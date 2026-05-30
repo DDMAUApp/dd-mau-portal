@@ -411,6 +411,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // control any time; we just don't make that the entry point. The
     // grid handles its own horizontal scroll on narrow screens.
     const [viewMode, setViewMode] = useState('grid');
+    // 2026-05-30 — Andrew "the month calendar needs to be on the bar
+    // above the my schedule bar. a small button that opens up a month
+    // calendar window. on the left of the week button but like 1/3 the
+    // week button size." Boolean for opening the modal (lazy mount).
+    const [showMonthModal, setShowMonthModal] = useState(false);
     // Mobile "fit-to-screen" zoom — Andrew 2026-05-22 "i want to be
     // able to zoom out and see the full picture of the weeks calendar
     // with everyone schedule. sling has this function". When true, the
@@ -5050,25 +5055,42 @@ ${dayBlocks}
             {/* Week navigator */}
             <WeekNav weekStart={weekStart} setWeekStart={setWeekStart} isEn={isEn} />
 
-            {/* View mode segmented control */}
-            <div className="flex gap-1 mb-3 glass-sheet rounded-lg p-1 print:hidden">
-                {[
-                    { key: 'grid', labelEn: 'Week', labelEs: 'Semana', Icon: LayoutGrid },
-                    { key: 'day',  labelEn: 'Day',  labelEs: 'Día',    Icon: LayoutList },
-                    { key: 'list', labelEn: 'List', labelEs: 'Lista',  Icon: List },
-                    { key: 'pto',  labelEn: 'Time Off', labelEs: 'Tiempo libre', Icon: Palmtree },
-                ].map(v => {
-                    const Icon = v.Icon;
-                    const isActive = viewMode === v.key;
-                    return (
-                        <button key={v.key} onClick={() => setViewMode(v.key)}
-                            className={`flex-1 py-1.5 rounded-md text-xs font-bold transition inline-flex items-center justify-center gap-1 ${isActive ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                            <Icon size={14} strokeWidth={2.25} aria-hidden="true"
-                                className={isActive ? 'text-white' : 'text-dd-green-700'} />
-                            {tx(v.labelEn, v.labelEs)}
-                        </button>
-                    );
-                })}
+            {/* 2026-05-30 — Andrew "small Month button on the left of
+                the Week button, about 1/3 the Week buttons size, opens
+                a month-calendar window." Icon-only Month pill sits to
+                the LEFT of the segmented view-mode control; tapping
+                opens the MonthMiniCal in a modal. View modes (Week /
+                Day / List / Time Off) stay flex-1 inside their own
+                segmented control to the right. */}
+            <div className="flex items-stretch gap-1 mb-3 print:hidden">
+                <button
+                    type="button"
+                    onClick={() => setShowMonthModal(true)}
+                    aria-label={tx('Open month calendar', 'Abrir calendario mensual')}
+                    title={tx('Month calendar', 'Calendario mensual')}
+                    className="shrink-0 glass-sheet rounded-lg px-3 inline-flex items-center justify-center text-dd-green-700 hover:bg-dd-bg transition active:scale-95"
+                >
+                    <Calendar size={16} strokeWidth={2.25} aria-hidden="true" />
+                </button>
+                <div className="flex flex-1 gap-1 glass-sheet rounded-lg p-1">
+                    {[
+                        { key: 'grid', labelEn: 'Week', labelEs: 'Semana', Icon: LayoutGrid },
+                        { key: 'day',  labelEn: 'Day',  labelEs: 'Día',    Icon: LayoutList },
+                        { key: 'list', labelEn: 'List', labelEs: 'Lista',  Icon: List },
+                        { key: 'pto',  labelEn: 'Time Off', labelEs: 'Tiempo libre', Icon: Palmtree },
+                    ].map(v => {
+                        const Icon = v.Icon;
+                        const isActive = viewMode === v.key;
+                        return (
+                            <button key={v.key} onClick={() => setViewMode(v.key)}
+                                className={`flex-1 py-1.5 rounded-md text-xs font-bold transition inline-flex items-center justify-center gap-1 ${isActive ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                                <Icon size={14} strokeWidth={2.25} aria-hidden="true"
+                                    className={isActive ? 'text-white' : 'text-dd-green-700'} />
+                                {tx(v.labelEn, v.labelEs)}
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
 
             {/* Mobile "fit to screen" zoom toggle — only relevant for
@@ -5784,27 +5806,6 @@ ${dayBlocks}
                                 level — by design, this is the at-a-glance
                                 view, not an editing view. Tap the toggle
                                 again to return to normal. */}
-                            {/* 2026-05-30 — Andrew: small month-view box
-                                on the LEFT of the week view. Reference
-                                aid that highlights the current week +
-                                shows event / birthday / closed-day dots.
-                                Click a day to jump weekStart to that
-                                week. Hidden below lg (mobile) — too
-                                narrow for two grids side-by-side. The
-                                inner main column keeps min-w-0 so the
-                                wide WeeklyGrid can still scroll cleanly
-                                inside its own column. */}
-                            <div className="flex gap-3 items-start">
-                                <aside className="hidden lg:block w-56 shrink-0 sticky top-2 print:hidden">
-                                    <MonthMiniCal
-                                        weekStart={weekStart}
-                                        setWeekStart={setWeekStart}
-                                        eventsByDate={eventsByDate}
-                                        blocksByDate={blocksByDate}
-                                        isEn={isEn}
-                                    />
-                                </aside>
-                                <div className="flex-1 min-w-0">
                             <GridFitWrapper enabled={gridFitToScreen}>
                             <WeeklyGrid
                                 weekStart={weekStart}
@@ -5928,8 +5929,6 @@ ${dayBlocks}
                                 dateClosedByRecurring={dateClosedByRecurring}
                             />
                             </GridFitWrapper>
-                                </div>
-                            </div>
                             {/* Weekly hours summary — managers-only per
                                 Andrew (2026-05-17). Was rendered for
                                 everyone; now hidden for staff + shift
@@ -6346,6 +6345,57 @@ ${dayBlocks}
                 the end of the JSX so they paint on top of everything else.
                 Each is rendered conditionally based on its target-state
                 cell (confirmDialog / offerTarget / takeTarget). */}
+            {/* 2026-05-30 — Month-calendar modal. Lazy-mount (only when
+                showMonthModal is true). Tap any day in the cal to jump
+                weekStart + auto-close the modal so the manager lands
+                directly on the chosen week. Same content as the prior
+                left-sidebar version, now invoked from the small Month
+                button in the toolbar above. */}
+            {showMonthModal && (
+                <ModalPortal>
+                    <div className="fixed inset-0 z-[60] bg-black/50 flex items-end md:items-center justify-center p-3"
+                        onClick={() => setShowMonthModal(false)}
+                        role="dialog" aria-modal="true">
+                        <div className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl shadow-xl"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                            <div className="md:hidden flex justify-center pt-2 pb-1">
+                                <div className="w-10 h-1 bg-dd-line rounded-full" />
+                            </div>
+                            <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between bg-dd-sage-50 safe-top">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-9 h-9 rounded-full bg-dd-green-50 text-dd-green-700 flex items-center justify-center">
+                                        <Calendar size={18} strokeWidth={2.25} />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-base font-black text-dd-text">
+                                            {tx('Month calendar', 'Calendario mensual')}
+                                        </h2>
+                                        <p className="text-[11px] text-dd-text-2 leading-tight">
+                                            {tx('Tap a day to jump the week', 'Toca un día para saltar a esa semana')}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setShowMonthModal(false)}
+                                    className="w-11 h-11 rounded-full hover:bg-white/60 flex items-center justify-center text-dd-text-2"
+                                    aria-label={tx('Close', 'Cerrar')}>
+                                    ✕
+                                </button>
+                            </div>
+                            <div className="p-3">
+                                <MonthMiniCal
+                                    weekStart={weekStart}
+                                    setWeekStart={(d) => { setWeekStart(d); setShowMonthModal(false); }}
+                                    eventsByDate={eventsByDate}
+                                    blocksByDate={blocksByDate}
+                                    isEn={isEn}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </ModalPortal>
+            )}
+
             {confirmDialog && (
                 <ConfirmModal
                     {...confirmDialog}
