@@ -55,6 +55,7 @@ import ModalPortal from './ModalPortal';
 import ConfirmModal from './ConfirmModal';
 import OfferShiftModal from './OfferShiftModal';
 import TakeShiftModal from './TakeShiftModal';
+import { useAppData } from '../v2/AppDataContext';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -712,7 +713,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [recurringShifts, setRecurringShifts] = useState([]);
     const [showRecurringModal, setShowRecurringModal] = useState(false);
     // In-app notifications (bell drawer)
+    // Andrew 2026-05-30 audit fix — consume from AppDataContext instead
+    // of subscribing here. Before this, Schedule held its own
+    // limit(50) notifications listener in parallel with
+    // AppDataContext's limit(100) one — two streams of identical data
+    // for any user with Schedule open. The local-state shim below
+    // preserves the existing code shape (notifications/setNotifications)
+    // so the bell drawer + markAllRead path keeps working unchanged;
+    // we just mirror context → local on every context change and
+    // accept local-only optimistic edits (markAllRead) until the
+    // server snapshot rebases it.
+    const { notifications: ctxNotifications } = useAppData();
     const [notifications, setNotifications] = useState([]);
+    useEffect(() => {
+        setNotifications(ctxNotifications || []);
+    }, [ctxNotifications]);
     // SPLH historical data — last 28 days of laborHistory_{location} feeds
     // the per-daypart staffing advisor that sits above the weekly grid.
     // Same shape used by LaborDashboard; helpers in src/data/splh.js.
@@ -1047,55 +1062,35 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         seenNotifIdsRef.current = new Set();
     }, [staffName]);
     const seenNotifIds = seenNotifIdsRef.current;
+    // Andrew 2026-05-30 — foreground browser-Notification toast now
+    // watches the context-supplied notifications array directly. Same
+    // semantics as before (fire once per fresh unread item, dedupe by
+    // id, ignore items older than 30s on first sight to avoid replaying
+    // a backlog when the page mounts). Just no longer holds a parallel
+    // Firestore subscription to do it.
     useEffect(() => {
         if (!staffName) return;
-        // Audit 2026-05-22 fix: cap at 50 notifications. Was unbounded.
-        // A composite (forStaff, createdAt desc) index would let us
-        // request the 50 MOST RECENT specifically, but adding orderBy
-        // without the index causes the listener to fail until Firebase
-        // builds it (~10 min outage). For now: rely on the cap + the
-        // existing client-side sort below. If notification volume per
-        // user gets above ~50/day this should be revisited.
-        const q = query(
-            collection(db, 'notifications'),
-            where('forStaff', '==', staffName),
-            limit(50),
-        );
-        const unsub = onSnapshot(q, (snap) => {
-            const items = [];
-            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
-            items.sort((a, b) => {
-                const at = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-                const bt = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-                return bt - at;
-            });
-            setNotifications(items);
-            // Foreground browser-notification fire for fresh unread items
-            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                const cutoff = Date.now() - 30 * 1000;
-                for (const n of items) {
-                    if (n.read) continue;
-                    if (seenNotifIds.has(n.id)) continue;
-                    const ts = n.createdAt?.toMillis ? n.createdAt.toMillis() : 0;
-                    if (ts < cutoff) { seenNotifIds.add(n.id); continue; }
-                    try {
-                        new Notification(n.title || 'DD Mau', {
-                            body: n.body || '',
-                            icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
-                            tag: n.id,
-                        });
-                        seenNotifIds.add(n.id);
-                    } catch {}
-                }
-            }
-        }, (err) => console.error('notifications snapshot error:', err));
-        return unsub;
-    // 2026-05-30 fix — seenNotifIds is a useRef whose `.current` (a Set)
-    // is mutated in-place; including it in the dep array did nothing
-    // useful and would tear down + re-subscribe if the ref ever got
-    // reassigned. Effect should only re-run when staffName changes.
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+        const cutoff = Date.now() - 30 * 1000;
+        for (const n of (ctxNotifications || [])) {
+            if (n.read) continue;
+            if (seenNotifIds.has(n.id)) continue;
+            const ts = n.createdAt?.toMillis ? n.createdAt.toMillis() : 0;
+            if (ts < cutoff) { seenNotifIds.add(n.id); continue; }
+            try {
+                new Notification(n.title || 'DD Mau', {
+                    body: n.body || '',
+                    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
+                    tag: n.id,
+                });
+                seenNotifIds.add(n.id);
+            } catch {}
+        }
+    // seenNotifIds is a useRef whose .current Set is mutated in place;
+    // intentionally not in the deps. Re-runs only when context flips
+    // or staffName changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [staffName]);
+    }, [staffName, ctxNotifications]);
 
     // Browser notification permission state, requested on demand from drawer.
     const [notifPermission, setNotifPermission] = useState(
@@ -2064,11 +2059,34 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const newOwner = (staffList || []).find(x => x.name === newStaffName);
         const newOwnerSide = newOwner ? resolveStaffSide(newOwner) : shift.side;
         try {
-            await updateDoc(doc(db, 'shifts', shiftId), {
-                staffName: newStaffName,
-                date: newDate,
-                ...(newOwnerSide && newOwnerSide !== shift.side ? { side: newOwnerSide } : {}),
-                updatedAt: serverTimestamp(),
+            // Andrew 2026-05-30 audit fix — wrap the drop write in
+            // runTransaction. Before this it was a plain updateDoc, so
+            // two managers dragging the same shift in the same second
+            // produced last-write-wins. With the transaction we re-
+            // read the live doc, refuse if it was deleted, refuse if
+            // someone ELSE already moved the same shift since we
+            // picked it up (staff or date drifted), and only then
+            // commit. The swap-approval path at 2206 already uses
+            // this pattern — making drop consistent.
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'shifts', shiftId);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) {
+                    throw new Error(tx('Shift was deleted by another user.', 'Otro usuario eliminó el turno.'));
+                }
+                const live = snap.data() || {};
+                if (live.staffName !== shift.staffName || live.date !== shift.date) {
+                    throw new Error(tx(
+                        'Shift was changed by another user — refresh and try again.',
+                        'Otro usuario cambió el turno — actualiza e inténtalo de nuevo.',
+                    ));
+                }
+                txn.update(ref, {
+                    staffName: newStaffName,
+                    date: newDate,
+                    ...(newOwnerSide && newOwnerSide !== live.side ? { side: newOwnerSide } : {}),
+                    updatedAt: serverTimestamp(),
+                });
             });
             // Availability acknowledgment modal — same pattern as add and
             // drag-resize, surfaces if the move lands the shift outside

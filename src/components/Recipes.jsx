@@ -551,12 +551,27 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     }, [expandedRecipe]);
 
     // Load recipes from Firestore
+    //
+    // Andrew 2026-05-30 audit fix — short-circuit setRecipes when the
+    // new list is identical to the current one. Firestore re-emits the
+    // doc on metadata-only changes and on echoes of our own writes;
+    // without this check, each emit produced a fresh array identity →
+    // `aiItems` useMemo (deps: [recipes]) rebuilt the 80-entry array →
+    // search input felt sluggish on slow devices. JSON.stringify of
+    // ~80 recipes is <1ms; smaller than the React reconciliation cost
+    // we're avoiding.
+    const recipesHashRef = useRef(null);
     useEffect(() => {
         const unsubscribe = onSnapshot(
             doc(db, "config", "recipes"),
             (docSnapshot) => {
                 if (docSnapshot.exists() && docSnapshot.data().list && docSnapshot.data().list.length > 0) {
-                    setRecipes(docSnapshot.data().list);
+                    const next = docSnapshot.data().list;
+                    let nextHash = null;
+                    try { nextHash = JSON.stringify(next); } catch { nextHash = null; }
+                    if (nextHash && nextHash === recipesHashRef.current) return;
+                    recipesHashRef.current = nextHash;
+                    setRecipes(next);
                 }
             },
             // Without an error handler, an offline blip / permission-denied

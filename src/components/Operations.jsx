@@ -232,6 +232,70 @@ function vendorColorFor(v) {
     return v === "Sysco" ? "blue" : v === "US Foods" ? "orange" : "gray";
 }
 
+// InventoryCountInput — quantity input that commits on blur / Enter
+// instead of on every keystroke. Andrew 2026-05-30 audit fix.
+//
+// Why: the previous in-place input fired updateInventoryCount (which
+// wraps a Firestore runTransaction + an audit-log addDoc) on every
+// keystroke. Typing "100" produced THREE transactions back-to-back,
+// each retrying on conflict if another phone touched the same item.
+// Under heavy use this serialized into noticeable lag.
+//
+// Now: local typed value while the field is focused, single commit
+// when the staffer tabs away / presses Enter / taps elsewhere. If
+// nothing actually changed (typed same number that was already there)
+// we no-op so we don't churn the audit log either. The +/- buttons
+// still call updateInventoryCount directly — those are intentional
+// single-tap commits.
+const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit, language }) {
+    const [local, setLocal] = useState(String(value || 0));
+    const [editing, setEditing] = useState(false);
+    // Mirror the external value into the input when NOT editing, so a
+    // sync from Firestore (another phone bumped the count) updates
+    // our display. Skip during editing so we don't snap the user's
+    // half-typed digits back to the old number mid-keystroke.
+    useEffect(() => {
+        if (!editing) setLocal(String(value || 0));
+    }, [value, editing]);
+    const commit = (raw) => {
+        const n = parseInt(raw || '0', 10);
+        const safe = Number.isFinite(n) && n >= 0 ? n : 0;
+        if (safe !== (Number.isFinite(value) ? value : 0)) {
+            onCommit(safe);
+        }
+    };
+    const numericLocal = parseInt(local || '0', 10) || 0;
+    return (
+        <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={local}
+            onChange={(e) => {
+                setEditing(true);
+                const raw = e.target.value.replace(/[^0-9]/g, '');
+                setLocal(raw);
+            }}
+            onFocus={(e) => {
+                setEditing(true);
+                e.target.select();
+            }}
+            onBlur={(e) => {
+                setEditing(false);
+                commit(e.target.value);
+            }}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                }
+            }}
+            aria-label={language === "es" ? "Cantidad" : "Quantity"}
+            className={`w-12 h-9 text-center font-bold text-lg rounded-lg border-2 ${numericLocal > 0 ? "text-green-700 border-green-200 bg-white" : "text-gray-300 border-gray-200 bg-white"} focus:border-mint-700 focus:outline-none tabular-nums`}
+        />
+    );
+});
+
 // CartRow — one `<tr>` of the cart comparison table. Memoized so
 // typing a count, toggling a vendor override, or any unrelated
 // Operations re-render does NOT re-render the other 199 rows.
@@ -7810,41 +7874,19 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             <>
                                                                                 <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
                                                                                     className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
-                                                                                {/* Quantity input — tap-to-type. Replaces
-                                                                                    the read-only count span so staff can
-                                                                                    enter a big number (e.g. 24 boxes)
-                                                                                    directly instead of tapping + twenty-
-                                                                                    four times. Andrew 2026-05-17.
-                                                                                    inputMode=numeric brings up the
-                                                                                    number keypad on iOS; pattern is
-                                                                                    the same. onChange saves on every
-                                                                                    keystroke via the existing
-                                                                                    updateInventoryCount path (which is
-                                                                                    transactional); we strip non-digit
-                                                                                    chars and clamp to 0..N. onFocus
-                                                                                    selects the existing value so typing
-                                                                                    replaces (the common case) instead
-                                                                                    of appending. */}
-                                                                                <input
-                                                                                    type="text"
-                                                                                    inputMode="numeric"
-                                                                                    pattern="[0-9]*"
+                                                                                {/* Quantity input — tap-to-type. Andrew 2026-05-17
+                                                                                    added inline numeric entry so staff can punch
+                                                                                    in "24" instead of tapping + 24 times. Audit
+                                                                                    2026-05-30 swapped the inline element for
+                                                                                    <InventoryCountInput/> (module scope above)
+                                                                                    so writes commit on blur / Enter instead of
+                                                                                    on every keystroke — typing "100" used to
+                                                                                    fire three Firestore transactions back-to-
+                                                                                    back. The +/- buttons still commit on tap. */}
+                                                                                <InventoryCountInput
                                                                                     value={count}
-                                                                                    onChange={(e) => {
-                                                                                        const raw = e.target.value.replace(/[^0-9]/g, '');
-                                                                                        const n = parseInt(raw || '0', 10);
-                                                                                        if (!Number.isFinite(n)) return;
-                                                                                        updateInventoryCount(item.id, Math.max(0, n));
-                                                                                    }}
-                                                                                    onFocus={(e) => e.target.select()}
-                                                                                    onBlur={(e) => {
-                                                                                        const n = parseInt(e.target.value || '0', 10);
-                                                                                        if (!Number.isFinite(n) || n < 0) {
-                                                                                            updateInventoryCount(item.id, 0);
-                                                                                        }
-                                                                                    }}
-                                                                                    aria-label={language === "es" ? "Cantidad" : "Quantity"}
-                                                                                    className={`w-12 h-9 text-center font-bold text-lg rounded-lg border-2 ${count > 0 ? "text-green-700 border-green-200 bg-white" : "text-gray-300 border-gray-200 bg-white"} focus:border-mint-700 focus:outline-none tabular-nums`}
+                                                                                    language={language}
+                                                                                    onCommit={(n) => updateInventoryCount(item.id, n)}
                                                                                 />
                                                                                 <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                     className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
