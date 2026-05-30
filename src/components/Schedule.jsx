@@ -5784,6 +5784,27 @@ ${dayBlocks}
                                 level — by design, this is the at-a-glance
                                 view, not an editing view. Tap the toggle
                                 again to return to normal. */}
+                            {/* 2026-05-30 — Andrew: small month-view box
+                                on the LEFT of the week view. Reference
+                                aid that highlights the current week +
+                                shows event / birthday / closed-day dots.
+                                Click a day to jump weekStart to that
+                                week. Hidden below lg (mobile) — too
+                                narrow for two grids side-by-side. The
+                                inner main column keeps min-w-0 so the
+                                wide WeeklyGrid can still scroll cleanly
+                                inside its own column. */}
+                            <div className="flex gap-3 items-start">
+                                <aside className="hidden lg:block w-56 shrink-0 sticky top-2 print:hidden">
+                                    <MonthMiniCal
+                                        weekStart={weekStart}
+                                        setWeekStart={setWeekStart}
+                                        eventsByDate={eventsByDate}
+                                        blocksByDate={blocksByDate}
+                                        isEn={isEn}
+                                    />
+                                </aside>
+                                <div className="flex-1 min-w-0">
                             <GridFitWrapper enabled={gridFitToScreen}>
                             <WeeklyGrid
                                 weekStart={weekStart}
@@ -5907,6 +5928,8 @@ ${dayBlocks}
                                 dateClosedByRecurring={dateClosedByRecurring}
                             />
                             </GridFitWrapper>
+                                </div>
+                            </div>
                             {/* Weekly hours summary — managers-only per
                                 Andrew (2026-05-17). Was rendered for
                                 everyone; now hidden for staff + shift
@@ -6441,6 +6464,143 @@ function GridFitWrapper({ enabled, children }) {
                 }}
             >
                 {children}
+            </div>
+        </div>
+    );
+}
+
+// 2026-05-30 — Andrew "make a month view of the schedule, small box on
+// left of week view, not the default."
+//
+// Compact reference calendar that sits left of the WeeklyGrid on lg+
+// screens (hidden on mobile — too narrow for both to coexist). Click any
+// day to jump the WeeklyGrid to that day's week. Manager-added events
+// from /calendar_events render as a tiny purple dot; staff birthdays
+// render as a tiny pink dot; closed-day blocks render as a gray stripe.
+//
+// Own its own "displayed month" state (initialized from weekStart) so
+// the manager can scroll months ahead to plan without yanking the main
+// grid around. Sync resets only when weekStart jumps far enough that
+// the current week isn't in the displayed month.
+function MonthMiniCal({ weekStart, setWeekStart, eventsByDate, blocksByDate, isEn }) {
+    const [displayMonth, setDisplayMonth] = useState(() => {
+        const d = new Date(weekStart);
+        return new Date(d.getFullYear(), d.getMonth(), 1);
+    });
+    // Resync displayed month if weekStart moves outside it (e.g. user
+    // jumped 6 weeks in the main grid). Keeps the mini-cal relevant to
+    // what the manager is editing without trapping them on this month.
+    useEffect(() => {
+        const ws = new Date(weekStart);
+        const we = addDays(ws, 6);
+        const inDispMonth = (d) =>
+            d.getFullYear() === displayMonth.getFullYear() &&
+            d.getMonth() === displayMonth.getMonth();
+        if (!inDispMonth(ws) && !inDispMonth(we)) {
+            setDisplayMonth(new Date(ws.getFullYear(), ws.getMonth(), 1));
+        }
+    }, [weekStart, displayMonth]);
+
+    const monthLabel = displayMonth.toLocaleDateString(isEn ? 'en-US' : 'es-MX',
+        { month: 'long', year: 'numeric' });
+    const dayHeaders = isEn
+        ? ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+        : ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+    // Build the 6×7 = 42 cell grid. Start on the Sunday on/before
+    // the 1st of displayMonth, then walk 42 days.
+    const firstOfMonth = displayMonth;
+    const gridStart = addDays(firstOfMonth, -firstOfMonth.getDay()); // back to Sunday
+    const cells = [];
+    for (let i = 0; i < 42; i++) cells.push(addDays(gridStart, i));
+
+    const todayStr = toDateStr(new Date());
+    const weekStartStr = toDateStr(weekStart);
+    const weekEndStr = toDateStr(addDays(weekStart, 6));
+
+    const isInCurrentWeek = (d) => {
+        const ds = toDateStr(d);
+        return ds >= weekStartStr && ds <= weekEndStr;
+    };
+
+    const prevMonth = () => setDisplayMonth(new Date(displayMonth.getFullYear(), displayMonth.getMonth() - 1, 1));
+    const nextMonth = () => setDisplayMonth(new Date(displayMonth.getFullYear(), displayMonth.getMonth() + 1, 1));
+    const goToday = () => {
+        const t = new Date();
+        setDisplayMonth(new Date(t.getFullYear(), t.getMonth(), 1));
+        setWeekStart(startOfWeek(t));
+    };
+
+    return (
+        <div className="bg-white rounded-xl border border-dd-line shadow-card p-3 print:hidden">
+            {/* Header — month + arrows */}
+            <div className="flex items-center justify-between mb-2">
+                <button onClick={prevMonth}
+                    aria-label={isEn ? 'Previous month' : 'Mes anterior'}
+                    className="w-7 h-7 rounded text-dd-text-2 hover:bg-dd-bg flex items-center justify-center">‹</button>
+                <div className="text-[11px] font-black uppercase tracking-wider text-dd-text capitalize">
+                    {monthLabel}
+                </div>
+                <button onClick={nextMonth}
+                    aria-label={isEn ? 'Next month' : 'Mes siguiente'}
+                    className="w-7 h-7 rounded text-dd-text-2 hover:bg-dd-bg flex items-center justify-center">›</button>
+            </div>
+            {/* Day-of-week header */}
+            <div className="grid grid-cols-7 gap-0.5 mb-1">
+                {dayHeaders.map((d, i) => (
+                    <div key={i} className="text-center text-[9px] font-bold uppercase text-dd-text-2/70 py-0.5">
+                        {d}
+                    </div>
+                ))}
+            </div>
+            {/* 42 day cells */}
+            <div className="grid grid-cols-7 gap-0.5">
+                {cells.map((d, i) => {
+                    const ds = toDateStr(d);
+                    const inMonth = d.getMonth() === displayMonth.getMonth();
+                    const isToday = ds === todayStr;
+                    const inWeek = isInCurrentWeek(d);
+                    const events = eventsByDate.get(ds) || [];
+                    const blocks = blocksByDate.get(ds) || [];
+                    const hasBirthday = events.some(e => e.isBirthday);
+                    const hasEvent = events.some(e => !e.isBirthday);
+                    const isClosed = blocks.some(b => b.type === 'closed');
+                    return (
+                        <button key={i}
+                            onClick={() => setWeekStart(startOfWeek(d))}
+                            aria-label={`Jump to week of ${ds}`}
+                            className={`relative aspect-square rounded text-[10px] font-bold transition flex flex-col items-center justify-center ${
+                                inWeek
+                                    ? 'bg-dd-green-50 ring-1 ring-dd-green text-dd-green-700'
+                                    : isToday
+                                        ? 'bg-dd-sage-50 text-dd-text ring-1 ring-dd-green/40'
+                                        : inMonth
+                                            ? 'text-dd-text hover:bg-dd-bg'
+                                            : 'text-dd-text-2/40 hover:bg-dd-bg/60'
+                            }`}>
+                            <span>{d.getDate()}</span>
+                            {/* Event indicator dots — stacked vertically below the day number */}
+                            {(hasEvent || hasBirthday || isClosed) && (
+                                <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 flex gap-0.5">
+                                    {isClosed && <span className="w-1 h-1 rounded-full bg-dd-text-2" />}
+                                    {hasEvent && <span className="w-1 h-1 rounded-full bg-purple-500" />}
+                                    {hasBirthday && <span className="w-1 h-1 rounded-full bg-pink-500" />}
+                                </div>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+            {/* Footer — legend + jump-to-today */}
+            <div className="mt-2 pt-2 border-t border-dd-line/60 space-y-1">
+                <div className="flex items-center gap-2 text-[9px] text-dd-text-2">
+                    <span className="inline-flex items-center gap-1"><span className="w-1 h-1 rounded-full bg-purple-500" /> {isEn ? 'event' : 'evento'}</span>
+                    <span className="inline-flex items-center gap-1"><span className="w-1 h-1 rounded-full bg-pink-500" /> {isEn ? 'b-day' : 'cumple'}</span>
+                    <span className="inline-flex items-center gap-1"><span className="w-1 h-1 rounded-full bg-dd-text-2" /> {isEn ? 'closed' : 'cerrado'}</span>
+                </div>
+                <button onClick={goToday}
+                    className="w-full text-[10px] text-dd-text-2 hover:text-dd-green-700 font-semibold py-1 rounded hover:bg-dd-bg">
+                    ↺ {isEn ? 'Jump to today' : 'Ir a hoy'}
+                </button>
             </div>
         </div>
     );
