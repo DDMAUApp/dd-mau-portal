@@ -2448,7 +2448,9 @@ function MessageBubbleInner({
                             <MediaImage url={message.mediaUrl} alt="Photo" />
                         )}
                         {message.type === 'video' && (
-                            <video src={message.mediaUrl} controls playsInline className="rounded-lg max-w-full max-h-[360px]" />
+                            <video src={message.mediaUrl} controls playsInline preload="metadata"
+                                width="320" height="240" style={{ aspectRatio: '4 / 3' }}
+                                className="rounded-lg w-auto max-w-full max-h-[360px] bg-dd-bg/40" />
                         )}
                         {message.type === 'audio' && (
                             <AudioPlayer src={message.mediaUrl} duration={message.duration} isMine={isMine} />
@@ -2726,12 +2728,21 @@ function MediaImage({ url, alt }) {
     if (!url) return null;
     return (
         <>
+            {/* 2026-05-30 perf — intrinsic 4:3 width/height + matching CSS
+                aspectRatio so the browser reserves vertical space BEFORE the
+                image bytes arrive. Without these, lazy-loaded chat photos
+                snap from 0px to natural height on first paint and shove the
+                rest of the message stream around (CLS). */}
             <img
                 src={url}
                 alt={alt}
                 loading="lazy"
+                decoding="async"
+                width="320"
+                height="240"
                 onClick={() => setZoom(true)}
-                className="rounded-lg max-w-full max-h-[360px] object-cover cursor-zoom-in"
+                style={{ aspectRatio: '4 / 3' }}
+                className="rounded-lg w-auto max-w-full max-h-[360px] object-cover cursor-zoom-in bg-dd-bg/40"
             />
             {zoom && (
                 <div

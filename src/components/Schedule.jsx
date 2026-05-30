@@ -602,11 +602,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setMoreMenuPos({ left, top: rect.bottom + 4 });
         };
         recompute();
+        // 2026-05-30 perf — make the capture-phase scroll listener passive so it
+        // doesn't block scroll on mobile while the More menu is open.
+        // removeEventListener must match the same options object shape for the
+        // unsub to register; pre-build it once.
+        const scrollOpts = { capture: true, passive: true };
         window.addEventListener('resize', recompute);
-        window.addEventListener('scroll', recompute, true);
+        window.addEventListener('scroll', recompute, scrollOpts);
         return () => {
             window.removeEventListener('resize', recompute);
-            window.removeEventListener('scroll', recompute, true);
+            window.removeEventListener('scroll', recompute, scrollOpts);
         };
     }, [showMoreActions]);
     // Staffing-needs (a.k.a. shift slots) — manager-defined "we need N people in this time block"
@@ -1034,7 +1039,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
         }, (err) => console.error('notifications snapshot error:', err));
         return unsub;
-    }, [staffName, seenNotifIds]);
+    // 2026-05-30 fix — seenNotifIds is a useRef whose `.current` (a Set)
+    // is mutated in-place; including it in the dep array did nothing
+    // useful and would tear down + re-subscribe if the ref ever got
+    // reassigned. Effect should only re-run when staffName changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [staffName]);
 
     // Browser notification permission state, requested on demand from drawer.
     const [notifPermission, setNotifPermission] = useState(
