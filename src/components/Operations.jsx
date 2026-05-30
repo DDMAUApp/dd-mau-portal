@@ -519,6 +519,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // "we're getting low" BEFORE the kitchen actually runs out.
             // Stored as a number; null/empty means "no threshold set".
             const [invEditMin, setInvEditMin] = useState("");
+            // 2026-05-29 — Andrew: "when we did a category audit a while
+            // back to put items in locations. i dont see the toggle to
+            // move the items to the locations". Edit form already had
+            // category + subcat pickers but never carried the storage-
+            // location field through — the location-mapper script set
+            // it server-side once, but staff had no way to fix mistakes
+            // in-app. This state + the picker added in the edit JSX
+            // restore in-app editability.
+            const [invEditLocation, setInvEditLocation] = useState("");
             // 2026-05-17 — let edit form recategorize an item. invEditTargetCatIdx
             // is the destination category index (move cross-category) and
             // invEditSubcat is the subcategory within that destination. Both
@@ -3672,6 +3681,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     vendor: invEditSupplier.trim(), supplier: invEditSupplier.trim(),
                     orderDay: invEditOrderDay,
                     subcat: (invEditSubcat || '').trim(),
+                    // 2026-05-29 — storage location ('Walk-in Freezer',
+                    // 'Pantry', etc). Empty string is preserved as ''
+                    // (not deleted) so a previously-set location can be
+                    // explicitly cleared back to "(none)".
+                    location: (invEditLocation || '').trim(),
                 };
                 // Persist the low-stock threshold. Empty / 0 / NaN clears
                 // the field so the indicator turns off. Stored as number
@@ -3724,7 +3738,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 setInvEditingIdx(null);
                 setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri"); setInvEditMin("");
-                setInvEditTargetCatIdx(null); setInvEditSubcat("");
+                setInvEditTargetCatIdx(null); setInvEditSubcat(""); setInvEditLocation("");
             };
 
             // Drop the currently-grabbed item into a target bucket. Same
@@ -7412,9 +7426,38 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             onChange={(e) => setInvEditSubcat(e.target.value)}
                                                                             placeholder={language === "es" ? "...o escribe nueva sub-categoría dentro de la categoría elegida" : "...or type a new subcategory inside the selected category"}
                                                                             className="w-full px-2 py-1.5 border-2 border-dashed border-gray-300 rounded-lg text-xs text-gray-600 focus:border-mint-700 focus:outline-none" />
+                                                                        {/* 📍 Storage location picker. Restored
+                                                                            2026-05-29 — the original location-
+                                                                            mapper script ran server-side once and
+                                                                            then had no in-app counterpart, so
+                                                                            staff couldn't fix bad assignments.
+                                                                            List = canonical INVENTORY_LOCATIONS
+                                                                            union'd with any non-canonical values
+                                                                            already in use so previously-set
+                                                                            custom locations stay reachable. */}
+                                                                        {(() => {
+                                                                            const seenLocs = new Set(INVENTORY_LOCATIONS);
+                                                                            for (const c of customInventory) for (const it of (c.items || [])) {
+                                                                                if (it.location && !seenLocs.has(it.location)) seenLocs.add(it.location);
+                                                                            }
+                                                                            return (
+                                                                                <label className="flex items-center gap-2 text-xs">
+                                                                                    <span className="text-gray-500 font-bold whitespace-nowrap">📍 {language === "es" ? "Ubicación" : "Location"}:</span>
+                                                                                    <select
+                                                                                        value={invEditLocation || ''}
+                                                                                        onChange={(e) => setInvEditLocation(e.target.value)}
+                                                                                        className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none bg-white">
+                                                                                        <option value="">{language === "es" ? "(sin ubicación)" : "(none)"}</option>
+                                                                                        {[...seenLocs].map(l => (
+                                                                                            <option key={l} value={l}>{l}</option>
+                                                                                        ))}
+                                                                                    </select>
+                                                                                </label>
+                                                                            );
+                                                                        })()}
                                                                         <div className="flex gap-2">
                                                                             <button onClick={() => saveInvEdit(catIdx, itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
-                                                                            <button onClick={() => { setInvEditingIdx(null); setInvEditTargetCatIdx(null); setInvEditSubcat(""); }} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                                            <button onClick={() => { setInvEditingIdx(null); setInvEditTargetCatIdx(null); setInvEditSubcat(""); setInvEditLocation(""); }} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                                         </div>
                                                                     </div>
                                                                 ) : (
@@ -7474,6 +7517,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                     setInvEditMin(item.min != null ? String(item.min) : "");
                                                                                     setInvEditTargetCatIdx(catIdx);
                                                                                     setInvEditSubcat(item.subcat || "");
+                                                                                    setInvEditLocation(item.location || "");
                                                                                 }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                                 {/* Quick-move: tap to grab this item,
                                                                                     then tap any subcategory header on
@@ -7938,6 +7982,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                 setInvEditOrderDay(item.orderDay || "");
                                                                                 setInvEditTargetCatIdx(item.catIdx);
                                                                                 setInvEditSubcat(item.subcat || "");
+                                                                                setInvEditLocation(item.location || "");
                                                                             }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                         </div>
                                                                     </div>
