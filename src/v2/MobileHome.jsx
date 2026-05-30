@@ -27,12 +27,13 @@
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
-import { canViewLabor } from '../data/staff';
+import { canViewLabor, canViewClockedIn } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 import StaffTodoCard from '../components/StaffTodoCard';
+import ClockedInPanel from '../components/ClockedInPanel';
 // 2026-05-27 — Andrew: "the home screen button emojis need a
 // professional look too." Tile icons now come from Lucide instead of
 // the emoji set. Same chunk vendor-react already pulls in (see
@@ -319,6 +320,22 @@ export default function MobileHome({
                     {todayDateLabel}
                 </p>
             </header>
+
+            {/* 2026-05-30 — Andrew "Who's clocked in" compact strip.
+                Admin-only by default (canViewClockedIn defaults to
+                isAdminId(40/41) but can be opted-in per-staff via the
+                AdminPanel). Renders just a 1-line summary with the
+                count + first 3 avatars; tapping it opens a glass modal
+                with the full sortable list including OT-risk warnings.
+                Sits above the notification banner so the highest-value
+                glance lives at the very top of mobile home. */}
+            {canViewClockedIn(me) && (
+                <ClockedInPanel
+                    location={storeLocation}
+                    language={language}
+                    variant="strip"
+                />
+            )}
 
             {/* Enable-notifications banner — first-sign-in nudge.
                 Component renders null when Notification.permission is

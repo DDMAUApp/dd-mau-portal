@@ -120,6 +120,22 @@ export function canViewOnboarding(staff) {
   return ADMIN_IDS.includes(staff.id);
 }
 
+// Clocked-in roster visibility. Andrew 2026-05-30 — "start with admin
+// only but give me the option to add staff/managers later." Mirrors the
+// canViewLabor / canViewOnboarding / canReceive86Alerts pattern: default
+// to admin-only (ids 40/41), but allow an explicit per-record opt-in
+// flag (canViewClockedIn: true) to widen access for a manager or
+// trusted staffer without code changes. Admin panel toggle TBD.
+//
+// Returns true/false; never undefined.
+export function canViewClockedIn(staff) {
+  if (!staff) return false;
+  if (staff.canViewClockedIn === true) return true;
+  if (staff.canViewClockedIn === false) return false;
+  // Default: owners only (id 40 = Andrew, 41 = Julie).
+  return isAdminId(staff.id);
+}
+
 // 86 alert push opt-in. Driven by the scheduledEightySixAlerts Cloud
 // Function that fires 3x daily (10am / 2pm / 8pm Central) listing
 // every item still flagged OUT_OF_STOCK on either location's 86 board.

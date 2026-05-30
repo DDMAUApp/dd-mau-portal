@@ -12,11 +12,12 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot } from 'firebase/firestore';
-import { canViewLabor, isAdmin as isAdminFn } from '../data/staff';
+import { canViewLabor, canViewClockedIn, isAdmin as isAdminFn } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 import StaffTodoCard from '../components/StaffTodoCard';
+import ClockedInPanel from '../components/ClockedInPanel';
 // 2026-05-27 — Andrew: "the home screen button emojis need a
 // professional look too." Swapping every emoji icon on the desktop
 // home dashboard for Lucide SVG glyphs (same set Sidebar.jsx +
@@ -184,6 +185,14 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
     const [showPrintCenter, setShowPrintCenter] = useState(false);
     // Resolve admin status for the Print Center location selector.
     const viewerIsAdmin = isAdminFn(staffName, staffList);
+    // 2026-05-30 — Andrew "Who's clocked in" widget. Resolve the viewer's
+    // staff record once so the canViewClockedIn() gate below doesn't have
+    // to re-scan staffList on every render. Mirrors the StaffTodoCard
+    // pattern at line ~300.
+    const viewer = useMemo(
+        () => (staffList || []).find(s => s.name === staffName) || null,
+        [staffList, staffName]
+    );
 
     // FIX (review 2026-05-14, perf): read from the shared AppDataContext
     // instead of four component-local Firestore subscriptions. The
@@ -350,8 +359,22 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                 </div>
             </section>
 
-            {/* Two-up row: shifts + publish CTA */}
+            {/* Two-up row: shifts/clocked-in + publish CTA */}
             <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* 2026-05-30 — Andrew: replaced "Upcoming shifts" with
+                    the live Toast "Who's clocked in" roster for admins.
+                    Non-admins continue to see upcoming shifts because
+                    they don't have access to the labor data. Future:
+                    canViewClockedIn() can be opted-in per-staff via the
+                    Admin Panel (see helper in src/data/staff.js). */}
+                {canViewClockedIn(viewer) ? (
+                    <div className="lg:col-span-2">
+                        <ClockedInPanel
+                            location={storeLocation}
+                            language={language}
+                        />
+                    </div>
+                ) : (
                 <Card className="lg:col-span-2 p-5">
                     <div className="flex items-center justify-between mb-3">
                         <div>
@@ -400,6 +423,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         </ul>
                     )}
                 </Card>
+                )}
 
                 {/* Publish CTA — solid sage tint when there are drafts to
                     drive attention; when zero, downgrades to a calm "all
