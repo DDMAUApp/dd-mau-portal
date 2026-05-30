@@ -4303,6 +4303,39 @@ exports.pruneSystemLogs = onSchedule(
             logger.warn("pruneSystemLogs error_alert_cooldowns failed:", err.message);
         }
 
+        // scheduled_messages — 2026-05-30 forward-looking-audit add.
+        // Admin-scheduled chat messages live here. Status flips to
+        // 'sent' once the Cloud Function fires it, or 'cancelled' if
+        // the admin cancels. Either way, after 30 days the row has
+        // zero operational value (the message itself lives in the
+        // chat's messages subcollection where it belongs). Open
+        // ('pending') rows are NEVER touched — they're the worklist.
+        try {
+            const schedCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000);
+            let deleted = 0;
+            for (const status of ['sent', 'cancelled']) {
+                try {
+                    const snap = await db.collection("scheduled_messages")
+                        .where("status", "==", status)
+                        .where("sendAt", "<", schedCutoff.toISOString())
+                        .limit(SCAN_LIMIT)
+                        .get();
+                    if (snap.empty) continue;
+                    const bw = db.bulkWriter();
+                    snap.forEach((d) => { bw.delete(d.ref); deleted++; });
+                    await bw.close();
+                } catch (e) {
+                    logger.warn(`pruneSystemLogs scheduled_messages[${status}] failed:`, e.message);
+                    totalErrors++;
+                }
+            }
+            report.push(`scheduled_messages(sent+cancelled>30d): ${deleted}`);
+            totalDeleted += deleted;
+        } catch (err) {
+            logger.warn("pruneSystemLogs scheduled_messages failed:", err.message);
+            totalErrors++;
+        }
+
         logger.info(`pruneSystemLogs: deleted=${totalDeleted} errors=${totalErrors} | ${report.join(", ")}`);
 
         // Stamp an audit row. Uses the same shape as pruneAuditLogs so
