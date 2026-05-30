@@ -6398,16 +6398,23 @@ ${dayBlocks}
                 button in the toolbar above. */}
             {showMonthModal && (
                 <ModalPortal>
+                    {/* Andrew 2026-05-30 — modal upsized to max-w-6xl (1152px)
+                        on desktop so a full month grid fits with every day's
+                        holiday/birthday names readable inline. Was previously
+                        max-w-sm (384px) which only had room for dots. On
+                        mobile it still stacks full-width from the bottom
+                        sheet; height-capped to 90vh with scroll for short
+                        viewports. */}
                     <div className="fixed inset-0 z-[60] bg-black/50 flex items-end md:items-center justify-center p-3"
                         onClick={() => setShowMonthModal(false)}
                         role="dialog" aria-modal="true">
-                        <div className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl shadow-xl"
+                        <div className="bg-white w-full md:max-w-6xl md:rounded-2xl rounded-t-2xl shadow-xl md:max-h-[90vh] max-h-[92vh] flex flex-col"
                             onClick={(e) => e.stopPropagation()}
                             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-                            <div className="md:hidden flex justify-center pt-2 pb-1">
+                            <div className="md:hidden flex justify-center pt-2 pb-1 shrink-0">
                                 <div className="w-10 h-1 bg-dd-line rounded-full" />
                             </div>
-                            <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between bg-dd-sage-50 safe-top">
+                            <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between bg-dd-sage-50 safe-top shrink-0">
                                 <div className="flex items-center gap-2">
                                     <div className="w-9 h-9 rounded-full bg-dd-green-50 text-dd-green-700 flex items-center justify-center">
                                         <Calendar size={18} strokeWidth={2.25} />
@@ -6427,7 +6434,7 @@ ${dayBlocks}
                                     ✕
                                 </button>
                             </div>
-                            <div className="p-3">
+                            <div className="p-3 md:p-4 overflow-y-auto flex-1 min-h-0">
                                 <MonthMiniCal
                                     weekStart={weekStart}
                                     setWeekStart={(d) => { setWeekStart(d); setShowMonthModal(false); }}
@@ -6598,9 +6605,14 @@ function MonthMiniCal({ weekStart, setWeekStart, eventsByDate, blocksByDate, isE
 
     const monthLabel = displayMonth.toLocaleDateString(isEn ? 'en-US' : 'es-MX',
         { month: 'long', year: 'numeric' });
-    const dayHeaders = isEn
+    // Full day-of-week headers on desktop; single letters on mobile so
+    // narrow cells aren't cramped.
+    const dayHeadersShort = isEn
         ? ['S', 'M', 'T', 'W', 'T', 'F', 'S']
         : ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+    const dayHeadersLong = isEn
+        ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        : ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
     // Build the 6×7 = 42 cell grid. Start on the Sunday on/before
     // the 1st of displayMonth, then walk 42 days.
     const firstOfMonth = displayMonth;
@@ -6625,60 +6637,113 @@ function MonthMiniCal({ weekStart, setWeekStart, eventsByDate, blocksByDate, isE
         setWeekStart(startOfWeek(t));
     };
 
+    // Andrew 2026-05-30 — read-friendly redesign. Each day cell now
+    // shows the actual holiday/birthday/observance label (truncated)
+    // instead of just a colored dot, since the modal is now 6× wider
+    // and has room. Pulls TWO sources:
+    //   1) eventsByDate from the parent — manager-added events + auto
+    //      staff birthdays
+    //   2) getEventsForDate(ds) — federal holidays + national food
+    //      days bundled in src/data/calendarEvents.js. These never
+    //      made it into eventsByDate (parent uses a different source)
+    //      so the mini-cal was previously missing things like
+    //      "Thanksgiving" or "Natl. Pho Day". Surfaced here so the
+    //      month view becomes a true at-a-glance overview.
+    const labelFor = (e) => {
+        if (e.isBirthday) return `${e.emoji || '🎂'} ${e.label || ''}`.trim();
+        if (e.en || e.es) return `${e.icon || ''} ${isEn ? e.en : e.es}`.trim();
+        if (e.label) return `${e.emoji || ''} ${e.label}`.trim();
+        return '';
+    };
+    const toneClassFor = (e) => {
+        if (e.isBirthday) return 'bg-pink-50 text-pink-800 border-pink-200';
+        if (e.kind === 'holiday') return 'bg-amber-50 text-amber-800 border-amber-200';
+        if (e.kind === 'food') return 'bg-rose-50 text-rose-800 border-rose-200';
+        if (e.kind === 'observance') return 'bg-indigo-50 text-indigo-800 border-indigo-200';
+        // Manager-added (no kind) → purple
+        return 'bg-purple-50 text-purple-800 border-purple-200';
+    };
+
     return (
-        <div className="bg-white rounded-xl border border-dd-line shadow-card p-3 print:hidden">
+        <div className="bg-white rounded-xl border border-dd-line shadow-card p-3 md:p-4 print:hidden">
             {/* Header — month + arrows */}
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-3">
                 <button onClick={prevMonth}
                     aria-label={isEn ? 'Previous month' : 'Mes anterior'}
-                    className="w-7 h-7 rounded text-dd-text-2 hover:bg-dd-bg flex items-center justify-center">‹</button>
-                <div className="text-[11px] font-black uppercase tracking-wider text-dd-text capitalize">
+                    className="w-9 h-9 rounded-lg text-dd-text-2 hover:bg-dd-bg flex items-center justify-center text-xl font-bold transition active:scale-95">‹</button>
+                <div className="text-sm md:text-base font-black uppercase tracking-wider text-dd-text capitalize">
                     {monthLabel}
                 </div>
                 <button onClick={nextMonth}
                     aria-label={isEn ? 'Next month' : 'Mes siguiente'}
-                    className="w-7 h-7 rounded text-dd-text-2 hover:bg-dd-bg flex items-center justify-center">›</button>
+                    className="w-9 h-9 rounded-lg text-dd-text-2 hover:bg-dd-bg flex items-center justify-center text-xl font-bold transition active:scale-95">›</button>
             </div>
-            {/* Day-of-week header */}
-            <div className="grid grid-cols-7 gap-0.5 mb-1">
-                {dayHeaders.map((d, i) => (
-                    <div key={i} className="text-center text-[9px] font-bold uppercase text-dd-text-2/70 py-0.5">
-                        {d}
+            {/* Day-of-week header — letter on mobile, full name on md+ */}
+            <div className="grid grid-cols-7 gap-1 mb-1">
+                {dayHeadersShort.map((d, i) => (
+                    <div key={i} className="text-center text-[10px] md:text-xs font-bold uppercase text-dd-text-2/70 py-1">
+                        <span className="md:hidden">{d}</span>
+                        <span className="hidden md:inline">{dayHeadersLong[i]}</span>
                     </div>
                 ))}
             </div>
-            {/* 42 day cells */}
-            <div className="grid grid-cols-7 gap-0.5">
+            {/* 42 day cells — much taller on md+ so event labels fit. */}
+            <div className="grid grid-cols-7 gap-1">
                 {cells.map((d, i) => {
                     const ds = toDateStr(d);
                     const inMonth = d.getMonth() === displayMonth.getMonth();
                     const isToday = ds === todayStr;
                     const inWeek = isInCurrentWeek(d);
-                    const events = eventsByDate.get(ds) || [];
+                    // Merge parent eventsByDate (calendarEvents + birthdays)
+                    // with calendarEvents.js federal/food/observance days.
+                    const parentEvents = eventsByDate.get(ds) || [];
+                    const codedEvents = getEventsForDate(ds);
+                    const allEvents = [...parentEvents, ...codedEvents];
                     const blocks = blocksByDate.get(ds) || [];
-                    const hasBirthday = events.some(e => e.isBirthday);
-                    const hasEvent = events.some(e => !e.isBirthday);
                     const isClosed = blocks.some(b => b.type === 'closed');
                     return (
                         <button key={i}
                             onClick={() => setWeekStart(startOfWeek(d))}
                             aria-label={`Jump to week of ${ds}`}
-                            className={`relative aspect-square rounded text-[10px] font-bold transition flex flex-col items-center justify-center ${
+                            className={`group relative rounded-lg text-left transition flex flex-col p-1 md:p-1.5 min-h-[64px] md:min-h-[110px] overflow-hidden border ${
                                 inWeek
-                                    ? 'bg-dd-green-50 ring-1 ring-dd-green text-dd-green-700'
+                                    ? 'bg-dd-green-50 ring-2 ring-dd-green text-dd-green-700 border-dd-green'
                                     : isToday
-                                        ? 'bg-dd-sage-50 text-dd-text ring-1 ring-dd-green/40'
+                                        ? 'bg-dd-sage-50 text-dd-text border-dd-green/40'
                                         : inMonth
-                                            ? 'text-dd-text hover:bg-dd-bg'
-                                            : 'text-dd-text-2/40 hover:bg-dd-bg/60'
-                            }`}>
-                            <span>{d.getDate()}</span>
-                            {/* Event indicator dots — stacked vertically below the day number */}
-                            {(hasEvent || hasBirthday || isClosed) && (
-                                <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 flex gap-0.5">
-                                    {isClosed && <span className="w-1 h-1 rounded-full bg-dd-text-2" />}
-                                    {hasEvent && <span className="w-1 h-1 rounded-full bg-purple-500" />}
-                                    {hasBirthday && <span className="w-1 h-1 rounded-full bg-pink-500" />}
+                                            ? 'text-dd-text hover:bg-dd-bg border-dd-line/60'
+                                            : 'text-dd-text-2/50 hover:bg-dd-bg/60 border-dd-line/30 bg-dd-bg/30'
+                            } ${isClosed ? 'opacity-70 line-through' : ''}`}>
+                            {/* Day number — top row */}
+                            <div className="flex items-center justify-between mb-0.5 md:mb-1">
+                                <span className={`text-xs md:text-sm font-black tabular-nums ${
+                                    isToday && !inWeek ? 'inline-flex items-center justify-center w-5 h-5 md:w-6 md:h-6 rounded-full bg-dd-green text-white' : ''
+                                }`}>
+                                    {d.getDate()}
+                                </span>
+                                {isClosed && (
+                                    <span className="text-[8px] md:text-[9px] font-black uppercase tracking-wider text-dd-text-2/70 px-1 rounded bg-dd-bg">
+                                        {isEn ? 'Closed' : 'Cerrado'}
+                                    </span>
+                                )}
+                            </div>
+                            {/* Event labels — full text, truncated per pill.
+                                Stack up to 3 on desktop; mobile shows up to 2
+                                with a +N pill for overflow. */}
+                            {allEvents.length > 0 && (
+                                <div className="flex flex-col gap-0.5 min-w-0">
+                                    {allEvents.slice(0, 3).map((e, idx) => (
+                                        <span key={idx}
+                                            title={labelFor(e)}
+                                            className={`text-[9px] md:text-[10px] font-bold px-1 py-0.5 rounded border truncate leading-tight ${toneClassFor(e)}`}>
+                                            {labelFor(e)}
+                                        </span>
+                                    ))}
+                                    {allEvents.length > 3 && (
+                                        <span className="text-[9px] md:text-[10px] font-bold text-dd-text-2/70 px-1">
+                                            +{allEvents.length - 3} {isEn ? 'more' : 'más'}
+                                        </span>
+                                    )}
                                 </div>
                             )}
                         </button>
@@ -6686,14 +6751,35 @@ function MonthMiniCal({ weekStart, setWeekStart, eventsByDate, blocksByDate, isE
                 })}
             </div>
             {/* Footer — legend + jump-to-today */}
-            <div className="mt-2 pt-2 border-t border-dd-line/60 space-y-1">
-                <div className="flex items-center gap-2 text-[9px] text-dd-text-2">
-                    <span className="inline-flex items-center gap-1"><span className="w-1 h-1 rounded-full bg-purple-500" /> {isEn ? 'event' : 'evento'}</span>
-                    <span className="inline-flex items-center gap-1"><span className="w-1 h-1 rounded-full bg-pink-500" /> {isEn ? 'b-day' : 'cumple'}</span>
-                    <span className="inline-flex items-center gap-1"><span className="w-1 h-1 rounded-full bg-dd-text-2" /> {isEn ? 'closed' : 'cerrado'}</span>
+            <div className="mt-3 pt-3 border-t border-dd-line/60 space-y-2">
+                <div className="flex items-center gap-3 flex-wrap text-[10px] md:text-xs text-dd-text-2">
+                    <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded border border-amber-200 bg-amber-50" />
+                        {isEn ? 'Holiday' : 'Feriado'}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded border border-rose-200 bg-rose-50" />
+                        {isEn ? 'Food day' : 'Día de comida'}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded border border-indigo-200 bg-indigo-50" />
+                        {isEn ? 'Observance' : 'Conmemoración'}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded border border-pink-200 bg-pink-50" />
+                        {isEn ? 'Birthday' : 'Cumpleaños'}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded border border-purple-200 bg-purple-50" />
+                        {isEn ? 'Event' : 'Evento'}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 ml-auto">
+                        <span className="inline-block w-3 h-3 rounded-full bg-dd-green-50 ring-2 ring-dd-green" />
+                        {isEn ? 'Selected week' : 'Semana actual'}
+                    </span>
                 </div>
                 <button onClick={goToday}
-                    className="w-full text-[10px] text-dd-text-2 hover:text-dd-green-700 font-semibold py-1 rounded hover:bg-dd-bg">
+                    className="w-full text-xs md:text-sm text-dd-text-2 hover:text-dd-green-700 font-semibold py-2 rounded-lg hover:bg-dd-bg transition active:scale-[0.99]">
                     ↺ {isEn ? 'Jump to today' : 'Ir a hoy'}
                 </button>
             </div>
