@@ -300,6 +300,63 @@ const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden
     );
 });
 
+// LocationItemRow — one row of the Location view's count list. Memoized so
+// changing the count on one item only repaints THAT row instead of all 300.
+//
+// Andrew 2026-05-29 perf batch D continuation. The Location view flattens
+// every counted item across categories into one big list (potentially
+// 300+ rows). Without memoization, every quantity tweak rerendered the
+// entire list. The handler `onUpdate` MUST be stable (parent should pass
+// the parent's updateInventoryCount directly — it's already a closure-
+// bound method that's stable across renders within Operations).
+//
+// Props are all stable primitives or stable references:
+//   id       — string, stable per item
+//   name     — string
+//   catName  — string (the originating category, shown as a tiny badge)
+//   subcat   — string
+//   pack     — string
+//   count    — number; changes when this specific row's count changes
+//   language — string
+//   onUpdate — function ref (parent's updateInventoryCount)
+const LocationItemRow = memo(function LocationItemRow({
+    id, name, catName, subcat, pack, count, language, onUpdate,
+}) {
+    return (
+        <div className={`flex items-center justify-between gap-2 px-3 py-2 ${count > 0 ? 'bg-green-50/50' : ''}`}>
+            <div className="flex-1 min-w-0 pr-2">
+                <p className={`text-sm font-semibold truncate ${count > 0 ? 'text-green-800' : 'text-gray-800'}`}>
+                    {name}
+                </p>
+                <div className="text-[10px] text-gray-400 truncate">
+                    {catName}
+                    {subcat && ` · ${subcat}`}
+                    {pack && ` · ${pack}`}
+                </div>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+                <button onClick={() => onUpdate(id, Math.max(0, count - 1), -1)}
+                    className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
+                <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={count}
+                    onChange={(e) => {
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        const n = parseInt(raw || '0', 10);
+                        if (!Number.isFinite(n)) return;
+                        onUpdate(id, Math.max(0, n));
+                    }}
+                    onFocus={(e) => e.target.select()}
+                    className="w-12 h-9 text-center text-base font-bold rounded-lg border-2 border-gray-200 bg-white text-gray-800 focus:border-mint-500 focus:outline-none tabular-nums" />
+                <button onClick={() => onUpdate(id, count + 1, 1)}
+                    className="w-9 h-9 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
+            </div>
+        </div>
+    );
+});
+
 export default function Operations({ language, staffList, staffName, storeLocation }) {
 
             // (Removed 2026-05-09) passwordEntered / password / handlePasswordSubmit
@@ -7989,43 +8046,19 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 )}
                                             </div>
                                             <div className="divide-y divide-gray-200">
-                                                {rows.map(({ it: item, catName }) => {
-                                                    const count = inventory[item.id] || 0;
-                                                    return (
-                                                        <div key={item.id}
-                                                            className={`flex items-center justify-between gap-2 px-3 py-2 ${count > 0 ? 'bg-green-50/50' : ''}`}>
-                                                            <div className="flex-1 min-w-0 pr-2">
-                                                                <p className={`text-sm font-semibold truncate ${count > 0 ? 'text-green-800' : 'text-gray-800'}`}>
-                                                                    {language === "es" && item.nameEs ? item.nameEs : item.name}
-                                                                </p>
-                                                                <div className="text-[10px] text-gray-400 truncate">
-                                                                    {catName}
-                                                                    {item.subcat && ` · ${item.subcat}`}
-                                                                    {item.pack && ` · ${item.pack}`}
-                                                                </div>
-                                                            </div>
-                                                            <div className="flex items-center gap-1 flex-shrink-0">
-                                                                <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
-                                                                    className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
-                                                                <input
-                                                                    type="text"
-                                                                    inputMode="numeric"
-                                                                    pattern="[0-9]*"
-                                                                    value={count}
-                                                                    onChange={(e) => {
-                                                                        const raw = e.target.value.replace(/[^0-9]/g, '');
-                                                                        const n = parseInt(raw || '0', 10);
-                                                                        if (!Number.isFinite(n)) return;
-                                                                        updateInventoryCount(item.id, Math.max(0, n));
-                                                                    }}
-                                                                    onFocus={(e) => e.target.select()}
-                                                                    className="w-12 h-9 text-center text-base font-bold rounded-lg border-2 border-gray-200 bg-white text-gray-800 focus:border-mint-500 focus:outline-none tabular-nums" />
-                                                                <button onClick={() => updateInventoryCount(item.id, count + 1, 1)}
-                                                                    className="w-9 h-9 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
+                                                {rows.map(({ it: item, catName }) => (
+                                                    <LocationItemRow
+                                                        key={item.id}
+                                                        id={item.id}
+                                                        name={language === "es" && item.nameEs ? item.nameEs : item.name}
+                                                        catName={catName}
+                                                        subcat={item.subcat || ''}
+                                                        pack={item.pack || ''}
+                                                        count={inventory[item.id] || 0}
+                                                        language={language}
+                                                        onUpdate={updateInventoryCount}
+                                                    />
+                                                ))}
                                             </div>
                                         </div>
                                     );
