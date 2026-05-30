@@ -253,7 +253,7 @@ export default function ToastOrders({ language, staffName = '' }) {
     // kitchen-slot printer for the current location — otherwise it'd
     // confuse staff at locations where the hardware isn't installed.
     const [kitchenPrinter, setKitchenPrinter] = useState(null);
-    const [labelPrinting, setLabelPrinting] = useState(null); // ord.guid being printed
+    const [labelPrinting, setLabelPrinting] = useState(null); // ord.orderGuid being printed
     useEffect(() => {
         const unsub = subscribePrinterConfig(location, setKitchenPrinter, 'kitchen');
         return () => { try { unsub && unsub(); } catch {} };
@@ -303,7 +303,13 @@ export default function ToastOrders({ language, staffName = '' }) {
 
     const handleLabelPrint = async (ord) => {
         if (!kitchenReady) return;
-        const orderKey = ord.guid || ord.orderNumber || String(Math.random());
+        // Toast scraper writes the field as `orderGuid` (see scraper.py
+        // ~line 2324). The earlier `ord.guid` lookup was always undefined,
+        // which made the disabled-while-printing check fall back to
+        // `ord.orderNumber` — fine for unique numbers, but two orders that
+        // share an orderNumber across days would lock together. Align
+        // with lines 548/564 which already use `orderGuid`.
+        const orderKey = ord.orderGuid || ord.orderNumber || String(Math.random());
         setLabelPrinting(orderKey);
         try {
             const text = buildOrderLabelText(ord);
@@ -662,9 +668,9 @@ export default function ToastOrders({ language, staffName = '' }) {
                                             {kitchenReady && (
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); handleLabelPrint(ord); }}
-                                                    disabled={labelPrinting === (ord.guid || ord.orderNumber)}
+                                                    disabled={labelPrinting === (ord.orderGuid || ord.orderNumber)}
                                                     className="py-2 rounded-lg text-sm font-bold border-2 border-purple-300 text-purple-700 bg-white hover:bg-purple-50 disabled:opacity-50 transition">
-                                                    {labelPrinting === (ord.guid || ord.orderNumber)
+                                                    {labelPrinting === (ord.orderGuid || ord.orderNumber)
                                                         ? (isEn ? '… Printing' : '… Imprimiendo')
                                                         : `🏷 ${isEn ? 'Print to label printer' : 'Imprimir etiqueta'}`}
                                                 </button>
