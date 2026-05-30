@@ -344,9 +344,13 @@ export const INVENTORY_CATEGORIES = [
         ]
     },
     {
+        // 2026-05-29 — Andrew flagged "Other" showing up in the
+        // inventory tab; root cause was Drinks' Spanish label set to
+        // "Otros" instead of "Bebidas", which made the category look
+        // like a generic catch-all to Spanish-speaking staff. Fixed.
         id: 8,
         name: "Drinks",
-        nameEs: "Otros",
+        nameEs: "Bebidas",
         items: [
             { id: "8-0", name: "Bloom Sparkling Energy Drink Variety", nameEs: "Bebida Energetica Bloom", vendor: "Costco Business", pack: "", price: 27.99, location: "Drinks", preferredVendor: "Costco Business", vendorOptions: [{ vendor: "Costco Business", price: null, pack: "" }] },
             { id: "8-1", name: "Clearly Canadian Sparkling Water Variety", nameEs: "Agua Mineral Clearly Canadian", vendor: "Costco Business", pack: "", price: 21.69, location: "Drinks", preferredVendor: "Costco Business", vendorOptions: [{ vendor: "Costco Business", price: null, pack: "" }] },

@@ -6398,30 +6398,18 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             📥 {language === "es" ? "Importar CSV" : "Import CSV"}
                                         </button>
                                     )}
-                                    <button onClick={printInventory} title="Print"
-                                        className="w-9 h-9 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-blue-50 hover:text-blue-700 transition text-lg">
-                                        {"\u{1F5A8}"}
-                                    </button>
-                                    {/* 🏷 Quick label — Andrew 2026-05-20.
-                                        Opens PrintLabelModal in editable mode
-                                        so a receiver can stick a date label
-                                        on a freshly-opened case without
-                                        going through Recipes. Available to
-                                        all staff (not admin-gated) — the
-                                        labeling task is a cook/receiver
-                                        responsibility, not management. */}
-                                    <button onClick={() => setShowQuickLabel(true)}
-                                        title={language === "es" ? "Etiqueta rápida (fecha)" : "Quick date label"}
-                                        className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold hover:bg-purple-100 transition">
-                                        🏷 {language === "es" ? "Etiqueta" : "Label"}
-                                    </button>
-                                    {/* 🖨 Print Center — free-form Word-style
-                                        printer for ad-hoc kitchen notes. Sits
-                                        next to the date-label button so
-                                        anyone reaching for "print something"
-                                        sees both options together. */}
-                                    <button onClick={() => setShowPrintCenter(true)}
-                                        title={language === "es" ? "Imprimir mensaje libre" : "Print free-form message"}
+                                    {/* 🖨 Print — single button, prints the
+                                        inventory comparison sheet (master +
+                                        vendor-only counts grouped by vendor).
+                                        2026-05-29 — Andrew: removed the 🏷
+                                        Label button (date-sticker flow lives
+                                        in Recipes / Operations sub-pages) and
+                                        the free-form PrintCenter button (was
+                                        confusing — staff thought it printed
+                                        the inventory). One Print button, one
+                                        job: print the inventory. */}
+                                    <button onClick={printInventory}
+                                        title={language === "es" ? "Imprimir inventario" : "Print inventory"}
                                         className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold hover:bg-purple-100 transition">
                                         🖨 {language === "es" ? "Imprimir" : "Print"}
                                     </button>
