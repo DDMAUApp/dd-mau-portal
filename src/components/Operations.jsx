@@ -755,7 +755,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // in." Inline expansion below the write-in input lets the
             // user override both before pressing Add.
             const [writeInDest, setWriteInDest] = useState({});
-            const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
+            // 2026-05-31 - Andrew: "lets let the locations tab be the default
+            // page to load instead of the master list. we will use that more."
+            // Was "category" (master list grouped by category). Now defaults
+            // to "location" (items grouped by walk-in / dry storage / etc.) -
+            // matches how staff actually count during a shift.
+            const [invViewMode, setInvViewMode] = useState("location"); // "category" | "location" | "vendor" | "split" | "pricing"
             const [collapsedCats, setCollapsedCats] = useState({});
             const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(false);
             // Filter to ONLY items currently flagged low-stock
