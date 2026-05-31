@@ -1013,7 +1013,13 @@ function BuildSheetTab({ language, byName }) {
     }
 
     const dirty = JSON.stringify(draft) !== lastSavedRef.current;
-    const rows = draft[activeSection] || [];
+    // Andrew 2026-05-30 bugfix: force-array. Some legacy build-sheet
+    // sections (PHO, FRIED_RICE) are single objects in the hardcoded
+    // file; the converter wraps them into a single-element array, but
+    // a future schema drift could still hand us a non-array here.
+    // Belt-and-suspenders so `.indexOf`, `[...rows]`, and `.map` never
+    // throw at render time and bring down the whole admin page.
+    const rows = Array.isArray(draft[activeSection]) ? draft[activeSection] : [];
 
     const updateRows = (next) => setDraft(prev => ({ ...prev, [activeSection]: next }));
     const move = (idx, dir) => {

@@ -145,21 +145,57 @@ export function legacyMenuToV2(legacyData = MENU_DATA) {
 /**
  * Convert hardcoded build sheet exports → v2 sections shape.
  * Each section is a slugged list of items in the same order.
+ *
+ * Andrew 2026-05-30 bugfix: the original buildSheet.js has MIXED
+ * shapes — most sections are arrays of items, but BUILD_SHEET_PHO and
+ * BUILD_SHEET_FRIED_RICE are SINGLE OBJECTS (Pho carries a unique
+ * `broths` field with per-broth protein lists). The first cut of
+ * this converter called `.map()` on the legacy data, which threw on
+ * the two single-object sections and crashed BuildSheetTab on mount.
+ *
+ * Fix:
+ *   1. Normalize input: array stays array, single object becomes a
+ *      one-element array, anything else becomes [].
+ *   2. Preserve unknown fields (broths, proteinsEn, proteinsEs, etc.)
+ *      verbatim via spread so a Firestore round-trip doesn't lose
+ *      the pho broths or other section-unique structure. The editor
+ *      doesn't yet surface those fields, but the data survives so a
+ *      Phase 2 richer editor can add them without a data migration.
  */
+const _BS_KNOWN_FIELDS = new Set([
+    'nameEn', 'nameEs', 'baseEn', 'baseEs',
+    'standardToppings', 'notes', 'piecesByProtein',
+    'id', 'order', 'archived',
+]);
+
 export function legacyBuildSheetToV2() {
-    const sectionFor = (legacyArr, sectionSlug) => (legacyArr || []).map((it, i) => ({
-        id:               makeItemSlug(sectionSlug, it.nameEn),
-        nameEn:           it.nameEn || '',
-        nameEs:           it.nameEs || '',
-        baseEn:           it.baseEn || '',
-        baseEs:           it.baseEs || '',
-        standardToppings: Array.isArray(it.standardToppings) ? [...it.standardToppings] : [],
-        notes:            Array.isArray(it.notes) ? [...it.notes] : [],
-        piecesByProtein:  it.piecesByProtein && typeof it.piecesByProtein === 'object'
-            ? { ...it.piecesByProtein } : {},
-        order:            i,
-        archived:         false,
-    }));
+    const sectionFor = (legacyData, sectionSlug) => {
+        const arr = Array.isArray(legacyData)
+            ? legacyData
+            : (legacyData && typeof legacyData === 'object' ? [legacyData] : []);
+        return arr.map((it, i) => {
+            const extras = {};
+            for (const k of Object.keys(it || {})) {
+                if (!_BS_KNOWN_FIELDS.has(k)) extras[k] = it[k];
+            }
+            return {
+                id:               makeItemSlug(sectionSlug, it.nameEn),
+                nameEn:           it.nameEn || '',
+                nameEs:           it.nameEs || '',
+                baseEn:           it.baseEn || '',
+                baseEs:           it.baseEs || '',
+                standardToppings: Array.isArray(it.standardToppings) ? [...it.standardToppings] : [],
+                notes:            Array.isArray(it.notes) ? [...it.notes] : [],
+                piecesByProtein:  it.piecesByProtein && typeof it.piecesByProtein === 'object'
+                    ? { ...it.piecesByProtein } : {},
+                // Pho-specific: { broths: [...] }. Fried-rice has none today,
+                // but anything else exotic falls through here for free.
+                ...extras,
+                order:            i,
+                archived:         false,
+            };
+        });
+    };
     return {
         bowls:      sectionFor(BUILD_SHEET_BOWLS,      'bowls'),
         handhelds:  sectionFor(BUILD_SHEET_HANDHELDS,  'handhelds'),
