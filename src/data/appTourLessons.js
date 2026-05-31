@@ -294,6 +294,597 @@ export const APP_TOUR_LESSONS = [
             },
         ],
     },
+
+    // ── MY TASKS ──────────────────────────────────────────────────────
+    {
+        id: 'mytasks',
+        icon: 'ListChecks',
+        color: 'emerald',
+        title:    { en: 'My Tasks',                              es: 'Mis Tareas' },
+        subtitle: { en: 'Personal to-do + manager kanban view',  es: 'Tareas personales + vista kanban' },
+        accessCheck: () => true,
+        estMinutes: 4,
+        steps: [
+            {
+                title: { en: 'Two views, one tab', es: 'Dos vistas, una pestaña' },
+                body:  { en: 'Regular staff see a personal task list — only tasks assigned to you. Managers and admins see a Kanban board with one column per staff member, plus a master "unassigned" column.',
+                         es: 'Personal regular ve una lista personal — solo tus tareas asignadas. Gerentes y admins ven un tablero Kanban con columna por persona, más una columna maestra de "sin asignar".' },
+            },
+            {
+                title: { en: 'Mark a task done', es: 'Marcar tarea hecha' },
+                body:  { en: 'Tap the empty circle on the left of a task — it fills in green and the task collapses to the Done section. Tap again to un-do.',
+                         es: 'Toca el círculo vacío a la izquierda — se llena de verde y la tarea pasa a Hechas. Toca otra vez para deshacer.' },
+            },
+            {
+                title: { en: 'See whose task is whose (managers)', es: 'Ver de quién es cada tarea (gerentes)' },
+                body:  { en: 'In the Kanban view, each column is one staffer. You can drag tasks between columns to reassign, or tap a task to edit it. Tasks on the master column are unassigned and visible to everyone.',
+                         es: 'En la vista Kanban, cada columna es una persona. Arrastra tareas entre columnas para reasignar, o toca una para editar. Las del maestro están sin asignar y son visibles para todos.' },
+            },
+            {
+                title: { en: 'Adding a task', es: 'Agregar una tarea' },
+                body:  { en: 'Tap the "+" at the top → write the title, pick an assignee + due time (optional), tap Add. Notifications fire automatically if you assign it to someone else.',
+                         es: 'Toca el "+" arriba → escribe título, elige persona + hora límite (opcional), toca Agregar. Se envía notificación automáticamente si se la asignas a otra persona.' },
+            },
+        ],
+    },
+
+    // ── NOTIFICATIONS (admin only) ────────────────────────────────────
+    {
+        id: 'notifications',
+        icon: 'Megaphone',
+        color: 'purple',
+        title:    { en: 'Notifications (Admin)',               es: 'Notificaciones (Admin)' },
+        subtitle: { en: 'Manual push messages to staff',       es: 'Mensajes push manuales al personal' },
+        accessCheck: (staff, staffList) => isAdmin(staff?.name, staffList || [staff]),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'When to use it', es: 'Cuándo usarlo' },
+                body:  { en: 'For broadcast announcements that need a push notification — schedule changes, urgent meal-period pushes, all-hands updates. For 1-on-1 conversations use Chat.',
+                         es: 'Para anuncios masivos que necesitan push — cambios de horario, avisos urgentes, mensajes a todos. Para 1-a-1 usa Chat.' },
+            },
+            {
+                title: { en: 'Pick the audience', es: 'Elige la audiencia' },
+                body:  { en: 'Pills at the top let you target Everyone / FOH / BOH / a single location / a specific staffer. The recipient count updates as you toggle.',
+                         es: 'Los botones de arriba te dejan apuntar a Todos / FOH / BOH / una ubicación / persona específica. El contador de destinatarios cambia al alternar.' },
+            },
+            {
+                title: { en: 'Write + send', es: 'Escribir + enviar' },
+                body:  { en: 'Title + body, both bilingual (the auto-translate button helps). Tap Send — push hits every recipient device within seconds, also logs to their in-app bell drawer.',
+                         es: 'Título + cuerpo, bilingüe (el botón de auto-traducción ayuda). Toca Enviar — el push llega a cada dispositivo en segundos, también queda en su campana.' },
+            },
+        ],
+    },
+
+    // ── MENU REFERENCE ────────────────────────────────────────────────
+    {
+        id: 'menu',
+        icon: 'BookOpen',
+        color: 'amber',
+        title:    { en: 'Menu Reference',                            es: 'Referencia del Menú' },
+        subtitle: { en: 'Prices, allergens, build sheet for staff',  es: 'Precios, alérgenos, build sheet' },
+        accessCheck: (staff) => canSeePage(staff, 'menu'),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'Customer menu vs build sheet', es: 'Menú al cliente vs build sheet' },
+                body:  { en: 'Top toggle: "Menu (prices)" shows what the customer orders — names, prices, allergens, dietary badges. "Build Sheet" shows what is IN each item — base, toppings, sauces, piece counts. Use the build sheet to answer "what comes on a Pho?" questions.',
+                         es: 'Botón arriba: "Menú (precios)" muestra lo que pide el cliente — nombres, precios, alérgenos, etiquetas dietéticas. "Build Sheet" muestra qué LLEVA cada artículo — base, toppings, salsas, piezas. Usa build sheet para responder "qué viene en un Pho?".' },
+            },
+            {
+                title: { en: 'Expand a category', es: 'Expandir una categoría' },
+                body:  { en: 'Tap a category card (Bowls, Bánh Mì, Pho, etc.) to expand all items in it. The per-category note at the top is critical — it has allergen rules and prep specifics that apply to every item in the category.',
+                         es: 'Toca una tarjeta de categoría (Bowls, Bánh Mì, Pho, etc.) para expandir sus artículos. La nota arriba de cada categoría es crítica — tiene reglas de alérgenos y detalles que aplican a todos los artículos.' },
+            },
+            {
+                title: { en: 'Allergens are guidance, not gospel', es: 'Los alérgenos son guía, no ley' },
+                body:  { en: 'For serious allergies (anaphylaxis-class), ALWAYS confirm with the Shift Lead AND the kitchen. The Allergen Matrix in Training M17 is the deep reference.',
+                         es: 'Para alergias graves (anafilaxia), SIEMPRE confirma con el Líder y la cocina. La Matriz de Alérgenos en Entrenamiento M17 es la referencia detallada.' },
+                tipEn: 'Edits to prices, descriptions, photos, and categories flow live from the Admin "Menu, brand & build sheet" editor. If a price looks wrong, ask a manager to update it there.',
+                tipEs: 'Los cambios de precios, descripciones, fotos y categorías fluyen en vivo del editor "Menú, marca y build sheet" en Admin. Si un precio se ve mal, pide al gerente que lo actualice ahí.',
+            },
+        ],
+    },
+
+    // ── DATE STICKERS ─────────────────────────────────────────────────
+    {
+        id: 'datestickers',
+        icon: 'Wrench',
+        color: 'amber',
+        title:    { en: 'Date Stickers',                            es: 'Etiquetas de Fecha' },
+        subtitle: { en: 'Label prepped items with date + shelf life', es: 'Etiqueta items preparados con fecha + vida útil' },
+        accessCheck: () => true,
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'Why we date everything', es: 'Por qué fechamos todo' },
+                body:  { en: 'Health code requires every prepped item (sauce, batch, container of cut veggies) to carry a date. Stickers also help the kitchen rotate stock first-in-first-out so nothing dies in the back of the walk-in.',
+                         es: 'Código sanitario exige que cada item preparado (salsa, batch, contenedor de verduras) tenga fecha. Las etiquetas también ayudan a rotar stock primero-en-primero-salir.' },
+            },
+            {
+                title: { en: 'Pick what you prepped', es: 'Elige lo preparado' },
+                body:  { en: 'Categories at the top: Proteins, Sauces, Snacks, Rice & Noodles, Stocks, Made-Ahead. Tap a category to see its items, then tap the item — that triggers the Epson printer at your location.',
+                         es: 'Categorías arriba: Proteínas, Salsas, Snacks, Arroz y Fideos, Caldos, Hechos-de-antes. Toca una categoría → toca el item — eso dispara la impresora Epson de tu ubicación.' },
+            },
+            {
+                title: { en: 'Shelf life is automatic', es: 'La vida útil es automática' },
+                body:  { en: 'Each item has a built-in default shelf life (e.g. cooked rice = 7 days, cut cucumber = 3 days). The sticker prints prep date + use-by date so you don\'t have to calculate.',
+                         es: 'Cada item tiene vida útil predeterminada (ej. arroz cocido = 7 días, pepino cortado = 3 días). La etiqueta imprime fecha de prep + fecha de uso para que no calcules.' },
+                tipEn: 'If the printer is offline, the page shows a red status banner. Tell a manager — it usually means the printer\'s IP changed or it\'s unplugged.',
+                tipEs: 'Si la impresora está offline, la página muestra un banner rojo. Avisa al gerente — normalmente significa que cambió la IP o está desconectada.',
+            },
+        ],
+    },
+
+    // ── RECIPES ───────────────────────────────────────────────────────
+    {
+        id: 'recipes',
+        icon: 'BookOpen',
+        color: 'amber',
+        title:    { en: 'Recipes',                                 es: 'Recetas' },
+        subtitle: { en: 'How to make every sauce, batch, prep',    es: 'Cómo hacer cada salsa, batch, prep' },
+        accessCheck: (staff) => hasRecipesAccess(staff),
+        estMinutes: 4,
+        steps: [
+            {
+                title: { en: 'Geofenced for safety', es: 'Geocercado por seguridad' },
+                body:  { en: 'Recipes only open when you are physically at a DD Mau location (we use device GPS to check). This keeps proprietary recipes from being read on the bus home. If you are at the restaurant and it refuses to load, give location permission to the browser.',
+                         es: 'Las recetas solo abren cuando estás físicamente en una ubicación DD Mau (usamos GPS). Esto evita que recetas propias se lean fuera. Si estás en el restaurante y no carga, da permiso de ubicación al navegador.' },
+            },
+            {
+                title: { en: 'Search', es: 'Buscar' },
+                body:  { en: 'Type at the top — instant filter on recipe title. Toggle "AI search" for natural-language matching ("things with shrimp", "vegan options"). AI is slower (~3s) but understands meaning, not just keywords.',
+                         es: 'Escribe arriba — filtro instantáneo por título. Activa "Búsqueda AI" para coincidencias en lenguaje natural ("cosas con camarón", "opciones veganas"). AI es más lenta (~3s) pero entiende el significado.' },
+            },
+            {
+                title: { en: 'Recipe detail', es: 'Detalle de receta' },
+                body:  { en: 'Tap a recipe → ingredients with quantities, step-by-step method, allergen list, prep time, yield. Some have photos. Pinch-zoom on mobile to read fine print.',
+                         es: 'Toca una receta → ingredientes con cantidades, método paso a paso, lista de alérgenos, tiempo de prep, rendimiento. Algunas tienen fotos. Pellizca para hacer zoom.' },
+            },
+            {
+                title: { en: 'Admin edits', es: 'Ediciones admin' },
+                body:  { en: 'Only admins can add, edit, or delete recipes. Every edit writes to /recipe_audits so the change history is recoverable. If a recipe is wrong, ask a manager — do not guess.',
+                         es: 'Solo admins pueden agregar, editar o eliminar. Cada cambio queda en /recipe_audits para recuperar el historial. Si una receta está mal, pregunta al gerente — no adivines.' },
+            },
+        ],
+    },
+
+    // ── TRAINING (the Training tab itself) ────────────────────────────
+    {
+        id: 'training',
+        icon: 'BookOpen',
+        color: 'indigo',
+        title:    { en: 'Training',                                  es: 'Capacitación' },
+        subtitle: { en: 'Modules, quizzes, and this App Tour',        es: 'Módulos, exámenes y este Tour' },
+        accessCheck: (staff) => canSeePage(staff, 'training'),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'Two things in this tab', es: 'Dos cosas en esta pestaña' },
+                body:  { en: 'The App Tour (this one!) teaches you how to USE the app. Below it are the M-modules (M1, M2, M6-M12, M17) — those teach you how to do the JOB: cashier, stations, allergens, food safety, etc.',
+                         es: 'El Tour de la App (¡este!) te enseña a USAR la app. Debajo están los módulos M (M1, M2, M6-M12, M17) — esos enseñan el TRABAJO: caja, estaciones, alérgenos, seguridad alimentaria.' },
+            },
+            {
+                title: { en: 'Module flow', es: 'Flujo del módulo' },
+                body:  { en: 'Read every lesson → take the quiz → 80% to pass (85% for safety modules). Two failed attempts in a row locks the module — a manager has to unlock it for you to try again. So slow down and re-read.',
+                         es: 'Lee cada lección → toma el examen → 80% para aprobar (85% para seguridad). Dos fallos seguidos bloquean el módulo — un gerente debe desbloquearlo. Lee con calma.' },
+            },
+            {
+                title: { en: 'Tracker (admin only)', es: 'Progreso (solo admin)' },
+                body:  { en: 'Admin sees a "Tracker" button at the top — opens a per-staff progress matrix. Useful for seeing who has finished what + unlocking modules a staffer failed twice on.',
+                         es: 'Admin ve un botón "Progreso" arriba — abre una matriz por persona. Útil para ver quién terminó qué + desbloquear módulos que alguien falló dos veces.' },
+            },
+        ],
+    },
+
+    // ── 86 BOARD ──────────────────────────────────────────────────────
+    {
+        id: 'eighty6',
+        icon: 'ListChecks',
+        color: 'rose',
+        title:    { en: '86 Board',                                  es: 'Lista 86' },
+        subtitle: { en: 'What is sold out right now',                es: 'Lo que está agotado ahora' },
+        accessCheck: (staff) => canSeePage(staff, 'eighty6'),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'Two purposes', es: 'Dos propósitos' },
+                body:  { en: 'Tells cashiers + servers which items they CANNOT sell right now. Also auto-dims the matching items on the public TV menu boards within seconds so customers see the same truth.',
+                         es: 'Dice a cajeros + servers qué artículos NO pueden vender ahora. También atenúa automáticamente los items en los menús TV públicos en segundos para que los clientes vean lo mismo.' },
+            },
+            {
+                title: { en: 'Add an item', es: 'Agregar un artículo' },
+                body:  { en: 'Tap the + button → search or pick from the menu list → confirm. The item lands in the active list with your name + timestamp. Everyone with the page open sees it in real time.',
+                         es: 'Toca el botón + → busca o elige del menú → confirma. El artículo entra en la lista activa con tu nombre + hora. Todos con la página abierta lo ven en tiempo real.' },
+            },
+            {
+                title: { en: 'Restock = remove', es: 'Reabastecer = quitar' },
+                body:  { en: 'When you make more / receive an order, tap the trash icon on the 86 entry to clear it. The TV menus un-dim within seconds; cashiers can sell it again.',
+                         es: 'Cuando preparas más / recibes pedido, toca el ícono de basura para quitar la entrada. Los menús TV se desatenúan en segundos; los cajeros pueden vender de nuevo.' },
+            },
+            {
+                title: { en: 'Toast auto-sync', es: 'Sincronización Toast' },
+                body:  { en: 'A scraper checks Toast POS every 5 minutes and pulls items Toast marked unavailable into the 86 board automatically — so most items show up here without any manual entry. Manual adds still work for things Toast does not know about (broken equipment, sauce out, etc.).',
+                         es: 'Un scraper revisa Toast POS cada 5 minutos y trae items que Toast marcó no-disponibles a la lista 86 automáticamente — la mayoría aparecen sin entrada manual. Las entradas manuales siguen funcionando para cosas que Toast no sabe (equipo roto, salsa agotada, etc.).' },
+            },
+        ],
+    },
+
+    // ── CATERING ──────────────────────────────────────────────────────
+    {
+        id: 'catering',
+        icon: 'ListChecks',
+        color: 'purple',
+        title:    { en: 'Catering',                                  es: 'Catering' },
+        subtitle: { en: 'Submit + track large group orders',         es: 'Enviar + rastrear pedidos grandes' },
+        accessCheck: (staff) => canSeePage(staff, 'catering'),
+        estMinutes: 4,
+        steps: [
+            {
+                title: { en: 'When to use this', es: 'Cuándo usar esto' },
+                body:  { en: 'For prepaid group / office / event orders. Walk-in tray orders go through the regular POS — catering is for orders that need kitchen lead time, special prep, and a written record.',
+                         es: 'Para pedidos prepagados de grupo / oficina / evento. Las bandejas de paso van por POS normal — catering es para pedidos que requieren tiempo de prep, prep especial y registro escrito.' },
+            },
+            {
+                title: { en: 'Build the order', es: 'Armar el pedido' },
+                body:  { en: 'Customer info → pickup/delivery date + time → menu items with quantities → special notes. Each line item shows its price; the running total updates as you add.',
+                         es: 'Datos del cliente → fecha + hora de recogida/entrega → menú con cantidades → notas. Cada línea muestra precio; el total se actualiza al agregar.' },
+            },
+            {
+                title: { en: 'Submit + notify', es: 'Enviar + notificar' },
+                body:  { en: 'Submit creates a catering order doc. Managers + kitchen lead get a push notification so they can prep ingredients in advance. The order shows up in the catering queue until marked complete.',
+                         es: 'Enviar crea un documento de pedido. Gerentes + líder de cocina reciben notificación push para preparar ingredientes con tiempo. El pedido queda en la cola hasta marcarlo completo.' },
+            },
+        ],
+    },
+
+    // ── MAINTENANCE ───────────────────────────────────────────────────
+    {
+        id: 'maintenance',
+        icon: 'Wrench',
+        color: 'amber',
+        title:    { en: 'Maintenance',                                  es: 'Mantenimiento' },
+        subtitle: { en: 'Report something broken',                       es: 'Reportar algo roto' },
+        accessCheck: (staff) => canSeePage(staff, 'maintenance'),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'What to report', es: 'Qué reportar' },
+                body:  { en: 'Anything not working right — fryer thermostat, walk-in door seal, POS screen, sink leak, broken tile. Be specific. A photo helps a ton.',
+                         es: 'Cualquier cosa que no funciona bien — termostato de freidora, sello de walk-in, pantalla POS, fuga de fregadero, baldosa rota. Sé específico. Una foto ayuda mucho.' },
+            },
+            {
+                title: { en: 'Fill + submit', es: 'Llenar + enviar' },
+                body:  { en: 'Pick the area (kitchen / dining / restroom / exterior), severity (urgent stops service / can wait / nice-to-have), description, photo if possible. Submit notifies the maintenance lead.',
+                         es: 'Elige el área (cocina / comedor / baño / exterior), gravedad (urgente / puede esperar / mejora), descripción, foto si puedes. Enviar notifica al líder de mantenimiento.' },
+            },
+            {
+                title: { en: 'Tracking + status', es: 'Seguimiento + estado' },
+                body:  { en: 'Open tickets show their status: New → Acknowledged → Scheduled → Resolved. You see updates on your phone so you know if your report has been picked up.',
+                         es: 'Los tickets abiertos muestran estado: Nuevo → Reconocido → Programado → Resuelto. Ves actualizaciones para saber si tu reporte fue atendido.' },
+            },
+        ],
+    },
+
+    // ── INSURANCE ─────────────────────────────────────────────────────
+    {
+        id: 'insurance',
+        icon: 'Shield',
+        color: 'indigo',
+        title:    { en: 'Insurance Enrollment',                      es: 'Inscripción de Seguro' },
+        subtitle: { en: 'Sign up for health benefits',               es: 'Inscríbete a beneficios médicos' },
+        accessCheck: (staff) => canSeePage(staff, 'insurance'),
+        estMinutes: 5,
+        steps: [
+            {
+                title: { en: 'Who can enroll', es: 'Quién puede inscribirse' },
+                body:  { en: 'Full-time staff (30+ hours/week average) become eligible after the waiting period. The page shows your eligibility status at the top — if you are not eligible yet, the date you become eligible is shown.',
+                         es: 'Personal de tiempo completo (promedio 30+ horas/semana) son elegibles después del periodo de espera. La página muestra tu estado arriba — si aún no eres elegible, te dice la fecha.' },
+            },
+            {
+                title: { en: 'Pick a plan', es: 'Elige un plan' },
+                body:  { en: 'Compare available plans side-by-side: monthly premium, deductible, copays, what is covered. Tap a plan to see the full summary of benefits.',
+                         es: 'Compara planes disponibles: prima mensual, deducible, copagos, cobertura. Toca un plan para ver el resumen completo de beneficios.' },
+            },
+            {
+                title: { en: 'Add dependents', es: 'Agregar dependientes' },
+                body:  { en: 'If covering family — spouse, kids — add them with name, DOB, relationship. Each dependent affects the monthly premium; the total updates as you add or remove people.',
+                         es: 'Si cubres familia — cónyuge, hijos — agrégalos con nombre, fecha de nacimiento, relación. Cada dependiente afecta la prima; el total se actualiza.' },
+            },
+            {
+                title: { en: 'Submit + payroll deduction', es: 'Enviar + descuento de nómina' },
+                body:  { en: 'Submitting locks in your choice for the plan year. Your share comes out of each paycheck. You can change plans only during open enrollment or after a qualifying life event (marriage, baby, etc.).',
+                         es: 'Enviar fija tu elección por el año. Tu parte se descuenta de cada cheque. Solo puedes cambiar plan en inscripción abierta o evento de vida (matrimonio, bebé, etc.).' },
+                tipEn: 'PII (SSN, DOB, etc.) is stored in your filled PDF in Storage, not in plain Firestore. Treat the enrollment confirmation page like a tax form — verify everything before submitting.',
+                tipEs: 'PII (SSN, fecha de nacimiento, etc.) se guarda en tu PDF en Storage, no en Firestore. Trata la confirmación como un formulario fiscal — verifica todo antes de enviar.',
+            },
+        ],
+    },
+
+    // ── AI ASSISTANT ──────────────────────────────────────────────────
+    {
+        id: 'ai',
+        icon: 'Megaphone',
+        color: 'purple',
+        title:    { en: 'AI Assistant',                              es: 'Asistente AI' },
+        subtitle: { en: 'Ask questions about menu, prep, policies',  es: 'Pregunta sobre menú, prep, políticas' },
+        accessCheck: (staff) => canSeePage(staff, 'ai'),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'What it knows', es: 'Qué sabe' },
+                body:  { en: 'The AI has access to the menu, build sheet, recipes, allergen matrix, and training content. Ask "what is in a Coconut Shrimp Bowl?", "is the peanut sauce dairy-free?", "how do I prep batch lemongrass?".',
+                         es: 'El AI tiene acceso al menú, build sheet, recetas, matriz de alérgenos y capacitación. Pregunta "qué lleva un Coconut Shrimp Bowl?", "la salsa de cacahuate tiene lácteo?", "cómo preparo lemongrass en batch?".' },
+            },
+            {
+                title: { en: 'Bilingual', es: 'Bilingüe' },
+                body:  { en: 'Ask in English or Spanish — same answers either way. If you switch the app to Spanish, the AI defaults to Spanish responses.',
+                         es: 'Pregunta en inglés o español — mismas respuestas. Si cambias la app a español, el AI responde en español por defecto.' },
+            },
+            {
+                title: { en: 'When to NOT trust it', es: 'Cuándo NO confiar' },
+                body:  { en: 'For serious allergy questions, always confirm with a manager + the kitchen. The AI is a fast reference, not a substitute for the M17 Allergen Matrix or a Shift Lead.',
+                         es: 'Para preguntas de alergia graves, siempre confirma con gerente + cocina. El AI es referencia rápida, no sustituto de la Matriz M17 o un Líder.' },
+            },
+        ],
+    },
+
+    // ── TARDIES ───────────────────────────────────────────────────────
+    {
+        id: 'tardies',
+        icon: 'ListChecks',
+        color: 'amber',
+        title:    { en: 'Tardies (Managers)',                        es: 'Tardanzas (Gerentes)' },
+        subtitle: { en: 'Track late clock-ins + no-shows',           es: 'Rastrear marcadas tarde + faltas' },
+        accessCheck: (staff) => isManager(staff),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'Auto-detected, manual review', es: 'Auto-detectado, revisión manual' },
+                body:  { en: 'The labor scraper checks every clock-in against the scheduled start time. Anything more than 5 minutes late (configurable) lands here as a "tardy event" for you to review and assign a status.',
+                         es: 'El scraper compara cada marcada contra el horario. Cualquier marcada más de 5 minutos tarde (configurable) llega aquí como "evento de tardanza" para revisar y asignar estado.' },
+            },
+            {
+                title: { en: 'Status workflow', es: 'Flujo de estado' },
+                body:  { en: 'Each tardy can be marked Excused (sick, emergency, advance notice) / Unexcused / Coaching given. The history rolls up per staffer so you can see patterns ("3 late in the last 14 days").',
+                         es: 'Cada tardanza se marca Disculpada (enferma, emergencia, aviso) / No-disculpada / Coaching dado. El historial se acumula por persona ("3 tardanzas en 14 días").' },
+            },
+            {
+                title: { en: 'No-shows', es: 'Faltas (no-show)' },
+                body:  { en: 'A scheduled shift with zero clock-in by 20 minutes after start becomes a No-Show. Same workflow — review, mark with reason, document for HR.',
+                         es: 'Un turno sin marcada 20 minutos después del inicio se vuelve No-Show. Mismo flujo — revisar, marcar con razón, documentar para RH.' },
+            },
+        ],
+    },
+
+    // ── SHIFT HANDOFF ─────────────────────────────────────────────────
+    {
+        id: 'handoff',
+        icon: 'Megaphone',
+        color: 'sky',
+        title:    { en: 'Shift Handoff (Managers)',                  es: 'Entrega de Turno (Gerentes)' },
+        subtitle: { en: 'Pass context to the next manager',          es: 'Pasa contexto al siguiente gerente' },
+        accessCheck: (staff) => isManager(staff),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'The point', es: 'El punto' },
+                body:  { en: 'When you close, the opening manager needs to know what happened: what is 86\'d, who called out, equipment issues, any guest situation worth following up on. This page is the written record.',
+                         es: 'Al cerrar, el gerente de apertura necesita saber qué pasó: qué está agotado, quién faltó, problemas de equipo, situaciones con clientes. Esta página es el registro escrito.' },
+            },
+            {
+                title: { en: 'Quick categories', es: 'Categorías rápidas' },
+                body:  { en: 'Pre-filled prompts: Sales summary, Staffing notes, Equipment, Inventory low / 86, Guest issues, Tomorrow heads-up. Fill what applies; skip what does not.',
+                         es: 'Prompts pre-llenados: Resumen de ventas, Notas de personal, Equipo, Inventario bajo / 86, Problemas con clientes, Aviso para mañana. Llena lo que aplique; salta lo que no.' },
+            },
+            {
+                title: { en: 'Visible to whom', es: 'Visible para quién' },
+                body:  { en: 'Saved handoffs are visible to all managers + admin. The next opening manager sees the most recent one when they sign in. History stays for ~30 days so you can look back.',
+                         es: 'Las entregas guardadas son visibles a todos los gerentes + admin. El siguiente gerente de apertura ve la más reciente al iniciar sesión. Historial se queda ~30 días.' },
+            },
+        ],
+    },
+
+    // ── LABOR DASHBOARD ───────────────────────────────────────────────
+    {
+        id: 'labor',
+        icon: 'ListChecks',
+        color: 'emerald',
+        title:    { en: 'Labor Dashboard (Admin)',                   es: 'Panel de Labor (Admin)' },
+        subtitle: { en: 'Hours, SPLH, cost % by daypart',            es: 'Horas, SPLH, % costo por daypart' },
+        accessCheck: (staff, staffList) => canViewLabor(staff) || isAdmin(staff?.name, staffList || [staff]),
+        estMinutes: 5,
+        steps: [
+            {
+                title: { en: 'Data source', es: 'Fuente de datos' },
+                body:  { en: 'Toast POS labor data, scraped every 30 minutes by Railway and written to /ops/labor_<loc>. So numbers are at most 30 min stale, often fresher. A "last scraped" timestamp shows top right — red if it has not updated in over 2 hours (scraper down).',
+                         es: 'Datos de Toast POS, scraped cada 30 minutos por Railway y escritos en /ops/labor_<loc>. Números son máximo 30 min viejos, normalmente más frescos. "Última actualización" arriba a la derecha — rojo si no actualiza en 2+ horas (scraper caído).' },
+            },
+            {
+                title: { en: 'Today vs week', es: 'Hoy vs semana' },
+                body:  { en: 'Today panel: hours so far, projected end of day, cost % so far. Week panel: hours week-to-date, on track / over / under target. Toggle the chart between SPLH (sales per labor hour) and pure cost %.',
+                         es: 'Panel Hoy: horas hasta ahora, proyección de fin del día, % de costo hasta ahora. Panel Semana: horas en la semana, en camino / sobre / bajo objetivo. Alterna entre SPLH (ventas por hora trabajada) y % de costo.' },
+            },
+            {
+                title: { en: 'Per-daypart breakdown', es: 'Desglose por daypart' },
+                body:  { en: 'Bottom table splits today\'s hours into Open / Lunch / Mid / Dinner / Close. Each row shows scheduled vs actual hours + SPLH. Use this to spot if you over-scheduled a slow lunch but under-scheduled dinner.',
+                         es: 'La tabla inferior divide las horas de hoy en Apertura / Almuerzo / Medio / Cena / Cierre. Cada fila muestra horas programadas vs reales + SPLH. Útil para detectar si sobreasignaste almuerzo y subasignaste cena.' },
+            },
+        ],
+    },
+
+    // ── MENU SCREENS (TV admin) ───────────────────────────────────────
+    {
+        id: 'menuscreens',
+        icon: 'ImageIcon',
+        color: 'sky',
+        title:    { en: 'Menu Screens (Admin)',                      es: 'Pantallas de Menú (Admin)' },
+        subtitle: { en: 'Manage every TV menu board',                es: 'Gestiona cada TV de menú' },
+        accessCheck: (staff, staffList) => isAdmin(staff?.name, staffList || [staff]),
+        estMinutes: 6,
+        steps: [
+            {
+                title: { en: 'What is here', es: 'Qué hay aquí' },
+                body:  { en: 'Health strip at the top: live / stale / offline TVs counted per location. Below, one card per TV with a 16:9 preview, status pill, and edit / pair / duplicate / delete actions.',
+                         es: 'Banner de salud arriba: TVs vivos / atrasados / offline por ubicación. Abajo, una tarjeta por TV con vista 16:9, estado y acciones edit / emparejar / duplicar / borrar.' },
+            },
+            {
+                title: { en: 'Configure a TV', es: 'Configurar una TV' },
+                body:  { en: 'Tap Edit on a TV card → set layout mode (data-driven menu / rotating images / split / PDF), pick dayparts (different layouts for breakfast vs lunch vs dinner), add hit zones (rectangles that overlay 86 indicators on image-mode menus), set rotation speeds.',
+                         es: 'Toca Editar → elige modo de layout (menú por datos / imágenes rotativas / split / PDF), elige dayparts (diferentes layouts por desayuno/almuerzo/cena), agrega hit zones (rectángulos para overlays 86 en menús-imagen), velocidades de rotación.' },
+            },
+            {
+                title: { en: 'Pair a new TV', es: 'Emparejar nueva TV' },
+                body:  { en: 'Tap "Pair device" → app generates a tvId + URL. On the new TV (Fire Stick, Pi, etc.) open that URL — the TV announces itself by writing to /tv_heartbeats and shows up in the dashboard within 60 seconds.',
+                         es: 'Toca "Emparejar dispositivo" → genera tvId + URL. En la TV nueva (Fire Stick, Pi, etc.) abre esa URL — la TV se anuncia escribiendo en /tv_heartbeats y aparece en el panel en 60 segundos.' },
+            },
+            {
+                title: { en: 'Holidays + templates', es: 'Feriados + plantillas' },
+                body:  { en: 'Templates tab: pre-built layouts you can drop onto a TV in one tap. Holidays tab: schedule a date-ranged overlay (background image, banner text, countdown) — perfect for Valentine\'s, Tet, July 4. Set dates once, the TVs pick it up automatically.',
+                         es: 'Pestaña Plantillas: layouts pre-hechos para aplicar en un toque. Pestaña Feriados: programa un overlay por rango de fechas (imagen, banner, cuenta regresiva) — perfecto para San Valentín, Tet, 4 de Julio.' },
+            },
+        ],
+    },
+
+    // ── ERROR REPORT (admin) ──────────────────────────────────────────
+    {
+        id: 'errorreport',
+        icon: 'Wrench',
+        color: 'rose',
+        title:    { en: 'Error Report (Admin)',                      es: 'Reporte de Errores (Admin)' },
+        subtitle: { en: 'JS errors + staff bug reports',             es: 'Errores JS + reportes de personal' },
+        accessCheck: (staff, staffList) => isAdmin(staff?.name, staffList || [staff]),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'Two streams', es: 'Dos fuentes' },
+                body:  { en: 'Top: uncaught JavaScript errors from any device running the app — stack trace, browser, time. Bottom: bug reports submitted by staff via the "Report a problem" button.',
+                         es: 'Arriba: errores JavaScript no capturados de cualquier dispositivo — stack trace, navegador, hora. Abajo: reportes de bugs enviados por personal con el botón "Reportar problema".' },
+            },
+            {
+                title: { en: 'Triage', es: 'Triage' },
+                body:  { en: 'Each error has counts (how many devices, how often). Click into one to see the latest stack trace + a "send to Claude" copy button — paste the dump into a chat and ask for a fix.',
+                         es: 'Cada error tiene conteos (cuántos dispositivos, qué tan seguido). Haz clic para ver el último stack trace + un botón "enviar a Claude" — pega el dump en chat y pide arreglo.' },
+            },
+            {
+                title: { en: 'Sentry too', es: 'Sentry también' },
+                body:  { en: 'Errors also flow to Sentry (errors.sentry.io) with full source maps. Open the Sentry link at the top to see the user breadcrumb trail + redacted state at the moment of crash.',
+                         es: 'Los errores también van a Sentry (errors.sentry.io) con source maps. Abre el link Sentry arriba para ver el rastro del usuario + estado redactado al momento del crash.' },
+            },
+        ],
+    },
+
+    // ── HEALTH (admin) ────────────────────────────────────────────────
+    {
+        id: 'health',
+        icon: 'ListChecks',
+        color: 'emerald',
+        title:    { en: 'System Health (Admin)',                     es: 'Salud del Sistema (Admin)' },
+        subtitle: { en: 'Backups, scrapers, audits',                 es: 'Respaldos, scrapers, auditorías' },
+        accessCheck: (staff, staffList) => isAdmin(staff?.name, staffList || [staff]),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'What is monitored', es: 'Qué se monitorea' },
+                body:  { en: 'Sections for: daily Firestore backups, scraper health (Toast labor, Sysco/USFoods, Sling CSV), audit log volume, Cloud Function recent invocations, push notification delivery rate.',
+                         es: 'Secciones: respaldos diarios de Firestore, salud de scrapers (Toast labor, Sysco/USFoods, Sling CSV), volumen de auditorías, invocaciones recientes de Cloud Functions, tasa de entrega de push.' },
+            },
+            {
+                title: { en: 'Red means investigate', es: 'Rojo = investigar' },
+                body:  { en: 'Any card with a red status pill needs attention. Most common: scraper missed its window (Railway cron paused, restart it). Click into the card for the full last-N-runs history.',
+                         es: 'Cualquier tarjeta con estado rojo necesita atención. Lo más común: scraper perdió su ventana (cron de Railway pausado, reinícialo). Haz clic para ver historial completo.' },
+            },
+            {
+                title: { en: 'Backups', es: 'Respaldos' },
+                body:  { en: 'Three layers: Firestore PITR (7-day rolling), daily managed export to GCS, local JSON dump via "npm run backup". You can browse the GCS bucket from here. If a backup has not run in 36 hours, the card turns red.',
+                         es: 'Tres capas: Firestore PITR (7 días rotando), exportación diaria a GCS, dump JSON local con "npm run backup". Puedes navegar el bucket GCS desde aquí. Si no corre en 36 horas, la tarjeta se vuelve roja.' },
+            },
+        ],
+    },
+
+    // ── LABEL PRINTING CENTER (admin) ─────────────────────────────────
+    {
+        id: 'labels',
+        icon: 'Wrench',
+        color: 'amber',
+        title:    { en: 'Label Printing (Admin)',                    es: 'Impresión de Etiquetas (Admin)' },
+        subtitle: { en: 'Bulk print + custom label runs',            es: 'Imprime en bulk + etiquetas custom' },
+        accessCheck: (staff, staffList) => isAdmin(staff?.name, staffList || [staff]),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'Beyond date stickers', es: 'Más allá de fechas' },
+                body:  { en: 'The regular Date Stickers page is for staff doing prep. This admin page handles bulk runs — print 50 of one label, design a custom layout (size, fields, barcode), test print specific sizes.',
+                         es: 'La página normal de Etiquetas es para personal en prep. Esta página admin maneja runs en bulk — imprime 50 de una etiqueta, diseña layout custom (tamaño, campos, código de barras), prueba tamaños específicos.' },
+            },
+            {
+                title: { en: 'Per-location printer', es: 'Impresora por ubicación' },
+                body:  { en: 'Each location has its own Epson TM-L100 with its own IP. The location picker at the top targets the right printer. Test print before a big run so you do not waste a stack of labels.',
+                         es: 'Cada ubicación tiene su propio Epson TM-L100 con su propia IP. El selector de ubicación arriba apunta a la impresora correcta. Prueba antes de un run grande para no desperdiciar etiquetas.' },
+            },
+        ],
+    },
+
+    // ── INBOX TRIAGE (admin) ──────────────────────────────────────────
+    {
+        id: 'inbox',
+        icon: 'Inbox',
+        color: 'sky',
+        title:    { en: 'Inbox Triage (Admin)',                      es: 'Bandeja (Admin)' },
+        subtitle: { en: 'Route inbound emails to a category',        es: 'Categoriza correos entrantes' },
+        accessCheck: (staff, staffList) => isAdmin(staff?.name, staffList || [staff]),
+        estMinutes: 3,
+        steps: [
+            {
+                title: { en: 'What lands here', es: 'Qué llega aquí' },
+                body:  { en: 'Inbound email to the restaurant\'s public addresses (info@, catering@, etc.) gets parsed, redacted of secrets, and queued here for an admin to assign a category and route to the right person.',
+                         es: 'Email entrante a las direcciones públicas (info@, catering@, etc.) se parsea, se redactan secretos, y se encola aquí para que un admin asigne categoría y enrute a la persona correcta.' },
+            },
+            {
+                title: { en: 'Route + reply', es: 'Enrutar + responder' },
+                body:  { en: 'Pick a category from the pills (Catering / HR / Vendor / Complaint / Spam) — the routing rules in Admin determine who gets notified. Reply inline if quick; longer responses can be drafted in Gmail.',
+                         es: 'Elige categoría (Catering / RH / Proveedor / Queja / Spam) — las reglas de enrutamiento en Admin determinan a quién se notifica. Responde inline si es rápido; respuestas largas en Gmail.' },
+            },
+        ],
+    },
+
+    // ── ONBOARDING ────────────────────────────────────────────────────
+    {
+        id: 'onboarding',
+        icon: 'Inbox',
+        color: 'indigo',
+        title:    { en: 'Onboarding (HR)',                           es: 'Onboarding (RH)' },
+        subtitle: { en: 'New hire paperwork + applications',         es: 'Papeleo de nuevos + aplicaciones' },
+        accessCheck: (staff) => canViewOnboarding(staff),
+        estMinutes: 6,
+        steps: [
+            {
+                title: { en: 'Three things', es: 'Tres cosas' },
+                body:  { en: 'Hires (active new hires filling paperwork), Applications (public job applicants), Templates (the fillable PDFs admins design once + reuse). Tabs at the top.',
+                         es: 'Hires (nuevos llenando papeleo), Aplicaciones (postulantes del público), Plantillas (PDFs llenables que admins diseñan una vez). Pestañas arriba.' },
+            },
+            {
+                title: { en: 'Send an invite', es: 'Enviar invitación' },
+                body:  { en: '"New hire" button → name, email, role, location → app generates a single-use token URL (?onboard=TOKEN, valid 30 days). Send via SMS or email. The hire opens the link to fill paperwork on their phone.',
+                         es: 'Botón "Nuevo hire" → nombre, email, rol, ubicación → app genera URL de token (?onboard=TOKEN, válido 30 días). Envía por SMS o email. El hire abre el link para llenar papeleo.' },
+            },
+            {
+                title: { en: 'Review submitted docs', es: 'Revisar docs enviados' },
+                body:  { en: 'When the hire submits each PDF (W-4, I-9, direct deposit, etc.), it shows up under their record. Review for completeness, mark approved or request changes. Every download is audited.',
+                         es: 'Cuando el hire envía cada PDF (W-4, I-9, depósito directo, etc.), aparece bajo su registro. Revisa lo completo, aprueba o pide cambios. Cada descarga queda auditada.' },
+            },
+            {
+                title: { en: 'Convert applicant → hire', es: 'Convertir aplicante → hire' },
+                body:  { en: 'On the Applications tab, qualified applicants can be promoted to "hire" — copies their info to a new hire record and sends them the onboarding invite in one tap.',
+                         es: 'En Aplicaciones, los aplicantes calificados pueden promoverse a "hire" — copia su info a nuevo registro y le envía la invitación de onboarding en un toque.' },
+            },
+            {
+                title: { en: 'PII safety', es: 'Seguridad de PII' },
+                body:  { en: 'SSN never lives in Firestore — only inside the filled PDF in Storage. Every view + download writes to /onboarding_audits. Only staff with canViewOnboarding can enter this tab; flip the flag in Admin → Staff list.',
+                         es: 'El SSN nunca vive en Firestore — solo dentro del PDF en Storage. Cada vista + descarga queda en /onboarding_audits. Solo personal con canViewOnboarding entra aquí; activa la marca en Admin → Lista de personal.' },
+            },
+        ],
+    },
 ];
 
 // Quick lookup map — used by the renderer + by the future "Try it"
