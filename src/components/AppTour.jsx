@@ -341,6 +341,30 @@ function LessonDetail({
                 <p className="text-sm md:text-base text-dd-text leading-relaxed whitespace-pre-wrap">
                     {step.body[language] || step.body.en}
                 </p>
+                {/* Optional screenshot. Andrew 2026-05-30. Public-folder
+                    path (e.g. /screenshots/schedule-week.png) renders as
+                    an <img>. Hosted via the same GitHub Pages deploy as
+                    the app — no extra Storage roundtrip on view. If the
+                    user is offline we fall back gracefully (broken-img
+                    icon hidden; alt text serves as the label). */}
+                {step.screenshot && (
+                    <figure className="mt-4 rounded-xl overflow-hidden border border-dd-line bg-dd-bg/40 shadow-card">
+                        <img
+                            src={step.screenshot}
+                            alt={step.screenshotAlt
+                                ? (step.screenshotAlt[language] || step.screenshotAlt.en)
+                                : (step.title[language] || step.title.en)}
+                            loading="lazy"
+                            className="w-full h-auto block"
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                        />
+                        {step.screenshotCaption && (
+                            <figcaption className="px-3 py-2 text-[11px] text-dd-text-2 bg-white border-t border-dd-line/60 italic">
+                                {step.screenshotCaption[language] || step.screenshotCaption.en}
+                            </figcaption>
+                        )}
+                    </figure>
+                )}
                 {(step.tipEn || step.tipEs) && (
                     <div className="mt-4 p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2">
                         <Lightbulb size={16} className="text-amber-700 shrink-0 mt-0.5" strokeWidth={2.5} />

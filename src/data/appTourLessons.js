@@ -40,14 +40,33 @@ const isManager        = (s) => !!s && (isAdmin(s.name, [s]) || /manager/i.test(
 //   accessCheck  — (staff, staffList) => boolean
 //   estMinutes   — rough estimate shown on the card
 //   steps[]      — sequential walkthrough
-//     title/body — bilingual
+//     title/body  — bilingual
 //     tipEn/tipEs — optional "good to know" callout
-//     tryItTab   — optional tab id; renders a "Try it →" button that
-//                  navigates the user to that tab when tapped
+//     tryItTab    — optional tab id; renders a "Try it →" button that
+//                   navigates the user to that tab when tapped
+//     screenshot  — optional path/URL to a PNG (recommended:
+//                   '/screenshots/<lesson-id>-<step-num>.png' which
+//                   maps to public/screenshots/ on disk and gets
+//                   served by the same GitHub Pages deploy as the
+//                   app — no Storage round-trip on view)
+//     screenshotAlt     — optional bilingual alt text for a11y
+//     screenshotCaption — optional bilingual caption shown below
 //
 // Authoring style: short paragraphs (1-3 sentences), plain language,
 // avoid jargon. If you say "Firestore" or "FCM" you've already lost
 // the staff member.
+//
+// HOW TO CAPTURE SCREENSHOTS (Phase 1.B workflow):
+//   1. Sign in to the live app, navigate to the page being described.
+//   2. Take a full-window screenshot. Crop to the meaningful region
+//      (typically: drop the OS chrome + browser tabs, keep the app
+//      window). Target dimensions: ~1200px wide, PNG.
+//   3. Save to public/screenshots/<lesson-id>-<step-num>.png
+//      (e.g. public/screenshots/schedule-2.png for Schedule lesson
+//      step 2).
+//   4. Add `screenshot: '/screenshots/schedule-2.png'` to the step
+//      object below. Optionally add screenshotAlt + screenshotCaption.
+//   5. Commit + push. The screenshot ships with the app build.
 export const APP_TOUR_LESSONS = [
 
     // ── HOME ──────────────────────────────────────────────────────────
