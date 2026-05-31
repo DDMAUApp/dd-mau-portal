@@ -348,34 +348,56 @@ function ChatThreadInner({
     // flash. Trade-off is a tiny pre-paint block to set scrollTop;
     // for the chat thread length we render, this is sub-ms and not
     // noticeable.
-    //
-    // Image-load expansion (messages with photos) still happens
-    // post-paint and would normally push the user away from bottom;
-    // a separate useEffect below re-anchors when an inline image
-    // finishes loading.
     const scrollRef = useRef(null);
+    const innerRef = useRef(null);
+    const atBottomRef = useRef(true);
     const [atBottom, setAtBottom] = useState(true);
+    useLayoutEffect(() => { atBottomRef.current = atBottom; }, [atBottom]);
     useLayoutEffect(() => {
         if (!atBottom) return;
         const el = scrollRef.current;
         if (el) el.scrollTop = el.scrollHeight;
     }, [messages.length, atBottom]);
-    // After paint: catch any inline images that finish loading and
-    // expanded the list, re-anchor to bottom if we were at bottom.
-    // Uses event delegation on the scroll container so we don't have
-    // to wire onLoad per-bubble.
+    // ── ResizeObserver — handles the "bottom → jump up → bottom" jitter
+    //
+    // Andrew 2026-05-31: opening a chat showed a visible jump-up-then-
+    // back-down. Root cause is the iMessage-style `justify-end
+    // min-h-full` trick on the inner wrapper. When total content
+    // height < viewport, justify-end pushes messages to the bottom of
+    // the scroll container. When an image (or async-loaded element)
+    // finishes loading and pushes total height > viewport, the flex
+    // collapses out of justify-end mode and the content reflows to
+    // top-anchored — the user sees their bottom-pinned view jump
+    // UP by the image height. The previous img-load listener fired
+    // post-paint, so the jump was visible before the snap-back.
+    //
+    // ResizeObserver fires synchronously after layout but BEFORE
+    // paint. We re-snap to bottom there, so the user only ever sees
+    // the final corrected position — no jitter. Catches everything:
+    // image loads, font swaps, async-rendered reply previews, date
+    // dividers, you name it.
+    //
+    // Also pairs well with overflow-anchor: none on the scroll
+    // container (set on the parent JSX below) to stop the browser's
+    // automatic scroll-anchoring heuristic from competing with us.
     useEffect(() => {
         const el = scrollRef.current;
-        if (!el) return;
-        const onImgLoad = (e) => {
-            if (e.target?.tagName !== 'IMG') return;
-            if (!atBottom) return;
+        const inner = innerRef.current;
+        if (!el || !inner) return;
+        if (typeof ResizeObserver === 'undefined') return; // very old browsers
+        let lastH = inner.getBoundingClientRect().height;
+        const ro = new ResizeObserver(() => {
+            const h = inner.getBoundingClientRect().height;
+            if (h === lastH) return;
+            lastH = h;
+            // Only re-anchor if the user was already pinned to bottom.
+            // If they've scrolled up to read older messages, leave them.
+            if (!atBottomRef.current) return;
             el.scrollTop = el.scrollHeight;
-        };
-        // `load` doesn't bubble; capture phase is required.
-        el.addEventListener('load', onImgLoad, true);
-        return () => el.removeEventListener('load', onImgLoad, true);
-    }, [atBottom]);
+        });
+        ro.observe(inner);
+        return () => ro.disconnect();
+    }, []);
     function handleScroll() {
         const el = scrollRef.current;
         if (!el) return;
@@ -1756,7 +1778,19 @@ function ChatThreadInner({
                 ref={scrollRef}
                 onScroll={handleScroll}
                 className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain px-3 py-2"
-                style={{ WebkitOverflowScrolling: 'touch' }}
+                style={{
+                    WebkitOverflowScrolling: 'touch',
+                    // Andrew 2026-05-31: disable the browser's scroll-
+                    // anchoring heuristic. With it ON, when content
+                    // height changes (image loads, fonts swap), the
+                    // browser shifts scrollTop to "keep the visual
+                    // position stable" — but that competes with our
+                    // ResizeObserver re-snap and produces visible
+                    // jitter. With it OFF, the ResizeObserver is the
+                    // single source of truth for "where should the
+                    // scroll be" and the result is one clean snap.
+                    overflowAnchor: 'none',
+                }}
             >
                 {/* 2026-05-27 — Andrew: "the chats and how its not stuch
                     to the bottom." iMessage / Zenzap pin messages to the
@@ -1767,8 +1801,13 @@ function ChatThreadInner({
                     sit at the bottom (justify-end pushes them down to
                     fill the min-height); long threads grow past min-h
                     and scroll normally with oldest at the top, newest
-                    at the bottom — same UX. */}
-                <div className="flex flex-col justify-end min-h-full space-y-1">
+                    at the bottom — same UX.
+
+                    innerRef (Andrew 2026-05-31): a ResizeObserver above
+                    watches this wrapper's height so any async expansion
+                    (image load, font swap, etc.) re-snaps to bottom
+                    pre-paint and the user never sees the jump-up. */}
+                <div ref={innerRef} className="flex flex-col justify-end min-h-full space-y-1">
                 {/* Load-older button — only when we haven't reached the
                     bottom of the message history yet. Bumps the limit
                     by 50 and re-runs the subscription. */}
