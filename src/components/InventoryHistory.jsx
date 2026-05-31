@@ -44,12 +44,26 @@ export default function InventoryHistory({ language, customInventory: customInve
                 // 2026-05-24 audit fix: was loading EVERY inventoryHistory
                 // doc on mount (one per day per location, slice(30) after).
                 // After 2 years that's 730 reads per tab-open per store.
-                // Doc IDs are date strings ('YYYY-MM-DD') so __name__-desc
-                // order = date-desc, and we can stop at 30.
+                //
+                // 2026-05-31 (Andrew bug report): "in adminpage the
+                // inventory history, doesnt seem to be saving anything."
+                // Root cause was `orderBy('__name__', 'desc')` — Firestore
+                // requires a manual composite index for descending sorts
+                // on __name__; the auto-index is ascending-only. Without
+                // the index the query threw "requires an index", got
+                // swallowed by the catch below, and the UI rendered
+                // empty. Same trap RecentOrdersBar + analytics in
+                // Operations.jsx hit on 2026-05-23 and fixed by sorting
+                // on the `date` field instead (single-field auto-index
+                // covers both directions, no manual setup needed). Doc
+                // IDs are still used as the per-day key for selection,
+                // so the rest of the component is unchanged. The
+                // catch+log stays as defense-in-depth for offline /
+                // permission-denied paths.
                 const fetchHistory = async () => {
                     try {
                         const colRef = collection(db, "inventoryHistory_" + storeLocation);
-                        const q = query(colRef, orderBy("__name__", "desc"), limit(30));
+                        const q = query(colRef, orderBy("date", "desc"), limit(30));
                         const snapshot = await getDocs(q);
                         const dates = snapshot.docs.map(doc => doc.id);
                         setHistoryDates(dates);
