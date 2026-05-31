@@ -42,6 +42,12 @@ const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
 // configuring a sync that had no effect. See git log for context.
 const LabelFormatEditor = reactLazy(() => import('./LabelFormatEditor'));
 const ChatHistoryAdmin = reactLazy(() => import('./ChatHistoryAdmin'));
+// 2026-05-30 — SaaS-ready menu/brand/buildsheet editor. Replaces the
+// legacy MenuEditor (overlay-only) that was removed 2026-05-24. New
+// editor is full CRUD: items + categories + brand + build sheet,
+// all backed by /config/menu_v2, /config/brand, /config/build_sheet.
+// See src/data/menuConfig.js for the schema + hooks.
+const MenuConfigEditor = reactLazy(() => import('./MenuConfigEditor'));
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -4327,11 +4333,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         <LabelFormatEditor language={language} byName={staffName} />
                     </ReactSuspense>
 
-                    {/* ── Menu data editor REMOVED 2026-05-24 ─────────────────────
-                        Andrew: "in the admin page i want to get rid of public
-                        menu board. we dont need it." MenuEditor.jsx is still
-                        in src/components/ if needed later — re-add the lazy
-                        import + Suspense block to bring it back. */}
+                    {/* ── SaaS-ready menu/brand/buildsheet editor ──────────────
+                        Andrew 2026-05-30, Phase 1.B-1.D. The old MenuEditor
+                        (overlay-only) was removed 2026-05-24; this is the
+                        full-CRUD replacement that writes to /config/menu_v2
+                        + /config/brand + /config/build_sheet. Designed for
+                        SaaS resale — every part of the menu is editable
+                        from this single screen, no code push required. */}
+                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3 mt-6">Loading menu editor…</div>}>
+                        <MenuConfigEditor language={language} byName={staffName} />
+                    </ReactSuspense>
 
                     {/* ── TV displays — moved to its own page ────────────────────
                         Andrew 2026-05-23 promoted the TvConfigsEditor block out
