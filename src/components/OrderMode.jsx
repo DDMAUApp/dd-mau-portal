@@ -281,16 +281,45 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
         const liveItems = itemsRef.current;
         switch (kind) {
             case 'ordered':
-                await updateSessionItem({ sessionId, itemId, status: ITEM_STATUS.ORDERED, vendor, byName: staffName });
+            case 'oos': {
+                // Andrew 2026-05-31 - "say sugar was costco and then you
+                // check it turning it to wholesale but that was a mistake.
+                // i want to be able to uncheck it and revert it back to
+                // its previous vendor choice." Record the vendor we are
+                // REPLACING (if any) as prevVendor so the Undo path can
+                // restore it. If we are checking for the first time
+                // (existing.vendor was null), prevVendor stays as
+                // whatever was already there (do not clobber a stash from
+                // an earlier round).
+                const status = kind === 'ordered' ? ITEM_STATUS.ORDERED : ITEM_STATUS.OOS;
+                const existing = liveItems[itemId] || {};
+                const prevVendor = (existing.vendor && existing.vendor !== vendor)
+                    ? existing.vendor
+                    : (existing.prevVendor || null);
+                await updateSessionItem({
+                    sessionId, itemId, status,
+                    vendor, prevVendor,
+                    byName: staffName,
+                });
                 return;
-            case 'oos':
-                await updateSessionItem({ sessionId, itemId, status: ITEM_STATUS.OOS, vendor, byName: staffName });
+            }
+            case 'pending': {
+                // Undo path - restore the previous vendor (sugar back to
+                // Costco in Andrews example) instead of clearing. If
+                // prevVendor was null (item was being checked for the
+                // first time), vendor falls back to null and the UI
+                // shows preferredVendor as the suggested choice again.
+                // Clear prevVendor since we just consumed it.
+                const existing = liveItems[itemId] || {};
+                await updateSessionItem({
+                    sessionId, itemId,
+                    status: ITEM_STATUS.PENDING,
+                    vendor: existing.prevVendor || null,
+                    prevVendor: null,
+                    byName: staffName,
+                });
                 return;
-            case 'pending':
-                // Undo path — clear the vendor attribution too so the next
-                // mark cleanly attributes to whoever's currently picked.
-                await updateSessionItem({ sessionId, itemId, status: ITEM_STATUS.PENDING, vendor: null, byName: staffName });
-                return;
+            }
             case 'partial': {
                 const orig = liveItems[itemId];
                 if (!orig) return;

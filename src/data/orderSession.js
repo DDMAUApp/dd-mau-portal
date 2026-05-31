@@ -128,7 +128,7 @@ export async function createOrderSession({
 // checkedAt / checkedBy so the audit log shows when each item was
 // reconciled with the vendor.
 export async function updateSessionItem({
-    sessionId, itemId, status, vendor, note, qty, byName,
+    sessionId, itemId, status, vendor, prevVendor, note, qty, byName,
 }) {
     if (!sessionId || !itemId) throw new Error('sessionId + itemId required');
     const patch = {};
@@ -138,6 +138,12 @@ export async function updateSessionItem({
         patch[`items.${itemId}.checkedBy`] = byName || null;
     }
     if (vendor !== undefined) patch[`items.${itemId}.vendor`] = vendor;
+    // 2026-05-31 - prevVendor stores the vendor we are REPLACING when
+    // an item is (re-)checked, so an Undo can restore it. Caller is
+    // responsible for computing what prevVendor should be (typically:
+    // the existing vendor if it differs from the new one). Pass null
+    // explicitly to clear the memory after restoring on Undo.
+    if (prevVendor !== undefined) patch[`items.${itemId}.prevVendor`] = prevVendor;
     if (note !== undefined)   patch[`items.${itemId}.note`]   = note;
     if (qty !== undefined)    patch[`items.${itemId}.qty`]    = Number(qty) || 0;
     if (Object.keys(patch).length === 0) return;
