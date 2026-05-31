@@ -80,6 +80,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 2,
         steps: [
             {
+                                screenshot: '/screenshots/home-1.jpg',
                 title: { en: 'What Home is for', es: 'Para qué es Inicio' },
                 body:  { en: 'Home is the first screen you see after signing in. It shows your shift today, who is clocked in (if you have access), today\'s tasks, any unread chat or alerts, and quick tiles to jump to the pages you use most.',
                          es: 'Inicio es la primera pantalla al iniciar sesión. Muestra tu turno de hoy, quién está marcado (si tienes acceso), tareas del día, chats o alertas sin leer, y tiles rápidos para saltar a las páginas más usadas.' },
@@ -120,6 +121,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 6,
         steps: [
             {
+                                screenshot: '/screenshots/schedule-1.jpg',
                 title: { en: 'Week view (default)', es: 'Vista semanal (por defecto)' },
                 body:  { en: 'You land on the current week, with each day as a column. Your shifts are highlighted; coworker shifts are visible so you know who you are working with.',
                          es: 'Aterrizas en la semana actual, con cada día como columna. Tus turnos están resaltados; ves los turnos de tus compañeros para saber con quién trabajas.' },
@@ -175,6 +177,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 4,
         steps: [
             {
+                                screenshot: '/screenshots/chat-1.jpg',
                 title: { en: 'What you get', es: 'Lo que tienes' },
                 body:  { en: 'A messenger built into the app. Direct messages with any coworker, plus channels (FOH, BOH, Managers, location-specific). Photos, voice notes, and replies all work.',
                          es: 'Un mensajero dentro de la app. Mensajes directos con cualquier compañero, además de canales (FOH, BOH, Gerentes, por ubicación). Fotos, notas de voz y respuestas funcionan.' },
@@ -213,6 +216,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 8,
         steps: [
             {
+                                screenshot: '/screenshots/operations-1.jpg',
                 title: { en: 'What Operations covers', es: 'Qué cubre Operaciones' },
                 body:  { en: 'The shift-running tools — opening / mid / closing checklists, inventory counts, the 86 board (out-of-stock list), date stickers, prep lists, and order mode.',
                          es: 'Herramientas para correr el turno — listas de apertura/medio/cierre, inventario, lista 86 (agotados), etiquetas de fecha, listas de prep, y modo de orden.' },
@@ -258,6 +262,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 10,
         steps: [
             {
+                                screenshot: '/screenshots/admin-1.jpg',
                 title: { en: 'Who sees this', es: 'Quién ve esto' },
                 body:  { en: 'Admin Panel is restricted to owners (Andrew & Julie — staff IDs 40 + 41). Other staff cannot enter, regardless of role title.',
                          es: 'Panel de Admin solo para dueños (Andrew y Julie — staff IDs 40 + 41). Otro personal no puede entrar, sin importar su rol.' },
@@ -306,6 +311,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 4,
         steps: [
             {
+                                screenshot: '/screenshots/mytasks-1.jpg',
                 title: { en: 'Two views, one tab', es: 'Dos vistas, una pestaña' },
                 body:  { en: 'Regular staff see a personal task list — only tasks assigned to you. Managers and admins see a Kanban board with one column per staff member, plus a master "unassigned" column.',
                          es: 'Personal regular ve una lista personal — solo tus tareas asignadas. Gerentes y admins ven un tablero Kanban con columna por persona, más una columna maestra de "sin asignar".' },
@@ -339,6 +345,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 3,
         steps: [
             {
+                                screenshot: '/screenshots/notifications-1.jpg',
                 title: { en: 'When to use it', es: 'Cuándo usarlo' },
                 body:  { en: 'For broadcast announcements that need a push notification — schedule changes, urgent meal-period pushes, all-hands updates. For 1-on-1 conversations use Chat.',
                          es: 'Para anuncios masivos que necesitan push — cambios de horario, avisos urgentes, mensajes a todos. Para 1-a-1 usa Chat.' },
@@ -367,6 +374,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 3,
         steps: [
             {
+                                screenshot: '/screenshots/menu-1.jpg',
                 title: { en: 'Customer menu vs build sheet', es: 'Menú al cliente vs build sheet' },
                 body:  { en: 'Top toggle: "Menu (prices)" shows what the customer orders — names, prices, allergens, dietary badges. "Build Sheet" shows what is IN each item — base, toppings, sauces, piece counts. Use the build sheet to answer "what comes on a Pho?" questions.',
                          es: 'Botón arriba: "Menú (precios)" muestra lo que pide el cliente — nombres, precios, alérgenos, etiquetas dietéticas. "Build Sheet" muestra qué LLEVA cada artículo — base, toppings, salsas, piezas. Usa build sheet para responder "qué viene en un Pho?".' },
@@ -397,6 +405,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 3,
         steps: [
             {
+                                screenshot: '/screenshots/datestickers-1.jpg',
                 title: { en: 'Why we date everything', es: 'Por qué fechamos todo' },
                 body:  { en: 'Health code requires every prepped item (sauce, batch, container of cut veggies) to carry a date. Stickers also help the kitchen rotate stock first-in-first-out so nothing dies in the back of the walk-in.',
                          es: 'Código sanitario exige que cada item preparado (salsa, batch, contenedor de verduras) tenga fecha. Las etiquetas también ayudan a rotar stock primero-en-primero-salir.' },
@@ -427,6 +436,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 4,
         steps: [
             {
+                                screenshot: '/screenshots/recipes-1.jpg',
                 title: { en: 'Geofenced for safety', es: 'Geocercado por seguridad' },
                 body:  { en: 'Recipes only open when you are physically at a DD Mau location (we use device GPS to check). This keeps proprietary recipes from being read on the bus home. If you are at the restaurant and it refuses to load, give location permission to the browser.',
                          es: 'Las recetas solo abren cuando estás físicamente en una ubicación DD Mau (usamos GPS). Esto evita que recetas propias se lean fuera. Si estás en el restaurante y no carga, da permiso de ubicación al navegador.' },
@@ -521,6 +531,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 4,
         steps: [
             {
+                                screenshot: '/screenshots/catering-1.jpg',
                 title: { en: 'When to use this', es: 'Cuándo usar esto' },
                 body:  { en: 'For prepaid group / office / event orders. Walk-in tray orders go through the regular POS — catering is for orders that need kitchen lead time, special prep, and a written record.',
                          es: 'Para pedidos prepagados de grupo / oficina / evento. Las bandejas de paso van por POS normal — catering es para pedidos que requieren tiempo de prep, prep especial y registro escrito.' },
@@ -549,6 +560,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 3,
         steps: [
             {
+                                screenshot: '/screenshots/maintenance-1.jpg',
                 title: { en: 'What to report', es: 'Qué reportar' },
                 body:  { en: 'Anything not working right — fryer thermostat, walk-in door seal, POS screen, sink leak, broken tile. Be specific. A photo helps a ton.',
                          es: 'Cualquier cosa que no funciona bien — termostato de freidora, sello de walk-in, pantalla POS, fuga de fregadero, baldosa rota. Sé específico. Una foto ayuda mucho.' },
@@ -612,6 +624,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 3,
         steps: [
             {
+                                screenshot: '/screenshots/ai-1.jpg',
                 title: { en: 'What it knows', es: 'Qué sabe' },
                 body:  { en: 'The AI has access to the menu, build sheet, recipes, allergen matrix, and training content. Ask "what is in a Coconut Shrimp Bowl?", "is the peanut sauce dairy-free?", "how do I prep batch lemongrass?".',
                          es: 'El AI tiene acceso al menú, build sheet, recetas, matriz de alérgenos y capacitación. Pregunta "qué lleva un Coconut Shrimp Bowl?", "la salsa de cacahuate tiene lácteo?", "cómo preparo lemongrass en batch?".' },
@@ -813,6 +826,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 3,
         steps: [
             {
+                                screenshot: '/screenshots/labels-1.jpg',
                 title: { en: 'Beyond date stickers', es: 'Más allá de fechas' },
                 body:  { en: 'The regular Date Stickers page is for staff doing prep. This admin page handles bulk runs — print 50 of one label, design a custom layout (size, fields, barcode), test print specific sizes.',
                          es: 'La página normal de Etiquetas es para personal en prep. Esta página admin maneja runs en bulk — imprime 50 de una etiqueta, diseña layout custom (tamaño, campos, código de barras), prueba tamaños específicos.' },
@@ -836,6 +850,7 @@ export const APP_TOUR_LESSONS = [
         estMinutes: 3,
         steps: [
             {
+                                screenshot: '/screenshots/inbox-1.jpg',
                 title: { en: 'What lands here', es: 'Qué llega aquí' },
                 body:  { en: 'Inbound email to the restaurant\'s public addresses (info@, catering@, etc.) gets parsed, redacted of secrets, and queued here for an admin to assign a category and route to the right person.',
                          es: 'Email entrante a las direcciones públicas (info@, catering@, etc.) se parsea, se redactan secretos, y se encola aquí para que un admin asigne categoría y enrute a la persona correcta.' },

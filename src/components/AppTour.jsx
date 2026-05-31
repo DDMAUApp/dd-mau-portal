@@ -374,8 +374,8 @@ function LessonDetail({
                         </div>
                     </div>
                 )}
-                {step.tryItTab && onNavigateTab && (
-                    <button onClick={() => onNavigateTab(step.tryItTab)}
+                {step.tryItTab && onTryItTab && (
+                    <button onClick={() => onTryItTab(step.tryItTab)}
                         className="mt-4 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-dd-green-50 text-dd-green-700 text-xs font-bold border border-dd-green/30 hover:bg-dd-sage-50 active:scale-95 transition">
                         <ExternalLink size={14} strokeWidth={2.5} />
                         {tx('Try it →', 'Pruébalo →')}
