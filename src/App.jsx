@@ -293,13 +293,62 @@ if (typeof window !== "undefined") {
 // double-mounting in dev won't double-bind.
 try { installGlobalHandlers(); } catch {}
 
-// Loading spinner for lazy-loaded components
+// Loading spinner for lazy-loaded components.
+//
+// Andrew 2026-05-31: was a plain gray ring + "Loading..." text. On
+// mobile during cold-boot or tab switch on a slow connection, the
+// staff member saw an empty page for several seconds with nothing
+// fun to look at. Now: bouncing pho bowl + a rotating bilingual
+// kitchen prep message + tri-color pulsing dots. Same purpose
+// (visible feedback while a lazy chunk loads), but on-brand and
+// less stressful — feels like the app is making your food, not
+// hanging.
+//
+// Messages rotate every 1.8s. Random start index so two staff on
+// the same page do not see the SAME message at the same beat. All
+// CSS animations are GPU-composited so no main-thread cost while
+// the actual chunk download is happening in parallel.
+const LOADING_MESSAGES = [
+    { en: 'Warming the broth...',       es: 'Calentando el caldo...' },
+    { en: 'Chopping the cilantro...',   es: 'Picando el cilantro...' },
+    { en: 'Steeping the tea...',        es: 'Reposando el té...' },
+    { en: 'Plating your bowl...',       es: 'Sirviendo tu bowl...' },
+    { en: 'Wrapping the bánh mì...',    es: 'Armando el bánh mì...' },
+    { en: 'Squeezing the lime...',      es: 'Exprimiendo la lima...' },
+    { en: 'Toasting the baguette...',   es: 'Tostando el baguette...' },
+    { en: 'Stirring the pho...',        es: 'Removiendo el pho...' },
+    { en: 'Slicing the steak...',       es: 'Rebanando el bistec...' },
+    { en: 'Brewing the coffee...',      es: 'Preparando el café...' },
+];
 function TabLoading({ language }) {
+    const isEs = language === 'es';
+    const [idx, setIdx] = useState(() => Math.floor(Math.random() * LOADING_MESSAGES.length));
+    useEffect(() => {
+        const id = setInterval(() => setIdx(i => (i + 1) % LOADING_MESSAGES.length), 1800);
+        return () => clearInterval(id);
+    }, []);
+    const msg = LOADING_MESSAGES[idx];
     return (
-        <div style={{padding: "48px 16px", textAlign: "center"}}>
-            <div style={{width: "32px", height: "32px", border: "3px solid #e5e7eb", borderTopColor: "#059669", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px"}} />
-            <p style={{fontSize: "14px", color: "#9ca3af"}}>{language === "es" ? "Cargando..." : "Loading..."}</p>
-            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div className="flex flex-col items-center justify-center min-h-[50vh] gap-4 px-6 text-center">
+            <div className="text-6xl select-none" style={{ animation: 'ddLoadBounce 1.2s ease-in-out infinite' }}>🍜</div>
+            <p className="text-sm font-bold text-dd-text transition-opacity duration-300" key={idx}>
+                {isEs ? msg.es : msg.en}
+            </p>
+            <div className="flex gap-1.5" aria-hidden="true">
+                <span className="w-2 h-2 rounded-full bg-dd-green" style={{ animation: 'ddLoadDot 1.2s ease-in-out 0s infinite' }} />
+                <span className="w-2 h-2 rounded-full bg-dd-green/70" style={{ animation: 'ddLoadDot 1.2s ease-in-out 0.15s infinite' }} />
+                <span className="w-2 h-2 rounded-full bg-dd-green/40" style={{ animation: 'ddLoadDot 1.2s ease-in-out 0.3s infinite' }} />
+            </div>
+            <style>{`
+                @keyframes ddLoadBounce {
+                    0%, 100% { transform: translateY(0) rotate(-3deg); }
+                    50%      { transform: translateY(-12px) rotate(3deg); }
+                }
+                @keyframes ddLoadDot {
+                    0%, 80%, 100% { opacity: 0.3; transform: scale(0.85); }
+                    40%           { opacity: 1;   transform: scale(1.2); }
+                }
+            `}</style>
         </div>
     );
 }
