@@ -51,10 +51,16 @@ function isChunkError(err) {
 export default class PageErrorBoundary extends Component {
     constructor(props) {
         super(props);
-        this.state = { hasError: false, error: null, errorLogId: null };
+        this.state = { hasError: false, error: null, errorLogId: null, isReloading: false };
     }
     static getDerivedStateFromError(error) {
-        return { hasError: true, error };
+        // Andrew 2026-05-31: chunk-load errors trigger a 50ms-deferred
+        // auto-reload (see componentDidCatch). For the gap between
+        // catch and reload, render a calm "Updating..." spinner
+        // instead of the alarming "Something broke" panel. Previous
+        // behavior flashed the error UI for ~1s on every deploy
+        // boundary; the spinner is honest about what is happening.
+        return { hasError: true, error, isReloading: isChunkError(error) };
     }
     componentDidCatch(error, info) {
         const tab = this.props.tabName || 'page';
@@ -127,6 +133,29 @@ export default class PageErrorBoundary extends Component {
         const tab = this.props.tabName || 'This page';
         const isEs = this.props.language === 'es';
         const tx = (en, es) => (isEs ? es : en);
+
+        // Chunk-load case — auto-reload is firing in ~50ms (see
+        // componentDidCatch). Show a friendly spinner instead of the
+        // error panel so the user does not see "Something broke" flash
+        // and reach for the panic button. The reload happens before
+        // most users finish reading the message.
+        if (this.state.isReloading) {
+            return (
+                <div className="flex flex-col items-center justify-center min-h-[60vh] bg-dd-bg text-center px-6 py-12 gap-3">
+                    <div className="w-10 h-10 rounded-full border-4 border-dd-line border-t-dd-green animate-spin" />
+                    <h3 className="text-sm font-bold text-dd-text">
+                        {tx('Updating app…', 'Actualizando app…')}
+                    </h3>
+                    <p className="text-[11px] text-dd-text-2 max-w-xs leading-relaxed">
+                        {tx(
+                            'A new version just shipped. Loading the latest files — one moment.',
+                            'Acaba de salir una nueva versión. Cargando los archivos más recientes — un momento.',
+                        )}
+                    </p>
+                </div>
+            );
+        }
+
         return (
             <div className="flex flex-col items-center justify-center min-h-[60vh] bg-dd-bg text-center px-6 py-12 gap-3">
                 <div className="text-5xl">⚠️</div>
