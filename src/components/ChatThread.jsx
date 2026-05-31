@@ -19,7 +19,7 @@
 // notify everyone except the sender, with @mentions getting a louder
 // "you were mentioned" badge.
 
-import { Component, memo, useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { Component, memo, useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 // 2026-05-27 — Andrew: "the mic emoji lets make it more modern." Swapped
 // the 🎤 in both the composer voice-message button and the staged-audio
 // preview pill icon for Lucide's `Mic` glyph. Same lucide-react chunk
@@ -337,13 +337,45 @@ function ChatThreadInner({
     // ── Auto-scroll-to-bottom on new messages ──────────────────────
     // Skip auto-scroll if the user has scrolled up >100px from bottom —
     // they're probably reading older messages, don't yank them.
+    //
+    // Andrew 2026-05-31: switched useEffect → useLayoutEffect. The
+    // previous version ran AFTER paint, so on chat-open the user saw
+    // ~1 frame of messages anchored to the TOP, then a visible
+    // "snap" down to the bottom on the next frame. Felt laggy /
+    // jumpy. useLayoutEffect runs synchronously between commit and
+    // paint, so the scroll position is correct in the first painted
+    // frame — the user lands at the newest message instantly with no
+    // flash. Trade-off is a tiny pre-paint block to set scrollTop;
+    // for the chat thread length we render, this is sub-ms and not
+    // noticeable.
+    //
+    // Image-load expansion (messages with photos) still happens
+    // post-paint and would normally push the user away from bottom;
+    // a separate useEffect below re-anchors when an inline image
+    // finishes loading.
     const scrollRef = useRef(null);
     const [atBottom, setAtBottom] = useState(true);
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!atBottom) return;
         const el = scrollRef.current;
         if (el) el.scrollTop = el.scrollHeight;
     }, [messages.length, atBottom]);
+    // After paint: catch any inline images that finish loading and
+    // expanded the list, re-anchor to bottom if we were at bottom.
+    // Uses event delegation on the scroll container so we don't have
+    // to wire onLoad per-bubble.
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const onImgLoad = (e) => {
+            if (e.target?.tagName !== 'IMG') return;
+            if (!atBottom) return;
+            el.scrollTop = el.scrollHeight;
+        };
+        // `load` doesn't bubble; capture phase is required.
+        el.addEventListener('load', onImgLoad, true);
+        return () => el.removeEventListener('load', onImgLoad, true);
+    }, [atBottom]);
     function handleScroll() {
         const el = scrollRef.current;
         if (!el) return;
