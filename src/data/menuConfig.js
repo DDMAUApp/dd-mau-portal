@@ -295,6 +295,70 @@ export function useBuildSheetConfig() {
     }, [snap, ready]);
 }
 
+// ── Legacy-shape adapter (for Phase 1.E migration) ─────────────────
+// The v2 schema renamed a couple of category fields (category →
+// nameEn, categoryEs → nameEs, note → noteEn). Existing consumers
+// (MenuReference, MenuDisplay, MenuEditor, DateStickerPrinter, ...)
+// were written against the old shape. Rather than touch nine files
+// at once, this adapter converts v2 → legacy on the fly so callers
+// can drop in the new hook with minimal diff:
+//
+//   - import { MENU_DATA } from '../data/menu';
+//   + import { useMenuConfigLegacy } from '../data/menuConfig';
+//   + const { menu: MENU_DATA } = useMenuConfigLegacy();
+//
+// Once all callers have migrated to the v2 shape directly, this
+// adapter can be deleted.
+//
+// Archived items + archived categories are filtered out — the
+// editor surfaces those for management, but the live menu (TVs,
+// reference, stickers, recipes) should never render them.
+export function v2ToLegacyShape(v2Categories) {
+    if (!Array.isArray(v2Categories)) return [];
+    return v2Categories
+        .filter(c => !c.archived)
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .map(c => ({
+            category:    c.nameEn || '',
+            categoryEs:  c.nameEs || c.nameEn || '',
+            note:        c.noteEn || '',
+            noteEs:      c.noteEs || '',
+            customizable: Array.isArray(c.customizable) ? [...c.customizable] : [],
+            items: (c.items || [])
+                .filter(it => !it.archived)
+                .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                .map(it => ({
+                    // Bonus: surface the v2 slug so callers can adopt
+                    // stable-id matching without changing their shape
+                    // assumptions. Legacy callers ignore unknown fields.
+                    _slug:      it.id,
+                    nameEn:     it.nameEn || '',
+                    nameEs:     it.nameEs || '',
+                    nameVi:     it.nameVi || '',
+                    price:      it.price || '',
+                    descEn:     it.descEn || '',
+                    descEs:     it.descEs || '',
+                    allergens:  it.allergens || '',
+                    spicy:      !!it.spicy,
+                    vegan:      !!it.vegan,
+                    glutenFree: !!it.glutenFree,
+                    popular:    !!it.popular,
+                    photoUrl:   it.photoUrl || '',
+                })),
+        }));
+}
+
+/**
+ * Legacy-shape view of the live menu. Same returns as useMenuConfig
+ * but the `menu` array uses the old MENU_DATA category/categoryEs
+ * field names for drop-in compatibility.
+ */
+export function useMenuConfigLegacy() {
+    const { menu, ready, fromFirestore } = useMenuConfig();
+    const legacyMenu = useMemo(() => v2ToLegacyShape(menu), [menu]);
+    return { menu: legacyMenu, ready, fromFirestore };
+}
+
 // ── Lookup helpers ────────────────────────────────────────────────
 // Centralized so callers don't reinvent.
 

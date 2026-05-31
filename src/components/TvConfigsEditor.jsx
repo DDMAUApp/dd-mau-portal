@@ -6,7 +6,8 @@
 // kiosk URL for each TV, and pick layout + category filter.
 
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
-import { MENU_DATA } from '../data/menu';
+import { MENU_DATA as LEGACY_MENU_DATA } from '../data/menu';
+import { useMenuConfigLegacy } from '../data/menuConfig';
 import {
     subscribeTvConfigs, saveTvConfig, saveTvConfigDraft, deleteTvConfig,
     LAYOUTS, MODES, DEFAULT_LAYOUT, DEFAULT_MODE,
@@ -426,7 +427,15 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState(false);
 
-    const categories = useMemo(() => MENU_DATA.map(c => c.category), []);
+    // Andrew 2026-05-30 Phase 1.E — categories list from the live
+    // Firestore menu (so newly-added categories show up in the TV
+    // include-filter picker), with the hardcoded MENU_DATA as cold-
+    // boot fallback.
+    const { menu: liveMenu } = useMenuConfigLegacy();
+    const categories = useMemo(() => {
+        const base = (liveMenu && liveMenu.length > 0) ? liveMenu : LEGACY_MENU_DATA;
+        return base.map(c => c.category);
+    }, [liveMenu]);
 
     const previewTvId = isNew
         ? (tvId.trim() || makeTvId(label, location))

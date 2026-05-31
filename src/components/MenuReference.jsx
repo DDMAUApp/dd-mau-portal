@@ -1,6 +1,15 @@
 import { useState } from 'react';
 import { t } from '../data/translations';
-import { MENU_DATA } from '../data/menu';
+// Andrew 2026-05-30 Phase 1.E — menu rows read from Firestore via
+// useMenuConfigLegacy (returns legacy-shape MENU_DATA for drop-in
+// compat). Hardcoded MENU_DATA remains as cold-boot fallback inside
+// menuConfig.js. Edits in MenuConfigEditor (Admin → Menu) flow here
+// automatically. NOTE: BUILD_SHEET_* imports still come from
+// buildSheet.js — those exports have mixed array/object shapes
+// (FRIED_RICE + PHO are single objects, others are arrays). A
+// follow-up will unify the shape + migrate BuildSheetView to read
+// from useBuildSheetConfig.
+import { useMenuConfigLegacy } from '../data/menuConfig';
 import {
     BUILD_SHEET_BOWLS,
     BUILD_SHEET_HANDHELDS,
@@ -14,6 +23,7 @@ export default function MenuReference({ language }) {
     const [expandedCategory, setExpandedCategory] = useState(null);
     const [view, setView] = useState("menu"); // "menu" | "build"
     const isEs = language === "es";
+    const { menu: MENU_DATA } = useMenuConfigLegacy();
 
     return (
         <div className="p-4 pb-bottom-nav">

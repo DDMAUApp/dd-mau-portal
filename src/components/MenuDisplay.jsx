@@ -32,6 +32,7 @@ import { Component, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, onSnapshot, query, where, limit, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MENU_DATA } from '../data/menu';
+import { useMenuConfigLegacy } from '../data/menuConfig';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
 import { urlIsVideo } from '../data/menuImageUpload';
 import {
@@ -493,12 +494,20 @@ function MenuDisplayInner({ tvId = 'webster' }) {
         return () => clearInterval(id);
     }, [tvId]);
 
-    // Merge MENU_DATA + overrides + apply category filter.
+    // Andrew 2026-05-30 Phase 1.E — base menu now comes from the
+    // Firestore-backed useMenuConfigLegacy hook, with MENU_DATA as
+    // cold-boot fallback (the hook handles that internally). The
+    // existing /menu_items override layer still applies on top of
+    // whatever base the hook returns, so per-item price/desc tweaks
+    // continue to work. Edits in MenuConfigEditor (Admin) flow to
+    // every TV within seconds via the onSnapshot inside the hook.
+    const { menu: liveMenuBase } = useMenuConfigLegacy();
     const menu = useMemo(() => {
-        const merged = applyMenuOverrides(MENU_DATA, overrides);
+        const base = (liveMenuBase && liveMenuBase.length > 0) ? liveMenuBase : MENU_DATA;
+        const merged = applyMenuOverrides(base, overrides);
         if (!includeCategories) return merged;
         return merged.filter(c => includeCategories.has(c.category));
-    }, [overrides, includeCategories]);
+    }, [liveMenuBase, overrides, includeCategories]);
 
     // Check 86 status. Try several name variants since the 86 doc
     // might list under different conventions.

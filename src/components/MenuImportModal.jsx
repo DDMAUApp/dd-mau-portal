@@ -18,7 +18,8 @@
 //   4. Apply     — write each checked row as an override doc.
 
 import { useState, useMemo } from 'react';
-import { MENU_DATA } from '../data/menu';
+import { MENU_DATA as LEGACY_MENU_DATA } from '../data/menu';
+import { useMenuConfigLegacy } from '../data/menuConfig';
 import { uploadMenuFile } from '../data/menuImageUpload';
 import { extractMenuFromImages } from '../data/aiExtractMenu';
 import { saveMenuOverride, makeMenuItemSlug } from '../data/menuOverrides';
@@ -40,23 +41,30 @@ export default function MenuImportModal({ language = 'en', byName, onClose }) {
     // spicy, vegan, glutenFree, popular, category, accepted }
     const [rows, setRows] = useState([]);
 
-    // Slug → existing MENU_DATA category (so we know whether each
+    // Slug → existing menu category (so we know whether each
     // extracted item is an "update existing" vs "new custom").
+    // Andrew 2026-05-30 Phase 1.E — diff is computed against the
+    // LIVE Firestore menu (so if a manager just added "Bún Bò Huế"
+    // through MenuConfigEditor, the importer correctly flags it as
+    // existing rather than as a duplicate-import). Falls back to
+    // hardcoded MENU_DATA before Firestore loads.
+    const { menu: liveMenu } = useMenuConfigLegacy();
+    const baseMenu = (liveMenu && liveMenu.length > 0) ? liveMenu : LEGACY_MENU_DATA;
     const existingByCategory = useMemo(() => {
         const map = new Map();
-        for (const cat of MENU_DATA) {
+        for (const cat of baseMenu) {
             for (const it of (cat.items || [])) {
                 map.set(makeMenuItemSlug(it.nameEn), cat.category);
             }
         }
         return map;
-    }, []);
+    }, [baseMenu]);
 
-    // Set of MENU_DATA category names (so we can flag "category not
-    // in MENU_DATA — will be auto-added").
+    // Set of category names (so we can flag "category not in current
+    // menu — will be auto-added").
     const existingCategoryNames = useMemo(() =>
-        new Set(MENU_DATA.map(c => c.category)),
-    []);
+        new Set(baseMenu.map(c => c.category)),
+    [baseMenu]);
 
     const handleFilePick = async (e) => {
         const file = e.target.files?.[0];

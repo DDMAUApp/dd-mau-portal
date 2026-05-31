@@ -17,7 +17,8 @@
 //   5. Multi-page menus: page tabs at top to switch between PDF pages.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MENU_DATA } from '../data/menu';
+import { MENU_DATA as LEGACY_MENU_DATA } from '../data/menu';
+import { useMenuConfigLegacy } from '../data/menuConfig';
 import { bakePriceOverlaysIntoImage } from '../data/menuImageUpload';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
@@ -53,10 +54,15 @@ export default function HitZoneEditor({
     const imageRef = useRef(null);
     const containerRef = useRef(null);
 
-    // Flat list of MENU_DATA items for the picker, grouped by category.
+    // Flat list of menu items for the picker, grouped by category.
+    // Andrew 2026-05-30 Phase 1.E — pulls from live Firestore-backed
+    // menu so newly-added items appear here automatically. Falls back
+    // to the hardcoded MENU_DATA before Firestore loads.
+    const { menu: liveMenu } = useMenuConfigLegacy();
     const menuItemOptions = useMemo(() => {
+        const base = (liveMenu && liveMenu.length > 0) ? liveMenu : LEGACY_MENU_DATA;
         const out = [];
-        for (const cat of MENU_DATA) {
+        for (const cat of base) {
             for (const item of (cat.items || [])) {
                 out.push({
                     category: cat.category,
@@ -66,7 +72,7 @@ export default function HitZoneEditor({
             }
         }
         return out;
-    }, []);
+    }, [liveMenu]);
 
     const filteredOptions = useMemo(() => {
         const q = pickerFilter.trim().toLowerCase();
