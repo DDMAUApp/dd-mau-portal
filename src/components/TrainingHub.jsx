@@ -1,12 +1,18 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { db } from "../firebase";
 import { doc, setDoc, getDoc, collection, getDocs, updateDoc, deleteField, onSnapshot } from "firebase/firestore";
 import { t } from "../data/translations";
 import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.
-import { GraduationCap, BarChart3 } from "lucide-react";
+import { GraduationCap, BarChart3, BookOpen } from "lucide-react";
 import { PageHeader } from "../v2/PageShell";
+// Andrew 2026-05-30 — page-by-page app tour. Lessons live in
+// src/data/appTourLessons.js; the component handles its own
+// progress tracking + access-filtered lesson list. Lazy because
+// the lesson copy is hefty and most staff open Training for
+// stations + quizzes, not the tour.
+const AppTour = lazy(() => import('./AppTour'));
 
 // Lesson-content overrides — admins can edit lesson titles + bullets in
 // the app, written to /config/training_overrides. The doc shape is one
@@ -789,6 +795,31 @@ export default function TrainingHub({ staffName, language, staffList }) {
         );
     }
 
+    // ── App Tour view (Andrew 2026-05-30) ──────────────────────────
+    // Page-by-page guided walkthrough of the whole app. Separate
+    // from the M-modules above (those teach the JOB; the tour
+    // teaches the APP). Component is lazy-loaded so this branch
+    // doesn't bloat the default TrainingHub chunk.
+    if (view === "apptour") {
+        const myStaff = (staffList || []).find(s => s.name === staffName) || { name: staffName };
+        return (
+            <Shell><div className="p-4 pb-bottom-nav md:p-5">
+                <button onClick={() => setView("list")}
+                    className="text-sm text-mint-700 mb-3 inline-flex items-center gap-1">
+                    ← {tx("Back to Training", "Volver a Capacitación")}
+                </button>
+                <Suspense fallback={<div className="p-6 text-center text-sm text-dd-text-2 italic">{tx("Loading App Tour…", "Cargando Tour…")}</div>}>
+                    <AppTour
+                        language={language}
+                        staffName={staffName}
+                        staff={myStaff}
+                        staffList={staffList}
+                    />
+                </Suspense>
+            </div></Shell>
+        );
+    }
+
     // Module list (default)
     const grouped = TRACK_ORDER.map(track => ({
         track,
@@ -812,6 +843,29 @@ export default function TrainingHub({ staffName, language, staffList }) {
                     </button>
                 )}
             />
+
+            {/* App Tour entry card — Andrew 2026-05-30. Separate from
+                the M-module stations because it teaches the APP, not
+                the job. Lessons are access-filtered so each staffer
+                only sees pages they can actually enter. */}
+            <button onClick={() => setView("apptour")}
+                className="w-full text-left mb-5 bg-gradient-to-br from-sky-50 to-emerald-50 border-2 border-sky-200 rounded-xl p-4 hover:border-sky-400 hover:shadow-card transition flex items-center gap-3 active:scale-[0.99]">
+                <div className="w-12 h-12 rounded-full bg-white text-sky-700 flex items-center justify-center shrink-0 shadow-sm">
+                    <BookOpen size={22} strokeWidth={2.25} />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <div className="text-sm font-black text-sky-900">
+                        {tx("App Tour — page by page", "Tour de la app — página por página")}
+                    </div>
+                    <div className="text-[11px] text-sky-800/85 leading-snug mt-0.5">
+                        {tx(
+                            "How to use every page of this app. You only see lessons for pages you have access to.",
+                            "Cómo usar cada página de esta app. Solo ves lecciones para páginas con tu acceso.",
+                        )}
+                    </div>
+                </div>
+                <span className="text-sky-700 text-lg shrink-0">→</span>
+            </button>
 
             {grouped.map(g => (
                 <div key={g.track} className="mb-5">
