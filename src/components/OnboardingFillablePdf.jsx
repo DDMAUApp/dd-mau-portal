@@ -156,7 +156,19 @@ export default function OnboardingFillablePdf({
                 const buf = await getBytes(sref(storage, chosen.storagePath));
                 if (!alive) return;
                 setPdfBytes(buf);
-                await renderPages(buf);
+                // Race PDF render against a 30s timeout. If pdf.js chunk
+                // fails to load (offline, GH Pages flake) or a huge PDF
+                // hangs, the hire would otherwise stare at the spinner
+                // forever. The thrown error surfaces in the catch below
+                // which sets `err` so the existing error UI offers a
+                // retry. Cap-readiness audit 2026-05-31.
+                await Promise.race([
+                    renderPages(buf),
+                    new Promise((_, rej) => setTimeout(
+                        () => rej(new Error('PDF render timed out after 30 seconds. Please reload and try again.')),
+                        30000,
+                    )),
+                ]);
             } catch (e) {
                 console.error('template load failed', e);
                 if (alive) setErr(String(e.message || e));

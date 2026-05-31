@@ -70,12 +70,19 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     agreedToTerms: false,
   });
 
-  // Load existing enrollment if any
+  // Load existing enrollment if any.
+  // Defensive: bail early if staffName isn't ready yet. Without this guard
+  // we'd call .toLowerCase() on undefined (throws; caught; but noisy) or
+  // try to read an empty-string doc id (Firestore throws). Cap-readiness
+  // audit 2026-05-31.
   useEffect(() => {
+    if (!staffName) { setLoading(false); return; }
+    let alive = true;
     async function loadExisting() {
       try {
         const docRef = doc(db, "insurance", staffName.toLowerCase().replace(/\s+/g, "_"));
         const snap = await getDoc(docRef);
+        if (!alive) return;
         if (snap.exists()) {
           const data = snap.data();
           setExistingData(data);
@@ -83,10 +90,12 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
         }
       } catch (err) {
         console.error("Error loading insurance data:", err);
+      } finally {
+        if (alive) setLoading(false);
       }
-      setLoading(false);
     }
     loadExisting();
+    return () => { alive = false; };
   }, [staffName]);
 
   const updateField = (field, value) => {

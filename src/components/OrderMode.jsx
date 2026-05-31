@@ -726,6 +726,8 @@ function OrderItemRowInner({ itemId, item, isEs, currentVendor, onAction }) {
 
                 {/* Qty input */}
                 <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                    {/* text-base (16px) prevents iOS Safari zoom-on-focus.
+                        Cap-readiness 2026-05-31 — was text-sm (14px). */}
                     <input
                         type="number"
                         inputMode="decimal"
@@ -733,7 +735,7 @@ function OrderItemRowInner({ itemId, item, isEs, currentVendor, onAction }) {
                         onChange={e => setQtyDraft(e.target.value)}
                         onBlur={() => onAction(itemId, 'editQty', Number(qtyDraft))}
                         onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                        className="w-14 text-center px-1 py-0.5 border border-dd-line rounded text-sm font-bold"
+                        className="w-14 text-center px-1 py-0.5 border border-dd-line rounded text-base font-bold"
                     />
                     <div className="text-[9px] text-dd-text-2 uppercase">{tx('qty', 'cant.')}</div>
                 </div>

@@ -838,11 +838,15 @@ function YesNoPick({ value, onChange, yesLabel, noLabel }) {
     );
 }
 
+// text-base (16px) prevents iOS Safari from zooming the viewport on input
+// focus — Safari zooms whenever a focused input has font-size < 16px. The
+// applicant fills this whole form on a phone, so every TextInput
+// downstream benefits. Cap-readiness audit 2026-05-31.
 function TextInput({ value, onChange, placeholder, type = 'text', autoComplete, inputMode, maxLength }) {
     return (
         <input type={type} value={value} onChange={e => onChange(e.target.value)}
             placeholder={placeholder} autoComplete={autoComplete} inputMode={inputMode} maxLength={maxLength}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:border-dd-green focus:outline-none focus:ring-2 focus:ring-dd-green/30" />
+            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-base focus:border-dd-green focus:outline-none focus:ring-2 focus:ring-dd-green/30" />
     );
 }
 
@@ -894,11 +898,12 @@ function Step1({ values, setField, toggleInArray, isEs }) {
                 </FieldLabel>
                 <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                    {/* text-base (16px) prevents iOS Safari zoom-on-focus. */}
                     <input type="number" step="0.25" min="0" max="50"
                         value={values.desiredHourlyWage}
                         onChange={e => setField('desiredHourlyWage', e.target.value)}
-                        placeholder="15.00" inputMode="decimal"
-                        className="w-full border border-gray-300 rounded-lg pl-7 pr-3 py-2.5 text-sm focus:border-dd-green focus:outline-none focus:ring-2 focus:ring-dd-green/30" />
+                        placeholder="15.00" inputMode="decimal" autoComplete="off"
+                        className="w-full border border-gray-300 rounded-lg pl-7 pr-3 py-2.5 text-base focus:border-dd-green focus:outline-none focus:ring-2 focus:ring-dd-green/30" />
                 </div>
             </div>
         </div>
@@ -948,7 +953,7 @@ function Step2({ values, setField, isEs }) {
                 <div>
                     <FieldLabel required>{tx('State', 'Estado')}</FieldLabel>
                     <select value={values.state} onChange={e => setField('state', e.target.value)}
-                        className="border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white">
+                        className="border border-gray-300 rounded-lg px-3 py-2.5 text-base bg-white">
                         <option value="MO">MO</option>
                         <option value="IL">IL</option>
                     </select>
@@ -1049,7 +1054,7 @@ function Step3({ values, setNested, setField, isEs }) {
                     )}
                     rows={3}
                     maxLength={500}
-                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green"
+                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 text-base focus:outline-none focus:border-dd-green"
                 />
                 <div className="text-[10px] text-gray-400 text-right mt-0.5">
                     {(values.availabilityNote || '').length}/500

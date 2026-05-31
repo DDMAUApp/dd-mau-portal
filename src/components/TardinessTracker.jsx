@@ -502,9 +502,12 @@ function LogTardyModal({ staffList, onClose, onSave, isEs }) {
                                 </button>
                             ))}
                         </div>
-                        <input type="number" min="1" max="600" value={form.minutesLate}
+                        {/* text-base (16px) instead of text-sm — iOS Safari
+                            zooms the viewport when an input has font-size <16px.
+                            Cap-readiness audit 2026-05-31. */}
+                        <input type="number" inputMode="numeric" min="1" max="600" value={form.minutesLate}
                             onChange={e => update('minutesLate', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
                     </div>
                     <div>
                         <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Reason', 'Razón')}</label>
@@ -523,7 +526,7 @@ function LogTardyModal({ staffList, onClose, onSave, isEs }) {
                         {showReasonText && (
                             <input type="text" value={form.reasonText} onChange={e => update('reasonText', e.target.value)}
                                 placeholder={tx('Add detail…', 'Agrega detalle…')}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mt-2" />
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base mt-2" />
                         )}
                     </div>
                     {/* Excusable reasons hint that this might warrant a 🛡 toggle */}

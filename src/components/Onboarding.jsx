@@ -2639,7 +2639,25 @@ function ReminderEmailButton({ hire, docs, isEs, onWriteAudit, staffName }) {
             staffName || 'DD Mau',
         ].join('\n');
         const url = `mailto:${encodeURIComponent(hire.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        // Belt-and-suspenders: copy the full message to the clipboard
+        // BEFORE triggering mailto. In Capacitor WebView the mailto:
+        // handler can fail silently if no native mail client is
+        // configured, leaving the user with nothing. With the message
+        // on the clipboard they can paste into iMessage / WhatsApp /
+        // anywhere as a fallback. Cap-readiness audit 2026-05-31.
+        try {
+            const fullText = `To: ${hire.email}\nSubject: ${subject}\n\n${body}`;
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(fullText).catch(() => {});
+            }
+        } catch {}
         window.location.href = url;
+        try {
+            toast(tx(
+                'Opening email — message also copied to clipboard',
+                'Abriendo correo — mensaje también copiado al portapapeles',
+            ));
+        } catch {}
         try {
             onWriteAudit('reminder_emailed', {
                 hireId: hire.id,

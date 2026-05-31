@@ -194,8 +194,10 @@ export default function LaborDashboard({ language, storeLocation }) {
                                 <span className="text-xs text-gray-500">{t("target", language)}:</span>
                                 {editingTarget ? (
                                     <div className="flex items-center gap-1">
-                                        <input type="number" value={tempTarget} onChange={(e) => setTempTarget(e.target.value)}
-                                            className="w-16 px-2 py-0.5 text-sm border rounded text-center" min="1" max="100" step="0.5" />
+                                        {/* text-base (16px) prevents iOS Safari
+                                            zoom-on-focus. Cap-readiness 2026-05-31. */}
+                                        <input type="number" inputMode="decimal" value={tempTarget} onChange={(e) => setTempTarget(e.target.value)}
+                                            className="w-16 px-2 py-0.5 text-base border rounded text-center" min="1" max="100" step="0.5" />
                                         <span className="text-xs text-gray-500">%</span>
                                         <button onClick={saveTarget} className="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded font-bold">{"\u2713"}</button>
                                         <button onClick={() => { setEditingTarget(false); setTempTarget(laborTarget); }} className="text-xs bg-gray-300 text-gray-700 px-2 py-0.5 rounded font-bold">{"\u2715"}</button>

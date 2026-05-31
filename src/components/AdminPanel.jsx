@@ -1663,7 +1663,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     return !p || !/^\d{4}$/.test(p);
                 });
                 if (bad) {
-                    console.error('Refusing staff save — invalid PIN on:', bad.name, 'pin=', bad.pin);
+                    // Do NOT log bad.pin — even console.error breadcrumbs can
+                    // leak into Sentry / aiDebugReport exports. Name alone is
+                    // enough to triage. Cap-readiness audit 2026-05-31.
+                    console.error('Refusing staff save — invalid PIN on:', bad.name);
                     toast(language === 'es'
                         ? `Guardado bloqueado: PIN inválido en ${bad.name}. No se hicieron cambios.`
                         : `Save blocked: invalid PIN on ${bad.name}. No changes made.`,
