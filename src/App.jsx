@@ -764,6 +764,22 @@ export default function App() {
     useEffect(() => { SS.set("language", language); }, [language]);
     useEffect(() => { SS.set("activeTab", activeTab); }, [activeTab]);
 
+    // 2026-05-31 — Capacitor hardware back button bridge. The native
+    // bridge in src/capacitor-bridge.js fires a DOM CustomEvent on
+    // back press; we react by changing tab. Web users are unaffected
+    // because Capacitor.isNativePlatform() is false in browsers, so
+    // the bridge never dispatches these events on web.
+    useEffect(() => {
+        const goHome = () => setActiveTab('home');
+        const hint = () => toast(language === 'es' ? 'Toca atrás otra vez para salir' : 'Press back again to exit', { kind: 'info' });
+        document.addEventListener('cap:back:to-home', goHome);
+        document.addEventListener('cap:back:exit-hint', hint);
+        return () => {
+            document.removeEventListener('cap:back:to-home', goHome);
+            document.removeEventListener('cap:back:exit-hint', hint);
+        };
+    }, [language]);
+
     // ── Silent-denial toast (audit 2026-05-30) ─────────────────────────
     // When a user navigates to a tab they don't have access to,
     // renderV2Body's fall-through bounces them home. Without feedback

@@ -5,6 +5,11 @@ import AppToast from './components/AppToast.jsx';
 import './index.css';
 import './firebase.js';
 import { setupPWA } from './pwa.js';
+// Capacitor native runtime bridge — 2026-05-31. Initialises the
+// status bar style, splash hide, keyboard listeners, Android back
+// button, and Capgo OTA on native builds. No-op on the web build
+// (Capacitor.isNativePlatform() returns false in browsers).
+import { initCapacitor } from './capacitor-bridge.js';
 // Sentry — Andrew 2026-05-26. Initialised BEFORE React renders so
 // the very first render is instrumented. No-op when VITE_SENTRY_DSN
 // is missing (dev or fresh-clone state) — see src/data/sentryClient.js.
@@ -12,6 +17,11 @@ import { initSentry } from './data/sentryClient.js';
 
 initSentry();
 setupPWA();
+// Fire-and-forget: the Capacitor init reads platform state then
+// wires listeners. Web builds skip the body of every function via
+// Capacitor.isNativePlatform() === false at the top, so this adds
+// nothing measurable to the web critical path.
+initCapacitor().catch((e) => console.warn('initCapacitor failed:', e?.message));
 
 // AppToast subscribes to the module-level toast queue. Rendering it
 // here (sibling of <App />) guarantees it shows on every code path —

@@ -866,6 +866,33 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // ── /staff_deletion_requests (2026-05-31) ────────────────────────────
+    // Apple + Google App Store compliance — staff must be able to
+    // request account deletion from inside the app. Owner approves
+    // within 7 days (Apple's guideline) then a manual/CF action
+    // does the actual record removal.
+    //
+    // Create — anyone with the public apiKey CAN submit a request
+    // for themselves. Without auth wired up yet, we cannot verify
+    // the requester IS the named staff — worst-case is spurious
+    // requests, which admin sees in the queue and dismisses. No
+    // PII risk in the request doc itself.
+    //
+    // Update — admins flip to approved/rejected; the requester can
+    // self-withdraw a pending request. Allowed status values are
+    // pinned to the valid lifecycle states.
+    //
+    // Delete — never. Keep the trail for compliance.
+    match /staff_deletion_requests/{reqId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+        && request.resource.data.requesterName is string
+        && request.resource.data.status == 'pending';
+      allow update: if request.resource.data is map
+        && request.resource.data.status in ['pending', 'withdrawn', 'approved', 'rejected'];
+      allow delete: if false;
+    }
+
     // ── Catch-all ──────────────────────────────────────────────────────
     // Every other collection inherits a permissive default. KNOWN GAP:
     // this is the single biggest security weakness in the rules — any

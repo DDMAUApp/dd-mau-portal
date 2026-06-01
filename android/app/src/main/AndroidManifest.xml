@@ -29,7 +29,21 @@
         </provider>
     </application>
 
-    <!-- Permissions -->
+    <!-- Permissions — 2026-05-31, added during Capacitor wrap.
+         POST_NOTIFICATIONS is mandatory on Android 13+ for FCM to ring.
+         Without it pushes are silently dropped. Camera + microphone +
+         location are runtime-prompted; the manifest entry is the floor
+         that lets the runtime even ask. -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 </manifest>

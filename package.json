@@ -14,7 +14,13 @@
     "sync-toast-employees": "node scripts/pull-toast-employees.mjs",
     "sync-toast-86": "node scripts/sync-toast-86-attribution.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "cap:sync": "npm run build && npx cap sync",
+    "cap:ios": "npm run build && npx cap sync ios && npx cap open ios",
+    "cap:android": "npm run build && npx cap sync android && npx cap open android",
+    "capgo:upload": "npx @capgo/cli@latest bundle upload --apikey $CAPGO_TOKEN",
+    "capgo:upload-dev": "npx @capgo/cli@latest bundle upload --apikey $CAPGO_TOKEN --channel dev",
+    "ship": "npm run build && git push && npx cap sync && npx @capgo/cli@latest bundle upload --apikey $CAPGO_TOKEN"
   },
   "dependencies": {
     "@sentry/react": "^10.54.0",
