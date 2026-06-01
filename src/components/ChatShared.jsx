@@ -45,11 +45,20 @@ export function ChatAvatar({ chat, viewerName, size = 40 }) {
         );
     }
     // DM — initials of the OTHER person.
+    // 2026-05-31 — Andrew: "the green bubbles with the name of the
+    // staff, make that the Apple glass look." Reuses .glass-avatar-green
+    // (defined in src/index.css) which gives a sage-to-green gradient,
+    // backdrop-blur, hairline brand ring, top highlight, and green-700
+    // initials. Same chrome the Header + Sidebar avatars adopted in the
+    // 2026-05-27 pass (Task #116). The class sets background AND text
+    // color via CSS, so the old `bg-dd-green text-white` utilities are
+    // gone and font-black stays so the initials read crisply against
+    // the lighter glass surface.
     const other = (chat.members || []).find(m => m !== viewerName) || '?';
     const initials = other.split(' ').filter(Boolean).map(p => p[0]).slice(0, 2).join('').toUpperCase();
     return (
         <span
-            className="inline-flex items-center justify-center rounded-full bg-dd-green text-white font-black shrink-0"
+            className="glass-avatar-green inline-flex items-center justify-center rounded-full font-black shrink-0"
             style={{ width: px, height: px, fontSize: `${Math.round(size * 0.38)}px` }}
         >
             {initials || '?'}
