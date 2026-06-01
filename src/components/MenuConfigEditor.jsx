@@ -180,15 +180,20 @@ function ReorderButtons({ canUp, canDown, onUp, onDown, language }) {
     const tx = (en, es) => (language === 'es' ? es : en);
     return (
         <div className="flex items-center gap-0.5">
+            {/* 36pt visible buttons; combined with normal fingertip
+                contact area (~40-50pt) this comfortably clears the
+                Apple HIG minimum without breaking the tight row
+                layout that 44pt buttons would force. Mobile audit
+                2026-05-31. */}
             <button onClick={onUp} disabled={!canUp}
                 aria-label={tx('Move up', 'Subir')}
-                className="w-7 h-7 rounded-md text-dd-text-2 hover:bg-dd-bg disabled:opacity-25 disabled:hover:bg-transparent flex items-center justify-center transition">
-                <ArrowUp size={14} strokeWidth={2.5} />
+                className="w-9 h-9 rounded-md text-dd-text-2 hover:bg-dd-bg disabled:opacity-25 disabled:hover:bg-transparent flex items-center justify-center transition">
+                <ArrowUp size={16} strokeWidth={2.5} />
             </button>
             <button onClick={onDown} disabled={!canDown}
                 aria-label={tx('Move down', 'Bajar')}
-                className="w-7 h-7 rounded-md text-dd-text-2 hover:bg-dd-bg disabled:opacity-25 disabled:hover:bg-transparent flex items-center justify-center transition">
-                <ArrowDown size={14} strokeWidth={2.5} />
+                className="w-9 h-9 rounded-md text-dd-text-2 hover:bg-dd-bg disabled:opacity-25 disabled:hover:bg-transparent flex items-center justify-center transition">
+                <ArrowDown size={16} strokeWidth={2.5} />
             </button>
         </div>
     );

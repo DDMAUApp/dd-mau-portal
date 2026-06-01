@@ -213,8 +213,11 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                             {photoPreview ? (
                                 <div className="relative">
                                     <img src={photoPreview} alt="Preview" className="rounded-lg border border-gray-200 max-w-full" style={{maxHeight: "200px"}} />
+                                    {/* 32pt tap target — bumped from 24pt for
+                                        finger reach on phones. Mobile audit
+                                        2026-05-31. */}
                                     <button onClick={() => { setPhotoFile(null); setPhotoPreview(null); }}
-                                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold">✕</button>
+                                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-8 h-8 text-sm font-bold shadow-md">✕</button>
                                 </div>
                             ) : (
                                 <label className="block w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-center text-sm text-gray-500 cursor-pointer hover:border-mint-400 hover:text-mint-600 transition">

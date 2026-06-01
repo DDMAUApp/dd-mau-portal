@@ -344,13 +344,17 @@ export default function BuildEditorModal({
                                         ))}
                                     </select>
                                     <div className="flex-1" />
+                                    {/* 36pt visible buttons to clear Apple
+                                        HIG minimum tap zone without breaking
+                                        the dense build-row layout. Mobile
+                                        audit 2026-05-31. */}
                                     <button onClick={() => moveRow(row.id, -1)} disabled={idx === 0}
-                                        className="w-7 h-7 rounded text-dd-text-2 disabled:opacity-30 hover:bg-white text-sm">▲</button>
+                                        className="w-9 h-9 rounded text-dd-text-2 disabled:opacity-30 hover:bg-white text-base">▲</button>
                                     <button onClick={() => moveRow(row.id, 1)} disabled={idx === rows.length - 1}
-                                        className="w-7 h-7 rounded text-dd-text-2 disabled:opacity-30 hover:bg-white text-sm">▼</button>
+                                        className="w-9 h-9 rounded text-dd-text-2 disabled:opacity-30 hover:bg-white text-base">▼</button>
                                     <button onClick={() => removeRow(row.id)}
                                         title={tx('Delete', 'Eliminar')}
-                                        className="w-7 h-7 rounded text-red-600 hover:bg-red-50 text-sm">✕</button>
+                                        className="w-9 h-9 rounded text-red-600 hover:bg-red-50 text-base">✕</button>
                                 </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     <input type="text"
