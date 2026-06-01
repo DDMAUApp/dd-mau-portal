@@ -92,9 +92,9 @@ export default function ChatPinsDrawer({
                                             blockMode={false}
                                         />
                                     ) : (
-                                        m.type === 'image' ? '📷 Photo'
-                                            : m.type === 'video' ? '🎬 Video'
-                                            : m.type === 'audio' ? '🎤 Voice'
+                                        m.type === 'image' ? tx('📷 Photo', '📷 Foto')
+                                            : m.type === 'video' ? tx('🎬 Video', '🎬 Video')
+                                            : m.type === 'audio' ? tx('🎤 Voice', '🎤 Voz')
                                             : '—'
                                     )}
                                 </div>

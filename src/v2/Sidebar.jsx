@@ -245,7 +245,7 @@ export default function Sidebar({
                 {!collapsed && (
                     <button onClick={onToggleCollapse}
                         className="ml-2 hidden md:flex w-7 h-7 items-center justify-center rounded text-dd-text-2 hover:text-dd-text hover:bg-dd-bg"
-                        title="Collapse sidebar">
+                        title={isEs ? 'Contraer barra lateral' : 'Collapse sidebar'}>
                         ◀
                     </button>
                 )}
@@ -255,7 +255,7 @@ export default function Sidebar({
             {collapsed && (
                 <button onClick={onToggleCollapse}
                     className="hidden md:flex h-8 mx-2 mt-2 items-center justify-center rounded text-white/40 hover:text-white hover:bg-dd-charcoal-2"
-                    title="Expand sidebar">
+                    title={isEs ? 'Expandir barra lateral' : 'Expand sidebar'}>
                     ▶
                 </button>
             )}

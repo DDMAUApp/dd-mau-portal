@@ -39,9 +39,13 @@ export default function AppToast() {
                     className={`pointer-events-auto rounded-xl border-2 px-4 py-3 shadow-lg flex items-start gap-2 animate-toast-in ${KIND_TONE[t.kind] || KIND_TONE.info}`}
                 >
                     <span className="text-base leading-none mt-0.5">{KIND_ICON[t.kind] || KIND_ICON.info}</span>
+                    {/* AppToast is a global mount with no props, so we read the
+                        chosen language straight from the localStorage key App.jsx
+                        writes (see `SS` helper). Bilingual tooltip on desktop
+                        hover — mobile users never see it. */}
                     <span className="text-sm font-semibold whitespace-pre-line flex-1 cursor-pointer"
                         onClick={() => dismissToast(t.id)}
-                        title="Tap to dismiss">
+                        title="Tap to dismiss · Tocar para descartar">
                         {t.message}
                     </span>
                     {t.actionLabel && t.onAction && (
