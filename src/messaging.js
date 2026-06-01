@@ -14,6 +14,39 @@
 import { getMessaging, getToken, deleteToken, onMessage, isSupported } from "firebase/messaging";
 import { doc, setDoc, runTransaction, getDoc } from "firebase/firestore";
 import app, { db } from "./firebase";
+import { Capacitor } from "@capacitor/core";
+
+// 2026-05-31 — Capacitor wrap. The Firebase web SDK uses a service
+// worker for push delivery (firebase-messaging-sw.js). Service
+// workers do NOT fire inside the iOS WKWebView or Android WebView
+// that Capacitor uses, so on native we MUST switch to the native
+// push plugin which talks to APNs (iOS) / native FCM (Android) and
+// surfaces tokens that Firebase Admin (used by the dispatchNotification
+// Cloud Function) can target without any backend changes.
+//
+// Web path stays IDENTICAL to before. Native path is added as a
+// short-circuit at the top of each public function. Detection is
+// safe to call on web — Capacitor.isNativePlatform() returns false
+// when the @capacitor/core runtime is not running inside a native
+// shell.
+function isCapacitorNative() {
+    try { return Capacitor.isNativePlatform(); }
+    catch { return false; }
+}
+
+// Lazy-load the native push plugin so the web build doesn't pull
+// in code it never executes. Dynamic import keeps the plugin off
+// the web critical path.
+async function loadNativePushPlugin() {
+    if (!isCapacitorNative()) return null;
+    try {
+        const mod = await import("@capacitor/push-notifications");
+        return mod.PushNotifications || null;
+    } catch (e) {
+        console.warn("[FCM] @capacitor/push-notifications import failed:", e?.message);
+        return null;
+    }
+}
 
 // ⚠️ REPLACE THIS PLACEHOLDER ⚠️
 // Firebase Console → ⚙️ Project Settings → Cloud Messaging tab →
@@ -48,6 +81,109 @@ function getOrCreateDeviceId() {
 let messagingInstance = null;
 // Module-level flag for one-shot legacy SW cleanup (see enableFcmPush).
 let _swCleanedUp = false;
+
+// Native push registration. Mirrors the web enableFcmPush — request
+// permission, fetch the device token, write it onto the staff record
+// in the same `fcmTokens` array that web tokens go into. Firebase
+// Admin in the dispatchNotification Cloud Function routes pushes to
+// EITHER kind of token transparently (the SDK figures out APNs vs
+// FCM per token), so no backend changes are needed.
+//
+// We tag each entry with `platform: 'ios' | 'android'` so admins
+// can see at a glance which device is on which OS. Also stamps a
+// `nativeWrap: true` so a future Capacitor migration can identify
+// installs that came in via the native shell vs the browser.
+async function enableNativePush(staffName, staffList, setStaffList) {
+    const plugin = await loadNativePushPlugin();
+    if (!plugin) return { ok: false, reason: "native-plugin-missing" };
+
+    // 1) Permission. requestPermissions() shows the system prompt
+    //    on first call; later calls return the current state. iOS
+    //    is the strict gate here — Android Chrome had to opt-in
+    //    in the web flow too.
+    let permResult;
+    try {
+        permResult = await plugin.requestPermissions();
+    } catch (e) {
+        console.warn("[FCM][native] requestPermissions failed:", e?.message);
+        return { ok: false, reason: "permission-error" };
+    }
+    if (permResult?.receive !== "granted") {
+        return { ok: false, reason: "permission-denied" };
+    }
+
+    // 2) Register. The plugin emits a one-shot `registration` event
+    //    with the token. Wire a one-time listener that resolves the
+    //    promise we await below. 10s timeout so we never strand the
+    //    caller in case APNs is slow.
+    const tokenPromise = new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (val, err) => {
+            if (settled) return;
+            settled = true;
+            regSub?.remove?.();
+            errSub?.remove?.();
+            err ? reject(err) : resolve(val);
+        };
+        let regSub, errSub;
+        plugin.addListener("registration", (t) => finish(t?.value || null)).then((s) => { regSub = s; });
+        plugin.addListener("registrationError", (e) => finish(null, new Error(e?.error || "registration-error"))).then((s) => { errSub = s; });
+        plugin.register().catch((e) => finish(null, e));
+        setTimeout(() => finish(null, new Error("registration-timeout")), 10_000);
+    });
+
+    let token;
+    try { token = await tokenPromise; }
+    catch (e) {
+        console.warn("[FCM][native] register failed:", e?.message);
+        return { ok: false, reason: "register-failed" };
+    }
+    if (!token) return { ok: false, reason: "no-token" };
+
+    // 3) Persist on the staff record. Identical pattern to the web
+    //    path's transactional write — dedupe by deviceId, cap at
+    //    MAX_TOKENS_PER_STAFF, refresh lastSeen on existing matches.
+    const deviceId = getOrCreateDeviceId();
+    const platform = Capacitor.getPlatform(); // 'ios' | 'android' | 'web'
+    try {
+        await runTransaction(db, async (tx) => {
+            const ref = doc(db, "config", "staff");
+            const snap = await tx.get(ref);
+            if (!snap.exists()) throw new Error("staff doc missing");
+            const list = (snap.data() || {}).list || [];
+            const idx = list.findIndex((s) => s.name === staffName);
+            if (idx === -1) throw new Error(`staff "${staffName}" not in list`);
+            const meRec = list[idx];
+            const existing = Array.isArray(meRec.fcmTokens) ? meRec.fcmTokens : [];
+            const now = new Date().toISOString();
+            const filtered = existing.filter((t) => {
+                if (!t || !t.token) return false;
+                if (t.deviceId && t.deviceId === deviceId) return false;
+                if (t.token === token) return false;
+                return true;
+            });
+            const updated = [...filtered, { token, deviceId, platform, nativeWrap: true, lastSeen: now }];
+            const capped = updated.slice(-MAX_TOKENS_PER_STAFF);
+            const nextList = list.map((s, i) =>
+                i === idx ? { ...s, fcmTokens: capped } : s
+            );
+            tx.set(ref, { list: nextList });
+        });
+        if (typeof setStaffList === "function") {
+            // Optimistic local update so the UI shows enabled state
+            // before the next /config/staff snapshot fires. Same
+            // pattern the web path uses below.
+            try {
+                const fresh = await getDoc(doc(db, "config", "staff"));
+                if (fresh.exists()) setStaffList((fresh.data() || {}).list || []);
+            } catch {}
+        }
+        return { ok: true, token, platform };
+    } catch (e) {
+        console.warn("[FCM][native] write failed:", e?.message);
+        return { ok: false, reason: "write-failed", error: e?.message };
+    }
+}
 async function getMessagingSafely() {
     if (messagingInstance) return messagingInstance;
     try {
@@ -71,6 +207,17 @@ async function getMessagingSafely() {
  * @returns {Promise<{ok: boolean, reason?: string, token?: string}>}
  */
 export async function enableFcmPush(staffName, staffList, setStaffList) {
+    // Native short-circuit. On iOS / Android via Capacitor we use the
+    // native push plugin instead of the web FCM SDK + service worker.
+    // The plugin emits an FCM token (Android) or APNs token (iOS) that
+    // Firebase Admin can target server-side without any backend code
+    // changes — dispatchNotification's existing fan-out works as-is.
+    // We tag the stored token with `platform` so admins can tell a
+    // phone install apart from a browser install when triaging
+    // delivery issues.
+    if (isCapacitorNative()) {
+        return enableNativePush(staffName, staffList, setStaffList);
+    }
     if (typeof Notification === "undefined") {
         return { ok: false, reason: "no-notification-api" };
     }
@@ -299,6 +446,26 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
  * onMessage instead of the SW. Returns an unsubscribe function.
  */
 export async function onForegroundMessage(handler) {
+    // Native short-circuit. On iOS / Android the native push plugin
+    // emits a `pushNotificationReceived` event when the app is in the
+    // foreground (background pushes are surfaced by the OS itself and
+    // don't enter the JS bridge unless tapped). We adapt the event
+    // shape to match the FCM web SDK so the in-app handler doesn't
+    // need to branch.
+    if (isCapacitorNative()) {
+        const plugin = await loadNativePushPlugin();
+        if (!plugin) return () => {};
+        const sub = await plugin.addListener("pushNotificationReceived", (notification) => {
+            // Shape adapter: FCM web SDK delivers { notification: { title, body }, data: {...} };
+            // Capacitor delivers { title, body, data: {...} }. Normalize to the FCM shape so
+            // every consumer keeps working.
+            handler({
+                notification: { title: notification?.title, body: notification?.body },
+                data: notification?.data || {},
+            });
+        });
+        return () => { try { sub?.remove?.(); } catch {} };
+    }
     const messaging = await getMessagingSafely();
     if (!messaging) return () => {};
     return onMessage(messaging, handler);

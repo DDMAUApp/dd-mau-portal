@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">DD Mau</string>
+    <string name="title_activity_main">DD Mau</string>
+    <string name="package_name">com.ddmau.staff</string>
+    <string name="custom_url_scheme">com.ddmau.staff</string>
+</resources>
