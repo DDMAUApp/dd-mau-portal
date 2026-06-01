@@ -1063,6 +1063,38 @@ button, a, [role="button"], input, select, textarea, label {
     padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* ── Mobile bottom nav stability fix — 2026-05-31 ─────────────────────────
+ * Andrew: "the mobile version the bottom bar is moving up and down."
+ *
+ * The nav uses `position: fixed` + Tailwind `backdrop-blur-xl` (24px blur).
+ * On iOS Safari + some Android Chrome builds, a fixed element with a heavy
+ * backdrop-filter re-composes the blur EVERY frame the content underneath
+ * scrolls — which is constantly when the user is reading the chat list or
+ * schedule. That per-frame recompose appears as a subtle vertical jitter:
+ * the bar shifts a pixel or two in time with the scroll velocity.
+ *
+ * Fix: promote the nav to its own GPU compositing layer with translateZ +
+ * isolation: isolate. The browser then renders the blur ONCE into its own
+ * layer and just translates that layer during scroll — no per-frame
+ * recompose, no jitter. will-change tells the browser to optimistically
+ * keep the layer ready (cheap since the nav is always on screen). The
+ * backface-visibility line nudges WebKit to use accelerated compositing
+ * even on older iOS versions.
+ *
+ * Also adds `contain: layout style paint` so the nav's internal layout
+ * never causes a parent reflow, which can cause its own jitter pattern
+ * when child badges update (e.g. the unread-count badge animating).
+ */
+.ddmau-mobile-bottom-nav {
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    will-change: transform;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    isolation: isolate;
+    contain: layout style paint;
+}
+
 /* Top banner sits below iPhone notch / Dynamic Island. With viewport-fit=cover
    (added so safe-area envs work for the bottom nav), the viewport extends
    into the notch area — `sticky top-0` puts the banner BEHIND the notch
