@@ -8709,76 +8709,30 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     )}
                                                 </div>
                                             </div>
-                                            {/* Refresh button — Sysco / US Foods only.
-                                                Costco has no scraper, so we show an
-                                                Import-CSV shortcut instead. */}
-                                            {isCostco ? (
-                                                <button
-                                                    onClick={() => setShowCsvImport(true)}
-                                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/20 hover:bg-white/30 text-white transition"
-                                                    title={language === "es" ? "Importar lista de Costco" : "Import Costco list"}
-                                                >
-                                                    📥 {language === "es" ? "Importar" : "Import"}
-                                                </button>
-                                            ) : (
-                                                <button
-                                                    onClick={async () => {
-                                                        if (triggerStatus === "requesting" || triggerStatus === "running") return;
-                                                        setTriggerStatus("requesting");
-                                                        try {
-                                                            await setDoc(doc(db, "vendor_prices", triggerDocName), {
-                                                                trigger: true,
-                                                                requestedAt: new Date().toISOString(),
-                                                                requestedBy: staffName || "unknown",
-                                                                status: "pending"
-                                                            });
-                                                        } catch (e) {
-                                                            console.error("Trigger error:", e);
-                                                            setTriggerStatus("error");
-                                                            setTimeout(() => setTriggerStatus(null), 4000);
-                                                        }
-                                                    }}
-                                                    disabled={triggerStatus === "requesting" || triggerStatus === "running"}
-                                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                                                        triggerStatus === "running" || triggerStatus === "requesting"
-                                                            ? "bg-white/10 text-white/60 cursor-wait"
-                                                            : triggerStatus === "done"
-                                                                ? "bg-green-500/30 text-green-100"
-                                                                : triggerStatus === "error"
-                                                                    ? "bg-red-500/30 text-red-100"
-                                                                    : "bg-white/20 hover:bg-white/30 text-white cursor-pointer"
-                                                    }`}
-                                                    title={language === "es" ? "Solicitar actualizacion de precios" : "Request price refresh"}
-                                                >
-                                                    {triggerStatus === "running" || triggerStatus === "requesting" ? (
-                                                        <><span className="animate-spin inline-block">{"\u{1F504}"}</span> {language === "es" ? "Actualizando..." : "Refreshing..."}</>
-                                                    ) : triggerStatus === "done" ? (
-                                                        <>{"\u{2705}"} {language === "es" ? "Listo" : "Done!"}</>
-                                                    ) : triggerStatus === "error" ? (
-                                                        <>{"\u{274C}"} {language === "es" ? "Error" : "Error"}</>
-                                                    ) : (
-                                                        <>{"\u{1F504}"} {language === "es" ? "Actualizar Precios" : "Refresh Prices"}</>
-                                                    )}
-                                                </button>
-                                            )}
+                                            {/* Import-CSV button — applies to ALL vendors
+                                                now. Andrew 2026-05-31 retired the Sysco
+                                                + US Foods live scrapers in favor of
+                                                self-uploading the price lists via the
+                                                same CSV import flow Costco has always
+                                                used. The trigger button + Railway scrape
+                                                flow + scrape_status alerts are all gone.
+                                                If a vendor returns to scraping later,
+                                                restore the trigger button from git
+                                                history (commit before this change). */}
+                                            <button
+                                                onClick={() => setShowCsvImport(true)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/20 hover:bg-white/30 text-white transition"
+                                                title={language === "es" ? `Importar lista de ${vendorName}` : `Import ${vendorName} list`}
+                                            >
+                                                📥 {language === "es" ? "Importar" : "Import"}
+                                            </button>
                                         </div>
 
-                                        {/* Scraper running indicator (not shown for Costco — it has none) */}
-                                        {!isCostco && scrapeStatus.status === "running" && (
-                                            <div className="text-center py-2 text-blue-600 text-xs bg-blue-50 rounded-lg border border-blue-200 animate-pulse">
-                                                {"\u{1F504}"} {language === "es" ? "Scraper ejecutandose ahora..." : "Scraper running now..."}
-                                            </div>
-                                        )}
-
-                                        {sorted.length === 0 && (isCostco || scrapeStatus.status !== "running") && (
+                                        {sorted.length === 0 && (
                                             <div className="text-center py-4 text-gray-500 text-xs bg-yellow-50 rounded-lg border border-yellow-200">
-                                                {isCostco ? (
-                                                    <>
-                                                        {language === "es"
-                                                            ? "Sin datos de Costco aún. Costco no tiene scraper — usa el botón Importar para subir un PDF de tu lista de Costco Business."
-                                                            : "No Costco data yet. Costco has no scraper — use the Import button to upload a PDF of your Costco Business list."}
-                                                    </>
-                                                ) : (language === "es" ? "Esperando datos del scraper. Los precios se actualizan diariamente." : "Waiting for scraper data. Prices update daily.")}
+                                                {language === "es"
+                                                    ? `Sin datos de ${vendorName} aún. Usa el botón Importar para subir tu lista de precios.`
+                                                    : `No ${vendorName} data yet. Use the Import button to upload your price list.`}
                                             </div>
                                         )}
 
