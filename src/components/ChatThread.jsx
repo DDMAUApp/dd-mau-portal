@@ -131,16 +131,22 @@ class ChatThreadErrorBoundary extends Component {
     }
     render() {
         if (this.state.hasError) {
+            // Bilingual fallback — language comes from the parent wrapper so
+            // Spanish-language staff don't see the English-only crash screen.
+            // Default to English if the prop is missing (defensive).
+            const isEs = this.props.language === 'es';
             return (
                 <div className="flex flex-col items-center justify-center h-full bg-dd-bg text-center px-6 py-12 gap-3">
                     <div className="text-5xl">💬</div>
                     <h3 className="text-base font-black text-dd-text">
-                        Something went wrong loading this chat
+                        {isEs
+                            ? 'Algo salió mal al cargar este chat'
+                            : 'Something went wrong loading this chat'}
                     </h3>
                     <p className="text-sm text-dd-text-2 max-w-md">
-                        The rest of your chats are fine. Tap back to the chat list
-                        and try opening this one again — if it keeps crashing,
-                        a manager can check the audit log.
+                        {isEs
+                            ? 'Tus otros chats están bien. Toca volver a la lista de chats e intenta abrir este otra vez — si sigue fallando, un gerente puede revisar el registro.'
+                            : 'The rest of your chats are fine. Tap back to the chat list and try opening this one again — if it keeps crashing, a manager can check the audit log.'}
                     </p>
                     <button
                         onClick={() => {
@@ -148,7 +154,7 @@ class ChatThreadErrorBoundary extends Component {
                             this.props.onReset?.();
                         }}
                         className="mt-2 px-4 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
-                        ← Back to chats
+                        {isEs ? '← Volver a los chats' : '← Back to chats'}
                     </button>
                 </div>
             );
@@ -642,10 +648,14 @@ function ChatThreadInner({
     // without bloating the new message doc.
     function handleReply(message) {
         if (!message?.id) return;
+        // Snippet is stored in Firestore with the sender's language at write time —
+        // a future polish would store message.type instead and translate at read
+        // time so the recipient sees their own language. For now Spanish staff
+        // at least get Spanish labels for THEIR replies.
         const snippet = (message.text || '').replace(/\s+/g, ' ').trim().slice(0, 120)
-            || (message.type === 'image' ? '📷 Photo'
-                : message.type === 'video' ? '🎬 Video'
-                : message.type === 'audio' ? '🎤 Voice'
+            || (message.type === 'image' ? tx('📷 Photo', '📷 Foto')
+                : message.type === 'video' ? tx('🎬 Video', '🎬 Video')
+                : message.type === 'audio' ? tx('🎤 Voice', '🎤 Voz')
                 : '');
         setReplyTarget({
             id: message.id,
@@ -2177,7 +2187,7 @@ function ChatThreadInner({
 export default function ChatThread(props) {
     const chatId = props?.chat?.id || 'no-chat';
     return (
-        <ChatThreadErrorBoundary key={chatId} onReset={props?.onBack}>
+        <ChatThreadErrorBoundary key={chatId} onReset={props?.onBack} language={props?.language}>
             <ChatThreadInner {...props} />
         </ChatThreadErrorBoundary>
     );
