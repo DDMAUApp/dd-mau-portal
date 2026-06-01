@@ -5,7 +5,7 @@ import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
-import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor } from '../data/inventory';
+import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
 import { useAiSearch } from '../data/aiSearch';
 const OrderMode = lazy(() => import('./OrderMode'));
@@ -7671,7 +7671,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                         className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none bg-white">
                                                                                         <option value="">{language === "es" ? "(sin ubicación)" : "(none)"}</option>
                                                                                         {[...seenLocs].map(l => (
-                                                                                            <option key={l} value={l}>{l}</option>
+                                                                                            <option key={l} value={l}>{locationLabel(l, language === 'es')}</option>
                                                                                         ))}
                                                                                     </select>
                                                                                 </label>
@@ -7962,7 +7962,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                         className={`px-2 py-1 border rounded-md bg-white text-xs focus:outline-none focus:border-mint-500 ${(dest.location || '').trim() ? 'border-gray-200' : 'border-amber-400 bg-amber-50'}`}>
                                                                         <option value="">{language === "es" ? "(elige una)" : "(pick one)"}</option>
                                                                         {locOpts.map(l => (
-                                                                            <option key={l} value={l}>{l}</option>
+                                                                            <option key={l} value={l}>{locationLabel(l, language === 'es')}</option>
                                                                         ))}
                                                                     </select>
                                                                 </label>
@@ -8159,7 +8159,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     }`}>
                                                         {isUnassigned
                                                             ? (language === "es" ? '⚠ Sin ubicación' : '⚠ No location')
-                                                            : `📍 ${loc}`}
+                                                            : `📍 ${locationLabel(loc, language === 'es')}`}
                                                     </span>
                                                     <span className="text-[10px] text-gray-500 font-bold">
                                                         {rows.length} {language === "es" ? "artíc." : "items"}

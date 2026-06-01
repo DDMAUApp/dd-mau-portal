@@ -26,6 +26,37 @@ export const INVENTORY_LOCATIONS = [
     'Expo',
 ];
 
+// Bilingual display labels for the locations above. Keyed by the
+// canonical English name in INVENTORY_LOCATIONS — that English name
+// is also what gets STORED on item.location in Firestore, so the
+// canonical IDs don't change and existing data keeps working. This
+// map is purely for rendering. Custom locations the user has
+// invented (anything not in INVENTORY_LOCATIONS) fall through to
+// the raw English name as-is, since we don't know a translation.
+// Added 2026-05-31 — Spanish-first BOH staff were seeing English
+// location headers in the inventory Location view.
+export const INVENTORY_LOCATION_LABELS_ES = {
+    'Walk-in Freezer': 'Congelador',
+    'Walk-in Refrigerator': 'Refrigerador',
+    'Pantry': 'Despensa',
+    'Paper Goods': 'Productos de Papel',
+    'Chemicals / Dish Area': 'Químicos / Área de Lavado',
+    'Drinks': 'Bebidas',
+    'Boba': 'Boba',
+    'Expo': 'Pase',
+};
+
+// Look up the localized display label for a storage location.
+// `loc` is the canonical English value as stored on item.location.
+// `isEs` is true when the current viewer's language is Spanish.
+// Non-canonical custom locations fall through to the raw English
+// string so they're never silently dropped.
+export function locationLabel(loc, isEs) {
+    if (!loc) return loc;
+    if (!isEs) return loc;
+    return INVENTORY_LOCATION_LABELS_ES[loc] || loc;
+}
+
 // Canonical vendor list — Andrew 2026-05-22. Every cart vendor
 // pill, every "Order By Vendor" print section, every vendor
 // dropdown should use this exact list. Anything outside it
