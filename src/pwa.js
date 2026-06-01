@@ -84,7 +84,22 @@ export function setupPWA() {
     selfHealIfStale();
 
 
+    // Icon strategy — two purposes to keep both iOS and Android happy.
+    // 2026-05-31 — Andrew Android audit. The previous manifest shipped a
+    // single icon with `purpose: "any"` and an `rx=20` rounded square.
+    // Android Chrome masks home-screen icons into the device-specific
+    // shape (round / squircle / teardrop) and was wrapping our rounded
+    // green square with a white frame on top, because we hadn't declared
+    // a `maskable` variant. The fix is two icons in the array:
+    //   • A `maskable` version with NO corner radius and the safe-zone
+    //     centered (Android crops the outer 20% so the noodle bowl emoji
+    //     stays fully visible inside the 80% safe area).
+    //   • An `any` version with the original rounded square, for browsers
+    //     that don't use maskable (Firefox, older Chrome).
+    // The `id` field stabilizes app identity across upgrades so Chrome
+    // doesn't treat each new build as a different installable app.
     const manifestData = {
+        id: "/?source=pwa",
         name: "DD Mau Staff Portal",
         short_name: "DD Mau",
         description: "Staff portal for DD Mau Vietnamese Eatery",
@@ -93,12 +108,29 @@ export function setupPWA() {
         background_color: "#f0f7f1",
         theme_color: "#255a37",
         orientation: "portrait",
-        icons: [{
-            src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
-            sizes: "any",
-            type: "image/svg+xml",
-            purpose: "any"
-        }]
+        prefer_related_applications: false,
+        icons: [
+            {
+                // Maskable — Android home-screen safe-zone friendly.
+                // Full-bleed green background (no rx), emoji centered in
+                // the 80% safe zone so Android can crop to any shape
+                // without cutting the design.
+                src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23255a37'/><text y='66' x='50' text-anchor='middle' font-size='44'>🍜</text></svg>",
+                sizes: "any",
+                type: "image/svg+xml",
+                purpose: "maskable"
+            },
+            {
+                // "Any" — used by Firefox / older Chrome / contexts that
+                // do not honour maskable. Same green background but with
+                // rounded corners so the icon reads as a finished design
+                // when shown un-masked (e.g. browser tab thumbnails).
+                src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
+                sizes: "any",
+                type: "image/svg+xml",
+                purpose: "any"
+            }
+        ]
     };
     const manifestBlob = new Blob([JSON.stringify(manifestData)], { type: 'application/json' });
     const manifestURL = URL.createObjectURL(manifestBlob);
