@@ -1165,14 +1165,14 @@ function Step4({ values, setField, toggleInArray, setValues, resumeFile, setResu
                                 placeholder={tx('Role (e.g. Line cook)', 'Puesto (ej: Cocinero)')} maxLength={40} />
                             <div className="grid grid-cols-2 gap-2">
                                 <input type="month" value={emp.startMonth} onChange={e => updateEmployer(i, { startMonth: e.target.value })}
-                                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs" placeholder="Start" />
+                                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs" placeholder={tx('Start', 'Inicio')} />
                                 {emp.stillHere ? (
                                     <span className="border border-dd-green/40 rounded-lg px-2 py-1.5 text-xs bg-dd-sage-50 text-dd-green-700 font-bold flex items-center">
                                         {tx('Still here', 'Aún trabajo aquí')}
                                     </span>
                                 ) : (
                                     <input type="month" value={emp.endMonth} onChange={e => updateEmployer(i, { endMonth: e.target.value })}
-                                        className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs" placeholder="End" />
+                                        className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs" placeholder={tx('End', 'Fin')} />
                                 )}
                             </div>
                             <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer">
