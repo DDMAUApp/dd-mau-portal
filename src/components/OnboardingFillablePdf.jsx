@@ -499,8 +499,14 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
         const signed = value && typeof value === 'string' && value.startsWith('data:image');
         return (
             <button onClick={onOpenSig}
+                // 2026-06-01 — Same readability fix as the text input
+                // below. /60 was opaque enough to hide a printed
+                // "Employee Signature" line on the PDF; dropped to /30
+                // when empty so the label shows. When signed the
+                // signature image already fills the field so /50 is
+                // fine — the image dominates anyway.
                 className={`absolute border-2 rounded text-[10px] font-bold flex items-center justify-center transition ${
-                    signed ? 'border-green-500 bg-green-100/60' : 'border-amber-500 bg-amber-100/60 animate-pulse'
+                    signed ? 'border-green-500 bg-green-100/50' : 'border-amber-500 bg-amber-100/30 animate-pulse'
                 }`}
                 // Same UA-min-height defeat as the text input below — without
                 // it, mobile browsers grow the signature button past the
@@ -529,8 +535,26 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
             type={field.type === 'date' ? 'date' : 'text'}
             value={value || ''}
             onChange={e => onChange(e.target.value)}
-            className={`absolute border-2 rounded px-1 text-[11px] bg-yellow-50/90 ${
-                value ? 'border-green-500' : 'border-amber-500'
+            // 2026-06-01 — Andrew: "for the W4 missouri, when the text
+            // bubble is over the doc anything under it cant be read.
+            // if it asks for first name the text bubble is covering it up."
+            //
+            // The input used `bg-yellow-50/90` (90% opaque) so the
+            // underlying PDF label was hidden. Hires opening the form
+            // saw a row of yellow boxes with no indication of what each
+            // field was asking. Fix: opacity conditional on value state.
+            //   • Empty field (no value yet): bg-yellow-50/15 — nearly
+            //     transparent, the underlying PDF label is fully readable
+            //     so the hire knows what to type.
+            //   • Filled field: bg-yellow-50/70 — opaque enough that the
+            //     typed text reads clearly without colliding with the
+            //     printed label underneath.
+            // Border colour change (amber → green) is preserved as the
+            // secondary fill-state cue.
+            className={`absolute border-2 rounded px-1 text-[11px] ${
+                value
+                    ? 'border-green-500 bg-yellow-50/70'
+                    : 'border-amber-500 bg-yellow-50/15 placeholder-amber-700/60'
             }`}
             // iOS Safari (and some Android browsers) enforce a UA min-height
             // (~32–36px) on text/date inputs to keep them tappable. That
