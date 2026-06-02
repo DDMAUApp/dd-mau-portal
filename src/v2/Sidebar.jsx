@@ -411,49 +411,6 @@ export default function Sidebar({
                     <span className="text-base">🔒</span>
                     {!collapsed && <span>{isEs ? 'Bloquear / Salir' : 'Lock / Log out'}</span>}
                 </button>
-                {/* Delete My Account — Apple + Google App Store requirement
-                    since 2022. Apps that allow account creation MUST allow
-                    account deletion from inside the app. The request flow
-                    writes a doc to /staff_deletion_requests; the admin
-                    (Andrew or Julie) approves within 7 days and the staff
-                    record is removed. The 7-day grace window lets the user
-                    cancel if they tapped this by mistake. Hidden in the
-                    collapsed-rail desktop view to keep it dense; reachable
-                    from the mobile More drawer and the expanded sidebar. */}
-                {!collapsed && staffName && (
-                    <button
-                        onClick={() => {
-                            const msg = isEs
-                                ? '¿Eliminar tu cuenta?\n\nTu solicitud se enviará a un gerente para aprobación. Tienes 7 días para cancelar si cambias de opinión.\n\nEsta acción no se puede deshacer una vez aprobada.'
-                                : 'Delete your account?\n\nYour request will be sent to a manager for approval. You have 7 days to cancel if you change your mind.\n\nThis cannot be undone once approved.';
-                            if (!window.confirm(msg)) return;
-                            // Fire-and-forget the request write. The native
-                            // confirm above is the gate; once they say yes we
-                            // post the request and toast back success.
-                            // Import lazily so we don't pay the cost on the
-                            // 95% of staff who will never tap this.
-                            import('../data/accountDeletion.js')
-                                .then(m => m.requestAccountDeletion(staffName))
-                                .then(r => {
-                                    if (r?.ok) {
-                                        window.alert(isEs
-                                            ? '✓ Solicitud enviada. Un gerente revisará en los próximos días.'
-                                            : '✓ Request submitted. A manager will review within the next few days.');
-                                    } else {
-                                        window.alert(isEs
-                                            ? `No se pudo enviar: ${r?.reason || 'error'}`
-                                            : `Could not submit: ${r?.reason || 'error'}`);
-                                    }
-                                })
-                                .catch(e => window.alert(isEs ? `Error: ${e?.message}` : `Error: ${e?.message}`));
-                        }}
-                        title={isEs ? 'Eliminar mi cuenta' : 'Delete my account'}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 min-h-[40px] md:min-h-0 rounded-lg text-[11px] font-medium text-white/40 hover:text-red-300 hover:bg-red-900/20 transition"
-                    >
-                        <span className="text-xs">🗑</span>
-                        <span>{isEs ? 'Eliminar mi cuenta' : 'Delete my account'}</span>
-                    </button>
-                )}
                 {/* Build version footer — tappable, opens version-info modal.
                     Visible whenever the sidebar is open (which means: always on
                     desktop, and inside the "More" drawer on mobile). Lets
@@ -464,12 +421,26 @@ export default function Sidebar({
                         <AppVersion language={language} />
                     </div>
                 )}
-                {/* 2026-05-31 — App Store + Play Store compliance.
-                    In-app footer linking to the live privacy policy
-                    + terms. Both stores REQUIRE that an installed
-                    app expose these from inside the app, not just on
-                    the listing page. Hidden in collapsed-rail desktop
-                    mode to keep that view dense; shown otherwise. */}
+                {/* 2026-05-31 — App Store + Play Store compliance footer.
+                    In-app links to the live privacy policy + terms + the
+                    account-deletion entry point. Both Apple Guideline 5.1.1(v)
+                    and Google's account-deletion policy require that an
+                    installed app expose its privacy policy AND offer in-app
+                    account deletion. Both stores explicitly accept a small
+                    footer-link pattern (Slack, Notion, Discord, Stripe use
+                    this) — the deletion entry point does NOT have to be a
+                    top-level button. Hidden in collapsed-rail desktop mode
+                    to keep that view dense.
+
+                    2026-06-01 — Andrew moved the Delete account UI from a
+                    standalone visible button above the version footer into
+                    this combined footer alongside Privacy + Terms. Reduces
+                    the visual weight of a destructive action without losing
+                    compliance — staff can still reach it in 2 taps (menu
+                    open → "Delete account" → confirm). The confirmation
+                    modal, the lazy import of accountDeletion.js, the 7-day
+                    grace window, and the admin-approval flow are all
+                    UNCHANGED — only the UI affordance moved. */}
                 {!collapsed && (
                     <div className="flex justify-center gap-3 pt-1.5 text-[10px] text-white/40">
                         <a
@@ -489,6 +460,41 @@ export default function Sidebar({
                         >
                             {isEs ? 'Términos' : 'Terms'}
                         </a>
+                        {staffName && (
+                            <>
+                                <span className="opacity-50">·</span>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const msg = isEs
+                                            ? '¿Eliminar tu cuenta?\n\nTu solicitud se enviará a un gerente para aprobación. Tienes 7 días para cancelar si cambias de opinión.\n\nEsta acción no se puede deshacer una vez aprobada.'
+                                            : 'Delete your account?\n\nYour request will be sent to a manager for approval. You have 7 days to cancel if you change your mind.\n\nThis cannot be undone once approved.';
+                                        if (!window.confirm(msg)) return;
+                                        // Lazy import — 95% of staff will never tap this,
+                                        // no reason to bundle the helper into the eager
+                                        // sidebar chunk.
+                                        import('../data/accountDeletion.js')
+                                            .then(m => m.requestAccountDeletion(staffName))
+                                            .then(r => {
+                                                if (r?.ok) {
+                                                    window.alert(isEs
+                                                        ? '✓ Solicitud enviada. Un gerente revisará en los próximos días.'
+                                                        : '✓ Request submitted. A manager will review within the next few days.');
+                                                } else {
+                                                    window.alert(isEs
+                                                        ? `No se pudo enviar: ${r?.reason || 'error'}`
+                                                        : `Could not submit: ${r?.reason || 'error'}`);
+                                                }
+                                            })
+                                            .catch(e => window.alert(isEs ? `Error: ${e?.message}` : `Error: ${e?.message}`));
+                                    }}
+                                    title={isEs ? 'Eliminar mi cuenta' : 'Delete my account'}
+                                    className="hover:text-red-300 transition"
+                                >
+                                    {isEs ? 'Eliminar cuenta' : 'Delete account'}
+                                </button>
+                            </>
+                        )}
                     </div>
                 )}
             </div>

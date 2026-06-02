@@ -51,13 +51,18 @@ const config: CapacitorConfig = {
         // Respect notch + Dynamic Island. With 'always' the WebView
         // viewport sits below the notch and above the home indicator.
         contentInset: 'always',
-        // Background behind the WebView during launch + transitions.
-        // Set to dd-charcoal so the cold-launch frame matches the
-        // splash + status-bar style (no white flash).
-        backgroundColor: '#0E1116',
-        // Prevent overscroll bounce — it looks great on Mobile Safari
-        // but on iOS native apps it's not idiomatic and can cause
-        // confusing UX inside scrolling lists.
+        // 2026-06-01 — Andrew: "when I scroll to the bottom it pulls up
+        // the black and if I scroll all the way to the top it pulls
+        // the black almost like there is a black back behind the app."
+        // That was the dd-charcoal WebView background showing through
+        // the iOS WKWebView rubber-band bounce. Our app's home, sched,
+        // ops, training and ops pages are all light, so revealing
+        // CHARCOAL during overscroll looked alarming. Switched to
+        // white so the bounce reveals the page color. The chat tab is
+        // dark and the brief white flash on chat overscroll is a
+        // cosmetic trade-off we can polish later by setting a per-
+        // route bg via the Capacitor bridge.
+        backgroundColor: '#FFFFFF',
         scrollEnabled: true,
         limitsNavigationsToAppBoundDomains: false,
     },
@@ -81,11 +86,19 @@ const config: CapacitorConfig = {
             splashImmersive: true,
         },
         StatusBar: {
-            // Light pages by default (home, schedule, ops). Chat thread
-            // flips this to DARK at runtime via StatusBar.setStyle({ style: 'Dark' }).
-            style: 'LIGHT',
+            // 2026-06-01 — Andrew reported a black bar at the very top of
+            // the app above the sidebar. Root cause was overlaysWebView:
+            // false, which left a non-WebView strip at the top that our
+            // page styles couldn't paint into. Flipping to overlay mode
+            // lets the WebView extend all the way to the phone notch +
+            // our existing pt-safe-banner / safe-top CSS handles the
+            // padding via env(safe-area-inset-top). The runtime bridge
+            // in src/capacitor-bridge.js still flips style+bg per page
+            // (DARK text by default for light home, LIGHT text on
+            // chat's dark surface).
+            style: 'DARK',
             backgroundColor: '#FFFFFF',
-            overlaysWebView: false,
+            overlaysWebView: true,
         },
         PushNotifications: {
             // Show alerts + sounds + badge counts via the OS, not the

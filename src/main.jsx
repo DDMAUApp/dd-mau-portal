@@ -15,8 +15,13 @@ import { initCapacitor } from './capacitor-bridge.js';
 // is missing (dev or fresh-clone state) — see src/data/sentryClient.js.
 import { initSentry } from './data/sentryClient.js';
 
-initSentry();
-setupPWA();
+// 2026-06-01 — wrap each init in try/catch so a throw from any of
+// them cannot prevent React from mounting. The first iOS build came
+// up to a white screen because a single PWA setup exception broke
+// the entire boot chain. Defensive try/catch keeps the React tree
+// rendering even if one helper bombs.
+try { initSentry(); } catch (e) { console.warn('initSentry failed:', e?.message); }
+try { setupPWA(); } catch (e) { console.warn('setupPWA failed:', e?.message); }
 // Fire-and-forget: the Capacitor init reads platform state then
 // wires listeners. Web builds skip the body of every function via
 // Capacitor.isNativePlatform() === false at the top, so this adds

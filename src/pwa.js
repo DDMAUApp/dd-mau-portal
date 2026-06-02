@@ -74,8 +74,34 @@ async function selfHealIfStale() {
     }
 }
 
+// Detect Capacitor native runtime. When running inside the iOS or
+// Android shell the PWA-specific boot path is not just useless but
+// actively harmful — `capacitor://localhost` origin breaks the
+// service worker registration (throws a JS exception during boot
+// that leaves React unmounted = white screen), and the inline
+// manifest link does nothing because native uses Info.plist /
+// AndroidManifest. Detection is sync + lazy — only require
+// @capacitor/core when running native, so the web bundle still
+// works in browsers that don't have Capacitor at all.
+function isCapacitorNative() {
+    try {
+        // window.Capacitor is set by the native bridge before the
+        // JS bundle evaluates. Falls through to false on web.
+        return !!(window?.Capacitor?.isNativePlatform?.());
+    } catch { return false; }
+}
+
 // Inline PWA manifest (no separate file needed)
 export function setupPWA() {
+    // 2026-06-01 — Capacitor native short-circuit. The first iOS
+    // build came up to a white screen because the service worker
+    // registration below threw a JS exception under capacitor://
+    // localhost. Native gets none of the PWA scaffolding because
+    // the native shell handles all of it via Info.plist / Android
+    // resources. Keep web parity by returning early.
+    if (isCapacitorNative()) {
+        return;
+    }
     // Kick off the self-heal check immediately. Don't await — the
     // rest of setupPWA needs to run synchronously so the manifest
     // link tag lands before the user does anything. If the bundle

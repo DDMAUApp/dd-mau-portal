@@ -28,10 +28,24 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<!-- 2026-06-01 — Andrew + Claude submission audit. Changed armv7 → arm64.
+	     armv7 is the 32-bit ARM ISA which Apple dropped support for at iOS 11
+	     (every device since iPhone 5s is arm64). Submitting with armv7
+	     triggers an automated Apple validation warning. arm64 correctly
+	     filters out the 32-bit-only iPhone 5/5c/4s which can't run any
+	     modern Swift Capacitor build anyway. -->
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
-		<string>armv7</string>
+		<string>arm64</string>
 	</array>
+	<!-- 2026-06-01 — App Store encryption export compliance.
+	     Setting this to false declares we only use standard HTTPS/TLS
+	     (no custom crypto). Without this key, App Store Connect blocks
+	     every TestFlight build asking you to fill in the encryption
+	     export form. Standard HTTPS via Firebase + iOS system APIs is
+	     exempt under U.S. export regulations 15 CFR 740.17(b)(1). -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

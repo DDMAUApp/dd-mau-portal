@@ -27,6 +27,22 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- 2026-06-01 — Firebase Cloud Messaging default notification channel.
+             Android 8+ requires every notification to belong to a channel.
+             Without this default, FCM creates a generic "Miscellaneous"
+             channel which lands push under a system-named bucket users
+             can't recognize. Naming the channel explicitly lets us label
+             it "DD Mau" in Settings → Notifications → DD Mau → Channels.
+             Notification icon + color meta-data are intentionally omitted
+             for the MVP — Android will use the app launcher icon, which
+             is acceptable for first store submission. A polished
+             notification-only silhouette icon can be added later as a
+             quality-of-life improvement (referenced @drawable/ic_stat_dd_notification
+             when ready). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="dd_default_channel" />
     </application>
 
     <!-- Permissions — 2026-05-31, added during Capacitor wrap.
