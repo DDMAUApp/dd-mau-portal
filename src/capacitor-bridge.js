@@ -41,6 +41,23 @@ export async function initCapacitor() {
     if (_initialized) return;
     _initialized = true;
 
+    // 2026-06-01 — Andrew: "the bottom bar with home schedule and ops
+    // are moving. keep it locked." The web build of MobileBottomNav
+    // already has a GPU layer pin (transform: translateZ(0) + isolation
+    // + contain) which fixes the jitter in mobile Safari. Inside the
+    // Capacitor WKWebView the jitter source is different: WKWebView's
+    // rubber-band overscroll drags fixed-positioned elements with the
+    // scroll velocity for ~150ms after a fling. The fix is per-platform:
+    // disable overscroll-y on body in the Capacitor build only (we keep
+    // it on the web build because pull-to-refresh on the home + chat
+    // pages depends on it). Adding `capacitor-native` to body makes
+    // every CSS scoped rule we need a one-class hop away.
+    try {
+        document.body.classList.add('capacitor-native');
+    } catch (e) {
+        console.warn('[cap] body class add failed:', e?.message);
+    }
+
     // ── Splash screen ────────────────────────────────────────────
     // Hide the native splash once React has mounted and the first
     // paint is done. The 1500ms launchShowDuration in capacitor.config

@@ -1095,6 +1095,41 @@ button, a, [role="button"], input, select, textarea, label {
     contain: layout style paint;
 }
 
+/* ── Capacitor WKWebView bottom-nav lockdown — 2026-06-01 ────────────────
+ * Andrew (in the wrapped iOS app): "the bottom bar with home schedule
+ * and ops are moving. keep it locked."
+ *
+ * In mobile Safari the GPU-layer pin above is enough — the page scroll
+ * is the native UIScrollView and `position: fixed` honors that. Inside
+ * the Capacitor WKWebView the rubber-band overscroll behaves slightly
+ * differently: a hard fling at the top or bottom of the page lets the
+ * elastic bounce briefly drag the fixed nav with the scroll velocity,
+ * for ~150-300ms after the gesture. The user sees a 1-3px vertical
+ * jitter, especially during pull-to-refresh.
+ *
+ * Two-part fix, scoped to the wrapped build via body.capacitor-native:
+ *   1. overscroll-behavior-y: none on body — disables the rubber-band
+ *      entirely. Pull-to-refresh on the wrapped app is provided by the
+ *      Capacitor app, not the WebView, so we don't lose anything.
+ *   2. position: fixed !important on the nav — defensive against any
+ *      cascade conflict and against ancestors that might gain a transform
+ *      and break fixed-positioning containment.
+ *
+ * The web build is UNAFFECTED — the body class is set by capacitor-bridge
+ * only when Capacitor.isNativePlatform() returns true, so browsers never
+ * match these rules and keep the existing pull-to-refresh behavior.
+ */
+body.capacitor-native {
+    overscroll-behavior-y: none;
+    -webkit-overflow-scrolling: auto;
+}
+body.capacitor-native .ddmau-mobile-bottom-nav {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+}
+
 /* Top banner sits below iPhone notch / Dynamic Island. With viewport-fit=cover
    (added so safe-area envs work for the bottom nav), the viewport extends
    into the notch area — `sticky top-0` puts the banner BEHIND the notch
