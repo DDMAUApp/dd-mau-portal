@@ -1123,11 +1123,16 @@ body.capacitor-native {
     overscroll-behavior-y: none;
     -webkit-overflow-scrolling: auto;
 }
+/* 2026-06-01 update — Andrew moved the bar from edge-to-edge to a
+ * floating Liquid Glass pill (left-3 right-3 + bottom: calc(safe + 8px)
+ * + rounded-3xl). The override below NO LONGER forces left/right/bottom
+ * to 0 — that would fight the floating positioning the Tailwind classes
+ * now own. We keep `position: fixed !important` purely as a cascade
+ * defence in case an ancestor gains a transform/filter that would
+ * otherwise break the fixed-positioning containment.
+ */
 body.capacitor-native .ddmau-mobile-bottom-nav {
     position: fixed !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: 0 !important;
 }
 
 /* Top banner sits below iPhone notch / Dynamic Island. With viewport-fit=cover

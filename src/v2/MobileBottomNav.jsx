@@ -95,13 +95,42 @@ export default function MobileBottomNav({
         { tab: '__more',   Icon: MoreHorizontal,   en: 'More',     es: 'Más' },
     ];
 
+    // 2026-06-01 — Andrew: "make the bottom bar look like the apple
+    // glass that is a floating button but locked at the bottom."
+    //
+    // Redesigned as a FLOATING Liquid Glass pill instead of an
+    // edge-to-edge bar. Visual references: iOS 26 Liquid Glass tab
+    // bars, iMessage floating composer, Apple Maps search pill.
+    //
+    // What changed vs the old design:
+    //   • Edge-to-edge → floats with 12px margin on left + right
+    //   • bottom: 0 → bottom: calc(safe-area + 8px) so it hovers above
+    //     the iPhone home indicator instead of sitting on it
+    //   • rounded-3xl (24px) corners for the pill silhouette
+    //   • bg-white/70 + backdrop-blur-2xl (heavier blur, more
+    //     translucent — Apple Liquid Glass spec)
+    //   • Outer drop shadow + 1px highlight ring (Apple's glass-on-bg
+    //     treatment — top edge looks glossy, bottom edge looks lifted)
+    //   • Removed the top hairline border (would look broken on a
+    //     floating element with rounded corners)
+    //   • Removed the absolute -top-2 active accent bar — it sat
+    //     OUTSIDE the rounded pill and looked detached. The bg-dd-sage
+    //     pill behind the active icon already reads "selected".
+    //
+    // Lock-down still in place:
+    //   • position: fixed (z-40)
+    //   • capacitor-native body class disables WKWebView rubber-band
+    //     (see index.css — prevents the bar from being dragged by
+    //     elastic overscroll)
+    //   • GPU layer pin (translateZ + isolation + contain) on the
+    //     .ddmau-mobile-bottom-nav class — no jitter during scroll.
     return (
         <nav
-            className="ddmau-mobile-bottom-nav md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/85 backdrop-blur-xl border-t border-dd-line/60 shadow-[0_-8px_24px_-4px_rgba(15,23,42,0.08)] bottom-nav-safe"
+            className="ddmau-mobile-bottom-nav md:hidden fixed left-3 right-3 z-40 rounded-3xl bg-white/70 backdrop-blur-2xl shadow-[0_10px_30px_-12px_rgba(0,0,0,0.25)] ring-1 ring-white/40"
+            style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
             aria-label={isEs ? 'Navegación principal' : 'Primary navigation'}
         >
-            {/* Hairline accent above the active tab — Toast-style indicator */}
-            <div className="grid grid-cols-5 px-1.5 pt-2 pb-0.5">
+            <div className="grid grid-cols-5 px-2 py-2">
                 {tabs.map((t) => {
                     const active = activeTab === t.tab;
                     const isMore = t.tab === '__more';
@@ -115,12 +144,6 @@ export default function MobileBottomNav({
                             aria-current={active ? 'page' : undefined}
                             aria-label={isEs ? t.es : t.en}
                         >
-                            {/* Top accent — 3px dd-green bar over the active tab.
-                                Toast / Sling pattern: makes the active state
-                                unmissable even when the screen is bright. */}
-                            {active && (
-                                <span className="absolute -top-2 left-1/2 -translate-x-1/2 w-8 h-[3px] rounded-full bg-dd-green" />
-                            )}
                             {/* Icon pill — solid sage when active, transparent
                                 otherwise. Slightly larger active state. */}
                             <span className={`relative flex items-center justify-center w-12 h-7 rounded-full transition-all duration-200 ${
