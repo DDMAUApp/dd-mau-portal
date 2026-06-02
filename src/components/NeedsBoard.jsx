@@ -118,7 +118,14 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState('');
-    const [showResolved, setShowResolved] = useState(false);
+    // 2026-06-01 — Andrew: "once i press show resolved it pops up the
+    // items but before the items list was blank." Default was hiding
+    // every resolved item, which surprises admins who added items in a
+    // testing pass and then can't find them. Switched to "always show
+    // everything" — open items grouped by urgency at the top, resolved
+    // items in a flat section below. The strike-through styling on the
+    // resolved cards already communicates state clearly.
+    const [hideResolved, setHideResolved] = useState(false);
 
     // Add-form state.
     const [draftText, setDraftText] = useState('');
@@ -197,29 +204,33 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
         return () => unsub();
     }, [collName, effectiveLocation]);
 
-    // Group by urgency for the open list. Resolved view stays flat.
-    // 2026-06-01 — now that the Firestore query returns ALL items in
-    // the collection (no server-side where filter — see useEffect
-    // comment), the open/resolved split happens here client-side.
+    // Group items for rendering. Strategy:
+    //   1. Always show open items grouped by urgency at the top.
+    //   2. Show a flat "Resolved" section below (unless hideResolved is
+    //      ON — that toggle lets a manager who only cares about pending
+    //      items collapse the resolved history out of the way).
+    //
+    // This means the screen is never blank just because items exist
+    // but are all resolved — they always render somewhere, marked
+    // with strike-through styling on the card.
     const groups = useMemo(() => {
         const open = items.filter((it) => it.status !== 'resolved');
         const resolved = items.filter((it) => it.status === 'resolved');
-        if (showResolved) {
-            // Flat list of resolved items, plus any still-open ones at
-            // the bottom so you can see everything at once.
-            return [
-                { key: 'resolved', label: tx('Resolved', 'Resueltos'), entries: resolved },
-                { key: 'open', label: tx('Still open', 'Pendientes'), entries: open },
-            ];
-        }
         const buckets = URGENCY_LEVELS.map((u) => ({
             key: u.key,
             label: tx(u.en, u.es),
             tone: u,
             entries: open.filter((it) => (it.urgency || 'soon') === u.key),
         }));
+        if (!hideResolved && resolved.length > 0) {
+            buckets.push({
+                key: 'resolved',
+                label: tx('Resolved', 'Resueltos'),
+                entries: resolved,
+            });
+        }
         return buckets;
-    }, [items, showResolved, isEs]);
+    }, [items, hideResolved, isEs]);
 
     // -- Add new need ------------------------------------------------------
     async function handleAdd(e) {
@@ -438,21 +449,23 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                 )}
             </form>
 
-            {/* Resolved toggle */}
+            {/* Resolved visibility toggle. Default state shows everything;
+                toggling hides the resolved section so managers triaging
+                only-open items aren't distracted by history. */}
             <div className="flex items-center justify-between mb-3">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-dd-text-2">
-                    {showResolved
-                        ? tx('All items', 'Todos')
-                        : tx('Open items', 'Pendientes')}
+                    {hideResolved
+                        ? tx('Open items only', 'Solo pendientes')
+                        : tx('All items', 'Todos')}
                 </span>
                 <button
                     type="button"
-                    onClick={() => setShowResolved((v) => !v)}
+                    onClick={() => setHideResolved((v) => !v)}
                     className="text-[11px] font-bold text-dd-green-700 hover:underline"
                 >
-                    {showResolved
-                        ? tx('Hide resolved', 'Ocultar resueltos')
-                        : tx('Show resolved', 'Mostrar resueltos')}
+                    {hideResolved
+                        ? tx('Show resolved', 'Mostrar resueltos')
+                        : tx('Hide resolved', 'Ocultar resueltos')}
                 </button>
             </div>
 
