@@ -59,8 +59,23 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- 2026-06-01 round 5 — Andrew: "the very top where the phone time
+	     is located is not visible because the time is white with the
+	     background as white. make the font black."
+	     Root cause: when UIViewControllerBasedStatusBarAppearance is
+	     true, iOS reads the WebView container's preferredStatusBarStyle.
+	     On iOS 17+ that defaults to .default which goes WHITE in any
+	     system-level dark context — even if our app is light. Forcing
+	     this to FALSE makes iOS read UIStatusBarStyle below globally,
+	     which we pin to DarkContent (dark text, dark icons). Combined
+	     with UIUserInterfaceStyle = Light below this also stops iOS
+	     auto-flipping the app to dark mode at the OS level. -->
 	<key>UIViewControllerBasedStatusBarAppearance</key>
-	<true/>
+	<false/>
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleDarkContent</string>
+	<key>UIUserInterfaceStyle</key>
+	<string>Light</string>
 	<!-- 2026-05-31 — Permission usage descriptions. Apple rejects apps that
 	     request permissions without honest, specific copy here. Each string
 	     gets shown verbatim in the OS permission prompt. -->

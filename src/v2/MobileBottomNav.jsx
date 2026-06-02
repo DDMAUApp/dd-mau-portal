@@ -166,7 +166,13 @@ export default function MobileBottomNav({
             // glass.
             style={{
                 position: 'fixed',
-                bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)',
+                // 2026-06-01 round 5 — Andrew: "the bottom bar is not moving
+                // but its too high. bring it down." Removed the +0.5rem
+                // padding above the safe area. The bar now sits flush with
+                // the top of the iPhone home-indicator zone — as close to
+                // the bottom of usable screen as iOS allows without
+                // clipping into the gesture area.
+                bottom: 'env(safe-area-inset-bottom, 0px)',
                 transform: 'translate3d(0, 0, 0)',
                 WebkitTransform: 'translate3d(0, 0, 0)',
                 willChange: 'transform',
