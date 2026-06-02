@@ -128,7 +128,7 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                         try { await deleteObject(photoRef); }
                         catch (cleanupErr) { console.warn("Maintenance photo orphan cleanup failed:", cleanupErr); }
                     }
-                    toast(language === "es" ? "Error al enviar solicitud" : "Error submitting request");
+                    toast(language === "es" ? "Error al enviar solicitud" : "Error submitting request", { kind: "error" });
                 }
                 setSubmitting(false);
             };
@@ -212,7 +212,7 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                             </label>
                             {photoPreview ? (
                                 <div className="relative">
-                                    <img src={photoPreview} alt="Preview" className="rounded-lg border border-gray-200 max-w-full" style={{maxHeight: "200px"}} />
+                                    <img src={photoPreview} alt={language === "es" ? "Vista previa" : "Preview"} className="rounded-lg border border-gray-200 max-w-full" style={{maxHeight: "200px"}} />
                                     {/* 32pt tap target — bumped from 24pt for
                                         finger reach on phones. Mobile audit
                                         2026-05-31. */}

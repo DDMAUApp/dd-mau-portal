@@ -1,4 +1,4 @@
-import { LogOut, Bell, ChevronLeft } from 'lucide-react';
+import { LogOut, Bell } from 'lucide-react';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsHeaderButton from './EnableNotificationsHeaderButton';
 

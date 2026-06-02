@@ -97,7 +97,7 @@ export default function OrderMode({
                                 {tx('Order mode', 'Modo pedido')}
                             </div>
                             <div className="text-[11px] opacity-90">
-                                {storeLocation === 'webster' ? 'Webster' : storeLocation === 'maryland' ? 'Maryland Heights' : storeLocation}
+                                {storeLocation === 'webster' ? tx('Webster', 'Webster') : storeLocation === 'maryland' ? tx('Maryland Heights', 'Maryland Heights') : storeLocation}
                                 {session ? ` · ${Object.keys(session.items || {}).length} ${tx('items', 'artículos')}` : ''}
                             </div>
                         </div>

@@ -1771,7 +1771,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             }
                         }).catch((err) => console.warn('legacy breakPlan read failed:', err));
                     }
-                });
+                }, (err) => console.warn('breakPlan snapshot error:', err));
                 // Migration of the OLDEST key (breakPlan_{date}, no loc),
                 // BOH-only, kept for parity with the pre-2026-05-25 behavior.
                 if (breakSide === 'BOH' && breakDate === getTodayKey()) {
@@ -1991,7 +1991,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             setChecklistLists(migLists);
                         }
                     }
-                });
+                }, (err) => console.warn('checklists2 snapshot subscribe failed', err));
 
                 // Active inventory-list subscription. Lives at /inventory_lists
                 // where status='active'. If/when one is found, its categories
@@ -2137,7 +2137,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             }
                         }
                     }
-                });
+                }, (err) => console.warn('inventory snapshot subscribe failed', err));
 
                 // Load vendor change log
                 const unsubVendorLog = onSnapshot(doc(db, "ops", "vendorLog_" + storeLocation), (docSnap) => {
@@ -5519,7 +5519,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         <span className="text-xs text-green-600 font-bold">{"\u{2713}"} {language === "es" ? "Foto tomada" : "Photo taken"}</span>
                                                         <span className="text-xs text-gray-400">{checks[currentPrefix + item.id + "_photoTime"] ? new Date(checks[currentPrefix + item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
                                                     </div>
-                                                    <img src={photoUrl} alt="Task photo" loading="lazy" decoding="async" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
+                                                    <img src={photoUrl} alt={language === 'es' ? 'Foto de tarea' : 'Task photo'} loading="lazy" decoding="async" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
                                                         onClick={() => {
                                                             const w = window.open(photoUrl, "_blank");
                                                             if (!w) {
@@ -5883,7 +5883,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                 {photoUrl ? (
                                                                     <a href={photoUrl} target="_blank" rel="noopener noreferrer"
                                                                         className="inline-block">
-                                                                        <img src={photoUrl} alt="Task photo"
+                                                                        <img src={photoUrl} alt={language === 'es' ? 'Foto de tarea' : 'Task photo'}
                                                                             loading="lazy" decoding="async"
                                                                             className="rounded border border-gray-200 max-h-20" />
                                                                     </a>

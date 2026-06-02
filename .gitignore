@@ -15,3 +15,5 @@ backups/
 # Vitest writes temp config files like vitest.config.js.timestamp-*.mjs
 # during test runs that should clean up but sometimes leak.
 vitest.config.js.timestamp-*
+**/google-services.json
+**/GoogleService-Info.plist

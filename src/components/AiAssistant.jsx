@@ -237,12 +237,12 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
                         <div className="flex items-center gap-2">
                             {routerStatus === "ok" && (
                                 <span style={{ fontSize: "10px", background: "rgba(255,255,255,0.2)", padding: "3px 8px", borderRadius: "12px" }}>
-                                    {"\u{1F7E2}"} Online
+                                    {"\u{1F7E2}"} {isEs ? "En linea" : "Online"}
                                 </span>
                             )}
                             {routerStatus === "down" && (
                                 <span style={{ fontSize: "10px", background: "rgba(255,0,0,0.3)", padding: "3px 8px", borderRadius: "12px" }}>
-                                    {"\u{1F534}"} Offline
+                                    {"\u{1F534}"} {isEs ? "Desconectado" : "Offline"}
                                 </span>
                             )}
                             <button

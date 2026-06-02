@@ -129,9 +129,12 @@ const config: CapacitorConfig = {
             resizeOnFullScreen: true,
         },
         CapacitorUpdater: {
-            // Capgo OTA updates. The API key is set at runtime in
-            // src/main.jsx (read from env at build time), NOT hard-
-            // coded here, so the same config works for dev + prod.
+            // Capgo OTA updates. Public Capgo cloud uses appId
+            // (com.ddmau.staff) as the auth anchor — no runtime API key
+            // needed. notifyAppReady() is called in src/capacitor-bridge.js.
+            // If we ever move to a private plan, set
+            // CapacitorUpdater.setUpdateUrl({ url, apiKey }) inside
+            // initCapacitor() in src/capacitor-bridge.js.
             // autoUpdate true means the plugin checks for a new bundle
             // on every app foreground; if newer, downloads + applies
             // on next cold launch.

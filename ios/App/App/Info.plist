@@ -55,7 +55,6 @@
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
@@ -85,8 +84,7 @@
 	<string>DD Mau uses the microphone to record voice notes in chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>DD Mau lets you attach photos from your library to chat and maintenance tickets.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>DD Mau saves PDFs of your onboarding paperwork to your photo library so you keep a personal copy.</string>
+	<!-- NSPhotoLibraryAddUsageDescription removed 2026-06-02: no code path writes to Photos; PDFs save to Files via Filesystem + Share sheet. Re-add only if a future feature actually calls UIImageWriteToSavedPhotosAlbum / PHPhotoLibrary save. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>DD Mau uses your location only when you are at work to confirm you are inside the restaurant for clock-in.</string>
 	<!-- Allow files from the iOS Files app + iCloud Drive when attaching documents. -->
@@ -94,5 +92,14 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<!-- 2026-06-02 — Added remote-notification background mode. Required so
+	     FCM/APNs content-available silent pushes from the dispatchNotification +
+	     sendShiftReminders Cloud Functions can wake a suspended/killed app to
+	     update badges and pre-fetch data. Must be paired with Push Notifications
+	     capability + aps-environment entitlement in Xcode (owner action). -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

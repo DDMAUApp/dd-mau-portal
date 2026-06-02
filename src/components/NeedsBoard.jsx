@@ -288,7 +288,7 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
             if (photoUploaded && photoStorageRef) {
                 try { await deleteObject(photoStorageRef); } catch (_) {}
             }
-            window.alert(tx(`Could not save: ${e?.message || 'error'}`, `No se pudo guardar.`));
+            window.alert(tx(`Could not save: ${e?.message || 'error'}`, `No se pudo guardar: ${e?.message || 'error'}`));
         } finally {
             setSubmitting(false);
         }
@@ -302,7 +302,7 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                 ? { status: 'resolved', resolvedAt: serverTimestamp(), resolvedBy: staffName || '' }
                 : { status: 'open', resolvedAt: null, resolvedBy: null });
         } catch (e) {
-            window.alert(tx(`Update failed: ${e?.message || 'error'}`, 'Error al actualizar.'));
+            window.alert(tx(`Update failed: ${e?.message || 'error'}`, `Error al actualizar: ${e?.message || 'error'}`));
         }
     }
 
@@ -314,7 +314,7 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
         try {
             await updateDoc(doc(db, collName, item.id), { urgency: next });
         } catch (e) {
-            window.alert(tx(`Update failed: ${e?.message || 'error'}`, 'Error al actualizar.'));
+            window.alert(tx(`Update failed: ${e?.message || 'error'}`, `Error al actualizar: ${e?.message || 'error'}`));
         }
     }
 
@@ -338,7 +338,7 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                 }
             }
         } catch (e) {
-            window.alert(tx(`Delete failed: ${e?.message || 'error'}`, 'Error al borrar.'));
+            window.alert(tx(`Delete failed: ${e?.message || 'error'}`, `Error al borrar: ${e?.message || 'error'}`));
         }
     }
 
@@ -434,7 +434,7 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                     <div className="mt-2.5 relative inline-block rounded-xl overflow-hidden border border-dd-line bg-black">
                         <img
                             src={draftPhotoPreview}
-                            alt="Preview"
+                            alt={tx('Preview', 'Vista previa')}
                             className="block max-h-32 w-auto"
                         />
                         <button

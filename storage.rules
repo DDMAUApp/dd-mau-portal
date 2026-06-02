@@ -144,6 +144,22 @@ service firebase.storage {
       allow delete: if true;
     }
 
+    // Needs Board attachments — NeedsBoard.jsx writes
+    // `needs/{location}/{ts}_{name}.{ext}` when an admin/manager picks
+    // a photo while filing a one-off supply request (brooms, pans,
+    // stickers, etc.). 2026-06-02 (autonomous code reviewer): without
+    // this block the photo upload silently 403s against the CR-6
+    // catch-all `write: if false` — the React try/catch then shows the
+    // generic "Could not save" alert and no photo is ever attached.
+    // Image-only, 10 MB cap (same posture as maintenance / checklist
+    // photos above).
+    match /needs/{location}/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if true;     // admin cleanup on need delete
+    }
+
     // ── Catch-all ──────────────────────────────────────────────────────
     // Hardened 2026-05-30 (CR-6). The previous catch-all allowed both
     // read AND write on any unlisted path — meaning any new feature that

@@ -872,7 +872,7 @@ export default function CateringOrder({ language, staffName }) {
                                         <tr style={{background: "#2d6e42", color: "white"}}>
                                             <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "left", width: "30px"}}>#</th>
                                             <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "left"}}>{language === "es" ? "Artículo" : "Item"}</th>
-                                            <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "center", width: "40px"}}>Qty</th>
+                                            <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "center", width: "40px"}}>{language === "es" ? "Cant." : "Qty"}</th>
                                             <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "right", width: "65px"}}>{language === "es" ? "Precio" : "Price"}</th>
                                             <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "right", width: "65px"}}>Total</th>
                                         </tr>
@@ -958,7 +958,7 @@ export default function CateringOrder({ language, staffName }) {
                                     <div>
                                         <p className="font-bold text-gray-800">{o.customer?.name}</p>
                                         <p className="text-xs text-gray-500">{o.customer?.date} @ {o.customer?.time} — {o.customer?.guests} guests</p>
-                                        <p className="text-xs text-gray-400">{"🏪 " + (o.customer?.pickupLocation === "maryland" ? "Maryland Heights" : "Webster") + " — " + (o.customer?.orderType === "delivery" ? "🚗 Delivery" : "Pickup")}</p>
+                                        <p className="text-xs text-gray-400">{"🏪 " + (o.customer?.pickupLocation === "maryland" ? "Maryland Heights" : "Webster") + " — " + (o.customer?.orderType === "delivery" ? "🚗 " + (language === "es" ? "Entrega" : "Delivery") : (language === "es" ? "Recogida" : "Pickup"))}</p>
                                     </div>
                                     <div className="text-right">
                                         <p className="font-bold text-mint-700">${o.total?.toFixed(2)}</p>
@@ -1218,7 +1218,7 @@ export default function CateringOrder({ language, staffName }) {
                                                     placeholder="0.00" />
                                             </div>
                                             <div className="w-20">
-                                                <label className="block text-xs font-bold text-gray-600 mb-1">Qty</label>
+                                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Cant." : "Qty"}</label>
                                                 <div className="flex items-center border-2 border-gray-200 rounded-lg bg-white">
                                                     <button onClick={() => setCustomItemQty(Math.max(1, customItemQty - 1))} className="px-2 py-2 text-gray-500 font-bold">−</button>
                                                     <span className="flex-1 text-center text-sm font-bold">{customItemQty}</span>
