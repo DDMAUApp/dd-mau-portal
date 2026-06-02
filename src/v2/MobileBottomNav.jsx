@@ -126,8 +126,26 @@ export default function MobileBottomNav({
     //     .ddmau-mobile-bottom-nav class — no jitter during scroll.
     return (
         <nav
-            className="ddmau-mobile-bottom-nav md:hidden fixed left-3 right-3 z-40 rounded-3xl bg-white/70 backdrop-blur-2xl shadow-[0_10px_30px_-12px_rgba(0,0,0,0.25)] ring-1 ring-white/40"
-            style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+            className="ddmau-mobile-bottom-nav md:hidden left-3 right-3 z-40 rounded-3xl bg-white/40 backdrop-blur-2xl backdrop-saturate-150 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.25)] ring-1 ring-white/50"
+            // 2026-06-01 round 2 — Andrew: "no it still moves and its not
+            // clear." Stronger lockdown via INLINE styles (highest CSS
+            // specificity, cannot be overridden by any cascade) PLUS a
+            // hard transform: translate3d to force own GPU compositing
+            // layer that the WKWebView can't drag during rubber-band
+            // overscroll. touchAction:'manipulation' tells iOS the nav
+            // is interactive and not part of the scroll surface.
+            // Also dropped opacity to white/40 and added backdrop-
+            // saturate-150 for the truly translucent Apple Liquid Glass
+            // look — at /70 it was reading as a frosted white bar, not
+            // glass.
+            style={{
+                position: 'fixed',
+                bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)',
+                transform: 'translate3d(0, 0, 0)',
+                WebkitTransform: 'translate3d(0, 0, 0)',
+                willChange: 'transform',
+                touchAction: 'manipulation',
+            }}
             aria-label={isEs ? 'Navegación principal' : 'Primary navigation'}
         >
             <div className="grid grid-cols-5 px-2 py-2">

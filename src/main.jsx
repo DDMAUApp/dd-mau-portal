@@ -20,6 +20,18 @@ import { initSentry } from './data/sentryClient.js';
 // up to a white screen because a single PWA setup exception broke
 // the entire boot chain. Defensive try/catch keeps the React tree
 // rendering even if one helper bombs.
+// 2026-06-01 round 2 — Set body.capacitor-native SYNCHRONOUSLY here
+// before React renders. capacitor-bridge.js still sets it from its
+// async initCapacitor() below, but that runs AFTER the first paint —
+// so for the first ~50ms of frames the bottom nav rendered without
+// the CSS rules that disable WKWebView rubber-band. Setting the class
+// here makes the lockdown rules apply from frame 1 of the React tree.
+try {
+    if (typeof window !== 'undefined' && window?.Capacitor?.isNativePlatform?.()) {
+        document.body.classList.add('capacitor-native');
+    }
+} catch (_) { /* no-op — non-fatal if Capacitor global isn't there */ }
+
 try { initSentry(); } catch (e) { console.warn('initSentry failed:', e?.message); }
 try { setupPWA(); } catch (e) { console.warn('setupPWA failed:', e?.message); }
 // Fire-and-forget: the Capacitor init reads platform state then
