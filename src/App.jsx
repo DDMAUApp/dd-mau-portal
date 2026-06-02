@@ -53,6 +53,11 @@ const Schedule = lazy(() => import('./components/Schedule').then(m => ({ default
 const Recipes = lazy(() => import('./components/Recipes').then(m => ({ default: memo(m.default) })));
 const LaborDashboard = lazy(() => import('./components/LaborDashboard').then(m => ({ default: memo(m.default) })));
 const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard').then(m => ({ default: memo(m.default) })));
+// 2026-06-01 — Needs Board. Admin/manager-only board for one-off
+// supply requests that don't belong in inventory (brooms, pans,
+// stickers, etc.). Each entry has urgency + timestamp + staff name.
+// See src/components/NeedsBoard.jsx for schema details.
+const NeedsBoard = lazy(() => import('./components/NeedsBoard').then(m => ({ default: memo(m.default) })));
 const CateringOrder = lazy(() => import('./components/CateringOrder').then(m => ({ default: memo(m.default) })));
 const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest').then(m => ({ default: memo(m.default) })));
 const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: memo(m.default) })));
@@ -1590,6 +1595,9 @@ export default function App() {
             if (activeTab === 'recipes' && hasRecipesAccess) return <PageErrorBoundary tabName="Recipes" language={language}><Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} geoRetry={geoRetry} geoPermState={geoPermState} /></PageErrorBoundary>;
             if (activeTab === 'labor' && staffIsAdmin) return <PageErrorBoundary tabName="Labor" language={language}><LaborDashboard language={language} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'eighty6' && canSeePage(currentStaffRecord, 'eighty6')) return <PageErrorBoundary tabName="86 Board" language={language}><Eighty6Dashboard language={language} storeLocation={effectiveLocation} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} /></PageErrorBoundary>;
+            // 2026-06-01 — Needs Board. Admin + manager only. Same pool that
+            // sees Operations + AdminPanel — staff cannot reach this tab.
+            if (activeTab === 'needs' && (staffIsAdmin || isManager)) return <PageErrorBoundary tabName="Needs Board" language={language}><NeedsBoard language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'catering' && canSeePage(currentStaffRecord, 'catering')) return <PageErrorBoundary tabName="Catering" language={language}><CateringOrder language={language} staffName={staffName} /></PageErrorBoundary>;
             if (activeTab === 'maintenance' && canSeePage(currentStaffRecord, 'maintenance')) return <PageErrorBoundary tabName="Maintenance" language={language}><MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'insurance' && canSeePage(currentStaffRecord, 'insurance')) return <PageErrorBoundary tabName="Insurance" language={language}><InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} /></PageErrorBoundary>;

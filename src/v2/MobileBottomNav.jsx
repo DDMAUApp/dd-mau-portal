@@ -177,7 +177,7 @@ export default function MobileBottomNav({
                 // without a home indicator (older devices, env() = 0)
                 // stay at screen-bottom, never pushed off-screen by the
                 // subtraction.
-                bottom: 'max(calc(env(safe-area-inset-bottom, 0px) - 18px), 0px)',
+                bottom: 'max(calc(env(safe-area-inset-bottom, 0px) - 30px), 0px)',
                 transform: 'translate3d(0, 0, 0)',
                 WebkitTransform: 'translate3d(0, 0, 0)',
                 willChange: 'transform',

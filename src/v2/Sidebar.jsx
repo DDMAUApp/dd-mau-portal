@@ -37,6 +37,7 @@ import {
     Settings as SettingsIcon,
     Bell,
     Mail,
+    ShoppingCart,
 } from 'lucide-react';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
@@ -89,6 +90,10 @@ const NAV_GROUPS = [
             { tab: 'recipes', Icon: BookOpen,         en: 'Recipes',  es: 'Recetas',   requires: 'recipesAccess' },
             { tab: 'menu',    Icon: UtensilsCrossed,  en: 'Menu',     es: 'Menú' },
             { tab: 'eighty6', Icon: Ban,              en: '86 Board', es: 'Tablero 86' },
+            // 2026-06-01 — Needs Board. Admin + manager only board for
+            // one-off supply requests outside the inventory system
+            // (brooms, pans, stickers, anything not on a par level).
+            { tab: 'needs',   Icon: ShoppingCart,     en: 'Needs Board', es: 'Lista de Pedidos', requires: 'manager' },
         ],
     },
     {
