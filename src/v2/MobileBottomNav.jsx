@@ -166,13 +166,18 @@ export default function MobileBottomNav({
             // glass.
             style={{
                 position: 'fixed',
-                // 2026-06-01 round 5 — Andrew: "the bottom bar is not moving
-                // but its too high. bring it down." Removed the +0.5rem
-                // padding above the safe area. The bar now sits flush with
-                // the top of the iPhone home-indicator zone — as close to
-                // the bottom of usable screen as iOS allows without
-                // clipping into the gesture area.
-                bottom: 'env(safe-area-inset-bottom, 0px)',
+                // 2026-06-01 round 6 — Andrew: "bring the bottom bar down
+                // more." Round 5 sat flush with the safe area. Now we
+                // intentionally pull the bar 18px BELOW the safe-area
+                // floor, overlapping the upper edge of the iPhone home-
+                // indicator gesture zone (Apple's tab bars do this too).
+                // The home indicator gesture still works because iOS
+                // processes the upward swipe regardless of overlapping
+                // content. max(..., 0px) clamps the value so iPhones
+                // without a home indicator (older devices, env() = 0)
+                // stay at screen-bottom, never pushed off-screen by the
+                // subtraction.
+                bottom: 'max(calc(env(safe-area-inset-bottom, 0px) - 18px), 0px)',
                 transform: 'translate3d(0, 0, 0)',
                 WebkitTransform: 'translate3d(0, 0, 0)',
                 willChange: 'transform',
