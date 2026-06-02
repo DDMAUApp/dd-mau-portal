@@ -37,13 +37,29 @@ function isCapacitorNative() {
 // Lazy-load the native push plugin so the web build doesn't pull
 // in code it never executes. Dynamic import keeps the plugin off
 // the web critical path.
+//
+// 2026-06-02 — Switched from `@capacitor/push-notifications` to
+// `@capacitor-firebase/messaging`. Reason: the raw push-notifications
+// plugin returns an APNs *device token* (hex) on iOS unless Firebase
+// iOS SDK is also linked into the native shell. The dispatchNotification
+// Cloud Function uses `getMessaging().sendEachForMulticast(tokens)`
+// which requires FCM registration tokens — APNs raw tokens are rejected
+// at the Admin SDK layer with "Invalid registration token". So the old
+// path silently produced unusable tokens.
+//
+// `@capacitor-firebase/messaging` wraps Firebase iOS SDK natively, so
+// `getToken()` returns a real FCM registration token routable through
+// the existing dispatch flow with NO Cloud Function changes. Requires
+// GoogleService-Info.plist to be present in the Xcode project (owner
+// step). On web build this dynamic import is a no-op via the
+// isCapacitorNative() short-circuit.
 async function loadNativePushPlugin() {
     if (!isCapacitorNative()) return null;
     try {
-        const mod = await import("@capacitor/push-notifications");
-        return mod.PushNotifications || null;
+        const mod = await import("@capacitor-firebase/messaging");
+        return mod.FirebaseMessaging || null;
     } catch (e) {
-        console.warn("[FCM] @capacitor/push-notifications import failed:", e?.message);
+        console.warn("[FCM] @capacitor-firebase/messaging import failed:", e?.message);
         return null;
     }
 }
@@ -101,6 +117,9 @@ async function enableNativePush(staffName, staffList, setStaffList) {
     //    on first call; later calls return the current state. iOS
     //    is the strict gate here — Android Chrome had to opt-in
     //    in the web flow too.
+    //
+    // @capacitor-firebase/messaging mirrors @capacitor/push-notifications
+    // for permission shape: { receive: 'granted' | 'denied' | 'prompt' }.
     let permResult;
     try {
         permResult = await plugin.requestPermissions();
@@ -112,31 +131,21 @@ async function enableNativePush(staffName, staffList, setStaffList) {
         return { ok: false, reason: "permission-denied" };
     }
 
-    // 2) Register. The plugin emits a one-shot `registration` event
-    //    with the token. Wire a one-time listener that resolves the
-    //    promise we await below. 10s timeout so we never strand the
-    //    caller in case APNs is slow.
-    const tokenPromise = new Promise((resolve, reject) => {
-        let settled = false;
-        const finish = (val, err) => {
-            if (settled) return;
-            settled = true;
-            regSub?.remove?.();
-            errSub?.remove?.();
-            err ? reject(err) : resolve(val);
-        };
-        let regSub, errSub;
-        plugin.addListener("registration", (t) => finish(t?.value || null)).then((s) => { regSub = s; });
-        plugin.addListener("registrationError", (e) => finish(null, new Error(e?.error || "registration-error"))).then((s) => { errSub = s; });
-        plugin.register().catch((e) => finish(null, e));
-        setTimeout(() => finish(null, new Error("registration-timeout")), 10_000);
-    });
-
+    // 2) Mint the FCM registration token. `getToken()` returns the FCM
+    //    token directly — no event listener dance, no APNs round-trip
+    //    to wait for. The plugin handles the APNs → FCM swap internally
+    //    against Firebase's hosted Sandbox/Production environments.
+    //    On first call iOS still needs the APNs token to be available
+    //    from the system, which can take a couple seconds after a fresh
+    //    install — the plugin handles that wait internally, so we just
+    //    await getToken() and trust the result.
     let token;
-    try { token = await tokenPromise; }
-    catch (e) {
-        console.warn("[FCM][native] register failed:", e?.message);
-        return { ok: false, reason: "register-failed" };
+    try {
+        const res = await plugin.getToken();
+        token = res?.token || null;
+    } catch (e) {
+        console.warn("[FCM][native] getToken failed:", e?.message);
+        return { ok: false, reason: "register-failed", error: e?.message };
     }
     if (!token) return { ok: false, reason: "no-token" };
 
@@ -455,7 +464,10 @@ export async function onForegroundMessage(handler) {
     if (isCapacitorNative()) {
         const plugin = await loadNativePushPlugin();
         if (!plugin) return () => {};
-        const sub = await plugin.addListener("pushNotificationReceived", (notification) => {
+        // @capacitor-firebase/messaging fires `notificationReceived`
+        // (singular event for foreground delivery). Same payload shape
+        // as the old plugin — { title, body, data }.
+        const sub = await plugin.addListener("notificationReceived", (notification) => {
             // Shape adapter: FCM web SDK delivers { notification: { title, body }, data: {...} };
             // Capacitor delivers { title, body, data: {...} }. Normalize to the FCM shape so
             // every consumer keeps working.

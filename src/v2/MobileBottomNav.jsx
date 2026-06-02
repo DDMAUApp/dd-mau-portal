@@ -145,6 +145,7 @@ export default function MobileBottomNav({
     // true viewport regardless of #root's scrolling. The web build
     // also benefits — same code path, no platform branch needed.
     const nav = (
+        <nav
             // 2026-06-01 round 3 — Andrew sent the iOS 26 Apple Game Center
             // tab bar as reference. Key spec deltas from the round-2 build:
             //   • rounded-3xl → rounded-full (true pill silhouette with

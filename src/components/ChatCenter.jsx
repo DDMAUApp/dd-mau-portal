@@ -381,11 +381,18 @@ export default function ChatCenter({
 
     // ── Mark chat notifications read on entering this tab ───────
     // The /notifications docs of type chat_message + chat_mention
-    // drive the unread badge on the Chat tile + sidebar entry. We
-    // mark them all read when the user enters ChatCenter — the
-    // per-chat unread indicators below (lastReadByName) still drive
-    // the WITHIN-list unread dots, so the user can still see which
-    // CONVERSATIONS are unread even after entering the tab.
+    // + chat_reply drive the unread badge on the Chat tile +
+    // sidebar entry. We mark them all read when the user enters
+    // ChatCenter — the per-chat unread indicators below
+    // (lastReadByName) still drive the WITHIN-list unread dots, so
+    // the user can still see which CONVERSATIONS are unread even
+    // after entering the tab.
+    //
+    // 2026-06-02 — Andrew home-screen badge fix. The badge counter
+    // in AppDataContext now also includes chat_reply, so this
+    // mark-read sweep has to match — otherwise reply notifications
+    // would never clear and the Chat tile badge would stick after
+    // opening chat.
     useEffect(() => {
         if (!staffName) return;
         let cancelled = false;
@@ -401,7 +408,7 @@ export default function ChatCenter({
                 const chatDocs = [];
                 snap.forEach(d => {
                     const t = d.data().type;
-                    if (t === 'chat_message' || t === 'chat_mention') chatDocs.push(d.id);
+                    if (t === 'chat_message' || t === 'chat_mention' || t === 'chat_reply') chatDocs.push(d.id);
                 });
                 if (chatDocs.length === 0) return;
                 const batch = writeBatch(db);

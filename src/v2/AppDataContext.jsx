@@ -342,12 +342,19 @@ export function AppDataProvider({ staffName, storeLocation, staffListReady = fal
             return pair.webster;
         };
         // Chat unread = unread notifications of type chat_message OR
-        // chat_mention. We compute it off the same notifications stream
-        // (already filtered to forStaff === me) so the chat tile + nav
-        // badge update instantly when a new chat message arrives, even
-        // before the chat document's lastReadByName mark is written.
+        // chat_mention OR chat_reply. We compute it off the same
+        // notifications stream (already filtered to forStaff === me)
+        // so the chat tile + nav badge update instantly when a new
+        // chat message arrives, even before the chat document's
+        // lastReadByName mark is written.
+        //
+        // 2026-06-02 — Andrew "if i have a new message in chat i
+        // want a 1 like 86 board has." Verified the badge wiring on
+        // the mobile chat Tile was already in place; the gap was
+        // that chat_reply (added in task #139) was missing from this
+        // filter. Reply notifications now bump the badge too.
         const unreadChat = notifications.filter(n =>
-            !n.read && (n.type === 'chat_message' || n.type === 'chat_mention')
+            !n.read && (n.type === 'chat_message' || n.type === 'chat_mention' || n.type === 'chat_reply')
         ).length;
         return {
             notifications,
