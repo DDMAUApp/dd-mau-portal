@@ -34,7 +34,7 @@
 // (with a confirmation prompt — per Andrew's persistent rule that no
 // destructive action happens without an "are you sure" prompt).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     collection,
     addDoc,
@@ -47,8 +47,9 @@ import {
     updateDoc,
     where,
 } from 'firebase/firestore';
-import { db } from '../firebase';
-import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, Sparkles } from 'lucide-react';
+import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { db, storage } from '../firebase';
+import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, Sparkles, Camera, X } from 'lucide-react';
 
 // Display labels per urgency level.
 const URGENCY_LEVELS = [
@@ -123,6 +124,42 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
     const [draftText, setDraftText] = useState('');
     const [draftUrgency, setDraftUrgency] = useState('soon');
     const [submitting, setSubmitting] = useState(false);
+    // 2026-06-01 — Andrew: "make it so we can add pictures." One image
+    // per need, optional. draftPhoto holds the picked File (browser /
+    // native system picker), draftPhotoPreview holds the dataURL for
+    // the thumbnail shown before submit. Both clear after a successful
+    // add. The hidden file input is opened via the photo button.
+    const [draftPhoto, setDraftPhoto] = useState(null);
+    const [draftPhotoPreview, setDraftPhotoPreview] = useState(null);
+    const photoInputRef = useRef(null);
+    // Lightbox state — tap any need's thumbnail to expand to a fullscreen
+    // overlay. Holds the URL of the image currently being viewed.
+    const [lightboxUrl, setLightboxUrl] = useState(null);
+
+    // Photo picker. accept=image/* + capture=environment matches the
+    // pattern used in MaintenanceRequest + ChatThread — on iOS Safari +
+    // Capacitor WKWebView this opens the system sheet with "Take Photo",
+    // "Choose from Library", and "Choose File" options.
+    function handlePhotoSelect(e) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        // Early-reject oversize photos (Storage rule caps at 10 MB but
+        // the failure arrives minutes later on cellular). Same threshold
+        // MaintenanceRequest uses.
+        if (file.size > 10 * 1024 * 1024) {
+            window.alert(tx('Photo is too large (max 10 MB)', 'Foto muy grande (máx 10 MB)'));
+            return;
+        }
+        setDraftPhoto(file);
+        const reader = new FileReader();
+        reader.onload = (ev) => setDraftPhotoPreview(ev.target.result);
+        reader.readAsDataURL(file);
+    }
+    function clearPhoto() {
+        setDraftPhoto(null);
+        setDraftPhotoPreview(null);
+        if (photoInputRef.current) photoInputRef.current.value = '';
+    }
 
     // Live subscription. Scope to open items by default; resolved fetched
     // lazily when the toggle is on.
@@ -174,7 +211,25 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
             return;
         }
         setSubmitting(true);
+        // Track the uploaded photoRef so we can roll it back if the
+        // Firestore write fails — orphaned files would otherwise sit
+        // in Storage forever. Same pattern MaintenanceRequest uses.
+        let photoStorageRef = null;
+        let photoUploaded = false;
         try {
+            let photoUrl = null;
+            let photoPath = null;
+            if (draftPhoto) {
+                // Storage path: needs/{location}/{timestamp}_{name}. Random
+                // would be safer against name collisions, but the timestamp
+                // is unique enough at our scale and makes the file lineage
+                // obvious when triaging.
+                photoPath = `needs/${effectiveLocation}/${Date.now()}_${draftPhoto.name}`;
+                photoStorageRef = storageRef(storage, photoPath);
+                await uploadBytes(photoStorageRef, draftPhoto);
+                photoUploaded = true;
+                photoUrl = await getDownloadURL(photoStorageRef);
+            }
             await addDoc(collection(db, collName), {
                 text,
                 urgency: draftUrgency,
@@ -188,12 +243,20 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                 resolvedAt: null,
                 resolvedBy: null,
                 location: effectiveLocation,
+                photoUrl,
+                photoPath,
             });
             setDraftText('');
+            clearPhoto();
             // Keep urgency on whatever the user just used — usually
             // multiple items get added in a row at the same level.
         } catch (e) {
             console.warn('[NeedsBoard] add failed', e);
+            // Rollback the orphaned photo if Firestore failed AFTER the
+            // upload succeeded.
+            if (photoUploaded && photoStorageRef) {
+                try { await deleteObject(photoStorageRef); } catch (_) {}
+            }
             window.alert(tx(`Could not save: ${e?.message || 'error'}`, `No se pudo guardar.`));
         } finally {
             setSubmitting(false);
@@ -233,6 +296,16 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
         if (!ok) return;
         try {
             await deleteDoc(doc(db, collName, item.id));
+            // Clean up the photo from Storage too. Best-effort — if the
+            // delete fails (e.g. photo already gone) we still treat the
+            // doc deletion as successful.
+            if (item.photoPath) {
+                try {
+                    await deleteObject(storageRef(storage, item.photoPath));
+                } catch (e) {
+                    console.warn('[NeedsBoard] photo cleanup failed:', e?.message);
+                }
+            }
         } catch (e) {
             window.alert(tx(`Delete failed: ${e?.message || 'error'}`, 'Error al borrar.'));
         }
@@ -288,15 +361,61 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                             </button>
                         );
                     })}
+                    {/* Photo picker — hidden input + visible button.
+                        accept=image/* + capture=environment matches the
+                        codebase pattern: on iOS Safari + Capacitor
+                        WKWebView this opens a sheet with "Take Photo",
+                        "Choose from Library", and "Choose File". */}
+                    <input
+                        ref={photoInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handlePhotoSelect}
+                        className="hidden"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => photoInputRef.current?.click()}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold border transition active:scale-95 ${
+                            draftPhoto
+                                ? 'bg-dd-green text-white border-transparent'
+                                : 'bg-white text-dd-text border-dd-line hover:bg-dd-bg'
+                        }`}
+                        title={tx('Add photo', 'Añadir foto')}
+                    >
+                        <Camera size={13} strokeWidth={2.4} />
+                        {draftPhoto ? tx('Photo ready', 'Foto lista') : tx('Photo', 'Foto')}
+                    </button>
                     <button
                         type="submit"
                         disabled={!draftText.trim() || submitting}
                         className="ml-auto inline-flex items-center gap-1 px-3.5 py-2 rounded-xl bg-dd-green text-white text-sm font-bold transition active:scale-95 disabled:opacity-50"
                     >
                         <Plus size={16} strokeWidth={2.5} />
-                        {tx('Add', 'Añadir')}
+                        {submitting ? tx('Adding…', 'Añadiendo…') : tx('Add', 'Añadir')}
                     </button>
                 </div>
+                {/* Photo preview pill — shown after the user picks a file,
+                    BEFORE submit. X button clears the photo without
+                    discarding the rest of the form. */}
+                {draftPhotoPreview && (
+                    <div className="mt-2.5 relative inline-block rounded-xl overflow-hidden border border-dd-line bg-black">
+                        <img
+                            src={draftPhotoPreview}
+                            alt="Preview"
+                            className="block max-h-32 w-auto"
+                        />
+                        <button
+                            type="button"
+                            onClick={clearPhoto}
+                            className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition active:scale-95"
+                            title={tx('Remove photo', 'Quitar foto')}
+                        >
+                            <X size={14} strokeWidth={2.5} />
+                        </button>
+                    </div>
+                )}
             </form>
 
             {/* Resolved toggle */}
@@ -365,6 +484,25 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                                                     <p className={`text-sm font-semibold text-dd-text break-words ${isResolved ? 'line-through' : ''}`}>
                                                         {it.text}
                                                     </p>
+                                                    {/* Photo thumbnail (if uploaded). Lazy-loaded
+                                                        so a long list with many photos doesn't
+                                                        immediately request every image. Tap to
+                                                        expand to lightbox. */}
+                                                    {it.photoUrl && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setLightboxUrl(it.photoUrl)}
+                                                            className="mt-2 block rounded-lg overflow-hidden border border-dd-line shadow-sm active:scale-95 transition"
+                                                            title={tx('Tap to view full size', 'Toca para ver en grande')}
+                                                        >
+                                                            <img
+                                                                src={it.photoUrl}
+                                                                alt=""
+                                                                loading="lazy"
+                                                                className="block max-h-32 w-auto"
+                                                            />
+                                                        </button>
+                                                    )}
                                                     <div className="flex flex-wrap items-center gap-2 mt-1.5">
                                                         <button
                                                             type="button"
@@ -398,6 +536,35 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                         </section>
                     ),
                 )
+            )}
+
+            {/* Lightbox — fullscreen overlay shown when a need's thumbnail
+                is tapped. Tap anywhere outside the image (or the X) to
+                close. z-50 sits above the bottom nav (z-40) so it covers
+                the whole screen even when the user opens it from a card
+                that scrolled to where the nav was.
+                Uses the same dark-scrim + tap-to-dismiss pattern other
+                modals in the app use. */}
+            {lightboxUrl && (
+                <div
+                    className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+                    onClick={() => setLightboxUrl(null)}
+                >
+                    <button
+                        type="button"
+                        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center backdrop-blur-md hover:bg-white/25 transition active:scale-95"
+                        onClick={(e) => { e.stopPropagation(); setLightboxUrl(null); }}
+                        title={tx('Close', 'Cerrar')}
+                    >
+                        <X size={20} strokeWidth={2.5} />
+                    </button>
+                    <img
+                        src={lightboxUrl}
+                        alt=""
+                        className="max-h-full max-w-full object-contain rounded-xl shadow-2xl"
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                </div>
             )}
         </div>
     );
