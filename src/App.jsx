@@ -1266,22 +1266,35 @@ export default function App() {
             : "home";
         setActiveTab(tab);
     };
-    // Same logic applied to the in-session Home tab — when staff (even on a
-    // device that didn't just sign in) taps Home, redirect to their preferred
-    // landing tab. This is a one-shot effect: once it redirects, normal nav
-    // takes over (so they CAN reach the default Home by going through some
-    // other tab and tapping Home again is fine — they'll get redirected, but
-    // any other manual tab tap stays put).
-    useEffect(() => {
-        if (activeTab !== 'home') return;
-        if (!currentStaffRecord) return;
-        const target = currentStaffRecord.homeView;
-        if (!target || target === 'auto' || target === 'home') return;
-        // Don't redirect to a tab the user can't access.
-        if (target === 'operations' && !hasOpsAccess) return;
-        if (target === 'recipes' && !hasRecipesAccess) return;
-        setActiveTab(target);
-    }, [activeTab, currentStaffRecord?.homeView, hasOpsAccess, hasRecipesAccess]);
+    // 2026-06-02 — Andrew: "if i add a default tab in the bulk edit it
+    // doesnt let you leave that tab."
+    //
+    // Root cause of the "stuck" feeling: the previous version of this
+    // effect re-fired any time activeTab became 'home' AND any time the
+    // currentStaffRecord identity changed (which happens on every
+    // /config/staff snapshot — i.e. whenever any other admin edited
+    // anything on the staff list, like a bulk tag sweep). The comment
+    // claimed the redirect was "one-shot" but it wasn't: tapping the
+    // Home tab always snapped you back to homeView, and an unrelated
+    // staff-list update while you sat on the Home page could yank you
+    // off Home into homeView with no user input.
+    //
+    // The bulk-edit sweep made this very visible: admin sets "Schedule
+    // home" for a batch of staff, the snapshot pushes to every connected
+    // device, and whichever staff happened to be ON the Home tab at
+    // that moment got yanked to Schedule with no chance to tap their
+    // way out (the next render fired the effect again the moment they
+    // tried to navigate back).
+    //
+    // Fix: removed the in-session Home redirect entirely. handleSelectStaff
+    // (line ~1264) still lands the staff on their homeView at SIGN-IN —
+    // that's the genuine "preferred landing" use case. After sign-in,
+    // Home tab means Home; the user is free to navigate anywhere; and
+    // a bulk-edit snapshot can no longer yank them mid-task. If the
+    // owner ever wants a per-staff "always redirect Home → X" mode
+    // back, do it as an opt-in setting separate from homeView and
+    // pair it with a one-shot ref so it does not fire on snapshot
+    // refresh.
 
     // ── Required-task interceptor ───────────────────────────────────────
     // After PIN unlock, check if the current staffer has any BLOCKING
