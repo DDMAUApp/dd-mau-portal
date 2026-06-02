@@ -54,6 +54,31 @@ function resolveText(val, recipient) {
     return String(val);
 }
 
+// 2026-06-02 — bilingual persistence. The notification doc now carries
+// BOTH titleEn/titleEs + bodyEn/bodyEs alongside the resolved client-
+// side title/body. Reason: the dispatchNotification Cloud Function
+// reads doc.title/doc.body directly when forming the FCM payload, so
+// historically the recipient's phone push was locked to whichever
+// language the WRITER's resolveText picked — meaning a Spanish-only
+// kitchen worker could still get an English push if the writer happened
+// to be Andrew (English) and the helper resolved on Andrew's recipient
+// pointer wrong, OR if the call site passed a plain English string.
+// Persisting both variants lets the Cloud Function pick per recipient
+// at dispatch time (FOLLOW-UP — see blockingForOwner on this PR).
+// In the meantime the resolved title/body remain for backwards-compat
+// with NotificationsDrawer + the current CF.
+function splitVariants(val) {
+    if (val == null) return { en: '', es: '' };
+    if (typeof val === 'string') return { en: val, es: val };
+    if (typeof val === 'object') {
+        const en = val.en || val.es || '';
+        const es = val.es || val.en || '';
+        return { en, es };
+    }
+    const s = String(val);
+    return { en: s, es: s };
+}
+
 // Look up the live MANAGEMENT recipients (owners by id + anyone with
 // "manager" or "owner" in their role title). Independent of the
 // canViewOnboarding flag, which is scoped to PII access — using it as
@@ -156,6 +181,8 @@ export async function notifyAdmins({
         console.info('notifyAdmins: no recipients, skipping');
         return [];
     }
+    const titleVar = splitVariants(title);
+    const bodyVar = splitVariants(body);
     const ids = await Promise.all(recipients.map(async (recipient) => {
         try {
             const ref = await addDoc(collection(db, 'notifications'), {
@@ -167,6 +194,14 @@ export async function notifyAdmins({
                 // React. See resolveText doc block.
                 title: resolveText(title, recipient),
                 body: resolveText(body, recipient),
+                // 2026-06-02 — persist both languages so the
+                // dispatchNotification Cloud Function can pick per
+                // recipient at dispatch time instead of being stuck
+                // with whatever the writer's resolveText picked.
+                titleEn: titleVar.en,
+                titleEs: titleVar.es,
+                bodyEn: bodyVar.en,
+                bodyEs: bodyVar.es,
                 link,
                 tag: tag || `${type}:${fallbackTagBucket()}`,
                 createdAt: serverTimestamp(),
@@ -208,6 +243,8 @@ export async function notifyManagement({
         console.info('notifyManagement: no recipients, skipping');
         return [];
     }
+    const titleVar = splitVariants(title);
+    const bodyVar = splitVariants(body);
     const ids = await Promise.all(filtered.map(async (recipient) => {
         try {
             const ref = await addDoc(collection(db, 'notifications'), {
@@ -215,6 +252,11 @@ export async function notifyManagement({
                 type,
                 title: resolveText(title, recipient),
                 body: resolveText(body, recipient),
+                // 2026-06-02 — persist both languages, see notifyAdmins.
+                titleEn: titleVar.en,
+                titleEs: titleVar.es,
+                bodyEn: bodyVar.en,
+                bodyEs: bodyVar.es,
                 link,
                 ...(deepLink ? { deepLink } : {}),
                 tag: tag || `${type}:${fallbackTagBucket()}`,
@@ -257,12 +299,39 @@ export async function notifyStaff({
 }) {
     if (!forStaff) return null;
     if (excludeStaff && forStaff === excludeStaff) return null;
+    // 2026-06-02 — accept either plain strings (legacy callers) or
+    // {en, es} pairs. Resolve to a recipient string client-side
+    // (NotificationsDrawer reads `title`/`body` directly) AND persist
+    // both variants so the Cloud Function dispatcher can pick per
+    // recipient at FCM-send time. We have to fetch the recipient
+    // staff record to resolve the client-side string — pricey for a
+    // one-shot helper, but notifyStaff is only used for high-impact
+    // events (swap, shift offer, etc) so the extra read is fine.
+    let recipient = null;
+    if (typeof title === 'object' || typeof body === 'object') {
+        try {
+            const snap = await getDoc(doc(db, 'config', 'staff'));
+            if (snap.exists()) {
+                const list = (snap.data() || {}).list || [];
+                recipient = list.find(s => s?.name === forStaff) || null;
+            }
+        } catch (e) {
+            // resolveText falls back to English on null recipient — safe.
+        }
+    }
+    const titleVar = splitVariants(title);
+    const bodyVar = splitVariants(body);
     try {
         const ref = await addDoc(collection(db, 'notifications'), {
             forStaff,
             type,
-            title,
-            body,
+            title: resolveText(title, recipient),
+            body: resolveText(body, recipient),
+            // 2026-06-02 — persist both languages, see notifyAdmins.
+            titleEn: titleVar.en,
+            titleEs: titleVar.es,
+            bodyEn: bodyVar.en,
+            bodyEs: bodyVar.es,
             link,
             ...(deepLink ? { deepLink } : {}),
             ...(priority ? { priority } : {}),

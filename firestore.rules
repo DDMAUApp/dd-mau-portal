@@ -311,11 +311,56 @@ service cloud.firestore {
     // in Storage). Read is open at the rules layer because the new-hire
     // portal reads its own record after resolving an invite token; the
     // admin tab is gated client-side via canViewOnboarding.
+    //
+    // Hardened 2026-06-02 (Phase 1 audit). Previously `update: if true`
+    // let any apiKey holder rewrite arbitrary fields on any hire —
+    // including overwriting completed `personal` (DOB, address) or
+    // `bankAccount` (direct deposit) blocks, or replacing the
+    // `finalCertification` signature record. Without Firebase Auth
+    // (Phase 2) we cannot bind the writer to the hire identity, but we
+    // CAN enforce:
+    //   1. The write must be a map (rejects raw-string / null
+    //      payloads that come from buggy clients).
+    //   2. PII-bearing top-level fields (`personal`, `emergencyContact`,
+    //      `bankAccount`, `finalCertification`), if present in the
+    //      write, must themselves be maps. Stops the specific abuse
+    //      vector "POST personal: null" or "POST bankAccount: 'foo'"
+    //      that destroys completed PII or trips renderer null-checks.
+    //   3. The hire's own `id` and original `createdAt` cannot be
+    //      flipped — those anchor audit reconstruction.
+    //
+    // What this does NOT enforce (Phase 2 / Firebase Auth closes it):
+    //   • Distinguishing the hire (filling their own portal) from a
+    //     stranger with the apiKey rewriting another hire's PII.
+    //   • Truly immutable PII once submitted — the portal still allows
+    //     the hire to fix a typo in their DOB before final cert, and a
+    //     hostile apiKey holder could mimic that flow. The right lock
+    //     is a hireId-scoped Auth claim, not a rules-level diff.
+    //
+    // Audit trail: every admin view / approve / download lands in
+    // /onboarding_audits, so any out-of-band PII rewrite is traceable.
     match /onboarding_hires/{hireId} {
       allow read: if true;
       allow create: if request.resource.data.keys().hasAny(['id', 'name', 'createdAt'])
                     && request.resource.data.name is string;
-      allow update: if true;       // narrowed by client gate + audit log
+      allow update: if request.resource.data is map
+                    // PII top-level fields, if present, must be maps —
+                    // blocks the "null over personal" class of abuse.
+                    && (!('personal' in request.resource.data)
+                        || request.resource.data.personal is map)
+                    && (!('emergencyContact' in request.resource.data)
+                        || request.resource.data.emergencyContact is map)
+                    && (!('bankAccount' in request.resource.data)
+                        || request.resource.data.bankAccount is map)
+                    && (!('finalCertification' in request.resource.data)
+                        || request.resource.data.finalCertification is map)
+                    // Hire identity anchors cannot be rewritten.
+                    && (!('id' in request.resource.data)
+                        || !('id' in resource.data)
+                        || request.resource.data.id == resource.data.id)
+                    && (!('createdAt' in request.resource.data)
+                        || !('createdAt' in resource.data)
+                        || request.resource.data.createdAt == resource.data.createdAt);
       allow delete: if false;      // archive flag instead of hard-delete
     }
 
@@ -360,13 +405,40 @@ service cloud.firestore {
     //     Function (admin SDK bypasses rules). No client-side delete
     //     path exists in the app today, so denying delete here doesn't
     //     break any flow.
+    //
+    // Hardened 2026-06-02 (Phase 1 audit). Previously `update: if
+    // request.resource.data is map` let any apiKey holder rewrite a
+    // submitted applicant's name / email / phone, breaking integrity
+    // of the application history. Application CONTENT is now immutable
+    // post-submit; only triage-state fields can change. Specifically:
+    //   • name + email + phone + createdAt + role + city + state + zip +
+    //     coverLetter + (any other content field) — must equal the
+    //     existing value on every update.
+    //   • status + statusUpdatedAt + statusUpdatedBy + starredBy +
+    //     hireId — admin triage state, freely writable from the
+    //     Onboarding tab.
+    //
+    // We can't enumerate every legitimate "content" field in rules, so
+    // we go the other way: pin the small set of identity fields that
+    // ABSOLUTELY must not change. `name` is the strongest anchor (every
+    // application carries one; the apply form requires it). Pinning
+    // name + createdAt is sufficient to prevent the "rewrite Bob's
+    // application as Alice's" abuse without enumerating every optional
+    // field on the form.
     match /onboarding_applications/{appId} {
       allow read: if true;
       allow create: if request.resource.data.name is string
                     && request.resource.data.name.size() > 1
                     && request.resource.data.name.size() < 200
                     && request.resource.data.createdAt == request.time;
-      allow update: if request.resource.data is map;
+      allow update: if request.resource.data is map
+                    // Identity anchors — once submitted, these can
+                    // never change. Blocks "rewrite an application's
+                    // applicant name + createdAt" abuse.
+                    && (!('name' in resource.data)
+                        || request.resource.data.name == resource.data.name)
+                    && (!('createdAt' in resource.data)
+                        || request.resource.data.createdAt == resource.data.createdAt);
       allow delete: if false;
     }
 
@@ -382,11 +454,23 @@ service cloud.firestore {
     // form once, marks field positions, and every hire fills the same
     // template in-browser. Templates are not PII themselves; the PDF
     // bytes live in Storage at onboarding_templates/{templateId}.pdf.
+    //
+    // Hardened 2026-06-02 (Phase 1 audit). Previously `delete: if true`
+    // let any apiKey holder wipe the entire template library — every
+    // hire's W-4 / MO W-4 / Direct Deposit fillable would break until
+    // an admin re-uploaded them. Templates are recoverable but not
+    // routinely deleted (admin uploads each one ONCE). The
+    // OnboardingTemplateEditor.removeTemplate path now fails fast at
+    // the rules layer; the legitimate workflow for removing an old
+    // template is via Firebase Console (or a future admin-callable
+    // Cloud Function). The trade-off is intentional: the rare admin-
+    // delete moves out of the client UI; the common abuse vector
+    // (mass-wipe via tampered client) closes.
     match /onboarding_templates/{templateId} {
       allow read: if true;
       allow create, update: if request.resource.data.name is string
                             && request.resource.data.forDocId is string;
-      allow delete: if true;
+      allow delete: if false;
     }
 
     // Training content overrides — admins edit lesson title + bullets
@@ -765,11 +849,19 @@ service cloud.firestore {
     }
 
     // ── /insurance — benefits enrollment (CR-1, 2026-05-30) ──────────────
-    // Doc IDs are predictable: `staffName.toLowerCase().replace(/\s+/g, "_")`
-    // (see InsuranceEnrollment.jsx). KNOWN PHASE-2 GAP: without Firebase
-    // Auth, anyone with the public apiKey can still READ another staff
-    // member's record by guessing the docId — there is no Auth-less fix
-    // for that. The Phase 2 roadmap at the top of this file is the only
+    // 2026-06-02 doc-ID hardening — NEW enrollments use Firestore-
+    // generated random doc IDs (see InsuranceEnrollment.jsx
+    // handleSubmit). The staffName → docId mapping lives at
+    // /config/insurance_index. Pre-migration records still live at
+    // the legacy predictable ID `staffName.toLowerCase().replace(...)`;
+    // a one-shot migration script (Andrew TODO) is the vehicle to
+    // rewrite them. Until that ships, BOTH ID shapes are valid here.
+    //
+    // KNOWN PHASE-2 GAP: without Firebase Auth, anyone with the public
+    // apiKey can still LIST the collection (and now also READ the
+    // index doc) — there is no Auth-less fix for that. Random IDs
+    // close the "guess by name" attack but not the "list collection"
+    // attack. The Phase 2 roadmap at the top of this file is the only
     // real lock. What we CAN enforce now:
     //   • Block client-side deletes — benefits-enrollment history must
     //     not be wipable from DevTools.
@@ -785,6 +877,31 @@ service cloud.firestore {
       allow update: if request.resource.data is map
                     && request.resource.data.staffName is string
                     && request.resource.data.staffName == resource.data.staffName;
+      allow delete: if false;
+    }
+
+    // ── /config/insurance_index — random-ID lookup table (2026-06-02) ────
+    // Maps staffName → random doc ID inside /insurance. Used to
+    // de-couple the insurance doc ID from the publicly-listable
+    // /config/staff names so a curious apiKey holder can't getDoc()
+    // someone's PII by guessing the name-derived legacy ID.
+    //
+    // Shape: { entries: { [staffName]: docId }, updatedAt }.
+    //
+    // POSTURE: read is currently open because anonymous Firestore +
+    // no Auth means we can't actually restrict to admins server-side.
+    // This is a defense-in-depth improvement, not a hard lock —
+    // raises the bar from "guess the convention" to "discover this
+    // specific doc path and read it." Phase 2 (Firebase Auth +
+    // canViewInsurance claim) closes it properly.
+    //
+    // Writes are shape-validated. Block delete entirely — wiping
+    // the index would orphan every random-ID insurance record from
+    // its staff name and break the load path.
+    match /config/insurance_index {
+      allow read: if true;
+      allow create, update: if request.resource.data is map
+                            && request.resource.data.entries is map;
       allow delete: if false;
     }
 
@@ -883,29 +1000,116 @@ service cloud.firestore {
     // pinned to the valid lifecycle states.
     //
     // Delete — never. Keep the trail for compliance.
+    //
+    // Hardened 2026-06-02 (Phase 1 audit). Previously the update rule
+    // allowed any of pending/withdrawn/approved/rejected from a client
+    // — meaning anyone with the apiKey could mark another staff's
+    // request "approved" and trigger the downstream deletion flow.
+    // Approved + rejected transitions are admin-only and happen via
+    // the admin Cloud Function (admin SDK bypasses these rules), so
+    // we restrict client updates to ONE transition: pending →
+    // withdrawn (the requester self-cancels a pending request).
     match /staff_deletion_requests/{reqId} {
       allow read: if true;
       allow create: if request.resource.data is map
         && request.resource.data.requesterName is string
         && request.resource.data.status == 'pending';
+      // Client can only flip pending → withdrawn. Any other transition
+      // (approve / reject / revive) goes through a Cloud Function.
       allow update: if request.resource.data is map
-        && request.resource.data.status in ['pending', 'withdrawn', 'approved', 'rejected'];
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'withdrawn';
       allow delete: if false;
     }
 
+    // ── /needs_webster + /needs_maryland (2026-06-02, Phase 1 audit) ─────
+    // Per-location supply request board (one-off needs like brooms,
+    // pans, stickers — see NeedsBoard.jsx). Previously silently
+    // inherited the catch-all below; lifting it out so the create
+    // shape is enforced server-side:
+    //   • text is a non-empty string
+    //   • urgency in [urgent, soon, no_rush]
+    //   • status in [open, resolved]
+    //
+    // Updates happen for two flows (toggleResolved, cycleUrgency) —
+    // we keep the update shape map-typed (rules can't statically
+    // validate which subset of fields changed without a full diff).
+    // Delete stays open because admin removes resolved entries via
+    // the dashboard (with a confirm prompt client-side).
+    //
+    // NOTE: Firestore rules do NOT support partial-segment variable
+    // substitution (same caveat as inventory_audits_{location}
+    // above). Each location gets its own explicit match block.
+    match /needs_webster/{needId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.text is string
+                    && request.resource.data.text.size() > 0
+                    && request.resource.data.urgency in ['urgent', 'soon', 'no_rush']
+                    && request.resource.data.status in ['open', 'resolved'];
+      allow update: if request.resource.data is map
+                    && (!('urgency' in request.resource.data)
+                        || request.resource.data.urgency in ['urgent', 'soon', 'no_rush'])
+                    && (!('status' in request.resource.data)
+                        || request.resource.data.status in ['open', 'resolved']);
+      allow delete: if true;       // admin cleanup
+    }
+    match /needs_maryland/{needId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.text is string
+                    && request.resource.data.text.size() > 0
+                    && request.resource.data.urgency in ['urgent', 'soon', 'no_rush']
+                    && request.resource.data.status in ['open', 'resolved'];
+      allow update: if request.resource.data is map
+                    && (!('urgency' in request.resource.data)
+                        || request.resource.data.urgency in ['urgent', 'soon', 'no_rush'])
+                    && (!('status' in request.resource.data)
+                        || request.resource.data.status in ['open', 'resolved']);
+      allow delete: if true;       // admin cleanup
+    }
+
+    // Hire-initiated invite-recovery requests. Written from the PUBLIC
+    // lock screen (HomePage.jsx#RecoverInviteModal) when a new hire lost
+    // their /?onboard=TOKEN link. The resendOnboardingInvite Cloud
+    // Function (server-only) reads these on create, looks up the hire by
+    // email, mints/refreshes a /onboarding_invites/{token} doc, and
+    // emails the new link. The function flips status to 'sent' /
+    // 'no_match' / 'error' from the server with admin credentials —
+    // clients cannot.
+    //
+    // Posture mirrors /onboarding_applications:
+    //   - Reads stay open (the catch-all already permits this; admins
+    //     occasionally inspect the queue from the Onboarding tab).
+    //   - Create requires a non-empty email + status === 'pending' +
+    //     serverTimestamp requestedAt. Blocks the obvious garbage shape.
+    //   - Update / delete from clients are blocked outright. The hire
+    //     can't edit their request after it's sent; the Cloud Function
+    //     uses admin SDK which bypasses these rules.
+    match /onboarding_invite_recovery_requests/{reqId} {
+      allow read: if true;
+      allow create: if request.resource.data.email is string
+                    && request.resource.data.email.size() > 4
+                    && request.resource.data.email.size() < 200
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.requestedAt == request.time;
+      allow update, delete: if false;
+    }
+
     // ── Catch-all ──────────────────────────────────────────────────────
-    // Every other collection inherits a permissive default. KNOWN GAP:
-    // this is the single biggest security weakness in the rules — any
-    // collection not explicitly listed above (shifts, vendor_*,
-    // staff_todos, swap_requests, scheduled_messages,
-    // required_tasks, calendar_events, etc.) is fully writable by
-    // anyone holding the public Firebase apiKey. The Phase 2 roadmap
-    // at the top of this file is the correct fix — Firebase Auth +
-    // custom claims + App Check. Until that lands, casual abuse is
-    // mitigated by: (a) the audit logs on each meaningful action,
-    // (b) the PIN screen + idle relock keeping random walkup access
-    // out, and (c) write-shape validation on the highest-PII paths
-    // immediately above this rule.
+    // Every other collection inherits a permissive default. KNOWN GAP
+    // (re-affirmed 2026-06-02, Phase 1 audit): this is the single
+    // biggest remaining security weakness in the rules. Any collection
+    // not explicitly listed above (shifts, vendor_*, staff_todos,
+    // swap_requests, scheduled_messages, required_tasks,
+    // calendar_events, etc.) is fully writable by anyone holding the
+    // public Firebase apiKey. The Phase 2 roadmap at the top of this
+    // file is the correct fix — Firebase Auth + custom claims + App
+    // Check. Until that lands, casual abuse is mitigated by: (a) the
+    // audit logs on each meaningful action, (b) the PIN screen +
+    // idle relock keeping random walkup access out, and (c) write-
+    // shape validation on the highest-PII paths immediately above
+    // this rule.
     //
     // The narrowing applied here: every catch-all CREATE/UPDATE must
     // be a map payload. Rejects the kind of raw-string or null

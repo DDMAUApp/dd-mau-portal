@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
@@ -943,6 +944,59 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // raw typed string lives here so we don't snap to the
             // normalized form mid-typing.
             const [phoneDrafts, setPhoneDrafts] = useState({});
+            // 2026-06-02 — Mask PINs on the staff-list cards by default
+            // (●●●● placeholder). Per-row Eye toggle reveals the real
+            // PIN for 10 seconds, then auto-hides. The audit flagged
+            // PINs as plain-text-visible to anyone with admin access
+            // (e.g. over-the-shoulder during a shift). State is per-row
+            // (Set of staff ids) so toggling one row never affects
+            // another. Timers are tracked in pinHideTimersRef so we can
+            // cancel them on unmount or when the same row is toggled
+            // off early. The edit form still shows the PIN editable —
+            // that surface is intentional and password-style would
+            // make it impossible to verify what was just typed.
+            const [visiblePinIds, setVisiblePinIds] = useState(() => new Set());
+            const pinHideTimersRef = useRef({});
+            useEffect(() => {
+                // Cancel any pending auto-hide timers on unmount so we
+                // don't fire setState on a torn-down component.
+                return () => {
+                    const timers = pinHideTimersRef.current;
+                    Object.keys(timers).forEach(id => {
+                        try { clearTimeout(timers[id]); } catch {}
+                    });
+                    pinHideTimersRef.current = {};
+                };
+            }, []);
+            const togglePinVisibility = (personId) => {
+                setVisiblePinIds(prev => {
+                    const next = new Set(prev);
+                    const timers = pinHideTimersRef.current;
+                    if (next.has(personId)) {
+                        // Hiding manually — cancel the auto-hide timer
+                        // so a stale fire later can't toggle other state.
+                        next.delete(personId);
+                        if (timers[personId]) {
+                            clearTimeout(timers[personId]);
+                            delete timers[personId];
+                        }
+                    } else {
+                        next.add(personId);
+                        // Reset any previous timer (shouldn't happen, but
+                        // belt-and-suspenders: a double-tap is harmless).
+                        if (timers[personId]) clearTimeout(timers[personId]);
+                        timers[personId] = setTimeout(() => {
+                            setVisiblePinIds(curr => {
+                                const after = new Set(curr);
+                                after.delete(personId);
+                                return after;
+                            });
+                            delete timers[personId];
+                        }, 10000);
+                    }
+                    return next;
+                });
+            };
             const [showBulkTag, setShowBulkTag] = useState(false);
             const [showRequiredTaskAdmin, setShowRequiredTaskAdmin] = useState(false);
             const [showInventoryLists, setShowInventoryLists] = useState(false);
@@ -2649,7 +2703,36 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 <div className="p-3 flex items-center justify-between">
                                                     <div>
                                                         <p className="font-bold text-gray-800">{person.name}</p>
-                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"}{person.location === 'both' && person.scheduleHome && person.scheduleHome !== 'both' ? ` (${language === "es" ? "horario" : "schedule"}: ${LOCATION_LABELS[person.scheduleHome] || person.scheduleHome})` : ''} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
+                                                        {/* 2026-06-02 — PIN masked on cards. Inline span +
+                                                            Eye toggle replaces the old `PIN: 1234` plain
+                                                            text. See visiblePinIds state + togglePinVisibility
+                                                            above for the 10s auto-hide. The rest of the meta
+                                                            line (role / location / flags) stays in the same
+                                                            <p> so wrapping behavior matches the previous
+                                                            layout. */}
+                                                        <p className="text-xs text-gray-500">
+                                                            {person.role} • {LOCATION_LABELS[person.location] || "Webster"}{person.location === 'both' && person.scheduleHome && person.scheduleHome !== 'both' ? ` (${language === "es" ? "horario" : "schedule"}: ${LOCATION_LABELS[person.scheduleHome] || person.scheduleHome})` : ''}
+                                                            {" • PIN: "}
+                                                            <span className="font-mono tracking-wider align-middle">
+                                                                {visiblePinIds.has(person.id) ? (person.pin || "") : "●●●●"}
+                                                            </span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); togglePinVisibility(person.id); }}
+                                                                title={visiblePinIds.has(person.id)
+                                                                    ? (language === "es" ? "Ocultar PIN" : "Hide PIN")
+                                                                    : (language === "es" ? "Mostrar PIN (se ocultará en 10s)" : "Show PIN (auto-hides in 10s)")}
+                                                                aria-label={visiblePinIds.has(person.id)
+                                                                    ? (language === "es" ? "Ocultar PIN" : "Hide PIN")
+                                                                    : (language === "es" ? "Mostrar PIN (se ocultará en 10s)" : "Show PIN (auto-hides in 10s)")}
+                                                                className="ml-1 inline-flex items-center justify-center align-middle text-gray-400 hover:text-gray-700 transition">
+                                                                {visiblePinIds.has(person.id)
+                                                                    ? <EyeOff size={14} />
+                                                                    : <Eye size={14} />}
+                                                            </button>
+                                                            {person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""}
+                                                            {" • "}{(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}
+                                                        </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}

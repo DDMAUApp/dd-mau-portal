@@ -78,15 +78,28 @@
 	<!-- 2026-05-31 — Permission usage descriptions. Apple rejects apps that
 	     request permissions without honest, specific copy here. Each string
 	     gets shown verbatim in the OS permission prompt. -->
+	<!-- 2026-06-02 — Stripped the "capture your ID during onboarding" clause.
+	     There is no camera-capture code path in any Onboarding* component —
+	     OnboardingPortal/OnboardingApply only do file uploads. Camera capture
+	     is only used in chat (ChatThread, ChatPhotoIssueModal), Maintenance
+	     (MaintenanceRequest), supply needs (NeedsBoard), and Operations
+	     checklists. Apple reviewers reject mismatched copy under 5.1.1(i). -->
 	<key>NSCameraUsageDescription</key>
-	<string>DD Mau uses the camera so you can attach photos of supply issues to chat and maintenance tickets, and capture your ID during onboarding.</string>
+	<string>DD Mau uses the camera so you can attach photos to chat, maintenance tickets, and supply-needs reports.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>DD Mau uses the microphone to record voice notes in chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>DD Mau lets you attach photos from your library to chat and maintenance tickets.</string>
 	<!-- NSPhotoLibraryAddUsageDescription removed 2026-06-02: no code path writes to Photos; PDFs save to Files via Filesystem + Share sheet. Re-add only if a future feature actually calls UIImageWriteToSavedPhotosAlbum / PHPhotoLibrary save. -->
+	<!-- 2026-06-02 — Rewrote to match actual usage. Geolocation is read in
+	     exactly ONE place: src/components/hooks/useGeofence.js, which the
+	     Recipes page uses to confirm the device is inside the restaurant
+	     before unhiding sensitive recipe details. There is NO clock-in
+	     geolocation code path in the app — the old "clock-in" wording was
+	     copied from an earlier plan that never shipped. Apple reviewers
+	     reject mismatched copy under guideline 5.1.1(i). -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>DD Mau uses your location only when you are at work to confirm you are inside the restaurant for clock-in.</string>
+	<string>DD Mau uses your location only on the Recipes page to confirm you are inside the restaurant before showing sensitive recipe details.</string>
 	<!-- Allow files from the iOS Files app + iCloud Drive when attaching documents. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>

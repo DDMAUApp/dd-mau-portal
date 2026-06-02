@@ -35,6 +35,7 @@ import SauceLogBohBanner from './SauceLogBohBanner';
 // mid-ordering).
 import CartPlanView from './CartPlanView';
 import { toast, undoToast } from '../toast';
+import { useAppData } from '../v2/AppDataContext';
 // CSV importer — lazy so the parser doesn't bloat the Operations chunk
 // for the common case where nobody clicks Import.
 const VendorCsvImportModal = lazy(() => import('./VendorCsvImportModal'));
@@ -946,8 +947,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [skillsMatrix, setSkillsMatrix] = useState({});
             const [showMatrix, setShowMatrix] = useState(false);
 
-            // Labor percentage state (admin-only, from Toast scraper)
-            const [laborData, setLaborData] = useState(null);
+            // Labor percentage state (admin-only, from Toast scraper).
+            //
+            // 2026-06-02 consolidation: previously held its own
+            // onSnapshot on ops/labor_{loc}, redundant with the listener
+            // in AppDataContext (which the home tiles already used).
+            // Sourcing from context dedups the listener AND fixes a
+            // latent bug — the direct subscription queried
+            // `ops/labor_<storeLocation>`, which in 'both' admin mode
+            // pointed at the non-existent doc `ops/labor_both`. The
+            // context's resolveLocDoc maps 'both' → webster.
+            const { labor: laborData } = useAppData();
             // Toggle for the expanded labor breakdown panel. The corner
             // bubble shows the % at a glance; tapping it pops the time +
             // progress bar + 25% target marker out underneath. Default
@@ -1622,21 +1632,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 await saveInventory(inventory, updated);
             };
 
-            // Listen to live labor data for current location
-            useEffect(() => {
-                const unsubLabor = onSnapshot(doc(db, "ops", "labor_" + storeLocation), (docSnap) => {
-                    if (docSnap.exists()) {
-                        setLaborData(docSnap.data());
-                    } else {
-                        setLaborData(null);
-                    }
-                }, (err) => console.warn('labor snapshot subscribe failed', err));
-                // FIX (review 2026-05-20): added the error callback above. Without it a
-                // permission-denied / transient onSnapshot failure became an unhandled
-                // rejection and the labor card silently stopped updating with no log —
-                // matching the error-callback pattern already used on the audit listener.
-                return () => unsubLabor();
-            }, [storeLocation]);
+            // 2026-06-02 — labor subscription removed. `laborData` now
+            // comes from useAppData() above (one listener serves Home
+            // tiles + Operations + LaborDashboard). Prior local
+            // onSnapshot duplicated AppDataContext's listener AND
+            // returned null in 'both' admin mode because it queried
+            // the literal doc `ops/labor_both`. The context's
+            // resolveLocDoc maps 'both' → webster, so the corner
+            // bubble now stays populated when an admin toggles to
+            // 'both'. Old comment block (preserving the
+            // error-callback-as-debug rationale from 2026-05-20) lives
+            // on in src/v2/AppDataContext.jsx alongside the
+            // consolidated listener.
 
             const saveStations = async (stations) => {
                 try {
@@ -9744,6 +9751,18 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
     //   5. Switched unsub return so React cleans the listener on
     //      location change / unmount (otherwise we leak one listener per
     //      mount).
+    //
+    // 2026-06-02 audit revert (partial): switched back to getDocs.
+    // inventoryHistory is append-only — past orders never mutate after
+    // they're saved — so the live-update half of onSnapshot was paying
+    // a long-lived listener cost (one per mount of the cart view) for
+    // data that, by definition, never changes underneath us. getDocs
+    // STILL hits the offline cache by default (Firestore's default
+    // source is 'default' which checks cache first then network), so
+    // we keep the warm-paint behavior the onSnapshot switch was put in
+    // place for. We just stop holding the listener open for live data
+    // we don't need. Refresh on storeLocation change / retry button
+    // (retryNonce bump) covers the only real refresh paths.
     useEffect(() => {
         if (!storeLocation) return;
         if (storeLocation === 'both') {
@@ -9764,26 +9783,24 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
             setLoading(false);
         }, 25_000);
         const q = query(colRef, orderBy('date', 'desc'), limit(5));
-        const unsub = onSnapshot(q,
-            (snap) => {
+        getDocs(q)
+            .then((snap) => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
                 setHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
                 setLoadError(null);
                 setLoading(false);
-            },
-            (err) => {
+            })
+            .catch((err) => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
-                console.warn('RecentOrdersBar snapshot failed:', err);
+                console.warn('RecentOrdersBar getDocs failed:', err);
                 setLoadError(err?.message || (isEs ? 'Error al cargar' : 'Failed to load'));
                 setLoading(false);
-            },
-        );
+            });
         return () => {
             cancelled = true;
             clearTimeout(timeoutId);
-            try { unsub(); } catch {}
         };
     }, [storeLocation, retryNonce, isEs]);
 
@@ -9952,6 +9969,13 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
     // getDocs → onSnapshot for cache warmth, bumped timeout to 25s.
     // The modal opens cached docs synchronously and refreshes when
     // the live read arrives. Modal stays usable on bad cellular.
+    //
+    // 2026-06-02 audit revert (partial): same reasoning as the bar
+    // (above) — inventoryHistory is append-only so the listener cost
+    // is wasted on the live-update half. Switched back to getDocs,
+    // which still serves from the offline cache by default. Modal-
+    // local Retry button (retryNonce) covers the rare "I want the
+    // freshest list NOW" case; reopening the modal also re-fetches.
     useEffect(() => {
         if (!storeLocation) return;
         if (storeLocation === 'both') {
@@ -9972,26 +9996,24 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
             setLoading(false);
         }, 25_000);
         const q = query(colRef, orderBy('date', 'desc'), limit(100));
-        const unsub = onSnapshot(q,
-            (snap) => {
+        getDocs(q)
+            .then((snap) => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
                 setHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
                 setLoadError(null);
                 setLoading(false);
-            },
-            (err) => {
+            })
+            .catch((err) => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
-                console.warn('RecentOrdersHistoryModal snapshot failed:', err);
+                console.warn('RecentOrdersHistoryModal getDocs failed:', err);
                 setLoadError(err?.message || (isEs ? 'Error al cargar' : 'Failed to load'));
                 setLoading(false);
-            },
-        );
+            });
         return () => {
             cancelled = true;
             clearTimeout(timeoutId);
-            try { unsub(); } catch {}
         };
     }, [storeLocation, retryNonce, isEs]);
 

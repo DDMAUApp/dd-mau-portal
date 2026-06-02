@@ -41,17 +41,38 @@
 // Re-entrancy safe: a stacked modal restores the PREVIOUS overflow
 // value on unmount, not just an empty string, so closing the inner
 // modal does not unlock the outer one.
+//
+// 2026-06-02 — Optional `onBackPress` prop wires the modal into the
+// Android hardware-back stack via pushBackHandler. Callers can pass
+// their existing close handler:
+//   <ModalPortal onBackPress={onClose}>...</ModalPortal>
+// and the back gesture will fire the close before the bridge falls
+// through to "navigate to home". The wire-up is opt-in so legacy
+// modals keep their existing scrim/Escape close behaviour and we
+// migrate them one at a time. No-op on web (bridge is a no-op when
+// Capacitor.isNativePlatform() is false).
 
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { pushBackHandler } from '../capacitor-bridge';
 
-export default function ModalPortal({ children }) {
+export default function ModalPortal({ children, onBackPress }) {
     useEffect(() => {
         if (typeof document === 'undefined') return;
         const prev = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
         return () => { document.body.style.overflow = prev; };
     }, []);
+    // Register a back-stack handler if the caller wants the Android
+    // hardware back gesture to close this modal. Skipped silently
+    // when onBackPress is omitted so existing callers stay unchanged.
+    useEffect(() => {
+        if (typeof onBackPress !== 'function') return;
+        const pop = pushBackHandler(() => {
+            try { onBackPress(); } finally { pop(); }
+        });
+        return pop;
+    }, [onBackPress]);
     if (typeof document === 'undefined') return null;   // SSR guard
     return createPortal(children, document.body);
 }

@@ -4,6 +4,7 @@ import { doc, collection, query, where, onSnapshot, setDoc } from 'firebase/fire
 import { t } from '../data/translations';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, fmtUSD, splhTone } from '../data/splh';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
+import { useAppData } from '../v2/AppDataContext';
 // 2026-05-27 Batch B — Apple-HIG page header. Visual only.
 import { BarChart3 } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
@@ -20,16 +21,25 @@ const HOURGLASS = String.fromCodePoint(0x231B);      // hourglass
 const MONEY_EMOJI = String.fromCodePoint(0x1F4B0);   // money bag
 
 export default function LaborDashboard({ language, storeLocation }) {
-    const [laborData, setLaborData] = useState(null);
+    // 2026-06-02 consolidation — labor + 28-day laborHistory now come
+    // from AppDataContext. Before this, both this component AND
+    // Operations.jsx held independent onSnapshot listeners on
+    // ops/labor_{loc}, and both this AND Schedule.jsx held independent
+    // listeners on laborHistory_{loc} for the same 28-day window.
+    // Consolidating cuts cold-mount Firestore reads on the labor page
+    // by ~1,500 docs (the SPLH range) and eliminates a "ghost"
+    // subscription that broke in 'both' mode (the direct query for
+    // ops/labor_both targets a doc that doesn't exist).
+    //
+    // The TODAY's-hourly-history listener below stays local — it uses a
+    // different filter (`date == today`) than the 28-day SPLH stream
+    // and is only opened by this one component, so there's nothing to
+    // consolidate.
+    const { labor: laborData, laborHistory: splhHistory } = useAppData();
     const [laborHistory, setLaborHistory] = useState([]);
     const [laborTarget, setLaborTarget] = useState(25); // default target %
     const [editingTarget, setEditingTarget] = useState(false);
     const [tempTarget, setTempTarget] = useState(25);
-    // Historical data for SPLH analysis — last 4 weeks of hourly snapshots.
-    // Each entry should have {date: 'YYYY-MM-DD', time: 'HH:MM', netSales,
-    // totalHours} (depending on what the labor scraper writes — we tolerate
-    // missing fields and just skip those entries from the SPLH math).
-    const [splhHistory, setSplhHistory] = useState([]);
 
     // Load labor target from Firestore
     useEffect(() => {
@@ -42,18 +52,6 @@ export default function LaborDashboard({ language, storeLocation }) {
         return () => unsubTarget();
     }, []);
 
-    // Listen to live labor data for current location
-    useEffect(() => {
-        const unsubLabor = onSnapshot(doc(db, "ops", "labor_" + storeLocation), (docSnap) => {
-            if (docSnap.exists()) {
-                setLaborData(docSnap.data());
-            } else {
-                setLaborData(null);
-            }
-        }, (err) => console.warn('labor data snapshot error:', err));
-        return () => unsubLabor();
-    }, [storeLocation]);
-
     // Listen to today's labor history (hourly snapshots).
     //
     // No server-side orderBy('timestamp'): combined with where('date', ...)
@@ -61,11 +59,19 @@ export default function LaborDashboard({ language, storeLocation }) {
     // listener errors silently and the dashboard shows nothing — same
     // trap that bit the Tardies tracker. Sort client-side instead; the
     // dataset is at most ~24 entries (hourly snapshots for one day).
+    //
+    // 2026-06-02: kept local (not in AppDataContext) — the today-only
+    // filter is specific to this page's hourly bar chart; no other
+    // consumer needs it.
     useEffect(() => {
+        // Resolve 'both' → webster the same way AppDataContext resolves
+        // the rest of the location-scoped collections. (Avoids querying
+        // `laborHistory_both`, which doesn't exist.)
+        const queryLoc = storeLocation === 'both' ? 'webster' : storeLocation;
         const today = new Date();
         const todayKey = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
         const unsubHistory = onSnapshot(
-            query(collection(db, "laborHistory_" + storeLocation), where("date", "==", todayKey)),
+            query(collection(db, "laborHistory_" + queryLoc), where("date", "==", todayKey)),
             (snap) => {
                 const entries = [];
                 snap.forEach(doc => entries.push(doc.data()));
@@ -79,23 +85,6 @@ export default function LaborDashboard({ language, storeLocation }) {
             (err) => { console.error("Labor history snapshot error:", err); }
         );
         return () => unsubHistory();
-    }, [storeLocation]);
-
-    // Pull last 28 days of laborHistory for SPLH analysis. Server-side
-    // date range filter so we don't fetch the entire collection.
-    useEffect(() => {
-        const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
-        const cutoffKey = cutoff.getFullYear() + "-" + String(cutoff.getMonth() + 1).padStart(2, "0") + "-" + String(cutoff.getDate()).padStart(2, "0");
-        const unsub = onSnapshot(
-            query(collection(db, "laborHistory_" + storeLocation), where("date", ">=", cutoffKey)),
-            (snap) => {
-                const arr = [];
-                snap.forEach(doc => arr.push(doc.data()));
-                setSplhHistory(arr);
-            },
-            (err) => { console.warn("SPLH history snapshot error:", err); }
-        );
-        return () => unsub();
     }, [storeLocation]);
 
     // Aggregation now lives in src/data/splh.js so Schedule's advisor uses

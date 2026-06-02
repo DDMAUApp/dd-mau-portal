@@ -79,6 +79,17 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
 
     const knowledgeStats = useMemo(() => getKnowledgeStats(), []);
 
+    // The system prompt is a multi-KB string assembled from the entire DD Mau
+    // knowledge base (allergens, recipes, training index, frameworks, rules).
+    // Rebuilding it on every send is wasteful — the inputs only change when
+    // the language toggles, the signed-in staff changes, or the store
+    // location switches. Memoize on exactly those keys so Spanish-mode users
+    // still get a Spanish prompt when `language` flips.
+    const systemPrompt = useMemo(
+        () => buildKnowledgeContext({ language, staffName, location: storeLocation }),
+        [language, staffName, storeLocation],
+    );
+
     // Persist chat history to localStorage so a refresh doesn't lose context.
     useEffect(() => { saveHistory(staffName, messages); }, [staffName, messages]);
     // If the user changes (logout + log in as someone else on same device),
@@ -131,13 +142,9 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
         setError(null);
 
         try {
-            // Build full DD-Mau-aware system prompt with training, recipes,
-            // allergen matrix, and operational rules embedded.
-            const systemPrompt = buildKnowledgeContext({
-                language,
-                staffName,
-                location: storeLocation,
-            });
+            // System prompt is memoized above — see the useMemo on
+            // [language, staffName, storeLocation]. Don't rebuild here; it's
+            // a multi-KB string and rebuilding per-send was the perf bug.
 
             const res = await fetch(`${AI_ROUTER_URL}/route`, {
                 method: "POST",

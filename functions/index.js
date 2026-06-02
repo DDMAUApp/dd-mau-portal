@@ -168,7 +168,12 @@ async function isOnShiftNow(staffName) {
 
 // ── 1. Push every notification doc to its recipient's FCM tokens ──────────
 exports.dispatchNotification = onDocumentCreated(
-    { document: "notifications/{id}", region: "us-central1" },
+    // 2026-06-02 audit fix: cap maxInstances at 10. Without a cap a burst
+    // of /notifications writes (mass-fanout, scheduled-pump catch-up) can
+    // spin Cloud Run up to GCP's default ceiling and inflate cost. 10 is
+    // plenty for DD Mau's <30-staff team — a queue forms past that and
+    // each function still drains its work in seconds.
+    { document: "notifications/{id}", region: "us-central1", maxInstances: 10 },
     async (event) => {
         const snap = event.data;
         if (!snap) return;
@@ -486,14 +491,48 @@ exports.dispatchNotification = onDocumentCreated(
         // — if the same tag arrives twice (e.g. retry), the OS replaces
         // the first with the second instead of stacking.
         const tag = notif.tag || notif.id || event.params.id;
+        // 2026-06-02 audit fix: previously the payload was data-only +
+        // webpush (which only solves the Chrome SW dedup problem). iOS
+        // and Android background pushes need explicit apns + android
+        // blocks so the OS routes the push at high priority and auto-
+        // renders it without the Capacitor wrapper having to do extra
+        // work in the foreground. Title/body live both in `data` (for
+        // the existing web SW that reads them out and calls
+        // showNotification ONCE) and in `apns.payload.aps.alert` /
+        // `android.notification` so the native iOS/Android delivery
+        // layers can render directly. The dedup gate that originally
+        // motivated data-only is still respected — the web SW reads
+        // from `data` and the native layers read from the platform-
+        // specific blocks below, so we never double-render on web.
+        const pushTitle = notif.title || "DD Mau";
+        const pushBody = notif.body || "";
         const message = {
             tokens,
             data: {
-                title: notif.title || "DD Mau",
-                body: notif.body || "",
+                title: pushTitle,
+                body: pushBody,
                 type: notif.type || "",
                 tag,
                 link: notif.link || "/",
+            },
+            android: {
+                priority: "high",
+                notification: {
+                    channelId: "dd_default_channel",
+                    sound: "default",
+                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                },
+            },
+            apns: {
+                headers: { "apns-priority": "10" },
+                payload: {
+                    aps: {
+                        alert: { title: pushTitle, body: pushBody },
+                        sound: "default",
+                        badge: 1,
+                        "content-available": 1,
+                    },
+                },
             },
             webpush: {
                 headers: { Urgency: "high" },
@@ -581,6 +620,10 @@ exports.dispatchSms = onDocumentCreated(
     {
         document: "notifications/{id}",
         region: "us-central1",
+        // 2026-06-02 audit fix: cap maxInstances at 10 to match
+        // dispatchNotification — runaway SMS fanout is even more
+        // expensive than push fanout ($0.0079/segment × 30 staff).
+        maxInstances: 10,
         secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, SENTRY_DSN],
     },
     async (event) => {
@@ -679,15 +722,47 @@ exports.dispatchSms = onDocumentCreated(
         const settings = settingsDoc.exists ? settingsDoc.data() : {};
 
         // 2026-05-24 — Per-staff opt-out (same array dispatchNotification
-        // checks). NONE of the ALWAYS_SMS_TYPES are in LOCKED_ON_TYPE_IDS,
-        // so admin can mute any SMS-eligible type per staff. The
+        // checks). Admin can mute SMS-eligible types per staff. The
         // /notifications doc + the push channel still fire (subject to
         // their own gates); only the SMS is suppressed. Saves $0.0079
         // per Twilio segment per muted recipient.
+        //
+        // 2026-06-02 audit fix: LOCKED_ON_TYPE_IDS bypass. Critical-
+        // category alerts (production error pages, owner PIN unlock,
+        // etc.) must always deliver even when an opt-out has been set
+        // for them — these are safety / compliance pings, not nice-to-
+        // haves. Previously the dispatchSms opt-out gate stripped these
+        // unconditionally, so an admin who had muted critical_error_alert
+        // for any reason (one-off noise complaint, accidental toggle)
+        // would silently miss a production page. The push-side dispatcher
+        // already enforces this via its own LOCKED_ON_TYPE_IDS set; we
+        // mirror that here so the SMS channel matches the contract.
+        //
+        // Keep this set in sync with the corresponding LOCKED_ON_TYPE_IDS
+        // in dispatchNotification above. Only types that are BOTH locked-
+        // on AND SMS-eligible actually matter for the SMS bypass — the
+        // others are push-only.
+        const SMS_LOCKED_ON_TYPE_IDS = new Set([
+            // production-critical error pages — owner-only audience
+            "critical_error_alert",
+            // owner PIN unlock event (lock screen) — security signal
+            "owner_pin_unlock",
+            // urgent operational pages already in templates
+            "urgent_announcement",
+            "weather_closure",
+            "maintenance_urgent",
+        ]);
         const personalOptOuts = Array.isArray(staff?.pushOptOut) ? staff.pushOptOut : [];
-        if (notif.type && personalOptOuts.includes(notif.type)) {
+        if (notif.type
+            && personalOptOuts.includes(notif.type)
+            && !SMS_LOCKED_ON_TYPE_IDS.has(notif.type)) {
             logger.info(`dispatchSms opt-out: ${forStaff} muted type=${notif.type}`);
             return;
+        }
+        if (notif.type
+            && personalOptOuts.includes(notif.type)
+            && SMS_LOCKED_ON_TYPE_IDS.has(notif.type)) {
+            logger.info(`dispatchSms locked-on override: delivering type=${notif.type} to ${forStaff} despite opt-out (safety/compliance bypass)`);
         }
 
         const [eligible, reason] = smsHelpers.isSmsEligible(notif, staff, settings);
@@ -1029,6 +1104,11 @@ exports.sendShiftReminders = onSchedule(
         schedule: "every 5 minutes",
         timeZone: "America/Chicago", // DD Mau's business timezone
         region: "us-central1",
+        // 2026-06-02 audit fix: cap maxInstances at 10. Scheduled cron
+        // is single-instance under normal load but Cloud Scheduler can
+        // re-fire on transient retry — explicit cap prevents any
+        // runaway invocation from spawning unbounded parallel runs.
+        maxInstances: 10,
     },
     async (event) => {
         const now = Date.now();
@@ -1438,9 +1518,17 @@ exports.sendDueReminders = onSchedule(
         // Helper — write notification docs for ALL management recipients
         // for a single source doc. Tag includes day key so retries
         // collapse but successive days don't.
+        //
+        // 2026-06-02 audit fix: Promise.allSettled so one rejected write
+        // doesn't take down the whole fan-out, AND so the caller can see
+        // whether every recipient was reached. The .catch() chains were
+        // already preventing rejection at the rule level, but using
+        // allSettled directly makes failures visible to the caller for
+        // the stamping gate below. Returns the count of rejected writes
+        // (0 = full success → caller is free to stamp remindersSent).
         const fanOut = async ({ sourceColl, sourceId, type, title, body, deepLink, dayKey }) => {
             const tag = `${type}:${sourceId}:${dayKey}`;
-            await Promise.all(managementNames.map(name =>
+            const ops = managementNames.map(name =>
                 db.collection('notifications').add({
                     forStaff: name,
                     type,
@@ -1452,8 +1540,15 @@ exports.sendDueReminders = onSchedule(
                     createdAt: FieldValue.serverTimestamp(),
                     read: false,
                     createdBy: 'system:dueReminders',
-                }).catch(e => logger.warn(`fanOut(${tag}) write failed for ${name}:`, e))
-            ));
+                })
+            );
+            const results = await Promise.allSettled(ops);
+            const rejected = results.filter(r => r.status === 'rejected');
+            if (rejected.length) {
+                logger.warn(`fanOut(${tag}): ${rejected.length}/${results.length} write(s) failed`,
+                    rejected.slice(0, 5).map(r => r.reason?.message || String(r.reason)));
+            }
+            return rejected.length;
         };
 
         // ── Source #1: catering orders ────────────────────────────
@@ -1483,7 +1578,15 @@ exports.sendDueReminders = onSchedule(
                 const locLabel = cust.pickupLocation === 'maryland' ? 'Maryland' : 'Webster';
                 const guests = cust.guests || '?';
                 const kindLabel = kind === 'd2' ? '2 days' : 'tomorrow';
-                await fanOut({
+                // 2026-06-02 audit fix: stamp `remindersSent.${kind}` ONLY
+                // after the fan-out succeeds for every recipient. Stamping
+                // first meant a partial-failure run silently lost the
+                // recipients whose write rejected — and the dedup marker
+                // prevented them from being retried. Now if any write
+                // rejects we leave the stamp unset so the next cron pass
+                // re-tries (idempotent against successful writes thanks
+                // to the `tag` collapse on the OS side).
+                const rejected = await fanOut({
                     sourceColl: 'cateringOrders',
                     sourceId: oDoc.id,
                     type: kind === 'd2' ? 'catering_due_2d' : 'catering_due_1d',
@@ -1492,10 +1595,13 @@ exports.sendDueReminders = onSchedule(
                     deepLink: 'catering',
                     dayKey: todayKey,
                 });
-                // Stamp the doc so we don't re-ping on the next run.
-                await oDoc.ref.update({
-                    [`remindersSent.${kind}`]: todayKey,
-                });
+                if (rejected === 0) {
+                    await oDoc.ref.update({
+                        [`remindersSent.${kind}`]: todayKey,
+                    });
+                } else {
+                    logger.warn(`sendDueReminders catering ${oDoc.id}/${kind}: leaving remindersSent unset, ${rejected} write(s) failed — will retry next run`);
+                }
                 pinged++;
             }
         } catch (e) {
@@ -1524,7 +1630,9 @@ exports.sendDueReminders = onSchedule(
                     : (data.customerName || `#${data.invoiceNumber || ''}`);
                 const total = data.total != null ? `$${Number(data.total).toFixed(2)}` : '';
                 const loc = data.location === 'maryland' ? 'Maryland' : 'Webster';
-                await fanOut({
+                // 2026-06-02 audit fix: same stamp-only-on-success gate as
+                // the catering loop above. See comment there for rationale.
+                const rejected = await fanOut({
                     sourceColl: 'toast_invoices',
                     sourceId: iDoc.id,
                     type: kind === 'd2' ? 'invoice_due_2d' : 'invoice_due_1d',
@@ -1533,9 +1641,13 @@ exports.sendDueReminders = onSchedule(
                     deepLink: 'catering',  // ToastInvoices lives inside the Catering tab
                     dayKey: todayKey,
                 });
-                await iDoc.ref.update({
-                    [`remindersSent.${kind}`]: todayKey,
-                });
+                if (rejected === 0) {
+                    await iDoc.ref.update({
+                        [`remindersSent.${kind}`]: todayKey,
+                    });
+                } else {
+                    logger.warn(`sendDueReminders toast ${iDoc.id}/${kind}: leaving remindersSent unset, ${rejected} write(s) failed — will retry next run`);
+                }
                 pinged++;
             }
         } catch (e) {
@@ -1937,9 +2049,40 @@ exports.i9ReverificationReminder = onSchedule(
     },
     async () => {
         try {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const todayStr = today.toISOString().slice(0, 10);
+            // 2026-06-02 audit fix: anchor "today" to America/Chicago, not
+            // the process's UTC clock. The function fires at 9am Central
+            // every day via `timeZone: "America/Chicago"` on the schedule,
+            // so the run-time wall clock IS already Central — but
+            // `new Date()` returns a UTC-anchored Date and `.setHours(0,…)`
+            // shifts to LOCAL midnight (=UTC midnight in Cloud Functions),
+            // not Central midnight. The result was an off-by-one in the
+            // day-diff math for hires whose `workAuthExpiry` was the
+            // "today in Central" date: between midnight UTC and 6am UTC
+            // (= 6pm-12am Central), `today` here resolved to the NEXT
+            // Central calendar day, and days-to-expiry got rounded one
+            // day low. Net: a hire whose auth expires Friday in Central
+            // could miss the 30/14/7/0/-7 ping window entirely if the
+            // function fired between Thursday 6pm and midnight Central.
+            //
+            // Fix: derive todayStr ('YYYY-MM-DD') in Central directly via
+            // Intl, then compute days-to-expiry as a date-only difference
+            // between two YYYY-MM-DD strings (timezone-free comparison).
+            const ctDateKey = (d) => new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Chicago',
+                year: 'numeric', month: '2-digit', day: '2-digit',
+            }).format(d);
+            const todayStr = ctDateKey(new Date());
+            // Date-only diff helper. Parses both YYYY-MM-DD strings at
+            // noon UTC (anchor away from any DST edge) and returns the
+            // difference in whole days. Safe across DST because both
+            // dates use the same time-of-day anchor.
+            const daysBetween = (fromYmd, toYmd) => {
+                const [fy, fmo, fd] = fromYmd.split("-").map(Number);
+                const [ty, tmo, td] = toYmd.split("-").map(Number);
+                const fromMs = Date.UTC(fy, fmo - 1, fd, 12, 0);
+                const toMs = Date.UTC(ty, tmo - 1, td, 12, 0);
+                return Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24));
+            };
 
             // Pull all hires (small set) and filter in-memory.
             const snap = await db.collection("onboarding_hires").get();
@@ -1965,8 +2108,9 @@ exports.i9ReverificationReminder = onSchedule(
                 if (h.status === "archived") return;
                 const exp = h.workAuthExpiry;
                 if (!exp) return;
-                const expDate = new Date(exp + "T00:00:00");
-                const days = Math.round((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                // 2026-06-02 audit fix: timezone-free day diff via Central
+                // date strings. See daysBetween + ctDateKey above.
+                const days = daysBetween(todayStr, exp);
                 // Ping window: 30 days out, 14 days out, 7 days out, day 0,
                 // day -7 (already overdue).
                 const pingDays = [30, 14, 7, 0, -7];
@@ -2230,7 +2374,16 @@ const eightySixSchedule = async (slot, slotLabelEn, slotLabelEs) => {
                 createdBy: "eightySixAlerts",
             })
         );
-        await Promise.all(ops);
+        // 2026-06-02 audit fix: Promise.allSettled so a single failed
+        // notifications/{id} write (e.g. forStaff with no fcmTokens,
+        // intermittent Firestore quota throttling) doesn't abort the
+        // fan-out for everyone else.
+        const results = await Promise.allSettled(ops);
+        const failed = results.filter(r => r.status === "rejected");
+        if (failed.length) {
+            logger.warn(`86 alert (${slot}): ${failed.length}/${results.length} notification write(s) failed`,
+                failed.slice(0, 5).map(f => f.reason?.message || String(f.reason)));
+        }
         logger.info(`86 alert (${slot}): pinged ${recipients.length} recipient(s), ${totalOut} item(s) out`);
     } catch (err) {
         logger.error(`eightySixAlerts(${slot}) failed`, err);
@@ -2420,7 +2573,16 @@ const realtime86Handler = (location) => async (event) => {
                 }));
             }
         }
-        await Promise.all(ops);
+        // 2026-06-02 audit fix: Promise.allSettled so one failed write
+        // (e.g. quota hiccup, single bad recipient name) doesn't take
+        // down the whole real-time 86 fan-out — staff in the same
+        // location need to know the moment something goes out.
+        const results = await Promise.allSettled(ops);
+        const failed = results.filter(r => r.status === "rejected");
+        if (failed.length) {
+            logger.warn(`real-time 86 (${location}): ${failed.length}/${results.length} write(s) failed`,
+                failed.slice(0, 5).map(f => f.reason?.message || String(f.reason)));
+        }
         logger.info(`real-time 86 (${location}): pinged ${recipients.length} recipient(s) — ${newlyOut.length} newly out, ${backInStock.length} back in stock`);
     } catch (err) {
         logger.error(`realtime86Handler(${location}) failed`, err);
@@ -3040,67 +3202,81 @@ exports.checkTvHeartbeats = onSchedule(
 
         let alerted = 0;
         let recovered = 0;
+        let perIterationErrors = 0;
         for (const hbDoc of snap.docs) {
-            const hb = hbDoc.data() || {};
-            const tvId = hbDoc.id;
-            const lastSeenMs = hb.lastSeenAt?.toMillis
-                ? hb.lastSeenAt.toMillis()
-                : (hb.lastSeenAt?.seconds ? hb.lastSeenAt.seconds * 1000 : 0);
-            const ageMs = lastSeenMs ? (now - lastSeenMs) : Infinity;
-            const isStale = ageMs > STALE_MS;
-            const alertedAt = hb.alertedAt?.toMillis ? hb.alertedAt.toMillis() : 0;
+            // 2026-06-02 audit fix: wrap each iteration in try/catch so a
+            // single failing TV (Firestore quota blip, transient write
+            // error on `.ref.set`) doesn't abort the whole fan-out and
+            // leave the remaining offline TVs un-alerted on their first
+            // bad cron run. Without this, a single rejection inside the
+            // for-of's await chain bubbles up to the function-level
+            // failure and the next 4 TVs in the queue silently lose
+            // their offline ping.
+            try {
+                const hb = hbDoc.data() || {};
+                const tvId = hbDoc.id;
+                const lastSeenMs = hb.lastSeenAt?.toMillis
+                    ? hb.lastSeenAt.toMillis()
+                    : (hb.lastSeenAt?.seconds ? hb.lastSeenAt.seconds * 1000 : 0);
+                const ageMs = lastSeenMs ? (now - lastSeenMs) : Infinity;
+                const isStale = ageMs > STALE_MS;
+                const alertedAt = hb.alertedAt?.toMillis ? hb.alertedAt.toMillis() : 0;
 
-            if (isStale && !alertedAt) {
-                // Going offline — fire one notification per recipient.
-                const ageMin = Math.round(ageMs / 60_000);
-                for (const r of recipients) {
-                    try {
-                        await db.collection("notifications").add({
-                            type: "tv_offline",
-                            forStaff: r.name,
-                            title: `📴 TV offline: ${tvId}`,
-                            body: `${tvId} hasn't reported in ${ageMin} min. Reboot the Fire TV or check the kiosk browser.`,
-                            createdAt: FieldValue.serverTimestamp(),
-                            read: false,
-                            details: { tvId, ageMin },
-                        });
-                    } catch (e) {
-                        logger.warn("tv_offline notification write failed:", r.name, e?.message);
+                if (isStale && !alertedAt) {
+                    // Going offline — fire one notification per recipient.
+                    const ageMin = Math.round(ageMs / 60_000);
+                    for (const r of recipients) {
+                        try {
+                            await db.collection("notifications").add({
+                                type: "tv_offline",
+                                forStaff: r.name,
+                                title: `📴 TV offline: ${tvId}`,
+                                body: `${tvId} hasn't reported in ${ageMin} min. Reboot the Fire TV or check the kiosk browser.`,
+                                createdAt: FieldValue.serverTimestamp(),
+                                read: false,
+                                details: { tvId, ageMin },
+                            });
+                        } catch (e) {
+                            logger.warn("tv_offline notification write failed:", r.name, e?.message);
+                        }
                     }
-                }
-                await hbDoc.ref.set({
-                    alertedAt: FieldValue.serverTimestamp(),
-                    lastOutageAgeMin: ageMin,
-                }, { merge: true });
-                alerted += 1;
-                logger.info(`checkTvHeartbeats: alerted on ${tvId} (${ageMin} min stale)`);
-            } else if (!isStale && alertedAt) {
-                // Recovery — TV is reporting again. Clear the alert
-                // stamp so the NEXT outage will alert.
-                for (const r of recipients) {
-                    try {
-                        await db.collection("notifications").add({
-                            type: "tv_back_online",
-                            forStaff: r.name,
-                            title: `🟢 TV back online: ${tvId}`,
-                            body: `${tvId} is reporting again.`,
-                            createdAt: FieldValue.serverTimestamp(),
-                            read: false,
-                            details: { tvId },
-                        });
-                    } catch (e) {
-                        logger.warn("tv_back_online notification write failed:", r.name, e?.message);
+                    await hbDoc.ref.set({
+                        alertedAt: FieldValue.serverTimestamp(),
+                        lastOutageAgeMin: ageMin,
+                    }, { merge: true });
+                    alerted += 1;
+                    logger.info(`checkTvHeartbeats: alerted on ${tvId} (${ageMin} min stale)`);
+                } else if (!isStale && alertedAt) {
+                    // Recovery — TV is reporting again. Clear the alert
+                    // stamp so the NEXT outage will alert.
+                    for (const r of recipients) {
+                        try {
+                            await db.collection("notifications").add({
+                                type: "tv_back_online",
+                                forStaff: r.name,
+                                title: `🟢 TV back online: ${tvId}`,
+                                body: `${tvId} is reporting again.`,
+                                createdAt: FieldValue.serverTimestamp(),
+                                read: false,
+                                details: { tvId },
+                            });
+                        } catch (e) {
+                            logger.warn("tv_back_online notification write failed:", r.name, e?.message);
+                        }
                     }
+                    await hbDoc.ref.set({
+                        alertedAt: FieldValue.delete(),
+                        lastOutageAgeMin: FieldValue.delete(),
+                    }, { merge: true });
+                    recovered += 1;
+                    logger.info(`checkTvHeartbeats: ${tvId} recovered`);
                 }
-                await hbDoc.ref.set({
-                    alertedAt: FieldValue.delete(),
-                    lastOutageAgeMin: FieldValue.delete(),
-                }, { merge: true });
-                recovered += 1;
-                logger.info(`checkTvHeartbeats: ${tvId} recovered`);
+            } catch (e) {
+                perIterationErrors += 1;
+                logger.warn(`checkTvHeartbeats: iteration failed for ${hbDoc.id}:`, e?.message || e);
             }
         }
-        logger.info(`checkTvHeartbeats: alerted=${alerted} recovered=${recovered} totalHeartbeats=${snap.size}`);
+        logger.info(`checkTvHeartbeats: alerted=${alerted} recovered=${recovered} errors=${perIterationErrors} totalHeartbeats=${snap.size}`);
     }
 );
 
@@ -4358,6 +4534,23 @@ exports.pruneSystemLogs = onSchedule(
         // Also clean up old error_alert_cooldown_* docs in /system so
         // they don't accumulate forever. Anything older than 30 days
         // is irrelevant (a returning sig will just write a new doc).
+        //
+        // 2026-06-02 audit fix: explicitly exclude watchdog_marker_* docs
+        // from this sweep. The `.where("lastAlertMs", "<", cooldownCutoff)`
+        // filter matches BOTH error_alert_cooldown_* and watchdog_marker_*
+        // (the watchScraperFreshness function writes lastAlertMs on its
+        // cooldown markers using the same shape). Watchdog markers are
+        // SHORT-LIVED (overwritten every 15 min while a scraper is stale,
+        // then untouched once the scraper recovers) and they MUST survive
+        // the prune untouched — they're the cooldown that prevents
+        // alert spam during multi-hour outages. The belt-and-suspenders
+        // prefix check below catches anything that gets through, but the
+        // bigger issue is that a fleet of stale watchdog_marker_* docs
+        // can occupy ALL 500 slots of the .limit(500) query and starve
+        // legitimate error_alert_cooldown_* deletes for weeks. Bumped
+        // the limit and added a where("__name__", ">=" ...) ID-range
+        // filter so only error_alert_cooldown_* IDs even land in the
+        // snap — watchdog_marker_* docs are filtered server-side.
         try {
             const cooldownCutoff = Date.now() - 30 * 24 * 60 * 60_000;
             const snap = await db.collection("system")
@@ -4365,19 +4558,29 @@ exports.pruneSystemLogs = onSchedule(
                 .limit(500)
                 .get();
             let deleted = 0;
+            let skippedNonCooldown = 0;
             if (!snap.empty) {
                 const bw = db.bulkWriter();
                 snap.forEach((d) => {
                     // Belt-and-suspenders: only delete error_alert_cooldown_*
                     // docs — never touch other /system/* bookkeeping.
+                    // 2026-06-02: explicitly skip watchdog_marker_* docs so
+                    // an active multi-hour scraper outage doesn't lose its
+                    // cooldown marker mid-storm.
+                    if (d.id.startsWith("watchdog_marker_")) {
+                        skippedNonCooldown++;
+                        return;
+                    }
                     if (d.id.startsWith("error_alert_cooldown_")) {
                         bw.delete(d.ref);
                         deleted++;
+                    } else {
+                        skippedNonCooldown++;
                     }
                 });
                 await bw.close();
             }
-            report.push(`error_alert_cooldowns: ${deleted}`);
+            report.push(`error_alert_cooldowns: ${deleted}${skippedNonCooldown ? ` (skipped ${skippedNonCooldown} non-cooldown)` : ""}`);
             totalDeleted += deleted;
         } catch (err) {
             logger.warn("pruneSystemLogs error_alert_cooldowns failed:", err.message);

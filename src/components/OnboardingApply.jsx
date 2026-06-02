@@ -31,7 +31,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
 import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { ref as sref, uploadBytes } from 'firebase/storage';
+import { ref as sref, uploadBytes, deleteObject } from 'firebase/storage';
 import { notifyAdmins } from '../data/notify';
 import {
     POSITIONS, LOCATIONS, DISTANCE_OPTIONS, TRANSPORT_OPTIONS, DESIRED_HOURS,
@@ -382,6 +382,17 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
         } catch {}
         setSaving(true);
         setErr('');
+        // 2026-06-02 audit fix — ORPHAN RESUME ROLLBACK. If the resume
+        // upload to Storage succeeds but the Firestore setDoc afterward
+        // throws (network blip, rules denial, transient outage), the
+        // resume file would otherwise sit in Storage forever with no
+        // application doc referencing it — leaked PII the admin team
+        // can't easily discover or clean up. Mirror the orphan-rollback
+        // pattern from MaintenanceRequest.jsx + NeedsBoard.jsx: track
+        // the uploaded resumeRef + a resumeUploaded flag, and on the
+        // outer catch call deleteObject(resumeRef) to roll back.
+        let resumeRef = null;
+        let resumeUploaded = false;
         try {
             const phoneE164 = normalizeUsPhone(values.phone);
             const ipHash = await sha256Hex(navigator.userAgent + '|' + Date.now());
@@ -397,10 +408,14 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                     const ext = (resumeFile.name.split('.').pop() || 'pdf').toLowerCase().replace(/[^a-z0-9]/g, '');
                     const safeName = `resume_${ts}.${ext || 'pdf'}`;
                     resumePath = `applications/${appRef.id}/${safeName}`;
-                    await uploadBytes(sref(storage, resumePath), resumeFile, { contentType: resumeFile.type });
+                    resumeRef = sref(storage, resumePath);
+                    await uploadBytes(resumeRef, resumeFile, { contentType: resumeFile.type });
+                    resumeUploaded = true;
                 } catch (upErr) {
                     console.warn('resume upload failed (non-fatal):', upErr);
                     resumePath = null;
+                    resumeRef = null;
+                    resumeUploaded = false;
                 }
             }
             // Compose the submit payload. Keep field names matched to the
@@ -519,6 +534,17 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
             onSubmitted?.(appRef.id);
         } catch (e) {
             console.error('apply submit failed', e);
+            // Roll back the orphaned resume if Storage upload succeeded
+            // but the Firestore write afterward failed. Without this the
+            // file would sit forever in applications/{appId}/ with no
+            // doc referencing it. Best-effort — swallow cleanup errors
+            // (the resume might already be gone, the user might be
+            // offline) so the submit-failure UX is the resume message,
+            // not a stack trace.
+            if (resumeUploaded && resumeRef) {
+                try { await deleteObject(resumeRef); }
+                catch (cleanupErr) { console.warn('resume orphan cleanup failed:', cleanupErr); }
+            }
             setErr(tx('Could not submit. Try again.', 'No se pudo enviar. Intenta de nuevo.'));
         } finally {
             setSaving(false);

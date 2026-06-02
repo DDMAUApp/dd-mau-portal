@@ -234,20 +234,31 @@ export function parseMentions(text, staffList) {
 
 // One-line preview of a message for chat-list rendering.
 // Shows the sender's first name + a short summary depending on type.
-// Bilingual via the {en, es} ternary at the call site (we just return
-// English here for the data layer; the UI rewraps).
-export function previewOf(msg) {
+//
+// 2026-06-02 — accepts a `language` arg ('en'|'es') so non-text message
+// previews ("📷 Photo", "🎤 Voice message", "📊 Poll", "✅ Back in
+// stock") render in the viewer's language. The function still defaults
+// to English when language isn't passed, so legacy callers and the
+// chat.js test fixtures keep working unchanged. The push-body preview
+// built inside sendMessage stays English-only because the Cloud
+// Function recipient may speak a different language than the sender —
+// see blockingForOwner note for the server-side fix.
+export function previewOf(msg, language = 'en') {
     if (!msg) return '';
-    if (msg.deleted) return '(deleted)';
+    const es = language === 'es';
+    const tx = (en, esStr) => (es ? esStr : en);
+    if (msg.deleted) return tx('(deleted)', '(eliminado)');
     const who = msg.senderName ? msg.senderName.split(' ')[0] + ': ' : '';
-    if (msg.type === 'image') return who + '📷 Photo';
-    if (msg.type === 'video') return who + '🎬 Video';
-    if (msg.type === 'audio') return who + '🎤 Voice message';
-    if (msg.type === 'poll') return who + '📊 ' + (msg.poll?.question || 'Poll');
+    if (msg.type === 'image') return who + tx('📷 Photo', '📷 Foto');
+    if (msg.type === 'video') return who + tx('🎬 Video', '🎬 Video');
+    if (msg.type === 'audio') return who + tx('🎤 Voice message', '🎤 Mensaje de voz');
+    if (msg.type === 'poll') return who + '📊 ' + (msg.poll?.question || tx('Poll', 'Encuesta'));
     if (msg.type === 'eighty_six_alert') {
         const d = msg.eightySixData || {};
-        const prefix = d.transition === 'in' ? '✅ Back in stock' : '🚫 86';
-        return who + `${prefix}: ${d.itemName || 'item'}`;
+        const prefix = d.transition === 'in'
+            ? tx('✅ Back in stock', '✅ De vuelta en stock')
+            : tx('🚫 86', '🚫 86');
+        return who + `${prefix}: ${d.itemName || tx('item', 'artículo')}`;
     }
     if (msg.type === 'system') return msg.text || '';
     const t = (msg.text || '').replace(/\s+/g, ' ').trim();

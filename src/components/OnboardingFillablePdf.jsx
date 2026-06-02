@@ -37,12 +37,45 @@ async function loadPdfLib() {
 //   • From the hire RECORD itself (admin-set when the hire is created):
 //     position, location, hireDate, offerAmount. These power offer-letter
 //     and other admin-prepared templates.
+//
+// SENSITIVE-AUTOFILL DENY-LIST — see SSN_AUTOFILL_DENYLIST below.
+// W-4 templates auto-detect an "Employee's SSN" field and (before this
+// fix) bound it to `autofill: 'ssn'`. Resolving that against the hire
+// record meant a partially-filled W-4 PDF — emailed, saved to disk, or
+// downloaded by a hire who abandons mid-form — leaked the SSN. That
+// matches the audit finding: "SSN gets autofilled from the hire record
+// into the W-4 PDF field, which means a partially-completed PDF
+// emailed/saved has the SSN visible."
+//
+// IRS guidance for SSN handling in form-prep apps (Pub. 1345 § 4 and
+// the W-4 / I-9 instructions) is that the SSN should be entered by the
+// taxpayer at the moment of form preparation, not pre-populated from an
+// upstream record. We follow that here: the autofill resolver returns
+// '' for any binding name in the deny-list, forcing the hire to retype
+// the SSN fresh into the PDF every time. The binding itself is kept
+// (so the FieldInput renderer can recognize the field and apply masked
+// input chrome) — we just never resolve it to a stored value.
+const SSN_AUTOFILL_DENYLIST = new Set([
+    'ssn',
+    'socialSecurityNumber',
+    'social',
+    'ssn4',
+    'ssnFull',
+]);
+
+function isSensitiveAutofill(autofillId) {
+    return !!autofillId && SSN_AUTOFILL_DENYLIST.has(autofillId);
+}
+
 function autofillValue(autofillId, hire) {
     if (!autofillId) return '';
+    // Sensitive bindings (SSN, etc.) intentionally never resolve to a
+    // stored value — the hire types them fresh into the PDF. See the
+    // SSN_AUTOFILL_DENYLIST block above for the IRS-guidance rationale.
+    if (isSensitiveAutofill(autofillId)) return '';
     const p = hire?.personal || {};
     const firstName = (p.legalName || hire?.name || '').split(' ')[0] || '';
     const lastName = (p.legalName || hire?.name || '').split(' ').slice(-1)[0] || '';
-    const ssn = hire?.ssn || p.ssn || '';
     const today = new Date().toISOString().slice(0, 10);
     const locInfo = (hire?.location && LOCATION_INFO[hire.location]) || null;
     const map = {
@@ -55,7 +88,6 @@ function autofillValue(autofillId, hire) {
         dob: p.dob || '',
         phone: p.phone || hire?.phone || '',
         email: p.email || hire?.email || '',
-        ssn,
         today,
         position: hire?.position || '',
         location: locInfo?.label || (hire?.location || ''),
@@ -487,6 +519,19 @@ function StaticOverlay({ field, isEs }) {
 }
 
 // FieldInput — overlay UI on top of the PDF page.
+//
+// Sensitive fields (SSN, etc. — see SSN_AUTOFILL_DENYLIST above) render
+// as masked password inputs so the digits the hire types aren't visible
+// on-screen / in screen-recordings / over a manager's shoulder. We also
+// detect SSN intent from the field label as a fallback, because admins
+// occasionally drop manual fields with no autofill binding.
+function isSensitiveField(field) {
+    if (isSensitiveAutofill(field?.autofill)) return true;
+    const label = String(field?.label || '').toLowerCase();
+    if (!label) return false;
+    return /\bssn\b|social\s*security|\btin\b/.test(label);
+}
+
 function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
     const tx = (en, es) => (isEs ? es : en);
     const style = {
@@ -530,9 +575,23 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
             </label>
         );
     }
+    // SSN / sensitive fields: render as masked input so digits aren't
+    // visible on-screen. The PDF still receives the plaintext value at
+    // submit time (it has to — that's what the IRS expects on the
+    // flattened form), but during the fill-in step we protect against
+    // shoulder-surfing, screen recordings, and screenshots. inputMode
+    // numeric keeps the mobile keypad simple; autoComplete off / new-
+    // password keeps browsers from caching SSNs as autofill candidates.
+    const sensitive = isSensitiveField(field);
+    const inputType = sensitive
+        ? 'password'
+        : field.type === 'date' ? 'date' : 'text';
     return (
         <input
-            type={field.type === 'date' ? 'date' : 'text'}
+            type={inputType}
+            inputMode={sensitive ? 'numeric' : undefined}
+            autoComplete={sensitive ? 'new-password' : undefined}
+            spellCheck={sensitive ? false : undefined}
             value={value || ''}
             onChange={e => onChange(e.target.value)}
             // 2026-06-01 — Andrew: "for the W4 missouri, when the text

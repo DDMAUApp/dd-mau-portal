@@ -11,7 +11,10 @@
 //     • ops/86_{loc}              — MobileBottomNav + HomeV2 + Sidebar
 //                                    + MobileHome = 4 listeners
 //     • time_off (FULL collection) — HomeV2 + Sidebar + MobileHome = 3
-//     • ops/labor_{loc}           — HomeV2 + MobileHome = 2
+//     • ops/labor_{loc}           — HomeV2 + MobileHome + LaborDashboard
+//                                    + Operations = 4 listeners (pre 2026-06-02)
+//     • laborHistory_{loc} (28d)  — LaborDashboard + Schedule = 2 listeners
+//                                    (pre 2026-06-02)
 //
 //   Every Firestore doc change replayed each listener individually,
 //   producing 4-6× the network traffic and 4-6× the React re-render
@@ -22,9 +25,25 @@
 // to every consumer via useAppData(). One listener per stream → one
 // re-render per data change → ~60-70% fewer Firestore reads.
 //
+// 2026-06-02 consolidation:
+//   • ops/labor_{loc} consolidated: LaborDashboard + Operations were
+//     each opening their own onSnapshot in parallel with the context's
+//     listener. As a side bonus, those direct subscriptions broke
+//     silently in 'both' mode (queried the literal doc ops/labor_both,
+//     which does not exist). The context resolves 'both' → webster
+//     primary the same way the home tiles already did.
+//   • laborHistory_{loc} (last 28d, SPLH) consolidated: Schedule + Labor
+//     Dashboard each pulled ~1,500 docs on cold mount. Schedule's
+//     localStorage cache + 'both'→webster fallback are preserved here.
+//
 // API:
 //   <AppDataProvider staffName="..." storeLocation="..."> { children }
-//   const { notifications, shifts14, timeOff, eightySix, labor } = useAppData()
+//   const {
+//       notifications, shifts14, timeOff,
+//       eightySix, eightySixByLoc,
+//       labor, laborByLoc,
+//       laborHistory, laborHistoryByLoc,
+//   } = useAppData()
 //
 // Each value is null/[] until the first snapshot lands; consumers
 // should tolerate the loading state. Lists are stable references when
@@ -38,12 +57,39 @@ import { postEightySixToChat } from '../data/eightySixChat';
 
 const AppDataContext = createContext(null);
 
+// laborHistory cache constants. Hoisted so the hydrate-from-cache step
+// (initial useState lazy initializer) and the live-listener writeback
+// stay in sync.
+const SPLH_CACHE_PREFIX = 'ddmau:splh:'; // suffixed by location
+const SPLH_CACHE_TTL_MS = 30 * 60 * 1000;
+const splhCacheKey = (loc) => `${SPLH_CACHE_PREFIX}${loc}`;
+const hydrateSplhFromCache = (loc) => {
+    try {
+        const raw = localStorage.getItem(splhCacheKey(loc));
+        if (!raw) return [];
+        const cached = JSON.parse(raw);
+        if (!cached?.savedAt || !Array.isArray(cached.items)) return [];
+        if (Date.now() - cached.savedAt >= SPLH_CACHE_TTL_MS) return [];
+        return cached.items;
+    } catch {
+        return [];
+    }
+};
+
 export function AppDataProvider({ staffName, storeLocation, staffListReady = false, children }) {
     const [notifications, setNotifications] = useState([]);
     const [shifts14, setShifts14] = useState([]);
     const [timeOff, setTimeOff] = useState([]);
     const [eightySix, setEightySix] = useState({ webster: null, maryland: null });
     const [labor, setLabor] = useState({ webster: null, maryland: null });
+    // laborHistory: last 28 days of laborHistory_{loc} per location,
+    // used by Schedule's SPLH advisor + LaborDashboard's historical
+    // grid. Hydrated from localStorage on initial mount so cold-start
+    // renders don't flash empty while Firestore is still pending.
+    const [laborHistory, setLaborHistory] = useState(() => ({
+        webster:  hydrateSplhFromCache('webster'),
+        maryland: hydrateSplhFromCache('maryland'),
+    }));
 
     // notifications — per user. Skipped if no staffName signed in.
     //
@@ -240,6 +286,53 @@ export function AppDataProvider({ staffName, storeLocation, staffListReady = fal
         return () => { unsubW(); unsubM(); };
     }, []);
 
+    // laborHistory_{loc} — last 28 days of hourly snapshots used for SPLH
+    // (sales per labor hour) analysis. Subscribes for whichever
+    // location(s) any consumer might need based on the active
+    // storeLocation. 'both' mode pulls webster (matches the prior
+    // Schedule.jsx fallback — there's no global "both" view of SPLH;
+    // managers eyeballing it pick a side mentally).
+    //
+    // 2026-06-02 consolidation: this lived in BOTH Schedule.jsx and
+    // LaborDashboard.jsx as parallel listeners. Each cold mount pulled
+    // ~1,500 docs per consumer. Now subscribed once here; both consumers
+    // read from useAppData().laborHistory / .laborHistoryByLoc.
+    //
+    // Cache strategy (preserved from Schedule's original): localStorage
+    // mirror with 30-min TTL hydrates the initial state synchronously,
+    // and every fresh snapshot rewrites the cache. Schedule's "fast
+    // path" perception of an already-warm advisor on tab return is
+    // preserved.
+    //
+    // We re-subscribe when storeLocation changes ONLY to potentially
+    // add the second location — we never tear down the active
+    // subscription. (For two locations the cost is trivial; this is a
+    // future-proofing comment for if a third location is added.) For
+    // now we subscribe to both unconditionally — matches the eightySix /
+    // labor pattern above and means an admin flipping the location
+    // toggle sees no flicker.
+    useEffect(() => {
+        const subscribeLoc = (loc) => {
+            const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+            const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
+            return onSnapshot(
+                query(collection(db, `laborHistory_${loc}`), where('date', '>=', cutoffKey)),
+                (snap) => {
+                    const arr = [];
+                    snap.forEach(d => arr.push(d.data()));
+                    setLaborHistory(prev => ({ ...prev, [loc]: arr }));
+                    try {
+                        localStorage.setItem(splhCacheKey(loc), JSON.stringify({ items: arr, savedAt: Date.now() }));
+                    } catch { /* storage full — non-fatal */ }
+                },
+                (err) => console.warn(`laborHistory_${loc} snapshot failed:`, err),
+            );
+        };
+        const unsubW = subscribeLoc('webster');
+        const unsubM = subscribeLoc('maryland');
+        return () => { unsubW(); unsubM(); };
+    }, []);
+
     // Convenience: resolve per-location data once based on storeLocation.
     // For 'both' we return the webster value as the primary plus expose
     // the full pair under `byLoc` so admin views can show both.
@@ -266,8 +359,10 @@ export function AppDataProvider({ staffName, storeLocation, staffListReady = fal
             eightySixByLoc: eightySix,
             labor: resolveLocDoc(labor),
             laborByLoc: labor,
+            laborHistory: resolveLocDoc(laborHistory) || [],
+            laborHistoryByLoc: laborHistory,
         };
-    }, [notifications, shifts14, timeOff, eightySix, labor, storeLocation]);
+    }, [notifications, shifts14, timeOff, eightySix, labor, laborHistory, storeLocation]);
 
     return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
 }
@@ -285,6 +380,8 @@ const EMPTY_VALUE = {
     eightySixByLoc: { webster: null, maryland: null },
     labor: null,
     laborByLoc: { webster: null, maryland: null },
+    laborHistory: [],
+    laborHistoryByLoc: { webster: [], maryland: [] },
 };
 
 export function useAppData() {

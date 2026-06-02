@@ -12,7 +12,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import {
-    collection, getDocs, query, where, orderBy, onSnapshot,
+    collection, getDocs, query, where, orderBy, onSnapshot, limit,
 } from 'firebase/firestore';
 import {
     TASK_TYPES, TASK_TYPE_IDS, TASK_STATUS,
@@ -138,7 +138,23 @@ export default function RequiredTaskAdmin({ staffList, staffName, language, onCl
         // on the client. For DD Mau scale (hundreds of rows max) this
         // is fine. If volume grows past a few thousand we add a
         // /campaigns aggregate doc.
-        const q = query(collection(db, 'required_tasks'), orderBy('createdAt', 'desc'));
+        //
+        // PERF, 2026-06-02 audit: bounded at 500. The collection is
+        // grow-only (cancelled/completed rows are never archived) so
+        // an unbounded orderBy('createdAt','desc') would stream every
+        // historical task to every admin who opens this tab — easily
+        // thousands once the restaurant runs a few months of opt-in /
+        // availability / i9 campaigns. 500 newest rows comfortably
+        // covers the last ~10 campaigns at DD Mau's scale; older
+        // campaigns can be surfaced via a "load older" cursor if/when
+        // anyone asks. Status-based scoping isn't usable here because
+        // the campaigns view counts ALL statuses (completed, pending,
+        // skipped, cancelled) to render completion stats.
+        const q = query(
+            collection(db, 'required_tasks'),
+            orderBy('createdAt', 'desc'),
+            limit(500),
+        );
         const unsub = onSnapshot(q, (snap) => {
             const byCampaign = new Map();
             for (const d of snap.docs) {
@@ -171,7 +187,7 @@ export default function RequiredTaskAdmin({ staffList, staffName, language, onCl
                 return bt - at;
             });
             setCampaigns(list);
-        });
+        }, (err) => console.warn('required_tasks campaigns snapshot failed:', err));
         return () => unsub();
     }, [view]);
 

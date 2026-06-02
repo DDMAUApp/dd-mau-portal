@@ -283,5 +283,24 @@ export const DEFAULT_STAFF = [
   { id: 66, name: "Carlos Pacheco", role: "BOH", pin: "", location: "maryland" },
   { id: 68, name: "Petrona Perez", role: "BOH", pin: "", location: "maryland" },
   { id: 69, name: "Inmer Ramirez", role: "BOH", pin: "", location: "maryland" },
-  { id: 71, name: "Emerson Velasquez", role: "BOH", pin: "", location: "maryland" }
+  { id: 71, name: "Emerson Velasquez", role: "BOH", pin: "", location: "maryland" },
+  {
+    id: 999,
+    name: 'Apple Reviewer',
+    pin: '8888',
+    role: 'Manager',
+    phoneE164: '',
+    smsOptIn: false,
+    emailOptIn: false,
+    location: 'both',
+    hasOpsAccess: true,
+    hasRecipesAccess: true,
+    isManager: true,
+    fcmTokens: [],
+    // DO NOT add canViewOnboarding — keep PII access denied for reviewer
+    // 2026-06-02 — Apple App Store reviewer account. PIN 8888. Manager role
+    // so they can see Schedule, Chat, Operations, 86 Board, Needs Board,
+    // Tasks, Maintenance, Training. NO PII access (onboarding). Add to
+    // store-listing app-review-notes blurb with this PIN.
+  }
 ];

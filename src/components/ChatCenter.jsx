@@ -43,6 +43,14 @@ import { ChatAvatar, chatDisplayName } from './ChatShared';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
+// 2026-06-02 — Capacitor status-bar bridge. The chat surface is the
+// only DARK page in the app, so the iOS status bar needs LIGHT icons
+// while chat is mounted (and we flip back to DARK icons on unmount
+// so home/schedule/ops keep dark text on the light background).
+// pushBackHandler wires the Android hardware-back gesture into the
+// chat's "leave thread / leave chat" flow — see the back-handler
+// useEffect below.
+import { setStatusBarStyle, pushBackHandler } from '../capacitor-bridge';
 
 // Lazy children. Andrew 2026-05-23: use the explicit `.then(m =>
 // ({ default: m.default }))` form instead of bare `lazy(() =>
@@ -86,6 +94,52 @@ export default function ChatCenter({
         () => tierOf(viewer, isAdmin),
         [viewer, isAdmin]
     );
+
+    // ── Native status-bar style flip ─────────────────────────────
+    // 2026-06-02 — Chat is the only dark surface in the app. The
+    // iOS status bar starts in DARK style (dark icons on light bg)
+    // for home/schedule/ops; mounting chat flips it to LIGHT (light
+    // icons on dark bg) so the status bar text is readable against
+    // the chat's near-black background. Unmount flips back.
+    //
+    // setStatusBarStyle() is a no-op on the web build (the bridge
+    // guards on Capacitor.isNativePlatform()), so this useEffect is
+    // safe to run unconditionally — no extra isNative branch needed
+    // in the component itself.
+    useEffect(() => {
+        setStatusBarStyle('light');
+        return () => { setStatusBarStyle('dark'); };
+    }, []);
+
+    // ── Native hardware-back integration (stub) ──────────────────
+    // 2026-06-02 — When ChatCenter mounts, push a handler onto the
+    // shared back-stack so the Android hardware back button can
+    // navigate within chat (leave open thread → leave chat list).
+    // The handler is popped on unmount via the returned cleanup.
+    //
+    // This wire-up is the canonical example for modals: any modal
+    // (ModalPortal, ChatSettingsModal, etc.) can do the same thing
+    // to participate in the back-stack — push on mount, return the
+    // popper from the useEffect cleanup, and the bridge will route
+    // the back gesture LIFO without any DOM event plumbing.
+    //
+    // Example for a modal:
+    //   useEffect(() => pushBackHandler(() => onClose()), []);
+    //
+    // The exact "leave thread vs. leave chat list" decision lives
+    // in the component that owns the `activeChatId` state. The stub
+    // below is intentionally minimal — wire it up to the real
+    // setActiveChatId / setMobileView setters when the back-stack
+    // refactor lands.
+    // useEffect(() => {
+    //     const pop = pushBackHandler(() => {
+    //         if (activeChatId) { setActiveChatId(null); return; }
+    //         // No thread open — let the next handler (or the
+    //         // bridge's default "navigate to home") take over.
+    //         pop();
+    //     });
+    //     return pop;
+    // }, [activeChatId]);
 
     // ── Chat list ─────────────────────────────────────────────────
     // Two queries: members array-contains me (groups + DMs the user is
@@ -451,10 +505,12 @@ export default function ChatCenter({
         if (!term) return chats;
         return chats.filter(c => {
             if (chatDisplayName(c, staffName).toLowerCase().includes(term)) return true;
-            const preview = previewOf(c.lastMessage).toLowerCase();
+            // Match against the viewer's-language preview so Spanish staff
+            // searching "foto" hits "📷 Foto" rows.
+            const preview = previewOf(c.lastMessage, isEs ? 'es' : 'en').toLowerCase();
             return preview.includes(term);
         });
-    }, [chats, deferredSearch, staffName]);
+    }, [chats, deferredSearch, staffName, isEs]);
 
     // Container height uses dynamic viewport units (dvh) instead of vh
     // — iOS Safari treats vh as the INITIAL viewport (address bar
@@ -932,7 +988,7 @@ export default function ChatCenter({
 // even before the memo wrapper has been built. Andrew 2026-05-22.
 function ChatListItemInner({ chat, viewerName, active, onClick, onLongPress, isEs }) {
     const name = chatDisplayName(chat, viewerName);
-    const subtitle = previewOf(chat.lastMessage) || subtitleFor(chat, isEs);
+    const subtitle = previewOf(chat.lastMessage, isEs ? 'es' : 'en') || subtitleFor(chat, isEs);
     const unread = isChatUnread(chat, viewerName);
     const time = formatChatTime(chat.lastActivityAt);
 

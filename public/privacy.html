@@ -17,14 +17,14 @@
 </head>
 <body>
 <h1>Privacy Policy</h1>
-<p class="meta">DD Mau Vietnamese Eatery · Effective May 29, 2026</p>
+<p class="meta">DD Mau Vietnamese Eatery · Effective May 29, 2026 · Last updated June 2, 2026</p>
 
 <p>This Privacy Policy explains how DD Mau Vietnamese Eatery (operating as Andrew &amp; Vy Catering LLC in Webster Groves, Missouri and forsis LLC in Maryland Heights, Missouri, together "DD Mau," "we," "us") collects, uses, and protects information about our employees and job applicants when they use the DD Mau Staff Portal (the "Portal") at <a href="https://app.ddmaustl.com">app.ddmaustl.com</a>.</p>
 
-<h2>Who this policy applies to</h2>
+<h2 id="audience">Who this policy applies to</h2>
 <p>Active W-2 employees, on-shift workers, and job applicants who have started an application or onboarding flow with DD Mau. The Portal is an internal employment tool. It is not a consumer product and is not used to communicate with restaurant customers.</p>
 
-<h2>What we collect</h2>
+<h2 id="what-we-collect">What we collect</h2>
 <ul>
 <li><strong>Identity and contact:</strong> legal name, mobile phone number, personal email, mailing address, date of birth, government ID and tax identifiers (Social Security number, W-4 / I-9 inputs), uploaded ID documents.</li>
 <li><strong>Employment:</strong> position, location, hire date, wage, schedule, time worked, training progress, performance notes captured by managers.</li>
@@ -33,7 +33,7 @@
 <li><strong>Device / technical:</strong> browser type, IP address at sign-in, push notification tokens (only stored if you enable push), session timestamps and audit logs of sensitive actions.</li>
 </ul>
 
-<h2>How we use it</h2>
+<h2 id="how-we-use">How we use it</h2>
 <ul>
 <li>Run payroll, scheduling, and the day-to-day operation of the restaurants.</li>
 <li>Send you operational SMS and push notifications you have consented to receive (shift reminders, sauce production requests, food-safety log reminders, equipment maintenance alerts, onboarding paperwork notifications, and other internal work communications).</li>
@@ -41,10 +41,29 @@
 <li>Investigate disputes, complaints, accidents, and policy violations.</li>
 </ul>
 
-<h2>Text messages (SMS)</h2>
+<h2 id="sms">Text messages (SMS)</h2>
 <p>By providing your mobile number on your employee record and signing the Employee Handbook Acknowledgment during onboarding, you consent to receive operational text messages from DD Mau through our SMS vendor, Twilio. Message and data rates may apply. Message frequency varies based on operational need (typically zero to ten messages per workweek). Reply <strong>STOP</strong> to any DD Mau text message to opt out, or reply <strong>HELP</strong> for help. Opting out of SMS does not end your employment and does not stop other operational communications through the Portal, email, or in-person.</p>
 
-<h2>Who we share information with</h2>
+<h2 id="location">Location data</h2>
+<p>When you clock in for a shift through the Portal, the app reads your device's approximate location once at the moment of clock-in. This is used solely to verify that you are physically present at the restaurant address you are clocking in to (a "geofence" check), so that hours worked are tied to an on-site presence. The location reading is stored as a single coordinate on that clock-in audit log entry and is not used for anything else.</p>
+<ul>
+<li><strong>Use:</strong> geofence verification at the moment of clock-in only.</li>
+<li><strong>Not tracked over time:</strong> we do not record your location while you are off shift, while you are on shift between clock events, or in the background. The app does not subscribe to continuous location updates.</li>
+<li><strong>Not shared, not sold:</strong> location coordinates are not shared with any third party, advertiser, or data broker, and are not sold under any circumstances.</li>
+<li><strong>Retention:</strong> retained only as part of the clock-in audit log entry for the wage-and-hour records retention period (see <a href="#retention">How long we keep it</a>).</li>
+<li><strong>Permission control:</strong> location permission is requested at the OS level the first time you clock in, and you can revoke it from your device settings at any time. If you revoke permission, clock-in will still work but the audit log will note that no geofence reading was captured.</li>
+</ul>
+
+<h2 id="diagnostics">Diagnostic and crash data</h2>
+<p>The Portal collects crash reports and performance diagnostics to keep the app working. When the app crashes, hits an unhandled error, or experiences a degraded session, a report is sent to <strong>Sentry</strong> (sentry.io), our error-monitoring vendor. The report includes a stack trace, the page or action where the error happened, browser / device type, and your <em>staff name</em> as the identifier on the report. We use your staff name (not a personal device advertising ID or any cross-app identifier) so that an owner can follow up with you to reproduce the issue.</p>
+<ul>
+<li><strong>Use:</strong> triage and fix bugs and outages in the Portal. Not used for any product analytics, advertising, profiling, or tracking across other apps or websites.</li>
+<li><strong>Sharing:</strong> not shared with any third party beyond Sentry's processing on our behalf. Sentry is contractually bound to handle the data confidentially and not to use it for its own purposes.</li>
+<li><strong>Retention:</strong> Sentry-side reports follow Sentry's default retention window (typically 30–90 days for events).</li>
+<li><strong>Scrubbing:</strong> the Portal scrubs known PII fields (legal names of other staff, phone numbers, SSN-shaped strings, ID-document URLs) from breadcrumbs and event payloads before sending. Free-form text you typed at the moment of the crash (a chat message, a note) may still appear in the stack trace.</li>
+</ul>
+
+<h2 id="sharing">Who we share information with</h2>
 <p>We do not sell, rent, or share employee personal information for marketing purposes. Information is shared only with:</p>
 <ul>
 <li><strong>Service providers under contract</strong> bound to handle your data confidentially: Google Firebase (database, authentication, hosting), Twilio (SMS delivery), Toast (point-of-sale and labor data), and our payroll provider.</li>
@@ -52,13 +71,13 @@
 <li><strong>Legal counsel and insurers</strong> as necessary to defend or resolve claims.</li>
 </ul>
 
-<h2>How we protect information</h2>
+<h2 id="security">How we protect information</h2>
 <p>Personal information is stored in Google Cloud's Firestore database with rules that restrict access to authenticated administrators and the employee themselves. ID documents and signed paperwork are stored in Firebase Storage behind short-lived access tokens. Action audit logs are retained so that sensitive accesses can be reviewed.</p>
 
-<h2>How long we keep it</h2>
+<h2 id="retention">How long we keep it</h2>
 <p>We retain employment records for the duration of employment plus the period required by law (generally four years for tax records under IRS rules and three years for wage-hour records under the Fair Labor Standards Act). Audit logs are retained for at least one year. SMS delivery logs are retained for the period required by our SMS vendor and applicable law.</p>
 
-<h2>Your rights</h2>
+<h2 id="your-rights">Your rights</h2>
 <ul>
 <li>You may review and update your personal information at any time by signing into the Portal or asking a manager.</li>
 <li>You may opt out of SMS at any time by replying STOP, as described above.</li>
@@ -66,14 +85,25 @@
 <li>You may ask us to correct inaccurate information or delete information we no longer need to keep.</li>
 </ul>
 
-<h2>Children</h2>
+<h2 id="children">Children</h2>
 <p>The Portal is not directed to anyone under 14 years of age. Where Missouri minor work permits apply, the minor's parent or guardian receives the privacy disclosures alongside the work permit.</p>
 
-<h2>Changes to this policy</h2>
+<h2 id="account-deletion">Account deletion</h2>
+<p>You can request deletion of your DD Mau Staff Portal account at any time, including after you have left employment. We honor deletion requests subject to a short cooling-off window and to records that we are legally required to retain (see <a href="#retention">How long we keep it</a>).</p>
+<ul>
+<li><strong>How to request:</strong> in the app, open the Sidebar and tap the "<strong>Delete account</strong>" link in the footer. Confirm the request on the screen that follows. You can also email <a href="mailto:andrew@ddmaustl.com">andrew@ddmaustl.com</a> from your account email and we will start the same flow on your behalf.</li>
+<li><strong>7-day grace window:</strong> after submission, the request enters a 7-day pending period. During those 7 days you can withdraw the request from the same screen in the Portal (or by replying to the confirmation email) and your account will be left untouched.</li>
+<li><strong>Owner approval:</strong> after the grace period, an owner reviews and approves the deletion. We do this to confirm that there are no open wage-and-hour or legally-required retentions tied to the account.</li>
+<li><strong>What gets deleted on approval:</strong> your staff record is removed from <code>/config/staff</code>, your FCM push notification tokens are wiped, your onboarding records (uploaded documents, signed PDFs, application form) are archived to a restricted-access location and removed from the active Portal. Chat messages you authored remain in the message history (they are part of a shared team record) but are detached from your identity going forward where technically possible.</li>
+<li><strong>What we must retain:</strong> payroll, tax (W-4, I-9), wage-hour, OSHA, and SMS-vendor delivery logs that we are required to keep by federal, Missouri state, or local law. These are retained for the statutory period in <a href="#retention">How long we keep it</a> and then deleted on the normal schedule. They are accessible only to owners and to legal/tax/government counterparties that have a legal basis to receive them.</li>
+<li><strong>Questions:</strong> any question about an in-flight or past deletion request can be sent to <a href="mailto:andrew@ddmaustl.com">andrew@ddmaustl.com</a>.</li>
+</ul>
+
+<h2 id="changes">Changes to this policy</h2>
 <p>If we make material changes we will post the updated policy at this URL with a new effective date and, when appropriate, notify employees through the Portal.</p>
 
-<h2>Contact</h2>
-<p>Questions about this Privacy Policy or your personal information may be directed to: <strong>DD Mau Vietnamese Eatery, Attn: Privacy Officer, Webster Groves, Missouri</strong> &nbsp;·&nbsp; <a href="mailto:privacy@ddmaustl.com">privacy@ddmaustl.com</a></p>
+<h2 id="contact">Contact</h2>
+<p>Questions about this Privacy Policy or your personal information may be directed to: <strong>DD Mau Vietnamese Eatery, Attn: Privacy Officer, Webster Groves, Missouri</strong> &nbsp;·&nbsp; <a href="mailto:andrew@ddmaustl.com">andrew@ddmaustl.com</a> &nbsp;·&nbsp; <a href="mailto:privacy@ddmaustl.com">privacy@ddmaustl.com</a></p>
 
 <div class="footer">
 DD Mau Vietnamese Eatery · This page is hosted at <a href="https://app.ddmaustl.com/privacy.html">app.ddmaustl.com/privacy.html</a> and is publicly accessible without authentication.

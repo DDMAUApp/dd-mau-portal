@@ -13,12 +13,12 @@
 // guarantees visibility while keeping the original poster's
 // conversational context.
 
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { db, storage } from '../firebase';
 import {
-    collection, doc, addDoc, updateDoc, serverTimestamp,
+    collection, doc, addDoc, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as sref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { recordAudit } from '../data/audit';
 import { isAdminId } from '../data/staff';
 import { notifyStaff } from '../data/notify';
@@ -43,10 +43,31 @@ export default function ChatPhotoIssueModal({
     const catDef = useMemo(() => ISSUE_CATEGORIES.find(c => c.key === category), [category]);
     const urgDef = useMemo(() => ISSUE_URGENCIES.find(u => u.key === urgency), [urgency]);
 
+    // 2026-06-02 audit fix — revoke any pending blob preview URL when the
+    // modal unmounts. Without this, closing the modal with a staged photo
+    // (X icon on the modal header or backdrop tap) leaked the object URL
+    // for the lifetime of the page. Tracking `photo?.previewUrl` in the
+    // dep so the cleanup runs against the URL that was actually live.
+    useEffect(() => {
+        return () => {
+            if (photo?.previewUrl) {
+                URL.revokeObjectURL(photo.previewUrl);
+            }
+        };
+    }, [photo?.previewUrl]);
+
     function handlePhotoPick(e) {
         const f = e.target.files?.[0];
         e.target.value = '';
         if (!f) return;
+        // 2026-06-02 audit fix — early-reject oversize photos. The storage
+        // rule caps at 10 MB but the failure arrives minutes later on
+        // cellular. 10 MB matches MaintenanceRequest + the Onboarding
+        // pattern.
+        if (f.size > 10 * 1024 * 1024) {
+            toast(tx('Photo is too large (max 10 MB)', 'La foto es muy grande (máx 10 MB)'), { kind: 'error' });
+            return;
+        }
         setPhoto({ file: f, previewUrl: URL.createObjectURL(f) });
     }
 
@@ -63,6 +84,16 @@ export default function ChatPhotoIssueModal({
         if (!photo) return;
         if (busy) return;
         setBusy(true);
+        // 2026-06-02 audit fix — orphan-rollback chain. Each multi-step
+        // write below conditionally sets one of these refs once it
+        // succeeds. If a LATER step throws, the catch block walks the
+        // refs in reverse and tears everything back down. Without this,
+        // a failure between the storage upload and the chat doc creation
+        // left a ticket pointing at a photo nobody could see, with a
+        // half-broadcast post.
+        let ticketId = null;
+        let uploadedMediaPath = null;
+        const createdMessages = []; // { chatId, messageId }
         try {
             // 1. Create ticket doc first so we have an ID for the photo path
             //    and a stable cross-reference.
@@ -77,10 +108,11 @@ export default function ChatPhotoIssueModal({
                 reportedById: viewer?.id || null,
                 createdAt: serverTimestamp(),
             });
-            const ticketId = ticketRef.id;
+            ticketId = ticketRef.id;
 
             // 2. Upload photo with the stable id.
             const media = await uploadPhoto(photo.file, ticketId);
+            uploadedMediaPath = media.path;
 
             // 3. Patch ticket with photo URL.
             await updateDoc(doc(db, 'maintenance_tickets', ticketId), {
@@ -95,7 +127,7 @@ export default function ChatPhotoIssueModal({
 
             for (const channelKey of targets) {
                 const chatId = channelDocId(channelKey);
-                await addDoc(collection(db, 'chats', chatId, 'messages'), {
+                const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), {
                     senderName: staffName,
                     senderId: viewer?.id || null,
                     type: 'photo_issue',
@@ -115,6 +147,7 @@ export default function ChatPhotoIssueModal({
                     mentions: [],
                     createdAt: serverTimestamp(),
                 });
+                createdMessages.push({ chatId, messageId: msgRef.id });
                 await updateDoc(doc(db, 'chats', chatId), {
                     lastMessage: {
                         text: `${catDef.emoji} ${tx('Issue reported', 'Problema reportado')}`,
@@ -158,6 +191,21 @@ export default function ChatPhotoIssueModal({
             onPosted?.({ ticketId });
         } catch (e) {
             console.error('issue report failed:', e);
+            // Rollback in reverse order. Each cleanup is its own try/catch
+            // so a partial failure (e.g. offline) doesn't mask the original
+            // error and we still attempt the remaining cleanups.
+            for (const { chatId, messageId } of createdMessages) {
+                try { await deleteDoc(doc(db, 'chats', chatId, 'messages', messageId)); }
+                catch (cleanupErr) { console.warn('issue chat message orphan cleanup failed:', cleanupErr); }
+            }
+            if (uploadedMediaPath) {
+                try { await deleteObject(sref(storage, uploadedMediaPath)); }
+                catch (cleanupErr) { console.warn('issue photo orphan cleanup failed:', cleanupErr); }
+            }
+            if (ticketId) {
+                try { await deleteDoc(doc(db, 'maintenance_tickets', ticketId)); }
+                catch (cleanupErr) { console.warn('issue ticket orphan cleanup failed:', cleanupErr); }
+            }
             toast(tx('Report failed', 'Error al reportar'), { kind: 'error' });
         } finally {
             setBusy(false);

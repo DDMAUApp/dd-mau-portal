@@ -904,11 +904,74 @@ export default function App() {
         document.addEventListener('keydown',    resetActive, { passive: true });
         document.addEventListener('touchstart', resetActive, { passive: true });
         document.addEventListener('mousedown',  resetActive, { passive: true });
+
+        // 2026-06-02 — Capacitor appStateChange listener.
+        // The browser-tab visibilitychange handler above doesn't fire
+        // in the iOS suspend-resume case: when iOS suspends the WebView
+        // (user swipes to home screen / locks phone), `document` is
+        // never marked hidden because the JS runtime itself is paused.
+        // On resume we'd compare lastActive against an instant in the
+        // past and fail to relock. The Capacitor @capacitor/app
+        // `appStateChange` event IS fired through the native side and
+        // captures suspend/resume reliably.
+        //
+        // Strategy: start a 5-minute background timer when isActive
+        // flips false; cancel it on isActive=true and check whether
+        // the gap exceeded IDLE_LOCK_MS. If the timer's already fired
+        // (rare — Cap delivers resume events synchronously to JS) or
+        // the gap is over the threshold, force the same logout path
+        // as the visibility handler.
+        let capAppCleanup = null;
+        let bgTimerId = null;
+        let bgStartedAt = 0;
+        (async () => {
+            try {
+                // Lazy-load @capacitor/core so the web build doesn't
+                // pull native runtime into the main chunk. The dynamic
+                // import resolves on web too (the package ships a
+                // browser shim), so the isNativePlatform() gate is the
+                // real off-switch for web users.
+                const { Capacitor } = await import('@capacitor/core');
+                if (!Capacitor.isNativePlatform?.()) return;
+                const { App: CapApp } = await import('@capacitor/app');
+                const handle = await CapApp.addListener('appStateChange', ({ isActive }) => {
+                    if (!isActive) {
+                        bgStartedAt = Date.now();
+                        try { localStorage.setItem('ddmau:lastActive', String(bgStartedAt)); } catch {}
+                        // Defensive timer — if the resume event ever
+                        // fires very late we'd still relock cleanly.
+                        if (bgTimerId) clearTimeout(bgTimerId);
+                        bgTimerId = setTimeout(() => { bgTimerId = null; }, IDLE_LOCK_MS);
+                        return;
+                    }
+                    // isActive === true — coming back to the foreground.
+                    const expired = bgStartedAt > 0 && Date.now() - bgStartedAt > IDLE_LOCK_MS;
+                    if (bgTimerId) { clearTimeout(bgTimerId); bgTimerId = null; }
+                    if (expired) {
+                        console.log('[lock] cap suspend >5min, locking');
+                        try { disableFcmPush(staffName); } catch {}
+                        setStaffName(null);
+                        setActiveTab('home');
+                    } else {
+                        try { localStorage.setItem('ddmau:lastActive', String(Date.now())); } catch {}
+                        lastInteractionBump = Date.now();
+                    }
+                    bgStartedAt = 0;
+                });
+                capAppCleanup = () => { try { handle.remove?.(); } catch {} };
+            } catch {
+                // Not on native or plugin missing — silent, web path
+                // is already handled by visibilitychange above.
+            }
+        })();
+
         return () => {
             document.removeEventListener('visibilitychange', onVisibility);
             document.removeEventListener('keydown',    resetActive);
             document.removeEventListener('touchstart', resetActive);
             document.removeEventListener('mousedown',  resetActive);
+            if (bgTimerId) clearTimeout(bgTimerId);
+            if (capAppCleanup) capAppCleanup();
         };
     }, [staffName]);
 

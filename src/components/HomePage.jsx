@@ -58,6 +58,16 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
     const [collisionMatches, setCollisionMatches] = useState([]); // multi-staff PIN collision
     const [lockedUntil, setLockedUntil] = useState(() => readLockUntil());
     const [now, setNow] = useState(() => Date.now());
+    // Invite-recovery modal — for new hires who lost the /?onboard=TOKEN
+    // link they were originally sent. They type the email they applied
+    // with; we write a doc the resendOnboardingInvite Cloud Function
+    // (NOT YET BUILT — see blockingForOwner from the audit that shipped
+    // this) picks up and uses to email a fresh link. No staff-portal
+    // PII is exposed here: the public catch-all already permits
+    // /onboarding_invite_recovery_requests writes, and we DO NOT
+    // confirm whether the email matched a hire (so a casual attacker
+    // can't probe whether an address is on file).
+    const [showRecover, setShowRecover] = useState(false);
     const isEs = language === "es";
 
     // Tick once a second while locked so the countdown updates.
@@ -286,8 +296,188 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                     </div>
                 </>
             )}
+            {/* Invite-recovery — quiet, low-emphasis text link under the
+                keypad. New hires who closed their onboarding email or lost
+                the SMS would otherwise have no self-serve path; today they
+                have to text the manager and wait for a manual resend.
+                Hidden when the collision picker is up — same reason the
+                bottom chrome already hides extra controls there. */}
+            {collisionMatches.length <= 1 && (
+                <button
+                    type="button"
+                    onClick={() => setShowRecover(true)}
+                    className="mt-4 text-[11px] text-dd-text-2 underline underline-offset-2 hover:text-dd-text active:scale-95">
+                    {isEs
+                        ? "¿Perdiste tu enlace de onboarding? Tócame para reenviar"
+                        : "Lost your onboarding link? Tap to resend"}
+                </button>
+            )}
             <div className="mt-6">
                 <InstallAppButton language={language} compact />
+            </div>
+            {showRecover && (
+                <RecoverInviteModal language={language} onClose={() => setShowRecover(false)} />
+            )}
+        </div>
+    );
+}
+
+// ── RecoverInviteModal ──────────────────────────────────────────────────────
+// Hire-side invite-recovery flow. Hire types the email address they used
+// on their application; we drop a doc into
+// /onboarding_invite_recovery_requests/{auto}. The resendOnboardingInvite
+// Cloud Function (NOT YET DEPLOYED — see blockingForOwner from this
+// audit) listens onCreate, looks up the matching hire by email, mints a
+// fresh /onboarding_invites/{token} (or reuses an unexpired one), and
+// emails the new link to the address on file. The function must NOT
+// echo back whether the email matched — we always show the same
+// "request received" UI so the lock screen can't be used as an email-
+// enumeration oracle.
+//
+// Client-side cooldown (60s, same pattern as OnboardingApply) keeps a
+// casual attacker from spamming the queue. The localStorage key is
+// distinct from the apply form's so the two flows don't trample each
+// other.
+function RecoverInviteModal({ language, onClose }) {
+    const isEs = language === "es";
+    const tx = (en, es) => (isEs ? es : en);
+    const COOLDOWN_KEY = "ddmau:recoverInviteLastSubmit";
+    const COOLDOWN_MS = 60 * 1000;
+    const [email, setEmail] = useState("");
+    const [submitting, setSubmitting] = useState(false);
+    const [done, setDone] = useState(false);
+    const [err, setErr] = useState("");
+
+    // Same email regex as src/data/applyForm.js#isValidEmail. Duplicated
+    // locally to keep the lock screen bundle from pulling in the apply-
+    // form module (which drags in storage SDKs).
+    const isValidEmail = (raw) => {
+        if (!raw) return false;
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(raw).trim());
+    };
+
+    const submit = async () => {
+        if (submitting) return;
+        const normalized = email.trim().toLowerCase();
+        if (!isValidEmail(normalized)) {
+            setErr(tx("Enter a valid email.", "Escribe un correo válido."));
+            return;
+        }
+        // Cooldown — one recovery request per minute per device. Same
+        // pattern as OnboardingApply.jsx so a panicked hire mashing the
+        // button doesn't fan out into N duplicate Cloud Function runs.
+        try {
+            const last = parseInt(localStorage.getItem(COOLDOWN_KEY) || "0", 10) || 0;
+            if (Date.now() - last < COOLDOWN_MS) {
+                setErr(tx(
+                    "You just sent one — wait a moment before sending another.",
+                    "Acabas de enviar una — espera un momento antes de enviar otra.",
+                ));
+                return;
+            }
+        } catch {}
+        setSubmitting(true);
+        setErr("");
+        try {
+            await addDoc(collection(db, "onboarding_invite_recovery_requests"), {
+                email: normalized,
+                status: "pending",
+                requestedAt: serverTimestamp(),
+                // Lightweight audit trail — same shape as the apply form's
+                // ipHash / userAgent so admin can correlate a request with
+                // an existing application in the rare case of abuse.
+                userAgent: (typeof navigator !== "undefined" && navigator.userAgent) || "",
+                source: "lock_screen",
+                language: isEs ? "es" : "en",
+            });
+            try { localStorage.setItem(COOLDOWN_KEY, String(Date.now())); } catch {}
+            setDone(true);
+        } catch (e) {
+            console.error("recovery request failed", e);
+            setErr(tx("Could not send. Try again.", "No se pudo enviar. Intenta de nuevo."));
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <div
+            onClick={onClose}
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-sm bg-white rounded-2xl border border-gray-200 shadow-xl p-5 space-y-3">
+                {done ? (
+                    <>
+                        <p className="text-4xl text-center">📬</p>
+                        <h2 className="text-lg font-black text-dd-green-700 text-center">
+                            {tx("Request received", "Solicitud recibida")}
+                        </h2>
+                        <p className="text-xs text-gray-600 text-center leading-snug">
+                            {tx(
+                                "If that email matches one of our new hires, we'll send a fresh onboarding link there shortly. Check your inbox (and spam folder) in the next few minutes.",
+                                "Si ese correo coincide con un nuevo empleado, enviaremos un enlace nuevo a esa dirección pronto. Revisa tu bandeja de entrada (y spam) en los próximos minutos.",
+                            )}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="w-full py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm active:scale-95">
+                            {tx("Close", "Cerrar")}
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        <h2 className="text-lg font-black text-gray-900 text-center">
+                            {tx("Resend onboarding link", "Reenviar enlace de onboarding")}
+                        </h2>
+                        <p className="text-xs text-gray-600 text-center leading-snug">
+                            {tx(
+                                "Type the email you used on your job application. We'll email a fresh onboarding link to that address.",
+                                "Escribe el correo que usaste en tu solicitud. Enviaremos un enlace nuevo a esa dirección.",
+                            )}
+                        </p>
+                        {/* text-base (16px) prevents iOS Safari zoom-on-focus —
+                            same convention as OnboardingApply.jsx#TextInput. */}
+                        <input
+                            type="email"
+                            inputMode="email"
+                            autoComplete="email"
+                            value={email}
+                            onChange={(e) => { setEmail(e.target.value); if (err) setErr(""); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+                            placeholder={tx("you@example.com", "tu@ejemplo.com")}
+                            disabled={submitting}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-base focus:border-dd-green focus:outline-none focus:ring-2 focus:ring-dd-green/30 disabled:opacity-60" />
+                        {err && (
+                            <p className="text-[11px] text-red-600 text-center">{err}</p>
+                        )}
+                        <div className="flex gap-2 pt-1">
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                disabled={submitting}
+                                className="flex-1 py-2.5 rounded-xl bg-white border-2 border-gray-300 text-gray-700 font-bold text-sm active:scale-95 disabled:opacity-60">
+                                {tx("Cancel", "Cancelar")}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={submit}
+                                disabled={submitting}
+                                className="flex-[2] py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm shadow-md active:scale-95 disabled:opacity-60">
+                                {submitting
+                                    ? tx("Sending…", "Enviando…")
+                                    : tx("Send link", "Enviar enlace")}
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-gray-400 text-center leading-snug">
+                            {tx(
+                                "For privacy we don't confirm whether an email is on file. If yours is, the link will arrive.",
+                                "Por privacidad no confirmamos si un correo está registrado. Si lo está, el enlace llegará.",
+                            )}
+                        </p>
+                    </>
+                )}
             </div>
         </div>
     );

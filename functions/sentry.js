@@ -23,6 +23,100 @@ const Sentry = require("@sentry/node");
 
 let initialized = false;
 
+// 2026-06-02 audit fix: beforeSend scrubber for backend events.
+//
+// The backend functions read PII through several paths (gmail subjects,
+// Twilio phone numbers, FCM tokens on staff records, occasional W-4
+// SSNs in error messages from PDF parsing) and any of those values
+// could ride along with a Sentry capture in event.contexts, event.extra,
+// or the error message itself. Strip them at the wire before the event
+// leaves the Cloud Function.
+//
+// Rules:
+//   1. Strip phone / phoneE164 / token / fcmToken fields under
+//      event.contexts.app.context.
+//   2. Redact gmail subject lines — event.extra.subject (and the
+//      common "subject" key under event.contexts.app.context) → '<redacted>'.
+//   3. Redact SSN-shaped strings (\d{3}-?\d{2}-?\d{4}) anywhere in
+//      event.message, event.exception messages, and any value under
+//      event.extra. The fix is intentionally regex-only so a stray
+//      "111-22-3333" embedded in a free-text error survives the scrub.
+const SSN_RE = /\d{3}-?\d{2}-?\d{4}/g;
+const SSN_REDACTED = "XXX-XX-XXXX";
+const PII_KEYS_REMOVE = new Set(["phone", "phoneE164", "token", "fcmToken"]);
+
+function redactSsnString(s) {
+    if (typeof s !== "string") return s;
+    return s.replace(SSN_RE, SSN_REDACTED);
+}
+
+function scrubObjectForPii(obj) {
+    if (!obj || typeof obj !== "object") return obj;
+    for (const k of Object.keys(obj)) {
+        if (PII_KEYS_REMOVE.has(k)) {
+            delete obj[k];
+            continue;
+        }
+        const v = obj[k];
+        if (typeof v === "string") {
+            obj[k] = redactSsnString(v);
+        } else if (v && typeof v === "object") {
+            scrubObjectForPii(v);
+        }
+    }
+    return obj;
+}
+
+function sentryBeforeSend(event) {
+    try {
+        // 1. Strip PII fields from contexts.app.context. Sentry's Node
+        //    SDK funnels arbitrary tags here when callers pass extra
+        //    metadata — phone numbers and FCM tokens are exactly the
+        //    kind of value that lands here uninspected.
+        const ctxApp = event.contexts && event.contexts.app;
+        if (ctxApp && ctxApp.context && typeof ctxApp.context === "object") {
+            for (const k of Object.keys(ctxApp.context)) {
+                if (PII_KEYS_REMOVE.has(k)) {
+                    delete ctxApp.context[k];
+                }
+            }
+            // 2. Redact subject line if present here.
+            if (typeof ctxApp.context.subject === "string") {
+                ctxApp.context.subject = "<redacted>";
+            }
+        }
+
+        // 2. Redact gmail subject in event.extra. pollGmail's captures
+        //    sometimes attach the email subject directly.
+        if (event.extra && typeof event.extra === "object") {
+            if (typeof event.extra.subject === "string") {
+                event.extra.subject = "<redacted>";
+            }
+            // 3. SSN redaction across every string in extra.
+            scrubObjectForPii(event.extra);
+        }
+
+        // 3. SSN redaction in the top-level error message + any
+        //    exception messages.
+        if (typeof event.message === "string") {
+            event.message = redactSsnString(event.message);
+        }
+        if (event.exception && Array.isArray(event.exception.values)) {
+            for (const exc of event.exception.values) {
+                if (exc && typeof exc.value === "string") {
+                    exc.value = redactSsnString(exc.value);
+                }
+            }
+        }
+    } catch {
+        // Belt-and-suspenders: if scrubbing somehow throws, prefer
+        // shipping a slightly-PII-leaky event over dropping it
+        // entirely. Sentry's PII rules + DSN-level filters give us
+        // a second layer of defense.
+    }
+    return event;
+}
+
 // Set up Sentry. Returns true if init succeeded, false if no DSN
 // configured (which is the no-op state — every captureException
 // below becomes a noop).
@@ -52,6 +146,11 @@ function initSentry({ dsn, release, environment } = {}) {
             // Functions handles termination its own way and the
             // bound handlers cause warnings.
             shutdownTimeout: 2_000,
+            // 2026-06-02 audit fix: PII scrubber. Strips phone /
+            // phoneE164 / token / fcmToken fields, redacts gmail
+            // subject lines, and replaces SSN-shaped strings with
+            // XXX-XX-XXXX. Defined above the init call.
+            beforeSend: sentryBeforeSend,
         });
         // Belt-and-suspenders unhandled-rejection catcher. The Cloud
         // Functions runtime catches uncaught throws/rejections at the

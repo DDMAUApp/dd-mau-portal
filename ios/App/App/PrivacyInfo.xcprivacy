@@ -118,6 +118,20 @@
                 <string>35F9.1</string>
             </array>
         </dict>
+        <!-- 2026-06-02 — Added DiskSpace category. Both Firebase SDK (cache /
+             Firestore IndexedDB sizing) and Sentry SDK (envelope-buffer
+             sizing) inspect available disk space at runtime. Reason 85F4.1
+             covers third-party SDK use of disk-space APIs. Apple started
+             rejecting builds in May 2024 that called this API without a
+             declared reason; this entry covers both SDKs. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>85F4.1</string>
+            </array>
+        </dict>
     </array>
 </dict>
 </plist>

@@ -65,6 +65,33 @@ export async function forceRefresh() {
     }
 }
 
+// CAPACITOR-NATIVE GATE (2026-06-02): in the Capacitor native shell, the
+// <body> is set to fixed positioning and `#root` becomes the scroll
+// container — so window.scrollY is permanently 0, which makes the
+// touchstart gate ("only activate from the top of the page") believe
+// the user is ALWAYS at the top. Result: any downward gesture inside
+// a mid-scrolled list (Schedule, Operations, etc.) gets interpreted
+// as a pull-to-refresh and fires the full app reload. The native
+// shell ships its own refresh affordances, so we disable this hook
+// entirely in that environment. Computed at module init — the body
+// class is set on app boot before any component renders, so it's
+// stable across the React lifecycle and we don't need to re-check
+// on every render.
+const IS_CAPACITOR_NATIVE =
+    typeof document !== 'undefined' &&
+    document.body?.classList.contains('capacitor-native');
+
+// Stable no-op return for the disabled (capacitor-native) path. Shape
+// must match the live hook's return so PullToRefreshIndicator + any
+// other consumer keeps working without a separate code path.
+const DISABLED_STATE = Object.freeze({
+    pullDistance: 0,
+    progress: 0,
+    refreshing: false,
+    armed: false,
+    triggered: false,
+});
+
 export default function usePullToRefresh() {
     const [pullDistance, setPullDistance] = useState(0);
     const [armed, setArmed] = useState(false);     // held past threshold long enough
@@ -93,6 +120,9 @@ export default function usePullToRefresh() {
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
+        // Capacitor native shell — bail before attaching any listeners
+        // so the gesture is truly inert (see module-level comment).
+        if (IS_CAPACITOR_NATIVE) return;
 
         const setDistance = (v) => {
             distanceRef.current = v;
@@ -233,6 +263,11 @@ export default function usePullToRefresh() {
             clearDwellTimer();
         };
     }, []);
+
+    // Capacitor native: ignore React state and hand back the frozen
+    // no-op snapshot so the PullToRefreshIndicator stays invisible and
+    // forceRefresh is never called via the gesture path.
+    if (IS_CAPACITOR_NATIVE) return DISABLED_STATE;
 
     return {
         pullDistance,

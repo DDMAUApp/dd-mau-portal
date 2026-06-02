@@ -731,7 +731,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // SPLH historical data — last 28 days of laborHistory_{location} feeds
     // the per-daypart staffing advisor that sits above the weekly grid.
     // Same shape used by LaborDashboard; helpers in src/data/splh.js.
-    const [splhHistory, setSplhHistory] = useState([]);
+    //
+    // 2026-06-02 consolidation: this listener moved into AppDataContext.
+    // Previously Schedule + LaborDashboard each ran their own
+    // onSnapshot on `laborHistory_{loc}` with a 28-day cutoff — same
+    // data, ~1,500 docs / mount, double-counted whenever the labor page
+    // and the schedule page were open in adjacent tabs.
+    //
+    // The localStorage cache (30-min TTL, "fast path" perceived warmth
+    // on tab return) and the 'both' → webster fallback are preserved in
+    // the context; behavior here is unchanged.
+    const { laborHistory: ctxLaborHistory } = useAppData();
+    const splhHistory = ctxLaborHistory || [];
     // Weather forecast for the current location's lat/lng. NWS API is free
     // (no key) and returns up to 7 days of half-day periods. We use the
     // forecast to nudge "rain → trim FOH" / "extreme heat → +1 drinks".
@@ -920,53 +931,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return unsub;
     }, []);
 
-    // ── SPLH historical pull (last 28 days of laborHistory_{location}) ──
-    // Powers the Schedule SPLH advisor — same data source as Labor Dashboard.
-    //
-    // 2026-05-15 perf — biggest single contributor to Schedule load time.
-    // laborHistory_{location} has 18-20k docs total across a year; 28 days
-    // filtered is ~1,500 docs. Each cold mount pulls all 1,500 over the
-    // wire, parses, and runs aggregateSplh() on them. localStorage cache
-    // with 30-min TTL skips the round-trip on repeat mounts (week
-    // navigation, tab return, deploy reload). Historical aggregation
-    // tolerates 30-min staleness fine — the data is used for forecasting
-    // typical-week patterns, not real-time anything.
-    useEffect(() => {
-        const queryLoc = storeLocation === 'both' ? 'webster' : storeLocation;
-        const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
-        const cutoffKey = cutoff.getFullYear() + '-' + String(cutoff.getMonth() + 1).padStart(2, '0') + '-' + String(cutoff.getDate()).padStart(2, '0');
-        const CACHE_KEY = `ddmau:splh:${queryLoc}`;
-        const CACHE_TTL_MS = 30 * 60 * 1000;
-        // Hydrate from cache first — skip waiting on the live query when
-        // we have something fresh enough to forecast with.
-        try {
-            const raw = localStorage.getItem(CACHE_KEY);
-            if (raw) {
-                const cached = JSON.parse(raw);
-                if (cached?.savedAt && (Date.now() - cached.savedAt) < CACHE_TTL_MS && Array.isArray(cached.items)) {
-                    setSplhHistory(cached.items);
-                    // Don't return — still fire the live listener in the
-                    // background so the cache stays warm. The setSplhHistory
-                    // above is the "fast path" for perceived speed; the
-                    // listener result will overwrite it with the same-or-
-                    // fresher data once Firestore answers.
-                }
-            }
-        } catch { /* fall through */ }
-        const unsub = onSnapshot(
-            query(collection(db, 'laborHistory_' + queryLoc), where('date', '>=', cutoffKey)),
-            (snap) => {
-                const arr = [];
-                snap.forEach(d => arr.push(d.data()));
-                setSplhHistory(arr);
-                try {
-                    localStorage.setItem(CACHE_KEY, JSON.stringify({ items: arr, savedAt: Date.now() }));
-                } catch { /* storage full — non-fatal */ }
-            },
-            (err) => console.warn('SPLH history snapshot error:', err)
-        );
-        return () => unsub();
-    }, [storeLocation]);
+    // 2026-06-02 — SPLH historical listener removed; now sourced from
+    // useAppData().laborHistory above. The localStorage cache (30-min
+    // TTL, "fast path" perceived warmth) and the 'both' → webster
+    // fallback both moved into AppDataContext, where they serve
+    // LaborDashboard too. Cuts ~1,500 docs per cold mount when both
+    // Schedule and Labor are opened in the same session.
 
     // ── Weather forecast (NWS API, free, no key) ──
     // Two-step: lat/lng → grid point → forecast. Stored per location-coord.
@@ -1183,6 +1153,23 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
         return String(val);
     };
+    // 2026-06-02 — bilingual persistence. Mirror of splitVariants() in
+    // src/data/notify.js. We persist BOTH titleEn/titleEs + bodyEn/
+    // bodyEs on the notification doc so the dispatchNotification Cloud
+    // Function can pick per recipient at FCM-send time (FOLLOW-UP).
+    // The resolved title/body fields stay for backwards-compat with the
+    // current CF + NotificationsDrawer.
+    const splitNotifVariants = (val) => {
+        if (val == null) return { en: '', es: '' };
+        if (typeof val === 'string') return { en: val, es: val };
+        if (typeof val === 'object') {
+            const en = val.en || val.es || '';
+            const es = val.es || val.en || '';
+            return { en, es };
+        }
+        const s = String(val);
+        return { en: s, es: s };
+    };
     // Schedule notifications. Builds the doc shape dispatchNotification
     // consumes (forStaff / type / title / body / link / tag) and writes
     // to /notifications.
@@ -1200,11 +1187,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (forStaff === staffName && !opts.allowSelf) return;
         const recipient = (staffList || []).find(s => s.name === forStaff);
         const tag = `${type}:${forStaff}:${opts.tagSuffix || Date.now()}`;
+        const titleVar = splitNotifVariants(title);
+        const bodyVar = splitNotifVariants(body);
         try {
             await addDoc(collection(db, 'notifications'), {
                 forStaff, type,
                 title: resolveText(title, recipient),
                 body: resolveText(body, recipient),
+                // 2026-06-02 — persist both languages so the Cloud
+                // Function dispatcher can pick per recipient at FCM-
+                // send time (see splitNotifVariants doc block).
+                titleEn: titleVar.en,
+                titleEs: titleVar.es,
+                bodyEn: bodyVar.en,
+                bodyEs: bodyVar.es,
                 link,
                 tag,
                 createdAt: serverTimestamp(),
@@ -2227,16 +2223,25 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 const reqRef  = doc(db, 'swap_requests', request.id);
                 const [fromSnap, toSnap, reqSnap] = await Promise.all([tx.get(fromRef), tx.get(toRef), tx.get(reqRef)]);
                 if (!fromSnap.exists() || !toSnap.exists()) {
-                    throw new Error(tx_msg('One of the shifts no longer exists. Request cleared.'));
+                    throw new Error(tx_msg(
+                        'One of the shifts no longer exists. Request cleared.',
+                        'Uno de los turnos ya no existe. Solicitud cancelada.',
+                    ));
                 }
                 if (!reqSnap.exists() || reqSnap.data().status !== 'pending') {
-                    throw new Error(tx_msg('Request already handled.'));
+                    throw new Error(tx_msg(
+                        'Request already handled.',
+                        'La solicitud ya fue procesada.',
+                    ));
                 }
                 const fromData = fromSnap.data();
                 const toData = toSnap.data();
                 // Verify ownership hasn't drifted since the request was filed.
                 if (fromData.staffName !== request.fromStaff || toData.staffName !== request.toStaff) {
-                    throw new Error(tx_msg('Shift ownership changed since the request was filed.'));
+                    throw new Error(tx_msg(
+                        'Shift ownership changed since the request was filed.',
+                        'La asignación del turno cambió desde que se hizo la solicitud.',
+                    ));
                 }
                 tx.update(fromRef, { staffName: request.toStaff, updatedAt: serverTimestamp(), updatedBy: staffName });
                 tx.update(toRef,   { staffName: request.fromStaff, updatedAt: serverTimestamp(), updatedBy: staffName });
@@ -2245,11 +2250,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // Notify both staff (best-effort, outside the transaction).
             const detail = `${request.fromShiftSnapshot?.date || ''} ↔ ${request.toShiftSnapshot?.date || ''}`;
             for (const recipient of [request.fromStaff, request.toStaff]) {
+                const counterparty = recipient === request.fromStaff ? request.toStaff : request.fromStaff;
                 notifyStaff({
                     forStaff: recipient,
                     type: 'swap_approved',
-                    title: '✓ Shift swap approved',
-                    body: `Your swap with ${recipient === request.fromStaff ? request.toStaff : request.fromStaff} is approved. ${detail}`,
+                    title: { en: '✓ Shift swap approved', es: '✓ Cambio de turno aprobado' },
+                    body: { en: `Your swap with ${counterparty} is approved. ${detail}`,
+                            es: `Tu cambio con ${counterparty} fue aprobado. ${detail}` },
                     link: '/schedule',
                     deepLink: 'schedule',
                     tag: `swap_approved:${request.id}:${recipient}`,
@@ -2290,8 +2297,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             notifyStaff({
                 forStaff: request.fromStaff,
                 type: 'swap_denied',
-                title: '✕ Shift swap denied',
-                body: `Your swap request with ${request.toStaff} was denied.`,
+                title: { en: '✕ Shift swap denied', es: '✕ Cambio de turno negado' },
+                body: { en: `Your swap request with ${request.toStaff} was denied.`,
+                        es: `Tu solicitud de cambio con ${request.toStaff} fue negada.` },
                 link: '/schedule',
                 deepLink: 'schedule',
                 tag: `swap_denied:${request.id}`,
@@ -2318,8 +2326,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     // tiny inline so the transaction's error path stays terse — these
     // throw inside the runTransaction and surface to the caller's catch.
-    const tx_msg = (en) => en; // (kept English for transaction errors;
-                                // staff-facing toasts use tx() above.)
+    // 2026-06-02 — was an English-only helper. Now resolves both
+    // languages so the message that bubbles to the toast picks the
+    // active locale. Caller still passes a single (en, es) pair, just
+    // like the page-level tx() helper.
+    const tx_msg = (en, es) => (isEn ? en : (es || en));
 
     // 2026-05-30 — replaced native confirm() with OfferShiftModal.
     // handleOfferShift now just opens the modal; the actual Firestore
@@ -3785,8 +3796,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         : `${entry.startDate} → ${entry.endDate || entry.startDate}`;
                     await notifyManagement({
                         type: 'pto_withdrawn',
-                        title: `↩ PTO withdrawn: ${staffName}`,
-                        body: `${dates}${entry.reason ? ` · ${entry.reason}` : ''} · ${tx('they can now be scheduled', 'pueden ser programados')}`,
+                        title: { en: `↩ PTO withdrawn: ${staffName}`,
+                                 es: `↩ Tiempo libre retirado: ${staffName}` },
+                        body: { en: `${dates}${entry.reason ? ` · ${entry.reason}` : ''} · they can now be scheduled`,
+                                es: `${dates}${entry.reason ? ` · ${entry.reason}` : ''} · ya pueden ser programados` },
                         link: '/schedule',
                         deepLink: 'schedule',
                         tag: `pto_withdrawn:${entry.id}`,
@@ -3865,8 +3878,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     : `${entry.startDate} → ${entry.endDate}`;
                 await notifyManagement({
                     type: 'pto_request',
-                    title: `🌴 PTO request: ${staffName}`,
-                    body: `${dates}${entry.reason ? ` · ${entry.reason}` : ''}`,
+                    title: { en: `🌴 PTO request: ${staffName}`,
+                             es: `🌴 Solicitud de tiempo libre: ${staffName}` },
+                    body: { en: `${dates}${entry.reason ? ` · ${entry.reason}` : ''}`,
+                            es: `${dates}${entry.reason ? ` · ${entry.reason}` : ''}` },
                     link: '/schedule',
                     deepLink: 'schedule',
                     tag: `pto_request:${ref.id}`,
@@ -3898,11 +3913,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await runTransaction(db, async (txn) => {
                 const ref = doc(db, 'time_off', entry.id);
                 const snap = await txn.get(ref);
-                if (!snap.exists()) throw new Error('PTO request no longer exists');
+                if (!snap.exists()) {
+                    throw new Error(tx_msg(
+                        'PTO request no longer exists',
+                        'La solicitud de tiempo libre ya no existe',
+                    ));
+                }
                 const live = snap.data() || {};
                 if (live.status !== 'pending') {
                     const reviewer = live.reviewedBy || 'someone';
-                    throw new Error(`Already ${live.status} by ${reviewer}`);
+                    throw new Error(tx_msg(
+                        `Already ${live.status} by ${reviewer}`,
+                        `Ya fue ${live.status === 'approved' ? 'aprobado' : 'negado'} por ${reviewer}`,
+                    ));
                 }
                 txn.update(ref, {
                     status: 'approved',
@@ -3941,11 +3964,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await runTransaction(db, async (txn) => {
                 const ref = doc(db, 'time_off', entry.id);
                 const snap = await txn.get(ref);
-                if (!snap.exists()) throw new Error('PTO request no longer exists');
+                if (!snap.exists()) {
+                    throw new Error(tx_msg(
+                        'PTO request no longer exists',
+                        'La solicitud de tiempo libre ya no existe',
+                    ));
+                }
                 const live = snap.data() || {};
                 if (live.status !== 'pending') {
                     const reviewer = live.reviewedBy || 'someone';
-                    throw new Error(`Already ${live.status} by ${reviewer}`);
+                    throw new Error(tx_msg(
+                        `Already ${live.status} by ${reviewer}`,
+                        `Ya fue ${live.status === 'approved' ? 'aprobado' : 'negado'} por ${reviewer}`,
+                    ));
                 }
                 txn.update(ref, {
                     status: 'denied',

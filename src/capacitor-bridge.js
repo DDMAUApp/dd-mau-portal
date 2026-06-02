@@ -36,6 +36,47 @@ function isNative() {
 // don't double-register listeners.
 let _initialized = false;
 
+// Subscription handles captured by initCapacitor(). Each Capacitor
+// plugin listener returns a Promise<PluginListenerHandle> with a
+// `.remove()` method. We retain them so cleanupCapacitor() can tear
+// every one down on HMR / future teardown paths.
+//
+// 2026-06-02 — Practical leak is small because initCapacitor() is
+// guarded by _initialized, but HMR can still reload this module
+// without unmounting the WebView in dev. Wiring the cleanup hook
+// now is cheap and future-proof.
+const _subscriptions = [];
+
+// ── Back-stack registry ──────────────────────────────────────────
+// 2026-06-02 — Previously the back-button listener dispatched
+// cap:back:modal / cap:back:chat-thread DOM events but nothing in
+// the app listened for them, so the back gesture inside a modal or
+// chat thread silently fell through to the tab-router. Replace the
+// event-dispatch with an actual handler stack: modal + chat-thread
+// components register a handler on mount and pop it on unmount.
+// The hardware back-button listener checks the stack first and
+// calls the top handler (LIFO) — matching how the native back
+// stack on Android works.
+const _backHandlers = [];
+
+export function pushBackHandler(fn) {
+    if (typeof fn !== 'function') return () => {};
+    _backHandlers.push(fn);
+    // Return a one-shot popper for the caller — easier than asking
+    // them to call popBackHandler() AND pass the same fn reference.
+    let popped = false;
+    return () => {
+        if (popped) return;
+        popped = true;
+        const idx = _backHandlers.lastIndexOf(fn);
+        if (idx >= 0) _backHandlers.splice(idx, 1);
+    };
+}
+
+export function popBackHandler() {
+    return _backHandlers.pop();
+}
+
 export async function initCapacitor() {
     if (!isNative()) return;
     if (_initialized) return;
@@ -76,11 +117,20 @@ export async function initCapacitor() {
     // home/schedule/ops pages). The chat tab flips this to LIGHT
     // (light icons on dark bg) via setStatusBarStyle() when it
     // mounts, then flips back on unmount.
+    //
+    // 2026-06-02 — Do NOT call setOverlaysWebView() here. The
+    // overlaysWebView:true value in capacitor.config.ts (StatusBar
+    // plugin block) is the source of truth — flipping it at runtime
+    // would contradict the static config and confuse anyone reading
+    // either file. Overlay mode lets the WebView paint under the
+    // status bar so the safe-area-inset-top CSS handles the notch
+    // padding (see comment in capacitor.config.ts). We still set
+    // style + background color at runtime because those flip per-
+    // page (chat dark surface vs. light home).
     try {
         const { StatusBar, Style } = await import('@capacitor/status-bar');
         await StatusBar.setStyle({ style: Style.Dark }); // 'Dark' = dark text
         await StatusBar.setBackgroundColor({ color: '#FFFFFF' });
-        await StatusBar.setOverlaysWebView({ overlay: false });
     } catch (e) {
         console.warn('[cap] status bar init failed:', e?.message);
     }
@@ -90,14 +140,21 @@ export async function initCapacitor() {
     // composer + input layouts can react. The existing iOS Safari
     // viewport hacks already handle most of this in CSS; the body
     // class is an escape hatch for native-only adjustments.
+    //
+    // 2026-06-02 — Capture the PluginListenerHandle promises so
+    // cleanupCapacitor() can remove them on HMR / future teardown.
+    // The initCapacitor() guard prevents duplicate listeners during
+    // a normal session, but Vite HMR can reload this module without
+    // unmounting the WebView — without cleanup that path leaks.
     try {
         const { Keyboard } = await import('@capacitor/keyboard');
-        Keyboard.addListener('keyboardWillShow', () => {
+        const showHandle = Keyboard.addListener('keyboardWillShow', () => {
             document.body.classList.add('keyboard-open');
         });
-        Keyboard.addListener('keyboardWillHide', () => {
+        const hideHandle = Keyboard.addListener('keyboardWillHide', () => {
             document.body.classList.remove('keyboard-open');
         });
+        _subscriptions.push(showHandle, hideHandle);
     } catch (e) {
         console.warn('[cap] keyboard init failed:', e?.message);
     }
@@ -105,33 +162,35 @@ export async function initCapacitor() {
     // ── Hardware back button (Android) ───────────────────────────
     // Android users expect the back gesture to navigate within the
     // app, not exit it immediately. Strategy:
-    //   1. If a modal is open (body has data-modal-open), close the
-    //      modal instead of navigating.
-    //   2. If a chat thread is open, leave the thread back to the
-    //      chat list (Capacitor wraps the existing chat-thread-open
-    //      body data flag).
-    //   3. If activeTab is not 'home', navigate to home.
-    //   4. If we're already on home, prompt to exit. A double-tap-
+    //   1. If the back-handler stack has any handlers registered
+    //      (modals, chat thread, image viewer, etc.), call the top
+    //      one. This is the proper LIFO back-stack — components
+    //      register on mount via pushBackHandler() and pop on
+    //      unmount.
+    //   2. If activeTab is not 'home', navigate to home.
+    //   3. If we're already on home, prompt to exit. A double-tap-
     //      back-to-exit pattern is the standard Android UX so we
     //      don't accidentally exit on a single tap.
+    //
+    // 2026-06-02 — Previously priorities 1+2 dispatched DOM events
+    // (cap:back:modal, cap:back:chat-thread) that nothing listened
+    // for, so the gesture silently fell through. Replaced with a
+    // module-level back-handler stack (pushBackHandler / popBack
+    // Handler) that modals + ChatCenter populate on mount.
     try {
         const { App: CapApp } = await import('@capacitor/app');
         let lastBackPressMs = 0;
-        CapApp.addListener('backButton', () => {
-            // Priority 1: close any open modal. We detect the open
-            // state via body data attributes that the chat surface
-            // and modals already set. Future modals just need to
-            // set body.dataset.modalOpen = 'true' to participate.
-            if (document.body.dataset.modalOpen === 'true') {
-                document.dispatchEvent(new CustomEvent('cap:back:modal'));
+        const backHandle = CapApp.addListener('backButton', () => {
+            // Priority 1: invoke the top of the back-handler stack
+            // if anything is registered. Handlers are responsible
+            // for popping themselves (or the caller's cleanup
+            // function does it on unmount).
+            if (_backHandlers.length > 0) {
+                const top = _backHandlers[_backHandlers.length - 1];
+                try { top(); } catch (err) { console.warn('[cap] back handler threw:', err?.message); }
                 return;
             }
-            // Priority 2: chat thread open → leave thread.
-            if (document.body.dataset.chatThreadOpen === 'true') {
-                document.dispatchEvent(new CustomEvent('cap:back:chat-thread'));
-                return;
-            }
-            // Priority 3: not on home → navigate to home.
+            // Priority 2: not on home → navigate to home.
             // Implementation reads the saved tab from localStorage
             // and dispatches a custom event the App.jsx tab router
             // can listen for. We do NOT call history.back() because
@@ -144,7 +203,7 @@ export async function initCapacitor() {
                 document.dispatchEvent(new CustomEvent('cap:back:to-home'));
                 return;
             }
-            // Priority 4: home + back pressed twice within 2s → exit.
+            // Priority 3: home + back pressed twice within 2s → exit.
             const now = Date.now();
             if (now - lastBackPressMs < 2000) {
                 CapApp.exitApp();
@@ -153,6 +212,7 @@ export async function initCapacitor() {
             lastBackPressMs = now;
             document.dispatchEvent(new CustomEvent('cap:back:exit-hint'));
         });
+        _subscriptions.push(backHandle);
     } catch (e) {
         console.warn('[cap] back button init failed:', e?.message);
     }
@@ -169,6 +229,33 @@ export async function initCapacitor() {
     } catch (e) {
         console.warn('[cap] Capgo notifyAppReady failed:', e?.message);
     }
+}
+
+// 2026-06-02 — Tear down every Capacitor plugin listener registered
+// by initCapacitor(). Nothing in the app calls this today (the
+// _initialized guard makes the practical leak small), but Vite HMR
+// can reload this module without unmounting the WebView in dev —
+// at which point the next initCapacitor() would register a SECOND
+// set of listeners on top of the orphaned first set. Wiring the
+// cleanup hook now is cheap and lets a future HMR-aware caller
+// (or unit test) flip the bridge off without restarting the app.
+export async function cleanupCapacitor() {
+    while (_subscriptions.length > 0) {
+        const handle = _subscriptions.pop();
+        try {
+            // Capacitor plugin .addListener() returns either a sync
+            // handle or a Promise<handle> depending on version; await
+            // both shapes so .remove() always has the resolved object.
+            const resolved = handle && typeof handle.then === 'function' ? await handle : handle;
+            if (resolved && typeof resolved.remove === 'function') {
+                await resolved.remove();
+            }
+        } catch (e) {
+            console.warn('[cap] subscription remove failed:', e?.message);
+        }
+    }
+    _backHandlers.length = 0;
+    _initialized = false;
 }
 
 // Status-bar style toggle. Called by ChatThread on mount/unmount so

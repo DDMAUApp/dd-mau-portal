@@ -30,14 +30,52 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Onboarding PII path. Allow upload + read; file size + content
-    // type checks here are server-side and can't be bypassed by a
-    // tampered client.
+    // ─────────────────────────────────────────────────────────────────────
+    //  ⚠️  HIGHEST-PRIORITY PHASE 2 ITEM  ⚠️
+    // ─────────────────────────────────────────────────────────────────────
+    // The /onboarding/** read rule below is `allow read: if true`. That
+    // means ANYONE who knows (or guesses) a /onboarding/{hireId}/{docId}/
+    // {fileName} path can download the raw PII file — SSN-bearing W-4s,
+    // I-9 photo IDs, voided checks with bank routing numbers.
+    //
+    // Mitigations in place today (defense-in-depth, NOT a real lock):
+    //   • hireId is a Firestore-random doc id (can't be enumerated
+    //     without listing /onboarding_hires, which is itself behind
+    //     the apiKey gate)
+    //   • fileName carries an internal timestamp prefix so it's not
+    //     guessable from the hire's name alone
+    //   • Every admin view / download writes /onboarding_audits
+    //
+    // The CORRECT FIX is a signed-URL proxy: a callable Cloud Function
+    // `getOnboardingFileUrl({ hireId, docId, fileName })` that:
+    //   1. verifies the caller's Auth claim (canViewOnboarding, the
+    //      same gate the admin tab uses client-side today)
+    //   2. mints a short-lived (5-min) signed URL via the Admin SDK
+    //   3. returns it to the client to fetch the actual bytes
+    // and once that's live, swap this block's `allow read: if true`
+    // to `allow read: if false`.
+    //
+    // We are NOT shipping that proxy in this pass (it's a Phase 2 task
+    // alongside Firebase Auth + custom claims). Marking it inline here
+    // so the next engineer sees the alarm.
+    //
+    // What WE DID change in this pass (2026-06-02, Phase 1 audit):
+    //   • `allow delete: if true` → `allow delete: if false`. Previously
+    //     any apiKey holder could mass-delete the entire PII storage
+    //     tree, breaking every hire's submitted paperwork. The handful
+    //     of legitimate delete callsites (admin re-uploads, cleanup)
+    //     will move to a Cloud Function with admin SDK access. Today,
+    //     the worst case is "admin can't delete an old W-4 from the
+    //     UI" — a far smaller surface than "anyone can wipe the bucket."
     match /onboarding/{hireId}/{docId}/{fileName} {
-      allow read: if true;       // admin-only via client gate
+      allow read: if true;       // admin-only via client gate — SEE WARNING ABOVE
       allow write: if request.resource.size < 10 * 1024 * 1024
                    && request.resource.contentType.matches('image/.*|application/pdf');
-      allow delete: if true;     // admin re-uploads / cleanup
+      // Hardened 2026-06-02 (Phase 1 audit). Was `if true` — blocks
+      // mass-delete abuse. Legitimate admin re-uploads can re-write the
+      // file at the same path (`write` still passes); legitimate
+      // cleanup of orphaned files lives in a Cloud Function path.
+      allow delete: if false;
     }
 
     // Onboarding fillable PDF templates — admin uploads the blank source
@@ -78,6 +116,14 @@ service firebase.storage {
     //
     // Path: chats/{chatId}/{messageId}.{ext}. See ChatThread.jsx
     // handleMediaPick + uploadVoice for the producer side.
+    //
+    // 2026-06-02 (Phase 1 audit) — the audit asked us to "preserve
+    // existing behavior, document the cap." The cap is 50 MB (not
+    // 10 MB) because the legitimate chat experience supports short
+    // videos (clip of a fryer issue, prep technique, etc.) and the
+    // existing client-side MAX_VIDEO_BYTES is 50 MB. Lowering the
+    // server cap would break those uploads for all 65 staff. This
+    // block stays at 50 MB.
     match /chats/{chatId}/{fileName} {
       allow read: if true;
       allow write: if request.resource.size < 50 * 1024 * 1024
@@ -158,6 +204,45 @@ service firebase.storage {
       allow write: if request.resource.size < 10 * 1024 * 1024
                    && request.resource.contentType.matches('image/.*');
       allow delete: if true;     // admin cleanup on need delete
+    }
+
+    // TV signage images + videos (2026-06-02, Phase 1 audit).
+    // Path: tv_images/{slugPrefix}_{ts}.{ext}.
+    // Producers:
+    //   • TvConfigsEditor (uploadMenuFile) — admin uploads source PDFs,
+    //     images, or videos that become menu-board art. PDFs are
+    //     rasterized client-side to PNG before upload (so the rule
+    //     never sees the original PDF mime), so we accept PNGs.
+    //   • DaypartEditor — same upload path for daypart art.
+    //   • menuImageUpload.js bakes composited PNGs into tv_images/
+    //     after combining background + overlay.
+    //
+    // Was silently 403'ing against the CR-6 catch-all `write: if false`,
+    // breaking every admin-side TV-art upload. Lifting it out with an
+    // explicit rule. Generous cap (50 MB) because video files for
+    // dayparts can be 20–30 MB after compression and we don't want to
+    // re-encode them in the browser.
+    match /tv_images/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 50 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*|video/.*');
+      allow delete: if true;     // admin re-uploads / TV cleanup
+    }
+
+    // Menu import staging path (2026-06-02, Phase 1 audit).
+    // Path: menu_imports/{slugPrefix}_{ts}.{ext} — MenuImportModal
+    // uploads source PDFs/images here as a temporary staging slot
+    // when the admin is bulk-importing menu items from a vendor
+    // export. Was also bleeding through CR-6 catch-all → import
+    // failed silently.
+    //
+    // Same shape posture as tv_images: image + video allowed (video
+    // for occasional motion-menu imports), generous 50 MB cap.
+    match /menu_imports/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 50 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*|video/.*|application/pdf');
+      allow delete: if true;     // staging area — admin clears after import
     }
 
     // ── Catch-all ──────────────────────────────────────────────────────

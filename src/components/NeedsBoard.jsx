@@ -106,13 +106,97 @@ function relativeTime(iso, language) {
     return isEs ? `hace ${months} meses` : `${months}mo ago`;
 }
 
+// Storage key for persisting the 'both'-user's chosen location view across
+// sessions. Scoped per-user via a key suffix would be nicer if we ever ship
+// multi-account on one device, but right now the lock-screen wipe handles
+// that. Same pattern other tabs use (e.g. inventory location toggle).
+const NEEDS_LOCATION_STORAGE_KEY = 'ddmau:needs_board_location';
+
+// Sanitize a user-supplied filename before using it inside a Storage path.
+// Two concerns:
+//   1. The new .firebasestorage.app bucket forbids certain characters in
+//      object keys, and arbitrary user-controlled bytes inside a path are
+//      a needless attack surface (path traversal, unicode lookalikes,
+//      double-extension trickery against downstream viewers).
+//   2. Capacitor / iOS sometimes hands us names like "image.JPEG (1).heic"
+//      or capture sessions with no extension at all ("image" from
+//      drag-drop on macOS), which both break previews.
+//
+// Strategy: lowercase, replace anything outside [a-zA-Z0-9._-] with '_',
+// ensure a non-empty stem, default to '.jpg' if no extension is present,
+// cap to 100 chars (Firebase Storage caps full paths around 1024 bytes
+// but per-segment we want something readable when triaging in the GCS
+// console).
+function sanitizeStorageFilename(rawName) {
+    const fallback = 'photo.jpg';
+    if (!rawName || typeof rawName !== 'string') return fallback;
+    // Strip any leading directory components a misbehaving picker might
+    // include (web standard says File.name is the basename, but
+    // capacitor-camera has occasionally returned full URIs).
+    const base = rawName.split(/[\\/]/).pop() || '';
+    // Replace any char outside the safe allowlist with '_'.
+    let cleaned = base.replace(/[^a-zA-Z0-9._-]/g, '_');
+    // Collapse runs of underscores so we don't end up with
+    // "________.jpg" from an emoji-only filename.
+    cleaned = cleaned.replace(/_+/g, '_');
+    // Strip leading dots so we never produce a hidden-file path like
+    // ".jpg" or "..foo".
+    cleaned = cleaned.replace(/^\.+/, '');
+    if (!cleaned) cleaned = 'photo';
+    // Default extension if none present (no '.' or the only '.' is
+    // leading, which we already stripped).
+    if (!/\.[a-zA-Z0-9]{1,8}$/.test(cleaned)) {
+        cleaned = `${cleaned}.jpg`;
+    }
+    // Cap to 100 chars, preserving the extension. Slice from the stem
+    // side so the extension stays intact for viewers/downloads.
+    if (cleaned.length > 100) {
+        const dot = cleaned.lastIndexOf('.');
+        if (dot > 0 && dot > cleaned.length - 10) {
+            const ext = cleaned.slice(dot);
+            const stem = cleaned.slice(0, dot);
+            const allowedStem = Math.max(1, 100 - ext.length);
+            cleaned = stem.slice(0, allowedStem) + ext;
+        } else {
+            cleaned = cleaned.slice(0, 100);
+        }
+    }
+    return cleaned;
+}
+
 export default function NeedsBoard({ language, staffName, storeLocation }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
-    // Default to webster if location is 'both' — single-location editors
-    // get auto-filtered.
-    const effectiveLocation = storeLocation === 'both' ? 'webster' : storeLocation || 'webster';
+    // 2026-06-02 — Audit finding: when staff has location === 'both', the
+    // previous behavior silently wrote to /needs_webster with no UI hint
+    // that maryland needs were a different list entirely. Admins thought
+    // they'd lost data. Fix: surface a location toggle + banner for
+    // both-users; persist the chosen view in localStorage so it doesn't
+    // flicker back to webster on every reload.
+    const isBoth = storeLocation === 'both';
+    const [bothLocation, setBothLocation] = useState(() => {
+        if (!isBoth) return null;
+        try {
+            const saved = window.localStorage?.getItem(NEEDS_LOCATION_STORAGE_KEY);
+            if (saved === 'webster' || saved === 'maryland') return saved;
+        } catch (_) {}
+        return 'webster';
+    });
+    // Persist the both-user's choice. Single-location users never write
+    // here — their effectiveLocation is pinned, not chosen.
+    useEffect(() => {
+        if (!isBoth || !bothLocation) return;
+        try { window.localStorage?.setItem(NEEDS_LOCATION_STORAGE_KEY, bothLocation); } catch (_) {}
+    }, [isBoth, bothLocation]);
+
+    // Resolve the effective location. For both-users we honor the
+    // toggle; for single-location users we pin to their store; if
+    // somehow we're called without any location, default to webster
+    // (matches the previous fallback so we don't break existing data).
+    const effectiveLocation = isBoth
+        ? (bothLocation || 'webster')
+        : (storeLocation || 'webster');
     const collName = `needs_${effectiveLocation}`;
 
     const [items, setItems] = useState([]);
@@ -255,7 +339,14 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                 // would be safer against name collisions, but the timestamp
                 // is unique enough at our scale and makes the file lineage
                 // obvious when triaging.
-                photoPath = `needs/${effectiveLocation}/${Date.now()}_${draftPhoto.name}`;
+                //
+                // 2026-06-02 — Audit finding: the raw File.name was going
+                // into the Storage path unsanitized. iOS share-sheet
+                // sometimes hands us names with spaces, parens, accented
+                // characters, or no extension at all. Sanitize via
+                // sanitizeStorageFilename() before composing the path.
+                const safeName = sanitizeStorageFilename(draftPhoto.name);
+                photoPath = `needs/${effectiveLocation}/${Date.now()}_${safeName}`;
                 photoStorageRef = storageRef(storage, photoPath);
                 await uploadBytes(photoStorageRef, draftPhoto);
                 photoUploaded = true;
@@ -357,6 +448,58 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                     )}
                 </p>
             </div>
+
+            {/* Both-location banner + toggle. Only shown for staff with
+                location === 'both' (Andrew, Julie). The needs board is
+                split per-store — each store's items live in their own
+                Firestore collection (needs_webster vs needs_maryland)
+                so a Webster broom request doesn't pollute the Maryland
+                view. Without this banner, both-users were silently
+                editing only the Webster list and wondering where their
+                Maryland items had gone. The chosen view persists across
+                reloads via localStorage. */}
+            {isBoth && (
+                <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50/80 backdrop-blur-md p-3 md:p-3.5 shadow-sm">
+                    <div className="flex items-start gap-2">
+                        <AlertCircle size={16} strokeWidth={2.4} className="flex-shrink-0 text-amber-600 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs md:text-sm font-semibold text-amber-900">
+                                {tx(
+                                    'Needs are tracked per location.',
+                                    'Los pedidos se guardan por tienda.',
+                                )}
+                            </p>
+                            <p className="text-[11px] md:text-xs text-amber-800 mt-0.5">
+                                {tx(
+                                    `Currently viewing ${effectiveLocation === 'webster' ? 'Webster' : 'Maryland'}. Switch below to see the other store's list.`,
+                                    `Viendo ${effectiveLocation === 'webster' ? 'Webster' : 'Maryland'}. Cambia abajo para ver la otra tienda.`,
+                                )}
+                            </p>
+                            <div className="mt-2 inline-flex rounded-full bg-white border border-amber-200 p-0.5 shadow-inner">
+                                {['webster', 'maryland'].map((loc) => {
+                                    const sel = effectiveLocation === loc;
+                                    const label = loc === 'webster' ? 'Webster' : 'Maryland';
+                                    return (
+                                        <button
+                                            key={loc}
+                                            type="button"
+                                            onClick={() => setBothLocation(loc)}
+                                            className={`px-3 py-1 rounded-full text-[11px] font-bold transition active:scale-95 ${
+                                                sel
+                                                    ? 'bg-dd-green text-white shadow-sm'
+                                                    : 'text-dd-text-2 hover:text-dd-text'
+                                            }`}
+                                            aria-pressed={sel}
+                                        >
+                                            {label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Add new need form */}
             <form onSubmit={handleAdd}

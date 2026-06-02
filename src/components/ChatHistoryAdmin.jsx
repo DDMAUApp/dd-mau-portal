@@ -82,14 +82,14 @@ export default function ChatHistoryAdmin({ language, staffName }) {
             if (!q) return true;
             const hay = [
                 c.name || '',
-                previewOf(c.lastMessage),
+                previewOf(c.lastMessage, isEs ? 'es' : 'en'),
                 (c.members || []).join(' '),
                 c.createdBy || '',
                 c.type || '',
             ].join(' ').toLowerCase();
             return hay.includes(q);
         });
-    }, [chats, typeFilter, searchTerm]);
+    }, [chats, typeFilter, searchTerm, isEs]);
 
     const totalCount = chats?.length ?? 0;
     const counts = useMemo(() => {
@@ -185,7 +185,7 @@ function ChatRow({ chat, isEs, onOpen }) {
     const memberCount = Array.isArray(chat.members) ? chat.members.length : 0;
     const lastTime = formatRelativeTime(chat.lastActivityAt || chat.createdAt, isEs);
     // lastMessage is an OBJECT — use previewOf to convert to display string.
-    const lastPreview = previewOf(chat.lastMessage);
+    const lastPreview = previewOf(chat.lastMessage, isEs ? 'es' : 'en');
     const displayName = chat.name || (chat.type === 'dm' && memberCount > 0
         ? chat.members.join(' ↔ ')
         : (isEs ? '(sin nombre)' : '(unnamed)'));

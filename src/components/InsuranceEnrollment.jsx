@@ -1,6 +1,9 @@
+// 2026-06-02 — ADMIN_PIN moved out of bundle to /config/secrets.insuranceAdminPin.
+// Andrew must seed this doc via Firebase Console with the desired PIN before
+// deploy. Audit ref #21.
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin as checkIsAdmin } from '../data/staff';
@@ -16,20 +19,73 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   const [allEnrollments, setAllEnrollments] = useState([]);
   const [loadingAll, setLoadingAll] = useState(false);
   const [selectedEnrollment, setSelectedEnrollment] = useState(null);
+  // Resolved docId for THIS staff's insurance record. Looked up via
+  // /config/insurance_index (random-ID mapping) on load. `null` until
+  // load completes, then either:
+  //   - a random ID from the index (new-style record)
+  //   - the legacy predictable ID `staffName_lowercase_underscored`
+  //     for pre-2026-06-02 enrollments not yet migrated
+  //   - "" (empty string sentinel) if no record exists yet — submit
+  //     will mint a fresh random ID and write the index mapping.
+  // See doc-ID-hardening note above handleSubmit for the threat model.
+  const [resolvedDocId, setResolvedDocId] = useState(null);
+  // Runtime-fetched admin PIN. `null` = not yet loaded OR fetch failed.
+  // We FAIL CLOSED: a null value rejects every PIN attempt, so a missing
+  // /config/secrets doc, an unreachable Firestore, or a rules-blocked
+  // read all degrade to "no admin access" rather than "any input wins."
+  // See audit ref #21 (2026-06-02) — previously a hardcoded string in
+  // the public JS bundle, trivially grep-able from view-source.
+  const [insuranceAdminPin, setInsuranceAdminPin] = useState(null);
 
   // Admin gate. The canonical helper resolves by staff ID (40 = Andrew,
   // 41 = Julie) — much safer than the previous string-match against
   // ["andrew shih", "julie truong"], which (a) had Julie's surname
   // wrong (Shih, not Truong) so Julie was silently denied admin
   // access here, and (b) leaked across rename / re-org.
-  // The local ADMIN_PIN remains a separate "Are you sure?" gate
-  // independent of the owner identity check.
-  const ADMIN_PIN = "ZhongGuo87";
+  // The admin PIN remains a separate "Are you sure?" gate independent
+  // of the owner identity check; sourced at runtime from
+  // /config/secrets.insuranceAdminPin (admin-only readable per
+  // Firestore rules) so it isn't shipped in the JS bundle.
   const isAdmin = checkIsAdmin(staffName, staffList);
 
+  // Fetch the admin PIN from Firestore on mount. Only attempt if the
+  // current user is an admin — non-admins can't read /config/secrets
+  // per the rules anyway, and we don't want to surface noisy
+  // permission-denied errors in their console.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let alive = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "config", "secrets"));
+        if (!alive) return;
+        if (snap.exists()) {
+          const pin = snap.data()?.insuranceAdminPin;
+          // Only accept non-empty strings. Anything else stays null →
+          // fail closed.
+          if (typeof pin === "string" && pin.length > 0) {
+            setInsuranceAdminPin(pin);
+          }
+        }
+      } catch (err) {
+        // Swallow — leaving insuranceAdminPin at null fails closed.
+        console.error("Could not load /config/secrets:", err);
+      }
+    })();
+    return () => { alive = false; };
+  }, [isAdmin]);
+
   const handleAdminAccess = () => {
+    // Fail closed: if we never loaded a PIN (missing doc, rules block,
+    // network error), no input string can unlock admin. Surface a
+    // friendly message instead of silently rejecting valid-looking
+    // input.
+    if (!insuranceAdminPin) {
+      toast("Admin PIN unavailable. Contact Andrew.");
+      return;
+    }
     const entered = prompt("Enter admin password:");
-    if (entered === ADMIN_PIN) {
+    if (entered === insuranceAdminPin) {
       setAdminUnlocked(true);
       setShowAdmin(true);
       loadAllEnrollments();
@@ -75,18 +131,63 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   // we'd call .toLowerCase() on undefined (throws; caught; but noisy) or
   // try to read an empty-string doc id (Firestore throws). Cap-readiness
   // audit 2026-05-31.
+  //
+  // 2026-06-02 doc-ID hardening — previously the insurance doc ID was
+  // `staffName.toLowerCase().replace(/\s+/g, "_")` which is fully
+  // predictable from the public /config/staff list. Anyone with the
+  // public apiKey could guess `julie_truong` and getDoc() another
+  // employee's SSN-4 / DOB / address. NEW enrollments now use
+  // Firestore-generated random IDs and store the mapping in
+  // /config/insurance_index (same posture as /onboarding_hires). The
+  // load path here checks the index FIRST; if no mapping exists we
+  // fall back to the legacy predictable ID so pre-migration records
+  // still surface.
+  // TODO(Andrew): once a one-shot migration script has rewritten every
+  // legacy doc to a random ID + updated the index, drop the legacy
+  // fallback below.
   useEffect(() => {
     if (!staffName) { setLoading(false); return; }
     let alive = true;
     async function loadExisting() {
       try {
-        const docRef = doc(db, "insurance", staffName.toLowerCase().replace(/\s+/g, "_"));
+        // Step 1: ask the index for this staff's docId. Map shape:
+        //   /config/insurance_index = { entries: { [staffName]: docId } }
+        // Wrapping the map in `.entries` (vs. dumping fields onto the
+        // doc root) lets us add metadata alongside (updatedAt, schema
+        // version) without colliding with a staff name like
+        // "updatedAt" or "schemaVersion".
+        let docId = "";
+        try {
+          const indexSnap = await getDoc(doc(db, "config", "insurance_index"));
+          if (indexSnap.exists()) {
+            const entries = indexSnap.data()?.entries || {};
+            docId = entries[staffName] || "";
+          }
+        } catch (err) {
+          // Missing index doc / rules block / network — silently fall
+          // through to legacy lookup so existing users aren't broken.
+          console.warn("Could not read /config/insurance_index:", err);
+        }
+
+        // Step 2: legacy fallback. If the index didn't resolve a docId,
+        // try the predictable ID one last time for backward compat
+        // with records written before this hardening landed.
+        const legacyId = staffName.toLowerCase().replace(/\s+/g, "_");
+        const effectiveDocId = docId || legacyId;
+        const docRef = doc(db, "insurance", effectiveDocId);
         const snap = await getDoc(docRef);
         if (!alive) return;
         if (snap.exists()) {
           const data = snap.data();
           setExistingData(data);
           setForm(prev => ({ ...prev, ...data.formData }));
+          // Remember which ID actually held the record so handleSubmit
+          // overwrites the same doc instead of forking a new one.
+          setResolvedDocId(effectiveDocId);
+        } else {
+          // No record exists. Leave resolvedDocId empty so handleSubmit
+          // mints a fresh random ID via addDoc.
+          setResolvedDocId("");
         }
       } catch (err) {
         console.error("Error loading insurance data:", err);
@@ -124,19 +225,62 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     }));
   };
 
+  // 2026-06-02 doc-ID hardening — NEW insurance enrollments mint a
+  // random Firestore-generated doc ID via addDoc() and store the
+  // staffName → docId mapping in /config/insurance_index. Same posture
+  // as /onboarding_hires (which long ago moved away from name-derived
+  // IDs for the same PII-leak reason). EXISTING records that still
+  // live at the legacy predictable ID continue to overwrite in place
+  // — we do NOT migrate them at submit time because that would orphan
+  // the old doc and double-write PII. A one-shot migration script
+  // (TODO Andrew) is the right vehicle: copy each legacy doc to a
+  // fresh random ID, write the index mapping, then delete the
+  // legacy doc (admin-SDK delete, since client deletes are blocked
+  // by rules).
   const handleSubmit = async () => {
     if (!form.agreedToTerms || !form.signature) return;
     setSubmitting(true);
     try {
-      const docId = staffName.toLowerCase().replace(/\s+/g, "_");
       const now = new Date();
-      await setDoc(doc(db, "insurance", docId), {
+      const payload = {
         staffName,
         formData: form,
         status: "pending_review",
         submittedAt: now.toISOString(),
         updatedAt: now.toISOString(),
-      });
+      };
+
+      if (resolvedDocId) {
+        // Updating an existing record (random ID from the index, OR
+        // the legacy predictable ID for pre-migration records). In-
+        // place overwrite preserves whatever doc ID already exists.
+        await setDoc(doc(db, "insurance", resolvedDocId), payload);
+      } else {
+        // First-time enrollment for this staff. Mint a random ID via
+        // addDoc — unguessable from the public staff list. Then
+        // record staffName → newDocId in /config/insurance_index so
+        // the next load resolves to the same record.
+        const newRef = await addDoc(collection(db, "insurance"), payload);
+        try {
+          await setDoc(
+            doc(db, "config", "insurance_index"),
+            {
+              entries: { [staffName]: newRef.id },
+              updatedAt: now.toISOString(),
+            },
+            { merge: true },
+          );
+        } catch (err) {
+          // Index write failed — the insurance doc still exists with
+          // the random ID but no mapping. Next load will fall through
+          // to the legacy lookup and find nothing, leaving the hire
+          // to re-submit. Log loudly so Andrew can repair the index
+          // entry manually if needed.
+          console.error("Failed to update /config/insurance_index — record exists at", newRef.id, "but is not mapped:", err);
+        }
+        setResolvedDocId(newRef.id);
+      }
+
       setSubmitted(true);
       setExistingData({ status: "pending_review", submittedAt: now.toISOString() });
     } catch (err) {
@@ -150,9 +294,11 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   // 2026-05-30 audit fix — was an unscoped getDocs(collection) that would
   // pull every doc in /insurance if the collection ever grew large
   // (compliance docs accumulate forever — multi-year retention is the
-  // norm). Added orderBy + limit so it's bounded. updatedAt fallback to
-  // a fixed key would also work; in practice the doc id is the staff
-  // name so we sort client-side after the fetch (already does).
+  // norm). Added orderBy + limit so it's bounded. Each doc carries its
+  // own `staffName` field (used for the client-side sort below) so
+  // this query is doc-ID-shape-agnostic: it works equally for the
+  // legacy predictable IDs and the random IDs that new submissions
+  // use (2026-06-02 doc-ID hardening).
   const loadAllEnrollments = async () => {
     setLoadingAll(true);
     try {
