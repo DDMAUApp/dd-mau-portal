@@ -1123,6 +1123,55 @@ body.capacitor-native {
     overscroll-behavior-y: none;
     -webkit-overflow-scrolling: auto;
 }
+
+/* 2026-06-01 round 4 — Lock body + delegate scroll to #root.
+ *
+ * Andrew: "when i get all the way to the bottom and i pull up it still
+ * moves. same with the top."
+ *
+ * The rubber-band bounce at the page edges is the WKWebView's native
+ * UIScrollView behaviour. CSS `overscroll-behavior` cannot disable it
+ * (works in mobile Safari but WKWebView ignores it at the edge-pull
+ * frame). The real fix is to disable WKWebView native scrolling
+ * (capacitor.config.ts ios.scrollEnabled:false) AND restructure the
+ * HTML scroll model so scrolling happens inside a child container.
+ *
+ * The pattern:
+ *   • body + html → position:fixed, overflow:hidden — they can't move
+ *   • #root → absolute-fills the body, overflow-y:auto — actual scroll
+ *     surface for all page content
+ *   • Nav's position:fixed is anchored to the WebView viewport (which
+ *     is now locked) so edge pulls in #root can't drag it.
+ *   • overscroll-behavior:contain on #root prevents inner-scroll
+ *     bounce from leaking out to a "phantom" outer scroll.
+ *
+ * Web build is UNAFFECTED — body.capacitor-native is never set in a
+ * browser, so the existing body-scroll model + pull-to-refresh on
+ * home / chat keep working.
+ */
+html.capacitor-native,
+body.capacitor-native {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+}
+body.capacitor-native #root {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
 /* 2026-06-01 update — Andrew moved the bar from edge-to-edge to a
  * floating Liquid Glass pill (left-3 right-3 + bottom: calc(safe + 8px)
  * + rounded-3xl). The override below NO LONGER forces left/right/bottom

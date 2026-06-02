@@ -142,7 +142,17 @@ export default function MobileBottomNav({
             //     drop shadow to lift off the page)
             //   • ring-white/50 → ring-white/15 (lighter highlight on
             //     a dark glass surface to mimic Apple's top edge)
-            className="ddmau-mobile-bottom-nav md:hidden left-3 right-3 z-40 rounded-full bg-black/40 backdrop-blur-2xl backdrop-saturate-150 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.4)] ring-1 ring-white/15"
+            // 2026-06-01 round 4 — Andrew: "can you make it a little more
+            // glass like." Cranked translucency + blur + saturation:
+            //   • bg-black/40 → bg-black/25 (much more see-through, content
+            //     behind the bar reads more visibly)
+            //   • backdrop-blur-2xl → backdrop-blur-3xl (heavier frost)
+            //   • backdrop-saturate-150 → backdrop-saturate-200 (stronger
+            //     colour bleed from content behind — the Apple Liquid
+            //     Glass signature)
+            //   • ring-white/15 → ring-white/25 (slightly brighter top
+            //     edge highlight against the more transparent body)
+            className="ddmau-mobile-bottom-nav md:hidden left-3 right-3 z-40 rounded-full bg-black/25 backdrop-blur-3xl backdrop-saturate-200 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.4)] ring-1 ring-white/25"
             // 2026-06-01 round 2 — Andrew: "no it still moves and its not
             // clear." Stronger lockdown via INLINE styles (highest CSS
             // specificity, cannot be overridden by any cascade) PLUS a

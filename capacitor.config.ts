@@ -63,7 +63,19 @@ const config: CapacitorConfig = {
         // cosmetic trade-off we can polish later by setting a per-
         // route bg via the Capacitor bridge.
         backgroundColor: '#FFFFFF',
-        scrollEnabled: true,
+        // 2026-06-01 round 4 — Andrew: "when i get all the way to the
+        // bottom and i pull up it still moves. same with the top."
+        // That's the WKWebView UIScrollView rubber-band bounce — a
+        // NATIVE iOS behaviour at the UIScrollView layer that CSS
+        // overscroll-behavior cannot override (CSS works in mobile
+        // Safari but WKWebView ignores it during edge-pull bounce).
+        // Setting scrollEnabled:false disables the WebView's native
+        // scroll entirely; the page now scrolls inside an HTML
+        // container (body + #root locked + position:fixed — see
+        // index.css body.capacitor-native rules). The nav's
+        // position:fixed is now anchored to the locked WebView frame
+        // which genuinely cannot move during edge pulls.
+        scrollEnabled: false,
         limitsNavigationsToAppBoundDomains: false,
     },
 

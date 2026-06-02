@@ -29,6 +29,10 @@ import { initSentry } from './data/sentryClient.js';
 try {
     if (typeof window !== 'undefined' && window?.Capacitor?.isNativePlatform?.()) {
         document.body.classList.add('capacitor-native');
+        // 2026-06-01 round 4 — also stamp on <html> so the body+root
+        // scroll-restructure CSS can target html as a containing block
+        // for the locked viewport.
+        document.documentElement.classList.add('capacitor-native');
     }
 } catch (_) { /* no-op — non-fatal if Capacitor global isn't there */ }
 
