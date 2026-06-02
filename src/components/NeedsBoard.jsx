@@ -40,12 +40,12 @@ import {
     addDoc,
     deleteDoc,
     doc,
+    limit,
     onSnapshot,
     orderBy,
     query,
     serverTimestamp,
     updateDoc,
-    where,
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase';
@@ -161,15 +161,25 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
         if (photoInputRef.current) photoInputRef.current.value = '';
     }
 
-    // Live subscription. Scope to open items by default; resolved fetched
-    // lazily when the toggle is on.
+    // Live subscription. 2026-06-01 — Andrew reported the board took
+    // forever / failed to load. Root cause: the original query combined
+    // where('status') + orderBy('createdAtIso') which requires a
+    // composite Firestore index that did not exist yet. Index-creation
+    // requests typically take 5+ minutes to deploy.
+    //
+    // Fix: drop the where() filter and the showResolved-branch — the
+    // collection will never grow to a size where reading every doc
+    // is meaningful cost (a needs board for a 2-location restaurant
+    // is at most ~50-100 active items + a few hundred resolved over
+    // time). Just orderBy + a generous limit. The resolved/open split
+    // and the urgency grouping happen client-side in the useMemo
+    // below, which already iterates the array once for the urgency
+    // buckets.
     useEffect(() => {
         if (!effectiveLocation) return;
         setLoading(true);
         const base = collection(db, collName);
-        const q = showResolved
-            ? query(base, orderBy('createdAtIso', 'desc'))
-            : query(base, where('status', '==', 'open'), orderBy('createdAtIso', 'desc'));
+        const q = query(base, orderBy('createdAtIso', 'desc'), limit(500));
         const unsub = onSnapshot(
             q,
             (snap) => {
@@ -180,23 +190,33 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
             },
             (e) => {
                 console.warn('[NeedsBoard] snapshot error', e);
-                setErr(e?.code === 'failed-precondition'
-                    ? tx('Index building… try again in a minute.', 'Indice cargando…')
-                    : tx('Could not load needs.', 'No se pudo cargar.'));
+                setErr(tx('Could not load needs.', 'No se pudo cargar.'));
                 setLoading(false);
             },
         );
         return () => unsub();
-    }, [collName, showResolved, effectiveLocation]);
+    }, [collName, effectiveLocation]);
 
     // Group by urgency for the open list. Resolved view stays flat.
+    // 2026-06-01 — now that the Firestore query returns ALL items in
+    // the collection (no server-side where filter — see useEffect
+    // comment), the open/resolved split happens here client-side.
     const groups = useMemo(() => {
-        if (showResolved) return [{ key: 'all', label: tx('All', 'Todos'), entries: items }];
+        const open = items.filter((it) => it.status !== 'resolved');
+        const resolved = items.filter((it) => it.status === 'resolved');
+        if (showResolved) {
+            // Flat list of resolved items, plus any still-open ones at
+            // the bottom so you can see everything at once.
+            return [
+                { key: 'resolved', label: tx('Resolved', 'Resueltos'), entries: resolved },
+                { key: 'open', label: tx('Still open', 'Pendientes'), entries: open },
+            ];
+        }
         const buckets = URGENCY_LEVELS.map((u) => ({
             key: u.key,
             label: tx(u.en, u.es),
             tone: u,
-            entries: items.filter((it) => (it.urgency || 'soon') === u.key),
+            entries: open.filter((it) => (it.urgency || 'soon') === u.key),
         }));
         return buckets;
     }, [items, showResolved, isEs]);
