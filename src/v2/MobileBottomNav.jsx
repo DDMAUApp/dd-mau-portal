@@ -31,7 +31,6 @@
 // equal but the drawer scrim covers the nav too while it's open.
 
 import { useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import {
     Home,
     Calendar,
@@ -126,25 +125,25 @@ export default function MobileBottomNav({
     //   • GPU layer pin (translateZ + isolation + contain) on the
     //     .ddmau-mobile-bottom-nav class — no jitter during scroll.
     //
-    // 2026-06-02 — Andrew: "in the schedule page the bottom pill bar
-    // comes off of the bottom when you scroll fix it."
+    // 2026-06-02 round 2 — Andrew (wrapped iOS app): "the bottom bar
+    // at the bottom doesnt work anymore. non of the buttons click
+    // anymore. only in the app version."
     //
-    // Root cause: in capacitor-native we lock body to position:fixed
-    // and make #root the scroll container with overflow-y:auto +
-    // -webkit-overflow-scrolling:touch (so momentum scroll works).
-    // On iOS that combination creates a scroll layer that becomes
-    // the containing block for descendant position:fixed elements —
-    // so the nav, even though it had position:fixed, was anchored
-    // to #root's scroll layer instead of the WebView viewport.
-    // On most pages the scroll length was too short to expose this;
-    // Schedule renders a tall weekly grid + several long panels and
-    // the bar visibly drifted upward as #root scrolled.
+    // Earlier today I tried portaling the nav out to document.body to
+    // fix a Schedule scroll-drag issue. In the wrapped Capacitor iOS
+    // app that broke click handling on every button — the portaled
+    // node was a direct child of body (which has position:fixed +
+    // overflow:hidden in capacitor-native) and WKWebView's hit-
+    // testing didn't reach it. The web build was fine but the
+    // wrapped app lost the entire bottom nav.
     //
-    // Fix: portal the nav out to document.body so it has NO scroll-
-    // container ancestor at all. position:fixed now anchors to the
-    // true viewport regardless of #root's scrolling. The web build
-    // also benefits — same code path, no platform branch needed.
-    const nav = (
+    // Reverted to the original return-inline pattern. The Schedule
+    // scroll-drag (#root scroll layer becoming the containing block
+    // for descendant position:fixed) will need a different fix —
+    // probably swap -webkit-overflow-scrolling:touch off on #root in
+    // capacitor-native CSS, or wire the nav as a sibling of #root
+    // from main.jsx. Either way, NOT a portal.
+    return (
         <nav
             // 2026-06-01 round 3 — Andrew sent the iOS 26 Apple Game Center
             // tab bar as reference. Key spec deltas from the round-2 build:
@@ -256,11 +255,4 @@ export default function MobileBottomNav({
             </div>
         </nav>
     );
-
-    // Portal to document.body. Guarded for SSR / pre-mount edge cases
-    // (during the first synchronous render document.body may briefly
-    // be unavailable in some test runners); in normal browser runtime
-    // it's always present.
-    if (typeof document === 'undefined' || !document.body) return nav;
-    return createPortal(nav, document.body);
 }
