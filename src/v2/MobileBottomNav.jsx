@@ -126,7 +126,23 @@ export default function MobileBottomNav({
     //     .ddmau-mobile-bottom-nav class — no jitter during scroll.
     return (
         <nav
-            className="ddmau-mobile-bottom-nav md:hidden left-3 right-3 z-40 rounded-3xl bg-white/40 backdrop-blur-2xl backdrop-saturate-150 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.25)] ring-1 ring-white/50"
+            // 2026-06-01 round 3 — Andrew sent the iOS 26 Apple Game Center
+            // tab bar as reference. Key spec deltas from the round-2 build:
+            //   • rounded-3xl → rounded-full (true pill silhouette with
+            //     semicircular ends, matches Apple's iOS 26 Liquid Glass
+            //     tab bars precisely)
+            //   • bg-white/40 → bg-black/40 (dark glass — Apple's pattern,
+            //     reads as deliberate floating chrome rather than a frosted
+            //     white slab against the also-light home page)
+            //   • Icon + label colours flipped to white tones (high
+            //     contrast on the dark glass) — see below
+            //   • Active state: bg-dd-sage-50 → bg-white/25 (Apple's
+            //     translucent white pill behind the selected tab)
+            //   • shadow alpha 0.25 → 0.4 (darker glass needs a darker
+            //     drop shadow to lift off the page)
+            //   • ring-white/50 → ring-white/15 (lighter highlight on
+            //     a dark glass surface to mimic Apple's top edge)
+            className="ddmau-mobile-bottom-nav md:hidden left-3 right-3 z-40 rounded-full bg-black/40 backdrop-blur-2xl backdrop-saturate-150 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.4)] ring-1 ring-white/15"
             // 2026-06-01 round 2 — Andrew: "no it still moves and its not
             // clear." Stronger lockdown via INLINE styles (highest CSS
             // specificity, cannot be overridden by any cascade) PLUS a
@@ -162,33 +178,34 @@ export default function MobileBottomNav({
                             aria-current={active ? 'page' : undefined}
                             aria-label={isEs ? t.es : t.en}
                         >
-                            {/* Icon pill — solid sage when active, transparent
-                                otherwise. Slightly larger active state. */}
+                            {/* Icon pill — translucent white when active
+                                (Apple iOS 26 pattern), transparent otherwise.
+                                Slightly larger active state. */}
                             <span className={`relative flex items-center justify-center w-12 h-7 rounded-full transition-all duration-200 ${
                                 active
-                                    ? 'bg-dd-sage-50'
-                                    : 'scale-95 group-active:bg-dd-bg'
+                                    ? 'bg-white/25'
+                                    : 'scale-95 group-active:bg-white/10'
                             }`}>
                                 {/* Lucide SVG icon — inherits currentColor from
-                                    the wrapping text-* class. Stroke width tuned
-                                    to match the visual weight of the previous
-                                    emoji glyphs (2.25 reads as "iconic but not
-                                    chunky"). Slight scale on active so the
-                                    selected tab subtly grows. */}
+                                    the wrapping text-* class. White on the dark
+                                    glass bar (matches Apple's design). Stroke
+                                    width 2.25 reads "iconic but not chunky".
+                                    Slight scale on active so the selected tab
+                                    subtly grows. */}
                                 <Icon
                                     size={22}
                                     strokeWidth={2.25}
-                                    className={`transition-transform duration-glass-fast ease-glass-out ${active ? 'scale-110 text-dd-green-700' : 'text-dd-text-2'}`}
+                                    className={`transition-transform duration-glass-fast ease-glass-out ${active ? 'scale-110 text-white' : 'text-white/80'}`}
                                     aria-hidden="true"
                                 />
                                 {showBadge && (
-                                    <span className={`absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center text-[9px] font-black text-white ${t.badgeTone} ring-2 ring-white tabular-nums`}>
+                                    <span className={`absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center text-[9px] font-black text-white ${t.badgeTone} ring-2 ring-black/40 tabular-nums`}>
                                         {t.badge > 9 ? '9+' : t.badge}
                                     </span>
                                 )}
                             </span>
                             <span className={`text-[10px] leading-none tracking-tight transition-colors ${
-                                active ? 'font-black text-dd-green-700' : 'font-semibold text-dd-text-2'
+                                active ? 'font-bold text-white' : 'font-semibold text-white/70'
                             }`}>
                                 {isEs ? t.es : t.en}
                             </span>
