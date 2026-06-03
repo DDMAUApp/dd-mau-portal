@@ -187,29 +187,38 @@ export default function MobileBottomNav({
                 position: 'fixed',
                 // 2026-06-02 round 7 — Andrew "the bottom bar is not
                 // working again. i see all the buttons but cant click."
+                // Root cause: round 6 pulled the bar 30px BELOW the
+                // safe area floor, deep into iOS's home-indicator
+                // gesture zone. Apple's UIKit tab bars get away with
+                // overlapping this zone because they live in NATIVE
+                // chrome that iOS knows is interactive. Our bar lives
+                // inside a WKWebView — iOS treats the bottom strip as
+                // system gesture area and intercepts touches BEFORE
+                // they reach the web content. Bar renders, no buttons
+                // respond.
                 //
-                // Root cause: round 6 pulled the bar 30px BELOW the safe
-                // area floor, deep into iOS's home-indicator gesture
-                // zone. Apple's UIKit tab bars get away with overlapping
-                // this zone because they live in NATIVE chrome that iOS
-                // knows is interactive. Our bar lives inside a WKWebView
-                // — iOS treats the bottom strip as system gesture area
-                // and intercepts touches BEFORE they reach the web
-                // content. Result: bar renders, no buttons respond.
+                // 2026-06-02 round 8 — Andrew (after round 7 shipped):
+                // "in the app store app the bottom bar is too high
+                // dont bring it all the way down but slightly."
                 //
-                // Fix: sit the bar AT the safe-area floor. The visible
-                // chrome is now ABOVE the home indicator gesture zone
-                // so every button is reliably tappable. Adds 8px of
-                // breathing room above the home indicator for visual
-                // comfort. On iPhones without home indicator (older
-                // devices, env() = 0) it sits flush with screen bottom.
+                // Round 7 sat the bar at safe-area + 8px (well clear
+                // of the gesture zone). That tested fine for taps but
+                // visually read too high. Round 8 dips ~10px INTO the
+                // gesture zone — just the upper edge of it, where
+                // touches usually still register because the iOS home-
+                // indicator swipe needs a distinct UPWARD motion to
+                // activate. Taps (no motion) on the upper 10-15px of
+                // the gesture zone reach the WebView most of the time.
                 //
-                // Visual trade: the bar reads slightly higher than the
-                // round-6 "Apple Game Center" position. Working clicks
-                // > pixel-perfect placement. We can revisit a fancier
-                // approach (e.g. tall transparent extension below
-                // tappable buttons) post-launch.
-                bottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
+                // max(..., 0px) clamps for iPhones without home
+                // indicator (older devices, env() = 0) so the bar
+                // sits flush with screen bottom there, never pushed
+                // off-screen by the subtraction.
+                //
+                // If Andrew reports taps stop working again after
+                // this, the only safe move is back to round 7's
+                // +8px and accept the visual height.
+                bottom: 'max(calc(env(safe-area-inset-bottom, 0px) - 10px), 0px)',
                 transform: 'translate3d(0, 0, 0)',
                 WebkitTransform: 'translate3d(0, 0, 0)',
                 willChange: 'transform',
