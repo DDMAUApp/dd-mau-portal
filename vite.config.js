@@ -130,6 +130,18 @@ export default defineConfig({
   base: '/',
   build: {
     outDir: 'dist',
+    // 2026-06-03 — Target ES2015 to dodge Temporal Dead Zone issues
+    // in WKWebView. The wrapped iOS app crashes on launch with
+    // "Cannot access 'X' before initialization" in vendor-firebase.
+    // The same bundle works fine in Safari and Chrome. WKWebView's
+    // JavaScriptCore is stricter about let/const evaluation order
+    // than V8 or the standalone Safari engine. Lowering target to
+    // es2015 makes esbuild/Rollup emit `var` declarations which
+    // are hoisted (no TDZ) - eliminates the entire bug class.
+    //
+    // Trade: bundle size grows ~3-5% from var hoisting (vendor-
+    // firebase 567 KB -> ~590 KB). Worth it for "always loads".
+    target: 'es2015',
     // 2026-05-26 — sourcemap generation is gated on Sentry being
     // configured. The Sentry vite plugin needs maps to upload to its
     // backend; if Sentry isn't configured we DON'T want to generate
