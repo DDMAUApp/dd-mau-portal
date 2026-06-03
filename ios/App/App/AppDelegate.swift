@@ -63,4 +63,36 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
     }
 
+    // 2026-06-03 ROOT-CAUSE FIX — bridge APNs token from iOS to the
+    // @capacitor/push-notifications plugin.
+    //
+    // Symptom before this: plugin.register() called UIApplication.
+    // registerForRemoteNotifications() successfully (we saw the call in
+    // Safari console), iOS contacted APNs and got a token back, but
+    // the 'registration' JS event NEVER fired → timeout after 15000ms
+    // → push registration aborted silently.
+    //
+    // Root cause: iOS's UIApplicationDelegate has 2 callback methods
+    // (didRegister... / didFailToRegister...) that fire when APNs
+    // returns. Capacitor's plugin listens for NotificationCenter posts
+    // on .capacitorDidRegisterForRemoteNotifications and
+    // .capacitorDidFailToRegisterForRemoteNotifications to translate
+    // those into the JS-side 'registration' / 'registrationError'
+    // events. Without these AppDelegate methods, iOS gets the token
+    // but the Capacitor plugin never knows about it.
+    //
+    // The default Capacitor app template includes these methods, but
+    // ours got stripped (probably during the @capacitor-firebase/
+    // messaging install/uninstall churn) and we never put them back.
+    //
+    // Reference: https://capacitorjs.com/docs/apis/push-notifications
+    // — "Add the following to your AppDelegate.swift" section.
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
+    }
+
 }

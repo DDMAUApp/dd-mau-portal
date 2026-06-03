@@ -1012,6 +1012,15 @@ export default function App() {
     // and Cloud Function reminders never reached devices.
     // Foreground message handler shows an in-app toast/console log.
     useEffect(() => {
+        // 2026-06-03 DIAGNOSTIC — proves the FCM useEffect fired and
+        // shows the gate values. Remove once push verified working.
+        try {
+            console.log('[BOOT][FCM useEffect] FIRED · staffName=' + staffName +
+                ' · staffListLen=' + (Array.isArray(staffList) ? staffList.length : 'NOT_ARRAY') +
+                ' · willCall=' + Boolean(staffName && Array.isArray(staffList) && staffList.length > 0));
+        } catch (e) {
+            console.warn('[BOOT][FCM useEffect] diagnostic threw:', e?.message);
+        }
         if (!staffName || !Array.isArray(staffList) || staffList.length === 0) return;
         let unsubForeground = null;
         let cancelled = false;

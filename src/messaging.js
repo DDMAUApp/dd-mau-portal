@@ -30,6 +30,17 @@ import { doc, setDoc, runTransaction, getDoc } from "firebase/firestore";
 import app, { db } from "./firebase";
 import { Capacitor } from "@capacitor/core";
 
+// 2026-06-03 DIAGNOSTIC — proves messaging.js module loaded and
+// Capacitor identity at load time. Remove once push verified working.
+try {
+    console.log('[BOOT][messaging] module loaded · Capacitor.isNativePlatform=' +
+        (Capacitor?.isNativePlatform?.() ?? 'undefined') +
+        ' · getPlatform=' + (Capacitor?.getPlatform?.() ?? 'undefined') +
+        ' · typeof Notification=' + (typeof Notification));
+} catch (e) {
+    console.warn('[BOOT][messaging] diagnostic log threw:', e?.message);
+}
+
 // 2026-05-31 — Capacitor wrap. The Firebase web SDK uses a service
 // worker for push delivery (firebase-messaging-sw.js). Service
 // workers do NOT fire inside the iOS WKWebView or Android WebView
@@ -76,7 +87,23 @@ async function loadNativePushPlugin() {
     if (!isCapacitorNative()) return null;
     try {
         const mod = await import("@capacitor/push-notifications");
-        return mod.PushNotifications || null;
+        const p = mod.PushNotifications;
+        if (!p) return null;
+        // 2026-06-03 ROOT-CAUSE FIX: Capacitor's plugin Proxy intercepts
+        // ALL property access including `.then`. If we return this Proxy
+        // from an async function, JS's Promise.resolve() does a thenable
+        // check by accessing `.then` on the Proxy — the Proxy treats it
+        // as a method call and forwards to iOS, which throws
+        //   "PushNotifications.then() is not implemented on ios"
+        // → unhandled rejection → entire push chain dies silently.
+        // Fix: bind the 3 methods we actually use into a plain object
+        // that has no `.then`. The bound functions properly delegate to
+        // the original Proxy for the actual native calls.
+        return {
+            requestPermissions: p.requestPermissions.bind(p),
+            register: p.register.bind(p),
+            addListener: p.addListener.bind(p),
+        };
     } catch (e) {
         console.warn("[push][native] @capacitor/push-notifications import failed:", e?.message);
         return null;
@@ -392,6 +419,15 @@ async function getMessagingSafely() {
  * @returns {Promise<{ok: boolean, reason?: string, token?: string}>}
  */
 export async function enableFcmPush(staffName, staffList, setStaffList) {
+    // 2026-06-03 DIAGNOSTIC — proves enableFcmPush was called and shows
+    // the gate values at entry. Remove once push verified working.
+    try {
+        console.log('[BOOT][enableFcmPush] ENTRY · staffName=' + staffName +
+            ' · staffListLen=' + (Array.isArray(staffList) ? staffList.length : 'NOT_ARRAY') +
+            ' · isCapacitorNative=' + isCapacitorNative());
+    } catch (e) {
+        console.warn('[BOOT][enableFcmPush] diagnostic threw:', e?.message);
+    }
     // Native short-circuit. On iOS / Android via Capacitor we use the
     // native push plugin instead of the web FCM SDK + service worker.
     // The plugin emits an FCM token (Android) or APNs token (iOS) that
