@@ -253,36 +253,36 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     // We tag the stored token with `platform` so admins can tell a
     // phone install apart from a browser install when triaging
     // delivery issues.
-    // 2026-06-03 — RE-ENABLING FCM after fixing the missing iOS push
-    // entitlement (Phase 1 of FCM_RUNBOOK.md). The previous white-
-    // screen-after-PIN was caused by aps-environment entitlement
-    // being absent — registerForRemoteNotifications() threw an
-    // NSInternalInconsistencyException that crashed WKWebView before
-    // our JavaScript could log anything. Now that App.entitlements
-    // exists with aps-environment=development AND project.pbxproj
-    // references it (CODE_SIGN_ENTITLEMENTS = App/App.entitlements,
-    // verified 4 matches in pbxproj after Andrew added the Push
-    // Notifications capability in Xcode), the plugin's native init
-    // should succeed.
+    // 2026-06-03 FINAL — Native FCM DISABLED for v1 launch.
     //
-    // Verbose [FCM][native] step logging stays in so if anything
-    // goes wrong we can see the last successful step in Safari Web
-    // Inspector. Outer try/catch protects React's render cycle from
-    // a synchronous throw at the gate.
+    // We tried (in order) over multiple debug sessions:
+    //   1. @capacitor/push-notifications → returns APNs raw tokens,
+    //      Firebase Admin SDK getMessaging() can't deliver to those.
+    //   2. @capacitor-firebase/messaging → white-screen, traced to
+    //      missing aps-environment entitlement (Phase 1 fix shipped).
+    //   3. After entitlement fix → FirebaseApp.configure() couldn't
+    //      find the plist due to a "(1)"-suffixed filename. Fixed.
+    //   4. After plist rename → WKWebView TDZ crash in vendor-firebase
+    //      chunk ("Cannot access 'Dp' before initialization"). Tried
+    //      lazy-loading firebase/messaging → same TDZ in a different
+    //      variable. Tried target:es2015 → still crashes. The TDZ
+    //      origin is somewhere deep in the firebase v10 npm package
+    //      that fails specifically in JavaScriptCore (WKWebView) but
+    //      works fine in mobile Safari and Chrome.
     //
-    // Web build is UNTOUCHED — isCapacitorNative() is false in
-    // browsers and the existing web FCM path (service worker +
-    // VAPID) runs exactly like before.
+    // Decision: ship v1 without native push. Web FCM still works,
+    // SMS for urgent alerts still works, in-app notifications (bell
+    // drawer + chat tile badge) still work via Firestore subscription.
+    //
+    // v1.1 plan: OneSignal. Their SDK does its own native init that
+    // sidesteps the firebase web SDK TDZ issue entirely, and handles
+    // APNs/FCM transparently. ~1 day of focused work after v1 ships.
+    //
+    // Web build COMPLETELY UNCHANGED — isCapacitorNative() is false
+    // in browsers so the existing web FCM path runs exactly as before.
     if (isCapacitorNative()) {
-        console.log('[FCM][native] === entering enableNativePush ===');
-        try {
-            const r = await enableNativePush(staffName, staffList, setStaffList);
-            console.log('[FCM][native] enableNativePush returned:', JSON.stringify(r));
-            return r;
-        } catch (e) {
-            console.warn('[FCM][native] enableNativePush THREW (caught at gate):', e?.message, e?.stack);
-            return { ok: false, reason: 'native-threw', error: e?.message };
-        }
+        console.log('[FCM][native] disabled for v1 launch — see messaging.js comments');
+        return { ok: false, reason: 'native-disabled-v1' };
     }
     if (typeof Notification === "undefined") {
         return { ok: false, reason: "no-notification-api" };
@@ -521,36 +521,9 @@ export async function onForegroundMessage(handler) {
     // shape to match the FCM web SDK so the in-app handler doesn't
     // need to branch.
     if (isCapacitorNative()) {
-        // 2026-06-03 — Re-enabled after Phase 1 entitlement fix. See
-        // enableFcmPush gate above. Wrapped in try/catch + verbose
-        // logging so a listener-setup crash can't bring down React.
-        console.log('[FCM][native] onForegroundMessage: loading plugin');
-        let plugin;
-        try {
-            plugin = await loadNativePushPlugin();
-        } catch (e) {
-            console.warn('[FCM][native] onForegroundMessage plugin load THREW:', e?.message);
-            return () => {};
-        }
-        if (!plugin) {
-            console.log('[FCM][native] onForegroundMessage plugin null, returning noop');
-            return () => {};
-        }
-        try {
-            console.log('[FCM][native] onForegroundMessage: addListener notificationReceived');
-            const sub = await plugin.addListener("notificationReceived", (notification) => {
-                console.log('[FCM][native] foreground notif:', notification?.title);
-                handler({
-                    notification: { title: notification?.title, body: notification?.body },
-                    data: notification?.data || {},
-                });
-            });
-            console.log('[FCM][native] onForegroundMessage: listener attached');
-            return () => { try { sub?.remove?.(); } catch {} };
-        } catch (e) {
-            console.warn('[FCM][native] onForegroundMessage addListener THREW:', e?.message);
-            return () => {};
-        }
+        // Native push disabled in v1 (see enableFcmPush gate above).
+        // No listener attached; web FCM path below unchanged.
+        return () => {};
     }
     const messaging = await getMessagingSafely();
     if (!messaging) return () => {};
