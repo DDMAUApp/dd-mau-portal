@@ -1610,3 +1610,45 @@ body[data-chat-thread-open="true"] .ddmau-report-fab {
         backdrop-filter: none;
     }
 }
+
+/* 2026-06-03 ANDROID PERF FIX — Andrew reported wrapped Android app
+   is slow + laggy. Root cause: Android System WebView renders
+   backdrop-filter on CPU (no GPU compositing fast path like iOS
+   WKWebView has). With 58 glass surfaces using blur(20-28px), every
+   scroll/animation triggers full-screen CPU rasterization → 5-15 fps.
+
+   Fix: When running inside Capacitor Android, replace all
+   backdrop-filter blurs with solid background fills. The visual
+   trade-off is acceptable: the frosted-glass look becomes a flat
+   surface, but the app becomes fluid again. iOS keeps the glass
+   look unchanged (its WKWebView does backdrop-filter on GPU).
+
+   `body.capacitor-android` is set synchronously in main.jsx at boot
+   based on Capacitor.getPlatform(). Web browsers + iOS native are
+   unaffected. */
+body.capacitor-android *,
+body.capacitor-android *::before,
+body.capacitor-android *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+/* Bump background opacity so the now-no-blur surfaces still read as
+   distinct chips. Light surfaces go from 0.45 → 0.92 alpha; dark
+   chips were already solid-fill so they don't need help. */
+body.capacitor-android .glass-card,
+body.capacitor-android .glass-panel,
+body.capacitor-android .glass-sheet,
+body.capacitor-android .glass-button-apple,
+body.capacitor-android .glass-nav,
+body.capacitor-android .glass-nav-bottom {
+    background-color: rgba(255, 255, 255, 0.94);
+}
+body.capacitor-android .glass-card.is-dark,
+body.capacitor-android .glass-panel.is-dark,
+body.capacitor-android .glass-sheet.is-dark,
+body.capacitor-android .glass-nav.is-dark,
+body.capacitor-android .glass-nav-bottom.is-dark {
+    /* Dark chips: keep the existing dark fill — they were already
+       fully opaque, no change needed. */
+    background-color: #1c1c1e;
+}

@@ -103,6 +103,19 @@ try {
         // scroll-restructure CSS can target html as a containing block
         // for the locked viewport.
         document.documentElement.classList.add('capacitor-native');
+        // 2026-06-03 — Andrew reported Android app is slow + laggy.
+        // Tag platform so CSS can disable backdrop-filter blur on
+        // Android (kills GPU compositing in Android WebView, causes
+        // major jank on scroll/animations). iOS WKWebView handles
+        // backdrop-filter natively, no override needed there.
+        const platform = window?.Capacitor?.getPlatform?.();
+        if (platform === 'android') {
+            document.body.classList.add('capacitor-android');
+            document.documentElement.classList.add('capacitor-android');
+        } else if (platform === 'ios') {
+            document.body.classList.add('capacitor-ios');
+            document.documentElement.classList.add('capacitor-ios');
+        }
     }
 } catch (_) { /* no-op — non-fatal if Capacitor global isn't there */ }
 
