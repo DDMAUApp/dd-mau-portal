@@ -197,28 +197,28 @@ export default function MobileBottomNav({
                 // they reach the web content. Bar renders, no buttons
                 // respond.
                 //
-                // 2026-06-02 round 8 — Andrew (after round 7 shipped):
-                // "in the app store app the bottom bar is too high
-                // dont bring it all the way down but slightly."
+                // 2026-06-02 round 9 — Andrew (after round 8 shipped):
+                // "the bottom buttons are not pressing easly."
                 //
-                // Round 7 sat the bar at safe-area + 8px (well clear
-                // of the gesture zone). That tested fine for taps but
-                // visually read too high. Round 8 dips ~10px INTO the
-                // gesture zone — just the upper edge of it, where
-                // touches usually still register because the iOS home-
-                // indicator swipe needs a distinct UPWARD motion to
-                // activate. Taps (no motion) on the upper 10-15px of
-                // the gesture zone reach the WebView most of the time.
+                // Round 8 dipped 10px into the gesture zone; even
+                // that small overlap made taps unreliable. Confirms
+                // the WKWebView gesture-zone behaviour is binary:
+                // any pixel below safe-area-inset-bottom is OWNED
+                // by iOS and the tap doesn't reach the WebView.
                 //
-                // max(..., 0px) clamps for iPhones without home
-                // indicator (older devices, env() = 0) so the bar
-                // sits flush with screen bottom there, never pushed
-                // off-screen by the subtraction.
+                // Round 9 settles at the safe-area floor with ZERO
+                // breathing room above or below. Every pixel of
+                // every button sits exactly at or above the iOS-
+                // owned strip — reliably tappable. Visually this is
+                // 8px lower than round 7 (which had +8 breathing
+                // room) and 10px higher than round 8.
                 //
-                // If Andrew reports taps stop working again after
-                // this, the only safe move is back to round 7's
-                // +8px and accept the visual height.
-                bottom: 'max(calc(env(safe-area-inset-bottom, 0px) - 10px), 0px)',
+                // This is the physical floor for "as low as possible
+                // while still tappable" inside a WKWebView. Anything
+                // lower trades tap reliability for pixel placement,
+                // and Andrew has confirmed both rounds 6 and 8 that
+                // even small overlaps break taps. Lock here.
+                bottom: 'env(safe-area-inset-bottom, 0px)',
                 transform: 'translate3d(0, 0, 0)',
                 WebkitTransform: 'translate3d(0, 0, 0)',
                 willChange: 'transform',
