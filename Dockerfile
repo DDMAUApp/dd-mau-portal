@@ -31,7 +31,17 @@ WORKDIR /app
 # not by the Vite frontend), and the sync-toast-86-attribution.mjs
 # script imports it. Installing devDeps in the cron container is fine —
 # the image is throwaway and we don't ship it anywhere.
-COPY package.json package-lock.json* ./
+#
+# 2026-06-02 — Andrew "look at safari": Railway deploys started failing
+# after we added @capacitor-firebase/messaging (firebase v12 peer dep
+# vs our firebase v10). The repo root .npmrc has legacy-peer-deps=true
+# which fixes both `npm ci` and `npm install` everywhere ELSE — but
+# the previous COPY line only copied package.json and package-lock.json
+# into the Docker build context, so npm install in here ran without the
+# .npmrc flag and rejected the peer-dep conflict. Adding .npmrc to the
+# COPY makes the Docker build behave the same as the GitHub Actions
+# build and the local install.
+COPY package.json package-lock.json* .npmrc ./
 RUN npm install --no-audit --no-fund
 
 # Copy only what the script needs. Keeps the image small and avoids

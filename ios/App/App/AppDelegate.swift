@@ -7,7 +7,24 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // 2026-06-03 — FirebaseApp.configure() is NOT called here for v1.
+        // The @capacitor-firebase/messaging plugin (which brought Firebase
+        // iOS SDK pods into the project) was uninstalled to resolve a
+        // firebase v10/v12 cross-version conflict that was crashing
+        // WKWebView with a TDZ in the JS bundle. With the plugin gone,
+        // FirebaseCore is no longer linked - adding `import FirebaseCore`
+        // would fail the Xcode compile.
+        //
+        // For v1.1 push wiring (Capacitor @capacitor/push-notifications +
+        // direct APNs from Cloud Function via node-apn), Firebase iOS SDK
+        // is not needed at all. APNs registration goes through the
+        // standard UIApplication.registerForRemoteNotifications path the
+        // Capacitor plugin handles, and the Cloud Function talks APNs
+        // HTTP/2 directly with the existing Auth Key.
+        //
+        // If we ever go back to FCM-via-Firebase-iOS-SDK, add the
+        // firebase-ios-sdk SPM dependency to the App target, re-add
+        // `import FirebaseCore` here, and call FirebaseApp.configure().
         return true
     }
 

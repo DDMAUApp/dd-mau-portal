@@ -1,10 +1,80 @@
-import React from 'react';
+import React, { Component } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import AppToast from './components/AppToast.jsx';
 import './index.css';
 import './firebase.js';
 import { setupPWA } from './pwa.js';
+
+// ─── Top-level ErrorBoundary — never let the screen go white ─────────
+// 2026-06-02 — Andrew "im stuck on the white screen again". App.jsx
+// already has an inner ErrorBoundary keyed on activeTab, but that
+// boundary is INSIDE App. If App.jsx itself throws during its own
+// render (or a top-level hook/effect throws), the inner boundary is
+// never reached and React unmounts the whole tree → white screen.
+//
+// This RootErrorBoundary wraps <App /> at the React root so absolutely
+// any uncaught render error in the entire tree lands here and shows a
+// usable fallback UI with the actual error message instead of white.
+// The user can tap Reload to retry. In native iOS/Android wraps this
+// makes white-screen-from-a-render-error impossible.
+//
+// We deliberately do NOT swallow the error — it's surfaced in the UI
+// and console.error'd so Safari Web Inspector picks it up. No
+// dependency on the app's logger module so this boundary can't itself
+// depend on a chunk that failed to load.
+class RootErrorBoundary extends Component {
+    constructor(props) { super(props); this.state = { error: null }; }
+    static getDerivedStateFromError(error) { return { error }; }
+    componentDidCatch(error, info) {
+        try { console.error('[RootErrorBoundary]', error, info?.componentStack); } catch {}
+    }
+    render() {
+        if (!this.state.error) return this.props.children;
+        const msg = (this.state.error && (this.state.error.message || String(this.state.error))) || 'Unknown error';
+        return (
+            <div style={{
+                padding: '32px 20px',
+                minHeight: '100vh',
+                boxSizing: 'border-box',
+                background: '#f0f7f1',
+                color: '#0f172a',
+                fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+            }}>
+                <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>DD Mau hit a snag</h1>
+                <p style={{ fontSize: 15, marginBottom: 16 }}>
+                    Something failed while loading the app. Tap Reload to try again. If it keeps happening, take a screenshot and send it to Andrew.
+                </p>
+                <pre style={{
+                    background: '#fff',
+                    padding: 12,
+                    borderRadius: 8,
+                    border: '1px solid #d1d5db',
+                    fontSize: 12,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    marginBottom: 20,
+                    maxHeight: 200,
+                    overflow: 'auto',
+                }}>{msg}</pre>
+                <button
+                    onClick={() => { try { window.location.reload(); } catch {} }}
+                    style={{
+                        background: '#255a37',
+                        color: 'white',
+                        border: 'none',
+                        padding: '14px 24px',
+                        borderRadius: 12,
+                        fontSize: 16,
+                        fontWeight: 700,
+                        width: '100%',
+                    }}>
+                    Reload
+                </button>
+            </div>
+        );
+    }
+}
 // Capacitor native runtime bridge — 2026-05-31. Initialises the
 // status bar style, splash hide, keyboard listeners, Android back
 // button, and Capgo OTA on native builds. No-op on the web build
@@ -57,8 +127,8 @@ initCapacitor().catch((e) => console.warn('initCapacitor failed:', e?.message));
 // toast pipeline in one shot.
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
-    <React.Fragment>
+    <RootErrorBoundary>
         <App />
         <AppToast />
-    </React.Fragment>
+    </RootErrorBoundary>
 );

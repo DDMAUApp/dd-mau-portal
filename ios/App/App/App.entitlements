@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	2026-06-03 — DD Mau iOS entitlements file.
+
+	Why this exists:
+	  The wrapped iOS app needs the aps-environment entitlement to call
+	  UIApplication.registerForRemoteNotifications(). Without it, iOS
+	  throws NSInternalInconsistencyException at the FIRST call from the
+	  @capacitor-firebase/messaging plugin's native init - and that
+	  exception terminates the WKWebView process before any of our
+	  JavaScript can run. Result: white-screen-after-PIN with nothing
+	  visible in Safari Web Inspector (the WebContent died too early to
+	  hook).
+
+	  We chased this as a JS bug for hours on 2026-06-02. The real fix
+	  is two lines: this entitlement key + the matching Xcode capability.
+
+	State right now:
+	  This FILE exists, but is NOT yet referenced by ios/App/App.xcodeproj/
+	  project.pbxproj. That's intentional - referencing it from pbxproj
+	  without also having the matching capability + provisioning profile
+	  configured would break code signing on the next Xcode build, and
+	  we promised "don't break anything" overnight.
+
+	  To activate this entitlement, Andrew clicks "+ Capability" in
+	  Xcode -> Signing & Capabilities and adds "Push Notifications".
+	  Xcode auto-links this file (or recreates it identically) and
+	  registers CODE_SIGN_ENTITLEMENTS in the build settings. After
+	  that the next Xcode build signs with aps-environment and the
+	  FCM plugin can register for remote notifications without
+	  crashing the WebView.
+
+	  Full step-by-step instructions in FCM_RUNBOOK.md at repo root.
+
+	Why "development" not "production":
+	  aps-environment values: development (sandbox APNs - TestFlight +
+	  local Xcode builds), production (real APNs - App Store).
+	  Xcode auto-flips this at archive time based on the build
+	  configuration: Debug -> development, Release -> production.
+	  Hardcoding "development" here makes local Xcode builds work; the
+	  archive step still produces a Release build with production set
+	  automatically. No manual flip needed at submission time.
+	-->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

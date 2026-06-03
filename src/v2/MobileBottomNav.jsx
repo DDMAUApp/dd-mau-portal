@@ -185,18 +185,40 @@ export default function MobileBottomNav({
             // glass.
             style={{
                 position: 'fixed',
-                // 2026-06-01 round 6 — Andrew: "bring the bottom bar down
-                // more." Round 5 sat flush with the safe area. Now we
-                // intentionally pull the bar 18px BELOW the safe-area
-                // floor, overlapping the upper edge of the iPhone home-
-                // indicator gesture zone (Apple's tab bars do this too).
-                // The home indicator gesture still works because iOS
-                // processes the upward swipe regardless of overlapping
-                // content. max(..., 0px) clamps the value so iPhones
-                // without a home indicator (older devices, env() = 0)
-                // stay at screen-bottom, never pushed off-screen by the
-                // subtraction.
-                bottom: 'max(calc(env(safe-area-inset-bottom, 0px) - 30px), 0px)',
+                // 2026-06-02 round 7 — Andrew "the bottom bar is not
+                // working again. i see all the buttons but cant click."
+                // Root cause: round 6 pulled the bar 30px BELOW the
+                // safe area floor, deep into iOS's home-indicator
+                // gesture zone. Apple's UIKit tab bars get away with
+                // overlapping this zone because they live in NATIVE
+                // chrome that iOS knows is interactive. Our bar lives
+                // inside a WKWebView — iOS treats the bottom strip as
+                // system gesture area and intercepts touches BEFORE
+                // they reach the web content. Bar renders, no buttons
+                // respond.
+                //
+                // 2026-06-02 round 9 — Andrew (after round 8 shipped):
+                // "the bottom buttons are not pressing easly."
+                //
+                // Round 8 dipped 10px into the gesture zone; even
+                // that small overlap made taps unreliable. Confirms
+                // the WKWebView gesture-zone behaviour is binary:
+                // any pixel below safe-area-inset-bottom is OWNED
+                // by iOS and the tap doesn't reach the WebView.
+                //
+                // Round 9 settles at the safe-area floor with ZERO
+                // breathing room above or below. Every pixel of
+                // every button sits exactly at or above the iOS-
+                // owned strip — reliably tappable. Visually this is
+                // 8px lower than round 7 (which had +8 breathing
+                // room) and 10px higher than round 8.
+                //
+                // This is the physical floor for "as low as possible
+                // while still tappable" inside a WKWebView. Anything
+                // lower trades tap reliability for pixel placement,
+                // and Andrew has confirmed both rounds 6 and 8 that
+                // even small overlaps break taps. Lock here.
+                bottom: 'env(safe-area-inset-bottom, 0px)',
                 transform: 'translate3d(0, 0, 0)',
                 WebkitTransform: 'translate3d(0, 0, 0)',
                 willChange: 'transform',

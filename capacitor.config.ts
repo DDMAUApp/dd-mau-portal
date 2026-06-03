@@ -138,7 +138,21 @@ const config: CapacitorConfig = {
             // autoUpdate true means the plugin checks for a new bundle
             // on every app foreground; if newer, downloads + applies
             // on next cold launch.
-            autoUpdate: true,
+            //
+            // 2026-06-02 STABILITY DECISION — DISABLED for v1 launch.
+            // Capgo OTA was a moving target during the white-screen
+            // debug: the wrapped app could be running the bundled JS
+            // OR a bundle Capgo pulled minutes ago, with no way to
+            // tell from the device which was active. That made every
+            // fix unreproducible. With autoUpdate:false, the wrapped
+            // app ALWAYS runs the JS bundled into the iOS/Android
+            // shell at build time — fully deterministic. To ship a
+            // fix, we rebuild via Xcode / Android Studio.
+            //
+            // Re-enable after the App Store v1 base is shipping
+            // cleanly and we have a staging channel + rollback flow
+            // configured in the Capgo dashboard.
+            autoUpdate: false,
             // Production-safe defaults. Tighten to staging-only via
             // the Capgo dashboard channels if needed.
             statsUrl: 'https://api.capgo.app/stats',
