@@ -52,30 +52,38 @@ function isCapacitorNative() {
 // in code it never executes. Dynamic import keeps the plugin off
 // the web critical path.
 //
-// 2026-06-02 — Switched from `@capacitor/push-notifications` to
-// `@capacitor-firebase/messaging`. Reason: the raw push-notifications
-// plugin returns an APNs *device token* (hex) on iOS unless Firebase
-// iOS SDK is also linked into the native shell. The dispatchNotification
-// Cloud Function uses `getMessaging().sendEachForMulticast(tokens)`
-// which requires FCM registration tokens — APNs raw tokens are rejected
-// at the Admin SDK layer with "Invalid registration token". So the old
-// path silently produced unusable tokens.
+// 2026-06-03 — @capacitor-firebase/messaging plugin REMOVED entirely.
+// Why: that plugin pinned `firebase: ^12.6.0` as a peer dep but the
+// project uses `firebase: ^10.12.0` everywhere else. With
+// --legacy-peer-deps both versions got installed into node_modules,
+// and Vite ended up pulling modules from BOTH versions into the
+// vendor-firebase chunk. The cross-version conflict caused a
+// Temporal Dead Zone crash at module init in WKWebView ("Cannot
+// access 'Dp/Np' before initialization") - white-screen on every
+// wrapped iOS launch. The root cause was invisible until we read
+// package-lock.json and saw two firebase entries.
 //
-// `@capacitor-firebase/messaging` wraps Firebase iOS SDK natively, so
-// `getToken()` returns a real FCM registration token routable through
-// the existing dispatch flow with NO Cloud Function changes. Requires
-// GoogleService-Info.plist to be present in the Xcode project (owner
-// step). On web build this dynamic import is a no-op via the
-// isCapacitorNative() short-circuit.
+// Removing the plugin restores a single firebase v10 version in
+// node_modules. The vendor-firebase chunk now has clean module
+// init order. No more TDZ.
+//
+// Push strategy going forward (v1.1 work, NOT this commit):
+//   • iOS / Android native push will use @capacitor/push-notifications
+//     (already installed). On iOS that plugin returns the raw APNs
+//     device token; we'll send to iOS via node-apn from the Cloud
+//     Function with the existing APNs Auth Key.
+//   • Cloud Function dispatchNotification will split tokens by
+//     platform: FCM for Android + Web, direct APNs for iOS.
+//   • OR (alternative if Firebase iOS SDK stays in the bundle via
+//     other means): swizzle APNs -> FCM tokens automatically.
+//
+// For v1 launch: native push stays DISABLED via the isCapacitorNative
+// gate in enableFcmPush above. Web FCM keeps working unchanged.
 async function loadNativePushPlugin() {
-    if (!isCapacitorNative()) return null;
-    try {
-        const mod = await import("@capacitor-firebase/messaging");
-        return mod.FirebaseMessaging || null;
-    } catch (e) {
-        console.warn("[FCM] @capacitor-firebase/messaging import failed:", e?.message);
-        return null;
-    }
+    // Removed plugin path - native FCM is disabled in v1 anyway via
+    // the gate in enableFcmPush. Returning null preserves the
+    // existing call-site contract.
+    return null;
 }
 
 // ⚠️ REPLACE THIS PLACEHOLDER ⚠️

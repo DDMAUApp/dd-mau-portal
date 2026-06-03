@@ -23,7 +23,6 @@
     "ship": "npm run build && git push && npx cap sync && npx @capgo/cli@latest bundle upload --apikey $CAPGO_TOKEN"
   },
   "dependencies": {
-    "@capacitor-firebase/messaging": "^8.2.0",
     "@sentry/react": "^10.54.0",
     "@sentry/vite-plugin": "^5.3.0",
     "firebase": "^10.12.0",
