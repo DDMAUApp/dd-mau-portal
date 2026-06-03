@@ -224,8 +224,17 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     // We tag the stored token with `platform` so admins can tell a
     // phone install apart from a browser install when triaging
     // delivery issues.
+    // 2026-06-02 EMERGENCY — Andrew "im stuck on the white screen again
+    // after the pin". The wrapped iOS app was white-screening post-PIN
+    // and the most-recently-changed code path is the FCM plugin swap to
+    // @capacitor-firebase/messaging. Until we can attach Safari Web
+    // Inspector and prove which line throws, short-circuit native FCM
+    // entirely so the rest of the app loads. Push notifications won't
+    // work on iOS in the meantime — acceptable trade vs an unlaunchable
+    // app. Web build is untouched.
     if (isCapacitorNative()) {
-        return enableNativePush(staffName, staffList, setStaffList);
+        console.log('[FCM][native] short-circuited (post-PIN white-screen debug)');
+        return { ok: false, reason: 'native-disabled-temp' };
     }
     if (typeof Notification === "undefined") {
         return { ok: false, reason: "no-notification-api" };
@@ -462,6 +471,11 @@ export async function onForegroundMessage(handler) {
     // shape to match the FCM web SDK so the in-app handler doesn't
     // need to branch.
     if (isCapacitorNative()) {
+        // 2026-06-02 EMERGENCY — see comment in enableFcmPush above.
+        // Short-circuit the foreground listener too while we debug.
+        return () => {};
+        // Disabled while debugging white-screen-after-pin:
+        // eslint-disable-next-line no-unreachable
         const plugin = await loadNativePushPlugin();
         if (!plugin) return () => {};
         // @capacitor-firebase/messaging fires `notificationReceived`

@@ -506,6 +506,26 @@ exports.dispatchNotification = onDocumentCreated(
         // specific blocks below, so we never double-render on web.
         const pushTitle = notif.title || "DD Mau";
         const pushBody = notif.body || "";
+
+        // 2026-06-02 — Compute the badge count for the iPhone home-
+        // screen icon. We count all CURRENTLY UNREAD notifications
+        // for this user (including the new one that just triggered
+        // this function). count() is a server-side aggregation —
+        // no documents are returned, only the size. If the query
+        // throws we fall back to 1 so the badge still shows
+        // something rather than silently going blank.
+        let unreadCount = 1;
+        try {
+            const agg = await db.collection("notifications")
+                .where("forStaff", "==", forStaff)
+                .where("read", "==", false)
+                .count()
+                .get();
+            unreadCount = Math.max(1, agg.data().count || 1);
+        } catch (e) {
+            logger.warn(`unread count failed for ${forStaff} (using badge=1):`, e?.message);
+        }
+
         const message = {
             tokens,
             data: {
@@ -529,7 +549,24 @@ exports.dispatchNotification = onDocumentCreated(
                     aps: {
                         alert: { title: pushTitle, body: pushBody },
                         sound: "default",
-                        badge: 1,
+                        // 2026-06-02 — Andrew: "can we put a badge on the
+                        // app on the phone screen?" Was hardcoded to 1
+                        // (so the iPhone home-screen icon always showed
+                        // "1" after any push). Now we count this user's
+                        // current UNREAD notifications and use that as
+                        // the badge. The new notif that triggered this
+                        // function is already in the count (Firestore
+                        // trigger fires AFTER write). Falls back to 1
+                        // if the count query throws — better to show a
+                        // stale 1 than no badge at all.
+                        //
+                        // Client-side clear (set badge to 0 when user
+                        // opens chat / marks all read) is a TODO that
+                        // needs @capacitor/badge plugin — not wired in
+                        // this pass. Result: badge climbs accurately on
+                        // each new push but only goes down when a fresh
+                        // push arrives after the user has read messages.
+                        badge: unreadCount,
                         "content-available": 1,
                     },
                 },
