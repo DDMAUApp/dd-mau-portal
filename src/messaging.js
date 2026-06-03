@@ -218,21 +218,29 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     // We tag the stored token with `platform` so admins can tell a
     // phone install apart from a browser install when triaging
     // delivery issues.
-    // 2026-06-02 — Andrew chose "debug FCM via Web Inspector". The
-    // short-circuit is REMOVED so the native path runs again. Every
-    // step inside enableNativePush is wrapped in try/catch with
-    // detailed console.log markers so when the WebView crashes we
-    // can see WHICH step was the last thing logged. Andrew opens
-    // Safari → Develop → his iPhone → DD Mau Web Inspector → Console
-    // tab to watch.
+    // 2026-06-02 — STABILITY DECISION. Native FCM is DISABLED in the
+    // wrapped iOS/Android app for the App Store v1 launch.
+    //
+    // Symptom we are protecting against: white-screen-after-PIN on the
+    // wrapped iOS build whenever the @capacitor-firebase/messaging
+    // plugin code path runs. We tried wrapping every step in
+    // try/catch + console.log markers, and the WebView still died
+    // before Safari Web Inspector could attach. The plugin's native
+    // side appears to interact badly with our current pod setup in a
+    // way that takes down the WebView itself (not just the JS).
+    //
+    // Trade: native push won't deliver to iOS/Android in v1. Staff
+    // will only see in-app notifications + the home-tile chat badge
+    // (driven by the same /notifications Firestore subscription —
+    // works without FCM). We add native push back as a focused v1.1
+    // task once the App Store base build is shipping cleanly.
+    //
+    // Web build is COMPLETELY UNTOUCHED — the isCapacitorNative()
+    // guard returns false in browsers, so the existing web FCM path
+    // (service worker + VAPID) runs exactly like before.
     if (isCapacitorNative()) {
-        console.log('[FCM][native] entering native push path (debug build)');
-        try {
-            return await enableNativePush(staffName, staffList, setStaffList);
-        } catch (e) {
-            console.warn('[FCM][native] enableNativePush THREW:', e?.message, e?.stack);
-            return { ok: false, reason: 'native-threw', error: e?.message };
-        }
+        console.log('[FCM][native] disabled for v1 (no plugin import attempted)');
+        return { ok: false, reason: 'native-disabled-v1' };
     }
     if (typeof Notification === "undefined") {
         return { ok: false, reason: "no-notification-api" };
@@ -469,7 +477,12 @@ export async function onForegroundMessage(handler) {
     // shape to match the FCM web SDK so the in-app handler doesn't
     // need to branch.
     if (isCapacitorNative()) {
-        console.log('[FCM][native] onForegroundMessage: loading plugin');
+        // Mirror of the enableFcmPush short-circuit. Native FCM is
+        // OFF in v1 — no listener is attached. See enableFcmPush
+        // above for context. Web build is unaffected (this gate is
+        // false in browsers).
+        return () => {};
+        // eslint-disable-next-line no-unreachable
         const plugin = await loadNativePushPlugin();
         if (!plugin) return () => {};
         // @capacitor-firebase/messaging fires `notificationReceived`
