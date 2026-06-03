@@ -110,41 +110,35 @@ let _swCleanedUp = false;
 // `nativeWrap: true` so a future Capacitor migration can identify
 // installs that came in via the native shell vs the browser.
 async function enableNativePush(staffName, staffList, setStaffList) {
+    console.log('[FCM][native] step 1: loadNativePushPlugin');
     const plugin = await loadNativePushPlugin();
+    console.log('[FCM][native] step 1 result:', plugin ? 'plugin loaded' : 'NULL');
     if (!plugin) return { ok: false, reason: "native-plugin-missing" };
 
     // 1) Permission. requestPermissions() shows the system prompt
-    //    on first call; later calls return the current state. iOS
-    //    is the strict gate here — Android Chrome had to opt-in
-    //    in the web flow too.
-    //
-    // @capacitor-firebase/messaging mirrors @capacitor/push-notifications
-    // for permission shape: { receive: 'granted' | 'denied' | 'prompt' }.
+    //    on first call; later calls return the current state.
     let permResult;
     try {
+        console.log('[FCM][native] step 2: requestPermissions');
         permResult = await plugin.requestPermissions();
+        console.log('[FCM][native] step 2 result:', JSON.stringify(permResult));
     } catch (e) {
-        console.warn("[FCM][native] requestPermissions failed:", e?.message);
+        console.warn("[FCM][native] requestPermissions THREW:", e?.message, e?.stack);
         return { ok: false, reason: "permission-error" };
     }
     if (permResult?.receive !== "granted") {
         return { ok: false, reason: "permission-denied" };
     }
 
-    // 2) Mint the FCM registration token. `getToken()` returns the FCM
-    //    token directly — no event listener dance, no APNs round-trip
-    //    to wait for. The plugin handles the APNs → FCM swap internally
-    //    against Firebase's hosted Sandbox/Production environments.
-    //    On first call iOS still needs the APNs token to be available
-    //    from the system, which can take a couple seconds after a fresh
-    //    install — the plugin handles that wait internally, so we just
-    //    await getToken() and trust the result.
+    // 2) Mint the FCM registration token.
     let token;
     try {
+        console.log('[FCM][native] step 3: getToken');
         const res = await plugin.getToken();
+        console.log('[FCM][native] step 3 result:', res?.token ? `token len=${res.token.length}` : 'NO TOKEN');
         token = res?.token || null;
     } catch (e) {
-        console.warn("[FCM][native] getToken failed:", e?.message);
+        console.warn("[FCM][native] getToken THREW:", e?.message, e?.stack);
         return { ok: false, reason: "register-failed", error: e?.message };
     }
     if (!token) return { ok: false, reason: "no-token" };
@@ -224,17 +218,21 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     // We tag the stored token with `platform` so admins can tell a
     // phone install apart from a browser install when triaging
     // delivery issues.
-    // 2026-06-02 EMERGENCY — Andrew "im stuck on the white screen again
-    // after the pin". The wrapped iOS app was white-screening post-PIN
-    // and the most-recently-changed code path is the FCM plugin swap to
-    // @capacitor-firebase/messaging. Until we can attach Safari Web
-    // Inspector and prove which line throws, short-circuit native FCM
-    // entirely so the rest of the app loads. Push notifications won't
-    // work on iOS in the meantime — acceptable trade vs an unlaunchable
-    // app. Web build is untouched.
+    // 2026-06-02 — Andrew chose "debug FCM via Web Inspector". The
+    // short-circuit is REMOVED so the native path runs again. Every
+    // step inside enableNativePush is wrapped in try/catch with
+    // detailed console.log markers so when the WebView crashes we
+    // can see WHICH step was the last thing logged. Andrew opens
+    // Safari → Develop → his iPhone → DD Mau Web Inspector → Console
+    // tab to watch.
     if (isCapacitorNative()) {
-        console.log('[FCM][native] short-circuited (post-PIN white-screen debug)');
-        return { ok: false, reason: 'native-disabled-temp' };
+        console.log('[FCM][native] entering native push path (debug build)');
+        try {
+            return await enableNativePush(staffName, staffList, setStaffList);
+        } catch (e) {
+            console.warn('[FCM][native] enableNativePush THREW:', e?.message, e?.stack);
+            return { ok: false, reason: 'native-threw', error: e?.message };
+        }
     }
     if (typeof Notification === "undefined") {
         return { ok: false, reason: "no-notification-api" };
@@ -471,11 +469,7 @@ export async function onForegroundMessage(handler) {
     // shape to match the FCM web SDK so the in-app handler doesn't
     // need to branch.
     if (isCapacitorNative()) {
-        // 2026-06-02 EMERGENCY — see comment in enableFcmPush above.
-        // Short-circuit the foreground listener too while we debug.
-        return () => {};
-        // Disabled while debugging white-screen-after-pin:
-        // eslint-disable-next-line no-unreachable
+        console.log('[FCM][native] onForegroundMessage: loading plugin');
         const plugin = await loadNativePushPlugin();
         if (!plugin) return () => {};
         // @capacitor-firebase/messaging fires `notificationReceived`
