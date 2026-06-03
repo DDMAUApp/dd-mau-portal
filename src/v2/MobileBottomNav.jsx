@@ -185,18 +185,31 @@ export default function MobileBottomNav({
             // glass.
             style={{
                 position: 'fixed',
-                // 2026-06-01 round 6 — Andrew: "bring the bottom bar down
-                // more." Round 5 sat flush with the safe area. Now we
-                // intentionally pull the bar 18px BELOW the safe-area
-                // floor, overlapping the upper edge of the iPhone home-
-                // indicator gesture zone (Apple's tab bars do this too).
-                // The home indicator gesture still works because iOS
-                // processes the upward swipe regardless of overlapping
-                // content. max(..., 0px) clamps the value so iPhones
-                // without a home indicator (older devices, env() = 0)
-                // stay at screen-bottom, never pushed off-screen by the
-                // subtraction.
-                bottom: 'max(calc(env(safe-area-inset-bottom, 0px) - 30px), 0px)',
+                // 2026-06-02 round 7 — Andrew "the bottom bar is not
+                // working again. i see all the buttons but cant click."
+                //
+                // Root cause: round 6 pulled the bar 30px BELOW the safe
+                // area floor, deep into iOS's home-indicator gesture
+                // zone. Apple's UIKit tab bars get away with overlapping
+                // this zone because they live in NATIVE chrome that iOS
+                // knows is interactive. Our bar lives inside a WKWebView
+                // — iOS treats the bottom strip as system gesture area
+                // and intercepts touches BEFORE they reach the web
+                // content. Result: bar renders, no buttons respond.
+                //
+                // Fix: sit the bar AT the safe-area floor. The visible
+                // chrome is now ABOVE the home indicator gesture zone
+                // so every button is reliably tappable. Adds 8px of
+                // breathing room above the home indicator for visual
+                // comfort. On iPhones without home indicator (older
+                // devices, env() = 0) it sits flush with screen bottom.
+                //
+                // Visual trade: the bar reads slightly higher than the
+                // round-6 "Apple Game Center" position. Working clicks
+                // > pixel-perfect placement. We can revisit a fancier
+                // approach (e.g. tall transparent extension below
+                // tappable buttons) post-launch.
+                bottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
                 transform: 'translate3d(0, 0, 0)',
                 WebkitTransform: 'translate3d(0, 0, 0)',
                 willChange: 'transform',
