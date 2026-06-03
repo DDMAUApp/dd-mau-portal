@@ -218,29 +218,38 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     // We tag the stored token with `platform` so admins can tell a
     // phone install apart from a browser install when triaging
     // delivery issues.
-    // 2026-06-02 — Re-enabling FCM with Safari Web Inspector connected
-    // (Andrew chose long-term FCM over SMS-only fallback). Every step
-    // in enableNativePush logs to console with [FCM][native] markers
-    // so the LAST line printed before any WebView crash tells us
-    // exactly which call killed it. Outer wrapper catches synchronous
-    // throws so they can't bubble into React's render cycle.
+    // 2026-06-03 — Native FCM DISABLED for v1 launch. Reverted from the
+    // debug round (commit e50a76b) because the @capacitor-firebase/
+    // messaging plugin's native side reliably crashes the WKWebView
+    // before any JavaScript can run — Safari Web Inspector never even
+    // gets a chance to print our [FCM][native] step markers. The crash
+    // is in native init (Firebase iOS SDK + the plugin's Swift glue),
+    // not in our JS, so we can't observe or guard around it from here.
     //
-    // If this round results in white-screen-after-PIN again:
-    //   • RootErrorBoundary in main.jsx catches render errors and shows
-    //     fallback UI instead of white (added today in stability pass).
-    //   • Safari Web Inspector will show the [FCM][native] crash line.
-    //   • To revert: change this gate back to the disabled short-circuit
-    //     (commit bc89364 has the exact form).
+    // Decision: ship v1 of the wrapped iOS/Android app without native
+    // push. Staff still get:
+    //   • In-app notifications (bell drawer + chat-tile red badge,
+    //     both driven by the same /notifications Firestore subscription
+    //     that worked before — no FCM dependency)
+    //   • SMS for urgent alerts (existing Twilio dispatchSms function
+    //     covers 86 alerts, shift offers, urgent chats — already wired)
+    //
+    // What's lost in v1:
+    //   • iPhone home-screen app-icon badge number
+    //   • Banner / sound when app is CLOSED
+    //   • Chat ping while phone is in pocket
+    //
+    // v1.1 plan: try OneSignal as a wrapper around APNs/FCM that does
+    // its own native init we don't have to debug. Or stand up direct
+    // APNs send from dispatchNotification using `node-apn`. Either is
+    // a 1-2 day focused project once the App Store base build is live.
+    //
+    // Web build is UNTOUCHED — the isCapacitorNative() guard is false
+    // in browsers and the existing web FCM path (service worker +
+    // VAPID) runs exactly like before.
     if (isCapacitorNative()) {
-        console.log('[FCM][native] === DEBUG BUILD === entering enableNativePush');
-        try {
-            const r = await enableNativePush(staffName, staffList, setStaffList);
-            console.log('[FCM][native] enableNativePush returned:', JSON.stringify(r));
-            return r;
-        } catch (e) {
-            console.warn('[FCM][native] enableNativePush THREW (caught at gate):', e?.message, e?.stack);
-            return { ok: false, reason: 'native-threw', error: e?.message };
-        }
+        console.log('[FCM][native] disabled for v1 (plugin crashes WebView)');
+        return { ok: false, reason: 'native-disabled-v1' };
     }
     if (typeof Notification === "undefined") {
         return { ok: false, reason: "no-notification-api" };
@@ -477,39 +486,10 @@ export async function onForegroundMessage(handler) {
     // shape to match the FCM web SDK so the in-app handler doesn't
     // need to branch.
     if (isCapacitorNative()) {
-        // 2026-06-02 — Re-enabled with FCM debug build. Wrapped in
-        // try/catch + verbose logging so a listener-setup crash can't
-        // bring down React. See enableFcmPush gate above.
-        console.log('[FCM][native] onForegroundMessage: loading plugin');
-        let plugin;
-        try {
-            plugin = await loadNativePushPlugin();
-        } catch (e) {
-            console.warn('[FCM][native] onForegroundMessage plugin load THREW:', e?.message);
-            return () => {};
-        }
-        if (!plugin) {
-            console.log('[FCM][native] onForegroundMessage plugin null, returning noop');
-            return () => {};
-        }
-        // @capacitor-firebase/messaging fires `notificationReceived`
-        // (singular event for foreground delivery). Same payload shape
-        // as the old plugin — { title, body, data }.
-        try {
-            console.log('[FCM][native] onForegroundMessage: addListener notificationReceived');
-            const sub = await plugin.addListener("notificationReceived", (notification) => {
-                console.log('[FCM][native] foreground notif:', notification?.title);
-                handler({
-                    notification: { title: notification?.title, body: notification?.body },
-                    data: notification?.data || {},
-                });
-            });
-            console.log('[FCM][native] onForegroundMessage: listener attached');
-            return () => { try { sub?.remove?.(); } catch {} };
-        } catch (e) {
-            console.warn('[FCM][native] onForegroundMessage addListener THREW:', e?.message);
-            return () => {};
-        }
+        // 2026-06-03 — Native push disabled in v1 (see enableFcmPush
+        // gate above). No listener attached; web FCM path below
+        // unchanged.
+        return () => {};
     }
     const messaging = await getMessagingSafely();
     if (!messaging) return () => {};
