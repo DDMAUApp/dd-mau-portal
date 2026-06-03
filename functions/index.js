@@ -68,6 +68,22 @@ const GMAIL_OAUTH_REFRESH_TOKEN = defineSecret("GMAIL_OAUTH_REFRESH_TOKEN");
 // cold start once the secret is attached to their config).
 const SENTRY_DSN = defineSecret("SENTRY_DSN");
 
+// APNs Auth Key + identifiers for direct iOS push (v1.1 Step 3+4).
+//   APNS_AUTH_KEY  — full PEM contents of the .p8 file (paste the
+//                    entire BEGIN/END PRIVATE KEY block when prompted)
+//   APNS_KEY_ID    — 10-char Key ID from Apple Developer Portal → Keys
+//   APNS_TEAM_ID   — 10-char Team ID from Apple Developer Portal → Membership
+// Set with:
+//   firebase functions:secrets:set APNS_AUTH_KEY < AuthKey_XXXXX.p8
+//   firebase functions:secrets:set APNS_KEY_ID
+//   firebase functions:secrets:set APNS_TEAM_ID
+// If any is missing, the dispatchNotification iOS path becomes a no-op
+// (logs a warning, skips APNs delivery, leaves the token in place for
+// the next attempt - does NOT prune). FCM path is unaffected.
+const APNS_AUTH_KEY = defineSecret("APNS_AUTH_KEY");
+const APNS_KEY_ID = defineSecret("APNS_KEY_ID");
+const APNS_TEAM_ID = defineSecret("APNS_TEAM_ID");
+
 // Initialize Sentry at module load — this fires once per Cloud Function
 // cold start. SENTRY_DSN.value() throws if the secret isn't attached to
 // the function being invoked, so we guard with try/catch and let
@@ -173,7 +189,16 @@ exports.dispatchNotification = onDocumentCreated(
     // spin Cloud Run up to GCP's default ceiling and inflate cost. 10 is
     // plenty for DD Mau's <30-staff team — a queue forms past that and
     // each function still drains its work in seconds.
-    { document: "notifications/{id}", region: "us-central1", maxInstances: 10 },
+    //
+    // 2026-06-03 v1.1 push — attach APNs secrets so iOS native push
+    // delivery via node-apn works. If secrets are unset, the iOS code
+    // path no-ops gracefully (logs + skips, doesn't prune tokens).
+    {
+        document: "notifications/{id}",
+        region: "us-central1",
+        maxInstances: 10,
+        secrets: [APNS_AUTH_KEY, APNS_KEY_ID, APNS_TEAM_ID, SENTRY_DSN],
+    },
     async (event) => {
         const snap = event.data;
         if (!snap) return;
@@ -285,12 +310,49 @@ exports.dispatchNotification = onDocumentCreated(
         // bug reported on 2026-05-13. The persist-side dedup in
         // messaging.js prevents new accumulation; this dispatch-side
         // dedup neutralizes legacy data already in Firestore.
-        const tokens = [...new Set(
-            me.fcmTokens.map((t) => t && t.token).filter(Boolean)
-        )];
-        if (tokens.length === 0) return;
-        if (tokens.length !== me.fcmTokens.length) {
-            logger.info(`deduped ${me.fcmTokens.length - tokens.length} duplicate token(s) for ${forStaff}`);
+        // 2026-06-03 v1.1 push — split tokens by platform.
+        //   iosTokens: APNs raw tokens from @capacitor/push-notifications
+        //              on iOS. Sent via node-apn (functions/apns.js).
+        //              Identified by platform === 'ios' OR tokenKind ===
+        //              'apns_raw'.
+        //   fcmTokens: everything else - legacy web tokens (no platform
+        //              field), Android FCM tokens (platform === 'android'),
+        //              and any iOS token that came in via the old FCM-
+        //              bridge path. Sent via Firebase Admin getMessaging
+        //              ().sendEachForMulticast() as before.
+        //
+        // Dedup happens within each platform bucket (so the same token
+        // string can't be sent twice in one trigger). Cross-platform
+        // collisions don't make sense - one token is either APNs or FCM,
+        // not both.
+        const allEntries = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
+        const seenIos = new Set();
+        const seenFcm = new Set();
+        const iosTokens = [];
+        const fcmTokens = [];
+        for (const t of allEntries) {
+            if (!t || !t.token) continue;
+            const isIos = t.platform === 'ios' || t.tokenKind === 'apns_raw';
+            if (isIos) {
+                if (seenIos.has(t.token)) continue;
+                seenIos.add(t.token);
+                iosTokens.push(t.token);
+            } else {
+                if (seenFcm.has(t.token)) continue;
+                seenFcm.add(t.token);
+                fcmTokens.push(t.token);
+            }
+        }
+        // Back-compat: existing code below uses `tokens` for FCM. Keep
+        // the variable name for the unchanged FCM path so the rest of
+        // the function reads identically.
+        const tokens = fcmTokens;
+        if (tokens.length === 0 && iosTokens.length === 0) return;
+        if (allEntries.length !== tokens.length + iosTokens.length) {
+            logger.info(`deduped ${allEntries.length - tokens.length - iosTokens.length} duplicate token(s) for ${forStaff}`);
+        }
+        if (iosTokens.length > 0) {
+            logger.info(`split tokens for ${forStaff}: ${tokens.length} fcm + ${iosTokens.length} apns`);
         }
 
         // ── Off-shift quiet hours gate ──────────────────────────────
@@ -577,34 +639,115 @@ exports.dispatchNotification = onDocumentCreated(
             },
         };
 
-        const result = await getMessaging().sendEachForMulticast(message);
-        logger.info(`Sent push for ${forStaff}: ${result.successCount} ok, ${result.failureCount} failed (${tokens.length} token${tokens.length === 1 ? "" : "s"})`);
+        // ── FCM send (web + Android tokens) ─────────────────────────
+        // Only call sendEachForMulticast if we actually have FCM
+        // tokens - empty arrays make Firebase Admin throw.
+        let fcmResult = { successCount: 0, failureCount: 0, responses: [] };
+        if (tokens.length > 0) {
+            fcmResult = await getMessaging().sendEachForMulticast(message);
+            logger.info(`FCM push for ${forStaff}: ${fcmResult.successCount} ok, ${fcmResult.failureCount} failed (${tokens.length} token${tokens.length === 1 ? "" : "s"})`);
+        }
 
-        // Clean up dead tokens (registration-token-not-registered, invalid-argument).
-        // Identify which tokens to PRUNE this round; we'll then atomically
-        // remove them inside a transaction so a concurrent admin PIN edit
-        // (or another notification trigger pruning a different staff's
-        // tokens) doesn't get clobbered.
+        // ── APNs send (iOS native tokens via node-apn) ──────────────
+        // v1.1 Step 4. The wrapped iOS app uses
+        // @capacitor/push-notifications which returns raw APNs tokens
+        // we cannot deliver via Firebase Admin getMessaging. Send each
+        // iOS token directly via APNs HTTP/2.
         //
-        // 2026-05-24 audit fix: was reading `list` from the trigger-time
-        // snapshot then writing the whole doc with `set({list: newList})`.
-        // This is the exact whole-doc clobber pattern that caused the
-        // 2026-05-09 PIN-wipe incident. Wrapping in runTransaction reads
-        // the LIVE doc inside the txn and only mutates this staff's
-        // fcmTokens — any concurrent admin write to a different staff
-        // (PIN edit, opsAccess toggle, etc.) survives.
+        // If APNs secrets are missing, skip the iOS send entirely
+        // (log + leave tokens in place). Andrew can set the secrets
+        // later and existing tokens get delivered on the next push.
+        const apnsDeadTokens = [];
+        if (iosTokens.length > 0) {
+            let apnsKey, apnsKeyId, apnsTeamId, apnsProduction;
+            try {
+                apnsKey = APNS_AUTH_KEY.value();
+                apnsKeyId = APNS_KEY_ID.value();
+                apnsTeamId = APNS_TEAM_ID.value();
+                // 'true' for App Store builds, 'false' for development
+                // builds (Xcode → device). We default to false so
+                // sandbox push works during testing; flip via
+                //   firebase functions:secrets:set APNS_PRODUCTION
+                // when ready for production traffic. (Hardcoding false
+                // here for the v1.1 first ship since Andrew is testing
+                // from Xcode-signed dev builds.)
+                apnsProduction = false;
+            } catch (e) {
+                logger.warn(`APNs secrets unavailable, skipping ${iosTokens.length} iOS token(s) for ${forStaff}:`, e?.message);
+            }
+            if (apnsKey && apnsKeyId && apnsTeamId) {
+                const { sendApnsPush } = require("./apns");
+                for (const iosTok of iosTokens) {
+                    try {
+                        const r = await sendApnsPush(
+                            iosTok,
+                            {
+                                title: pushTitle,
+                                body: pushBody,
+                                badge: unreadCount,
+                                sound: "default",
+                                tag,
+                                data: {
+                                    title: pushTitle,
+                                    body: pushBody,
+                                    type: notif.type || "",
+                                    tag,
+                                    link: notif.link || "/",
+                                },
+                            },
+                            {
+                                authKey: apnsKey,
+                                keyId: apnsKeyId,
+                                teamId: apnsTeamId,
+                                production: apnsProduction,
+                                bundleId: "com.ddmau.staff",
+                            },
+                        );
+                        if (r.success) {
+                            logger.info(`APNs push delivered for ${forStaff}: token ${iosTok.slice(0, 12)}…`);
+                        } else {
+                            logger.warn(`APNs delivery failed for ${forStaff}: token ${iosTok.slice(0, 12)}… reason=${r.error}`);
+                            // BadDeviceToken / Unregistered → prune.
+                            if (r.deadToken) apnsDeadTokens.push(iosTok);
+                        }
+                    } catch (e) {
+                        logger.warn(`APNs sendApnsPush THREW for ${forStaff}:`, e?.message);
+                    }
+                }
+            }
+        }
+
+        // ── Combined dead-token pruning ─────────────────────────────
+        // Clean up dead tokens (registration-token-not-registered,
+        // invalid-argument from FCM; BadDeviceToken / Unregistered
+        // from APNs). Identify which tokens to PRUNE this round; we'll
+        // then atomically remove them inside a transaction so a
+        // concurrent admin PIN edit (or another notification trigger
+        // pruning a different staff's tokens) doesn't get clobbered.
+        //
+        // 2026-05-24 audit fix: was reading `list` from the trigger-
+        // time snapshot then writing the whole doc with
+        // `set({list: newList})`. This is the exact whole-doc clobber
+        // pattern that caused the 2026-05-09 PIN-wipe incident.
+        // Wrapping in runTransaction reads the LIVE doc inside the txn
+        // and only mutates this staff's fcmTokens — any concurrent
+        // admin write to a different staff (PIN edit, opsAccess
+        // toggle, etc.) survives.
         const deadCodes = new Set([
             "messaging/registration-token-not-registered",
             "messaging/invalid-registration-token",
             "messaging/invalid-argument",
         ]);
-        const deadTokens = [];
+        const deadTokens = [...apnsDeadTokens];
         for (let i = 0; i < tokens.length; i++) {
-            const r = result.responses[i];
-            if (!r.success && deadCodes.has(r.error?.code)) {
+            const r = fcmResult.responses[i];
+            if (r && !r.success && deadCodes.has(r.error?.code)) {
                 deadTokens.push(tokens[i]);
-                logger.info(`pruning dead token for ${forStaff}: ${r.error?.code}`);
+                logger.info(`pruning dead FCM token for ${forStaff}: ${r.error?.code}`);
             }
+        }
+        for (const t of apnsDeadTokens) {
+            logger.info(`pruning dead APNs token for ${forStaff}: BadDeviceToken/Unregistered`);
         }
         if (deadTokens.length > 0) {
             try {
