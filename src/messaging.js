@@ -11,7 +11,21 @@
 // VAPID KEY: get the public key from Firebase Console → Project Settings →
 // Cloud Messaging → Web Push certificates → Generate key pair, then paste the
 // PUBLIC key string here. Without it, getToken() will fail.
-import { getMessaging, getToken, deleteToken, onMessage, isSupported } from "firebase/messaging";
+// 2026-06-03 — firebase/messaging is LAZY-LOADED via dynamic import
+// inside getMessagingSafely() instead of being at the top level.
+// Reason: WKWebView (the Capacitor wrapper) hit a Temporal Dead Zone
+// initialization error in the bundled firebase/messaging code that
+// crashed the entire app on launch with the cryptic message
+// "ReferenceError: Cannot access 'Dp' before initialization." at
+// vendor-firebase-*.js. The eager top-level import was causing
+// firebase/messaging's module evaluation to run before the rest of
+// vendor-firebase had finished setting up its const declarations.
+// Moving the import to a dynamic `await import(...)` inside the
+// only function that uses it (getMessagingSafely on web) defers
+// evaluation until after the rest of the vendor-firebase chunk has
+// initialized, fixing the TDZ. Web behaviour is identical - the
+// dynamic import resolves synchronously after the first call since
+// the chunk is already loaded.
 import { doc, setDoc, runTransaction, getDoc } from "firebase/firestore";
 import app, { db } from "./firebase";
 import { Capacitor } from "@capacitor/core";
@@ -187,11 +201,32 @@ async function enableNativePush(staffName, staffList, setStaffList) {
         return { ok: false, reason: "write-failed", error: e?.message };
     }
 }
+// Cached firebase/messaging module ref. Loaded once via dynamic
+// import then reused. The first call pays the dynamic-import cost
+// (very small — the chunk is already in the vendor-firebase bundle
+// fetched at app start), subsequent calls are instant.
+let _fbMessagingMod = null;
+async function loadFirebaseMessagingMod() {
+    if (_fbMessagingMod) return _fbMessagingMod;
+    try {
+        // Dynamic import — defers firebase/messaging's module-init
+        // code until first call. See top-of-file comment for the
+        // TDZ bug this works around.
+        _fbMessagingMod = await import("firebase/messaging");
+        return _fbMessagingMod;
+    } catch (e) {
+        console.warn("firebase/messaging dynamic import failed:", e?.message);
+        return null;
+    }
+}
+
 async function getMessagingSafely() {
     if (messagingInstance) return messagingInstance;
     try {
-        if (!(await isSupported())) return null;
-        messagingInstance = getMessaging(app);
+        const mod = await loadFirebaseMessagingMod();
+        if (!mod) return null;
+        if (!(await mod.isSupported())) return null;
+        messagingInstance = mod.getMessaging(app);
         return messagingInstance;
     } catch (e) {
         console.warn("FCM not available in this environment:", e);
@@ -332,7 +367,9 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
 
     let token = null;
     try {
-        token = await getToken(messaging, {
+        const mod = await loadFirebaseMessagingMod();
+        if (!mod) return { ok: false, reason: "fb-messaging-load-failed" };
+        token = await mod.getToken(messaging, {
             vapidKey: VAPID_KEY,
             serviceWorkerRegistration: swRegistration,
         });
@@ -517,7 +554,9 @@ export async function onForegroundMessage(handler) {
     }
     const messaging = await getMessagingSafely();
     if (!messaging) return () => {};
-    return onMessage(messaging, handler);
+    const mod = await loadFirebaseMessagingMod();
+    if (!mod) return () => {};
+    return mod.onMessage(messaging, handler);
 }
 
 /**
@@ -556,7 +595,10 @@ export async function disableFcmPush(prevStaffName) {
     // try to clean the Firestore entry even if this fails.
     try {
         const messaging = await getMessagingSafely();
-        if (messaging) await deleteToken(messaging);
+        if (messaging) {
+            const mod = await loadFirebaseMessagingMod();
+            if (mod) await mod.deleteToken(messaging);
+        }
     } catch (e) {
         console.warn("[FCM] deleteToken failed (non-fatal):", e?.message);
     }
