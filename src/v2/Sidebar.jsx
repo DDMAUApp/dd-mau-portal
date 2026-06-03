@@ -276,7 +276,22 @@ export default function Sidebar({
                 the way down to SETTINGS regardless of how many groups
                 exist. The trailing pb-4 keeps the LAST item visible
                 above the footer's border-top during scroll. */}
-            <nav className="flex-1 min-h-0 overflow-y-auto py-3 px-2 space-y-4 pb-4">
+            {/* 2026-06-03 ANDROID SCROLL FIX — Andrew reported the More
+                drawer wouldn't scroll on Android WebView. min-h-0 +
+                overflow-y-auto works on iOS Safari but Android Chrome
+                WebView additionally needs:
+                  - touch-action: pan-y (allow vertical pan gestures,
+                    block horizontal swipes that compete with the drawer
+                    open/close gesture)
+                  - overscroll-behavior: contain (don't let scroll
+                    momentum escape to the parent / page-pull-to-refresh)
+                  - WebkitOverflowScrolling: touch (legacy iOS momentum
+                    scroll; harmless on Android)
+                Cheap additive fix, doesn't affect iOS or desktop. */}
+            <nav
+                className="flex-1 min-h-0 overflow-y-auto py-3 px-2 space-y-4 pb-4 touch-pan-y overscroll-contain"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+            >
                 {filteredGroups.map(group => (
                     <div key={group.labelEn}>
                         {!collapsed && (
