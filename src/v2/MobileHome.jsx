@@ -271,8 +271,13 @@ export default function MobileHome({
         // Chat is a PRIMARY tile because team communication runs through it
         // constantly. Badge shows total unread chat-message notifications
         // (drawn from the same /notifications feed as the bell — type
-        // 'chat_message' or 'chat_mention').
-        { tab: 'chat',       Icon: MessageSquare,   en: 'Chat',         es: 'Chat',           primary: true,  badge: unreadChat, badgeTone: 'amber' },
+        // 'chat_message', 'chat_mention', or 'chat_reply').
+        //
+        // 2026-06-02 — Andrew: "i still dont see that red dot next to
+        // chat tab to tell us how many messages we have." Was amber
+        // (orange-yellow); flipped to danger (red) so it reads at a
+        // glance the same way the 86 board badge does.
+        { tab: 'chat',       Icon: MessageSquare,   en: 'Chat',         es: 'Chat',           primary: true,  badge: unreadChat, badgeTone: 'danger' },
         ...(hasOpsAccess     ? [{ tab: 'operations',  Icon: ClipboardList, en: 'Operations', es: 'Operaciones', primary: true }] : []),
         // 2026-05-20 — Sticker printer for menu-item / component
         // date labels. Sits next to Operations (kitchen surface).
