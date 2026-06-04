@@ -238,6 +238,9 @@ export default function Sidebar({
                         <img
                             src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
                             alt="DD Mau Vietnamese Eatery"
+                            width="80"
+                            height="80"
+                            style={{ aspectRatio: '1 / 1' }}
                             className="max-h-20 w-auto object-contain"
                             onError={(e) => {
                                 e.target.style.display = 'none';

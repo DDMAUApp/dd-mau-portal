@@ -29,7 +29,6 @@ const config: CapacitorConfig = {
     appId: 'com.ddmau.staff',
     appName: 'DD Mau',
     webDir: 'dist',
-    bundledWebRuntime: false,
 
     server: {
         // Use https scheme on Android (matches iOS WKWebView semantics

@@ -2024,6 +2024,7 @@ function InviteSheet({ hire, token, url, isEs, onClose }) {
     const tx = (en, es) => (isEs ? es : en);
     const [qrDataUrl, setQrDataUrl] = useState(null);
     const [copied, setCopied] = useState(false);
+    const copiedTimerRef = useRef(null);
 
     useEffect(() => {
         let alive = true;
@@ -2037,11 +2038,24 @@ function InviteSheet({ hire, token, url, isEs, onClose }) {
         return () => { alive = false; };
     }, [url]);
 
+    useEffect(() => {
+        return () => {
+            if (copiedTimerRef.current) {
+                clearTimeout(copiedTimerRef.current);
+                copiedTimerRef.current = null;
+            }
+        };
+    }, []);
+
     const copy = async () => {
         try {
             await navigator.clipboard.writeText(url);
             setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+            copiedTimerRef.current = setTimeout(() => {
+                copiedTimerRef.current = null;
+                setCopied(false);
+            }, 2000);
         } catch (e) { console.warn('clipboard write failed', e); }
     };
 
@@ -2709,6 +2723,7 @@ function HiringQrPanel({ isEs }) {
     const [qrDataUrl, setQrDataUrl] = useState(null);
     const [copied, setCopied] = useState(false);
     const [expanded, setExpanded] = useState(false);
+    const copiedTimerRef = useRef(null);
 
     useEffect(() => {
         if (!expanded || qrDataUrl) return;
@@ -2727,11 +2742,24 @@ function HiringQrPanel({ isEs }) {
         return () => { alive = false; };
     }, [expanded, qrDataUrl, url]);
 
+    useEffect(() => {
+        return () => {
+            if (copiedTimerRef.current) {
+                clearTimeout(copiedTimerRef.current);
+                copiedTimerRef.current = null;
+            }
+        };
+    }, []);
+
     const copy = async () => {
         try {
             await navigator.clipboard.writeText(url);
             setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+            copiedTimerRef.current = setTimeout(() => {
+                copiedTimerRef.current = null;
+                setCopied(false);
+            }, 2000);
         } catch {}
     };
 

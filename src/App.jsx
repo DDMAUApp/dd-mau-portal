@@ -412,7 +412,6 @@ async function runMigrations() {
                 const oldDocSnap = await getDoc(doc(db, fromCol, fromDoc));
                 if (oldDocSnap.exists()) {
                     await setDoc(doc(db, toCol, toDoc), oldDocSnap.data());
-                    console.log("Migrated " + m.from + " → " + m.to);
                 }
             }
         }
@@ -428,7 +427,6 @@ async function runMigrations() {
                     const batch = writeBatch(db);
                     oldSnap.forEach(d => batch.set(doc(db, m.to, d.id), d.data()));
                     await batch.commit();
-                    console.log("Migrated collection " + m.from + " → " + m.to + " (" + oldSnap.size + " docs)");
                 }
             }
         }
@@ -885,7 +883,6 @@ export default function App() {
             let lastActive = 0;
             try { lastActive = parseInt(localStorage.getItem('ddmau:lastActive') || '0', 10) || 0; } catch {}
             if (lastActive && Date.now() - lastActive > IDLE_LOCK_MS) {
-                console.log('[lock] idle for >5min, locking');
                 // 2026-05-24 audit fix: same FCM cleanup as manual logout
                 // — drop this device's token so push for the prior staff
                 // doesn't keep firing on the locked screen.
@@ -948,7 +945,6 @@ export default function App() {
                     const expired = bgStartedAt > 0 && Date.now() - bgStartedAt > IDLE_LOCK_MS;
                     if (bgTimerId) { clearTimeout(bgTimerId); bgTimerId = null; }
                     if (expired) {
-                        console.log('[lock] cap suspend >5min, locking');
                         try { disableFcmPush(staffName); } catch {}
                         setStaffName(null);
                         setActiveTab('home');
@@ -1012,15 +1008,6 @@ export default function App() {
     // and Cloud Function reminders never reached devices.
     // Foreground message handler shows an in-app toast/console log.
     useEffect(() => {
-        // 2026-06-03 DIAGNOSTIC — proves the FCM useEffect fired and
-        // shows the gate values. Remove once push verified working.
-        try {
-            console.log('[BOOT][FCM useEffect] FIRED · staffName=' + staffName +
-                ' · staffListLen=' + (Array.isArray(staffList) ? staffList.length : 'NOT_ARRAY') +
-                ' · willCall=' + Boolean(staffName && Array.isArray(staffList) && staffList.length > 0));
-        } catch (e) {
-            console.warn('[BOOT][FCM useEffect] diagnostic threw:', e?.message);
-        }
         if (!staffName || !Array.isArray(staffList) || staffList.length === 0) return;
         let unsubForeground = null;
         let cancelled = false;
@@ -1029,7 +1016,6 @@ export default function App() {
                 const result = await enableFcmPush(staffName, staffList, setStaffList);
                 if (cancelled) return;
                 if (result.ok) {
-                    console.log("[FCM] push enabled for", staffName);
                     unsubForeground = await onForegroundMessage((payload) => {
                         // Read from EITHER `data` or `notification` field
                         // — same defense-in-depth as the SW. Lets the

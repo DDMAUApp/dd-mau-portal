@@ -370,7 +370,6 @@ export default function ChatCenter({
                 }
                 await batch.commit();
                 try { localStorage.setItem(FLAG_KEY, String(Date.now())); } catch {}
-                console.log(`[chat] purged ${count} auto-channels`);
             } catch (e) {
                 console.warn('one-shot autochannel purge failed:', e);
                 // Don't set the flag on failure so the next mount can retry.

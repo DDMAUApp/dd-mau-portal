@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../firebase';
 import { doc, collection, query, where, orderBy, limit, onSnapshot, setDoc, deleteDoc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -19,6 +19,19 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
             const [submitting, setSubmitting] = useState(false);
             const [submitted, setSubmitted] = useState(false);
             const [myRequests, setMyRequests] = useState([]);
+            const submittedTimerRef = useRef(null);
+
+            // Clear the "submitted" flash timer on unmount so the
+            // setSubmitted(false) callback can't fire after the
+            // component has been torn down (no React warning).
+            useEffect(() => {
+                return () => {
+                    if (submittedTimerRef.current) {
+                        clearTimeout(submittedTimerRef.current);
+                        submittedTimerRef.current = null;
+                    }
+                };
+            }, []);
 
             const locationOptions = [
                 { en: "Kitchen — Line", es: "Cocina — Línea" },
@@ -119,7 +132,11 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                     setPhotoFile(null);
                     setPhotoPreview(null);
                     setSubmitted(true);
-                    setTimeout(() => setSubmitted(false), 3000);
+                    if (submittedTimerRef.current) clearTimeout(submittedTimerRef.current);
+                    submittedTimerRef.current = setTimeout(() => {
+                        submittedTimerRef.current = null;
+                        setSubmitted(false);
+                    }, 3000);
                 } catch (err) {
                     console.error("Error submitting request:", err);
                     // Clean up the orphaned photo if the Firestore write

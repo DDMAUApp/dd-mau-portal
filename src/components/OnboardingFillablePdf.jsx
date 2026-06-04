@@ -158,7 +158,6 @@ export default function OnboardingFillablePdf({
                     if ((data.updatedAt || '') > (chosen.updatedAt || '')) chosen = data;
                 }
                 if (!alive) return;
-                console.log(`[FillablePdf] loaded template for ${docDef.id}:`, chosen.name);
                 setTemplate(chosen);
                 // Initialize values from autofill bindings.
                 // Static fields are admin-prefilled at template time — they're

@@ -84,7 +84,6 @@ export default function OnboardingTemplateEditor({
             setLoadingPdf(true);
             setError('');
             try {
-                console.log('[TemplateEditor] loading existing template:', initialTemplate.storagePath);
                 // Use SDK getBytes() (XHR) instead of getDownloadURL()+fetch():
                 // the SDK has built-in retry, returns ArrayBuffer directly,
                 // and routes through the same auth-aware channel that the
@@ -93,7 +92,6 @@ export default function OnboardingTemplateEditor({
                 // freshly cached, leaving "10 fields placed, 0 pages" — an
                 // empty editor with no PDF to anchor field positions to.
                 const buf = await getBytes(sref(storage, initialTemplate.storagePath));
-                console.log('[TemplateEditor] downloaded', buf.byteLength, 'bytes');
                 if (!alive) return;
                 if (buf.byteLength === 0) throw new Error('Downloaded PDF is empty (file missing or zero bytes in Storage)');
                 setPdfBytes(buf);

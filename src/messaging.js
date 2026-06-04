@@ -30,17 +30,6 @@ import { doc, setDoc, runTransaction, getDoc } from "firebase/firestore";
 import app, { db } from "./firebase";
 import { Capacitor } from "@capacitor/core";
 
-// 2026-06-03 DIAGNOSTIC — proves messaging.js module loaded and
-// Capacitor identity at load time. Remove once push verified working.
-try {
-    console.log('[BOOT][messaging] module loaded · Capacitor.isNativePlatform=' +
-        (Capacitor?.isNativePlatform?.() ?? 'undefined') +
-        ' · getPlatform=' + (Capacitor?.getPlatform?.() ?? 'undefined') +
-        ' · typeof Notification=' + (typeof Notification));
-} catch (e) {
-    console.warn('[BOOT][messaging] diagnostic log threw:', e?.message);
-}
-
 // 2026-05-31 — Capacitor wrap. The Firebase web SDK uses a service
 // worker for push delivery (firebase-messaging-sw.js). Service
 // workers do NOT fire inside the iOS WKWebView or Android WebView
@@ -441,15 +430,6 @@ async function getMessagingSafely() {
  * @returns {Promise<{ok: boolean, reason?: string, token?: string}>}
  */
 export async function enableFcmPush(staffName, staffList, setStaffList) {
-    // 2026-06-03 DIAGNOSTIC — proves enableFcmPush was called and shows
-    // the gate values at entry. Remove once push verified working.
-    try {
-        console.log('[BOOT][enableFcmPush] ENTRY · staffName=' + staffName +
-            ' · staffListLen=' + (Array.isArray(staffList) ? staffList.length : 'NOT_ARRAY') +
-            ' · isCapacitorNative=' + isCapacitorNative());
-    } catch (e) {
-        console.warn('[BOOT][enableFcmPush] diagnostic threw:', e?.message);
-    }
     // Native short-circuit. On iOS / Android via Capacitor we use the
     // native push plugin instead of the web FCM SDK + service worker.
     // The plugin emits an FCM token (Android) or APNs token (iOS) that
@@ -829,7 +809,6 @@ export async function disableFcmPush(prevStaffName) {
             );
             tx.set(ref, { list: nextList });
         });
-        console.log(`[FCM] disabled push for ${prevStaffName} on device ${(deviceId || '').slice(0, 8)}…`);
     } catch (e) {
         console.warn("[FCM] disableFcmPush write failed (non-fatal):", e?.message);
     }
