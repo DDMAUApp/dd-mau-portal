@@ -46,15 +46,24 @@
 	     exempt under U.S. export regulations 15 CFR 740.17(b)(1). -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- 2026-06-03 — Added PortraitUpsideDown to both arrays. Xcode warning
+	     "All interface orientations must be supported unless the app
+	     requires full screen." Apple's iPad requirement is that an app
+	     must either declare all 4 orientations OR set UIRequiresFullScreen.
+	     We support all 4 (rare on iPhone, common on iPad) — preferable to
+	     locking full-screen, which would disable iPad multitasking
+	     (Slide Over / Split View) and reduce App Store discoverability. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
