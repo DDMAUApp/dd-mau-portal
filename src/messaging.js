@@ -85,6 +85,28 @@ function isCapacitorNative() {
 // gets enabled in Step 2 (immediately followed by backend Steps 3+4).
 async function loadNativePushPlugin() {
     if (!isCapacitorNative()) return null;
+    // 2026-06-03 CRASH FIX — Andrew installed APK on Android, app
+    // crashed natively when user entered PIN. Logcat showed:
+    //   E AndroidRuntime: FATAL EXCEPTION: CapacitorPlugins
+    //   Caused by: java.lang.IllegalStateException: Default FirebaseApp
+    //     is not initialized in this process com.ddmau.staff. Make sure
+    //     to call FirebaseApp.initializeApp(Context) first.
+    // Root cause: android/app/google-services.json is missing (gitignored),
+    // so Firebase native SDK can't initialize, and @capacitor/push-notifications
+    // .register() on Android calls Firebase FCM which throws on the
+    // CapacitorPlugins background thread — an uncaught Java exception
+    // kills the entire process. JS try/catch CANNOT catch that.
+    // Until Andrew downloads google-services.json from Firebase Console
+    // and drops it into android/app/, we MUST skip the native push path
+    // on Android. iOS is unaffected (uses APNs directly, no Firebase).
+    // Web FCM path also unaffected (separate code branch).
+    try {
+        const platform = Capacitor.getPlatform?.();
+        if (platform === 'android') {
+            console.warn('[push][native] Android push DISABLED — google-services.json not present yet. Skipping to prevent native crash.');
+            return null;
+        }
+    } catch { /* ignore — fall through and try to load anyway */ }
     try {
         const mod = await import("@capacitor/push-notifications");
         const p = mod.PushNotifications;

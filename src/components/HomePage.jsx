@@ -194,13 +194,18 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                     jumps on first paint when the image bytes land. The
                     intrinsic 1:1 ratio matches the source asset; h-28
                     (112px) class still rules the final rendered size. */}
+                {/* 2026-06-03 — Andrew: "logo needs to be bigger". Bumped
+                    from h-28 (112px) → h-44 (176px) for stronger brand
+                    presence on the lock screen. Width/height attrs also
+                    bumped so layout reservation matches the rendered size
+                    (the perf intent of the explicit dims still holds). */}
                 <img
                     src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
                     alt="DD Mau Vietnamese Eatery"
-                    width="112"
-                    height="112"
+                    width="176"
+                    height="176"
                     style={{ aspectRatio: '1 / 1' }}
-                    className="mx-auto h-28 w-28 object-contain mb-3 select-none pointer-events-none"
+                    className="mx-auto h-44 w-44 object-contain mb-4 select-none pointer-events-none"
                     draggable={false}
                 />
                 <p className="text-headline text-dd-text-2">{t("staffPortal", language)}</p>

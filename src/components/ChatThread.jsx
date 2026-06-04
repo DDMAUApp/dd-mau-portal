@@ -3018,8 +3018,21 @@ function Composer({
         return () => clearInterval(t);
     }, [recording, recordStartMs]);
 
+    // 2026-06-03 — Andrew: on iOS, the green send arrow didn't fire
+    // (the keyboard Return key was sending instead). Two related
+    // changes to make Return == newline + green arrow == send:
+    //   1. Enter no longer triggers send. We deliberately do nothing
+    //      so the textarea inserts a literal newline like every other
+    //      iMessage / WhatsApp composer.
+    //   2. The send button below now uses onMouseDown to preventDefault
+    //      so the textarea doesn't blur, the soft keyboard stays up,
+    //      and the tap lands on the button instead of being eaten by
+    //      iOS's "dismiss keyboard then click" race.
+    // (Ctrl+Enter / Cmd+Enter still send — keyboard users on desktop
+    // expect that affordance and it doesn't conflict with the iOS
+    // soft keyboard.)
     function onKeyDown(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             onSendText();
         }
@@ -3435,7 +3448,18 @@ function Composer({
                     // the parent to a dispatcher (handleSend) that
                     // routes to sendStagedAttachment() when an
                     // attachment is parked, otherwise to handleSendText().
+                    //
+                    // 2026-06-03 iOS fix — onMouseDown preventDefault keeps
+                    // the textarea focused so the soft keyboard doesn't
+                    // dismiss before the click lands. Without this, iOS
+                    // dismisses the keyboard on tap, the layout shifts up
+                    // by ~336px, and the click event is lost because the
+                    // button is no longer under the tap point. type="button"
+                    // is defensive — no form here today, but if one is
+                    // added later this stops accidental form submit.
                     <button
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); }}
                         onClick={onSendText}
                         disabled={sending}
                         // `ddmau-composer-btn-send` keeps the brand green on

@@ -208,11 +208,14 @@ export default function Sidebar({
     };
 
     // Badge tone per tab — green if positive thing (notifications), amber if
-    // attention needed (drafts, PTO), red if blocking (86'd items).
+    // attention needed (drafts, PTO), red if blocking (86'd items) or unread
+    // chat (Andrew 2026-06-03 — "when there is a new chat i dont see it on
+    // the chat tab with a red pill"; matches the iMessage / WhatsApp red
+    // badge muscle memory for new messages).
     const badgeTone = (tab) => {
-        if (tab === 'eighty6') return 'bg-red-500 text-white';
+        if (tab === 'eighty6' || tab === 'chat') return 'bg-red-500 text-white';
         if (tab === 'schedule' || tab === 'admin') return 'bg-amber-400 text-amber-950';
-        if (tab === 'home' || tab === 'chat') return 'bg-dd-green text-white';
+        if (tab === 'home') return 'bg-dd-green text-white';
         return 'bg-white/20 text-white';
     };
 

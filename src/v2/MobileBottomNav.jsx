@@ -60,7 +60,7 @@ export default function MobileBottomNav({
     // instead of three component-local Firestore subscriptions. The
     // provider mounts in AppShellV2 and owns one listener per data
     // stream; every consumer reads the same in-memory snapshot.
-    const { shifts14, eightySixByLoc, unreadCount: unreadNotifs } = useAppData();
+    const { shifts14, eightySixByLoc, unreadCount: unreadNotifs, unreadChat } = useAppData();
     const draftCount = useMemo(() => {
         return shifts14.filter(sh =>
             sh.published === false &&
@@ -92,7 +92,14 @@ export default function MobileBottomNav({
         { tab: 'schedule', Icon: Calendar,         en: 'Schedule', es: 'Horario', badge: draftCount,   badgeTone: 'bg-amber-500' },
         slot3,
         { tab: 'eighty6',  Icon: Ban,              en: '86',       es: '86',      badge: eighty6Count, badgeTone: 'bg-red-500' },
-        { tab: '__more',   Icon: MoreHorizontal,   en: 'More',     es: 'Más' },
+        // 2026-06-03 — Andrew: "when there is a new chat i dont see it on
+        // the chat tab with a red pill". Chat isn't one of the 5 bottom-nav
+        // slots (it lives inside the More drawer), so the unread signal is
+        // surfaced on the More pill as a red badge instead. Matches the
+        // iMessage muscle memory: red number on the icon = new message.
+        // Tapping More opens the drawer where the Chat row's own badge
+        // confirms which sub-tab is unread (Sidebar logic handles that).
+        { tab: '__more',   Icon: MoreHorizontal,   en: 'More',     es: 'Más',     badge: unreadChat,   badgeTone: 'bg-red-500' },
     ];
 
     // 2026-06-01 — Andrew: "make the bottom bar look like the apple
@@ -230,7 +237,12 @@ export default function MobileBottomNav({
                 {tabs.map((t) => {
                     const active = activeTab === t.tab;
                     const isMore = t.tab === '__more';
-                    const showBadge = !isMore && t.badge > 0;
+                    // 2026-06-03 — Used to suppress badges on More since
+                    // there was no aggregate signal to show. Now More
+                    // carries the unread-chat count (Chat lives inside
+                    // the More drawer) so the badge MUST render — drop
+                    // the !isMore guard.
+                    const showBadge = t.badge > 0;
                     const Icon = t.Icon;
                     return (
                         <button
