@@ -117,6 +117,16 @@ try {
             document.documentElement.classList.add('capacitor-ios');
         }
     }
+    // 2026-06-03 — Tag ANY Android device (Chrome browser visiting
+    // app.ddmaustl.com OR Capacitor wrapped app) via UA sniff. The
+    // capacitor-android class above only fires inside the wrapped
+    // app; Chrome browser on Android also needs the perf overrides.
+    // body.is-android-device catches both cases. UA sniff for
+    // "Android" excludes iOS devices reliably.
+    if (typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '')) {
+        document.body.classList.add('is-android-device');
+        document.documentElement.classList.add('is-android-device');
+    }
 } catch (_) { /* no-op — non-fatal if Capacitor global isn't there */ }
 
 try { initSentry(); } catch (e) { console.warn('initSentry failed:', e?.message); }
