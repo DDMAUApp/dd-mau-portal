@@ -60,8 +60,14 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- 2026-06-05 — Removed READ_MEDIA_IMAGES + READ_MEDIA_VIDEO. Photo/video
+         attach across the app (chat, maintenance, 86/needs board, onboarding
+         uploads) is done with WebView <input type="file">, which routes through
+         Android's system photo/file picker and needs NO media-read permission.
+         These two were dead weight AND tripped Google Play's Photo & Video
+         Permissions policy gate, blocking app review. CAMERA stays (used by
+         <input type="file" capture> to shoot a new photo). Do NOT re-add these
+         unless we move to the @capacitor/camera getPhoto() MediaStore path. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
