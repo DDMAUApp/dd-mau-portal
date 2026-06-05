@@ -109,6 +109,16 @@
 	     reject mismatched copy under guideline 5.1.1(i). -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>DD Mau uses your location only on the Recipes page to confirm you are inside the restaurant before showing sensitive recipe details.</string>
+	<!-- 2026-06-05 — Apple delivery warning ITMS-90683 also wants the "always"
+	     variant. We do NOT call requestAlwaysAuthorization anywhere — a linked
+	     SDK (Capacitor Geolocation / GoogleAppMeasurement) references the
+	     always-location API at the binary level, so Apple's static scanner
+	     requires the matching purpose string even though the app only ever
+	     reads location while open (the Recipes geofence). Copy mirrors the
+	     when-in-use string and explicitly states we never track in the
+	     background, so it stays truthful under guideline 5.1.1(i). -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>DD Mau uses your location only on the Recipes page to confirm you are inside the restaurant before showing sensitive recipe details. The app never tracks your location in the background.</string>
 	<!-- Allow files from the iOS Files app + iCloud Drive when attaching documents. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
