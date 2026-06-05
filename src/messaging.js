@@ -74,28 +74,22 @@ function isCapacitorNative() {
 // gets enabled in Step 2 (immediately followed by backend Steps 3+4).
 async function loadNativePushPlugin() {
     if (!isCapacitorNative()) return null;
-    // 2026-06-03 CRASH FIX — Andrew installed APK on Android, app
-    // crashed natively when user entered PIN. Logcat showed:
-    //   E AndroidRuntime: FATAL EXCEPTION: CapacitorPlugins
-    //   Caused by: java.lang.IllegalStateException: Default FirebaseApp
-    //     is not initialized in this process com.ddmau.staff. Make sure
-    //     to call FirebaseApp.initializeApp(Context) first.
-    // Root cause: android/app/google-services.json is missing (gitignored),
-    // so Firebase native SDK can't initialize, and @capacitor/push-notifications
-    // .register() on Android calls Firebase FCM which throws on the
-    // CapacitorPlugins background thread — an uncaught Java exception
-    // kills the entire process. JS try/catch CANNOT catch that.
-    // Until Andrew downloads google-services.json from Firebase Console
-    // and drops it into android/app/, we MUST skip the native push path
-    // on Android. iOS is unaffected (uses APNs directly, no Firebase).
-    // Web FCM path also unaffected (separate code branch).
-    try {
-        const platform = Capacitor.getPlatform?.();
-        if (platform === 'android') {
-            console.warn('[push][native] Android push DISABLED — google-services.json not present yet. Skipping to prevent native crash.');
-            return null;
-        }
-    } catch { /* ignore — fall through and try to load anyway */ }
+    // 2026-06-04 — Android push RE-ENABLED. The 2026-06-03 guard that
+    // skipped Android push was a safety net while google-services.json
+    // was missing from android/app/. The file is now in place
+    // (downloaded via `firebase apps:sdkconfig ANDROID` after registering
+    // the Android app in the Firebase project). Verification:
+    //   - android/app/google-services.json exists (gitignored, contains
+    //     project_id=dd-mau-staff-app, package=com.ddmau.staff, real API key)
+    //   - android/build.gradle has the google-services classpath
+    //   - android/app/build.gradle conditionally applies the plugin when
+    //     the file exists (it now does), so Firebase native SDK initializes
+    //     at app start and PushNotifications.register() can safely call
+    //     FirebaseMessaging.getInstance() without throwing
+    //     IllegalStateException: Default FirebaseApp is not initialized.
+    // If Android push starts crashing again, re-add the platform guard
+    // and check for the file. Original crash trace was on the
+    // CapacitorPlugins background thread — uncatchable from JS.
     try {
         const mod = await import("@capacitor/push-notifications");
         const p = mod.PushNotifications;
