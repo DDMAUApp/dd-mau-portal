@@ -802,51 +802,61 @@ export default function CateringOrder({ language, staffName }) {
                 </div>
                 </body></html>`;
             };
-            const printOrder = (o) => {
+            const printOrder = async (o) => {
                 const html = buildInvoiceHTML(o);
                 const isNative = !!(window?.Capacitor?.isNativePlatform?.());
-                // Web/desktop ONLY: a real popup window is the nicest UX (the
-                // invoice opens in its own tab and staff can re-print). We must
-                // NOT call window.open in the Capacitor wrap: on iOS WKWebView it
-                // returns null, and on Android the WebView hands target=_blank to
-                // an EXTERNAL browser — Andrew: "it takes me to a web browser, not
-                // a print screen". So only take this path on the web; native uses
-                // the in-app iframe below.
-                if (!isNative) {
-                    const w = window.open('', '_blank', 'width=800,height=1100');
-                    if (w) {
-                        w.document.write(html);
-                        w.document.close();
-                        setTimeout(() => w.print(), 300);
-                        return;
+                // 2026-06-06 — Native (iOS + Android): print via the OS print
+                // sheet using @capgo/capacitor-printer. The WebView can't print
+                // on its own: window.open returns null on iOS WKWebView, opens an
+                // EXTERNAL browser on Android, and window.print() — even from a
+                // hidden iframe — is a NO-OP in the Android System WebView. The
+                // old iframe path therefore produced "no print or close" on
+                // Android (nothing appeared, nothing to cancel). Printer.printHtml
+                // drives UIPrintInteractionController (iOS) / PrintManager
+                // (Android) → a real sheet with Save-as-PDF / printer / Cancel.
+                // Dynamic import keeps the plugin out of the web bundle's main
+                // chunk and off the web path entirely.
+                if (isNative) {
+                    try {
+                        const { Printer } = await import('@capgo/capacitor-printer');
+                        await Printer.printHtml({
+                            name: ('DD Mau Catering ' + (o.id?.slice(-6).toUpperCase() || '')).trim(),
+                            html,
+                        });
+                    } catch (e) {
+                        toast('Could not open the print sheet. Please try again.');
                     }
-                    // popup blocked on web → fall through to the iframe path.
+                    return;
                 }
-                // 2026-06-05 — Native (iOS + Android) + web-popup-blocked. Render
-                // the invoice into a hidden same-origin iframe and print THAT
-                // document. iframe.contentWindow.print() fires the OS print sheet
-                // IN-APP — iOS's print/share sheet and Android's system print
-                // dialog (both modern WebViews drive the native print framework
-                // for a same-document window.print). No popup, no external browser.
+                // Web/desktop: a real popup window is the nicest UX (opens in its
+                // own tab; staff can re-print). Fall back to a hidden same-origin
+                // iframe + window.print() only if the popup is blocked (works in
+                // real desktop browsers, where window.print() is supported).
+                const w = window.open('', '_blank', 'width=800,height=1100');
+                if (w) {
+                    w.document.write(html);
+                    w.document.close();
+                    setTimeout(() => w.print(), 300);
+                    return;
+                }
                 document.getElementById('dd-print-frame')?.remove();
                 const frame = document.createElement('iframe');
                 frame.id = 'dd-print-frame';
                 Object.assign(frame.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' });
                 document.body.appendChild(frame);
                 const doc = frame.contentWindow && frame.contentWindow.document;
-                if (!doc) { frame.remove(); toast('Could not open the print view. Try the Share button on your phone.'); return; }
+                if (!doc) { frame.remove(); toast('Could not open the print view.'); return; }
                 doc.open(); doc.write(html); doc.close();
                 let fired = false;
                 const fire = () => {
                     if (fired) return;
                     fired = true;
                     try { frame.contentWindow.focus(); frame.contentWindow.print(); }
-                    catch (e) { toast('Printing is not available here. Try the Share button on your phone.'); }
-                    // Leave the frame long enough for the print sheet to grab it.
+                    catch (e) { toast('Printing is not available here.'); }
                     setTimeout(() => { try { frame.remove(); } catch (e) {} }, 2000);
                 };
                 frame.onload = () => setTimeout(fire, 150);
-                setTimeout(fire, 700); // safety net if onload doesn't fire after document.write
+                setTimeout(fire, 700);
             };
             // Success screen
             if (pageTab === "catering" && submitted) {
