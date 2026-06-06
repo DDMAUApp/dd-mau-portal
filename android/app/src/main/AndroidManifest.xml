@@ -3,6 +3,7 @@
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:usesCleartextTraffic="true"
         android:fullBackupContent="@xml/data_extraction_rules"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"

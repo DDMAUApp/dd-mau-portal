@@ -2,7 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CAPACITOR_DEBUG</key>
+	<!-- 2026-06-06 — Local-network label printing (Epson TM-L100, ePOS over
+	     HTTP on the restaurant Wi-Fi). NSAllowsLocalNetworking permits
+	     cleartext to LAN/private addresses ONLY — internet traffic stays
+	     ATS-protected. NSLocalNetworkUsageDescription is required on iOS 14+
+	     to reach a device on the local network. Used by CapacitorHttp.post()
+	     in src/data/labelPrinting.js. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DD Mau prints prep and date labels directly to the Epson label printer on your restaurant Wi-Fi.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>

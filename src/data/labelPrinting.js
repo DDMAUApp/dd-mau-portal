@@ -45,6 +45,14 @@
 // touching the existing config. Mirrors how ops/inventory_{loc} works.
 
 import { db } from '../firebase';
+// 2026-06-06 — Native HTTP for direct printer access. On iOS/Android we POST
+// to the Epson ePOS endpoint via CapacitorHttp (OS network stack) instead of
+// the WebView's fetch. That sidesteps the HTTPS→HTTP mixed-content block AND
+// the printer's CORS allow-list — which is what lets the phone/tablet apps
+// print straight to the TM-L100 over Wi-Fi with no Pi. Used ONLY for the
+// printer call (see sendToPrinter); we never enable the global fetch patch,
+// which would route Firestore through native and break its live listeners.
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import {
     doc, collection, getDoc, setDoc, addDoc, onSnapshot, serverTimestamp,
     query, orderBy, limit as fsLimit,
@@ -1551,23 +1559,54 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     const devId = printer.deviceId || DEFAULT_DEVICE_ID;
     const url = `http://${printer.ip}:${port}/cgi-bin/epos/service.cgi?devid=${encodeURIComponent(devId)}&timeout=${DEFAULT_TIMEOUT_MS}`;
 
-    // AbortController so the fetch doesn't hang forever if the
-    // printer is off. Belt + suspenders alongside the printer's
-    // own ?timeout= param.
-    const controller = new AbortController();
-    const killer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS + 2_000);
-    let resp, body = '';
+    // Transport split (2026-06-06):
+    //   • Native (iOS/Android) → CapacitorHttp.post — the request goes through
+    //     the OS network stack, NOT the WebView, so it bypasses the HTTPS→HTTP
+    //     mixed-content block AND the printer's CORS allow-list. This is the
+    //     no-Pi path: phone/tablet prints straight to the TM-L100 over Wi-Fi.
+    //     Needs native cleartext + local-network permission (AndroidManifest
+    //     usesCleartextTraffic + iOS NSAllowsLocalNetworking / usage string).
+    //   • Web/PWA/desktop → plain fetch. NOTE: blocked by browser mixed-content
+    //     when the app is HTTPS and the printer is HTTP, so direct printing
+    //     from a browser won't work — use the native app (or the Pi bridge).
+    //     Kept for localhost/dev and any future HTTPS-capable printer.
+    const TIMEOUT = DEFAULT_TIMEOUT_MS + 2_000;
+    let httpStatus = 0;
+    let body = '';
     try {
-        resp = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'text/xml; charset=utf-8',
-                'SOAPAction': '""',
-            },
-            body: eposXml,
-            signal: controller.signal,
-        });
-        body = await resp.text();
+        if (Capacitor.isNativePlatform()) {
+            const native = await CapacitorHttp.post({
+                url,
+                headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '""' },
+                data: eposXml,                 // already a string — sent as-is
+                responseType: 'text',          // ePOS replies with XML, not JSON
+                readTimeout: TIMEOUT,
+                connectTimeout: TIMEOUT,
+            });
+            httpStatus = native?.status || 0;
+            body = typeof native?.data === 'string' ? native.data : String(native?.data ?? '');
+        } else {
+            // AbortController so the fetch doesn't hang forever if the
+            // printer is off. Belt + suspenders alongside the printer's
+            // own ?timeout= param.
+            const controller = new AbortController();
+            const killer = setTimeout(() => controller.abort(), TIMEOUT);
+            try {
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'text/xml; charset=utf-8',
+                        'SOAPAction': '""',
+                    },
+                    body: eposXml,
+                    signal: controller.signal,
+                });
+                httpStatus = resp.status;
+                body = await resp.text();
+            } finally {
+                clearTimeout(killer);
+            }
+        }
     } catch (e) {
         if (e.name === 'AbortError') {
             finalize({ ok: false, error: 'timeout' });
@@ -1575,12 +1614,10 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
         }
         finalize({ ok: false, error: e?.message || 'network_error' });
         throw e;
-    } finally {
-        clearTimeout(killer);
     }
-    if (!resp.ok) {
-        finalize({ ok: false, error: `http_${resp.status}` });
-        throw new Error(`printer responded ${resp.status}`);
+    if (httpStatus >= 400) {
+        finalize({ ok: false, error: `http_${httpStatus}` });
+        throw new Error(`printer responded ${httpStatus}`);
     }
     // Epson returns SOAP with a <response success="true"/> tag on
     // success. Quick string sniff is enough — we don't need a full
@@ -1589,13 +1626,13 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     const ok = successMatch ? successMatch[1].toLowerCase() === 'true' : false;
     finalize({
         ok,
-        status: resp.status,
+        status: httpStatus,
         // If the printer reported success=false, surface the body
         // snippet so admin can see "media empty", "cover open",
         // "wrong tape", etc. in the Label Center.
         printerMessage: !ok ? body.slice(0, 200) : null,
     });
-    return { ok, status: resp.status, responseXml: body.slice(0, 500) };
+    return { ok, status: httpStatus, responseXml: body.slice(0, 500) };
 }
 
 // ── Print job log ──────────────────────────────────────────────
