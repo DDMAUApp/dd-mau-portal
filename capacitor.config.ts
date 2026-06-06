@@ -148,10 +148,21 @@ const config: CapacitorConfig = {
             // shell at build time — fully deterministic. To ship a
             // fix, we rebuild via Xcode / Android Studio.
             //
-            // Re-enable after the App Store v1 base is shipping
-            // cleanly and we have a staging channel + rollback flow
-            // configured in the Capgo dashboard.
-            autoUpdate: false,
+            // 2026-06-06 RE-ENABLED — Andrew: "turn on capgo." The v1 base
+            // is shipping cleanly (login + black-screen + catering-print
+            // fixes verified on-device), so the determinism concern above
+            // is moot. OTA now lets web/UI fixes reach staff phones without
+            // an Xcode / Android Studio rebuild. Per-fix flow: bump the
+            // version, `npm run build`, `npx @capgo/cli bundle upload` —
+            // phones pull on next foreground. The Capgo channel was verified
+            // EMPTY at enable time (0 active bundles via `bundle list`), so
+            // turning this on pulls NOTHING until we deliberately upload a
+            // fix — the wrapped app keeps running its build-time JS.
+            // RISK to manage: a bad bundle auto-applies with no staging /
+            // rollback flow yet — verify every bundle before upload and add
+            // a staging channel + rollback in the Capgo dashboard as a
+            // follow-up before relying on OTA for anything critical.
+            autoUpdate: true,
             // Production-safe defaults. Tighten to staging-only via
             // the Capgo dashboard channels if needed.
             statsUrl: 'https://api.capgo.app/stats',
