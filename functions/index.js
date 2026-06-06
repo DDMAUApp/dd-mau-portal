@@ -2485,8 +2485,11 @@ const eightySixSchedule = async (slot, slotLabelEn, slotLabelEs) => {
         const outOf = (snap) => {
             if (!snap.exists) return [];
             const items = (snap.data() || {}).items || [];
+            // looks86NameValid (defined below; evaluated at runtime) drops
+            // GUID- and number-named rows so the daily reminder never
+            // lists "1234" or a raw guid. Same gate as the realtime push.
             return items
-                .filter((i) => i && i.status === "OUT_OF_STOCK" && i.name)
+                .filter((i) => i && i.status === "OUT_OF_STOCK" && looks86NameValid(i.name))
                 .map((i) => i.name);
         };
         const websterOut = outOf(websterSnap);
@@ -2658,11 +2661,23 @@ exports.eightySixAlertsHourly = onSchedule(
 // dropped entirely from the diff. The fix on the scraper side is to
 // either skip those items or write "Unknown ({guid})"; this is
 // belt-and-suspenders.
+// Shared validity gate for 86 PUSH text — used by BOTH the realtime
+// handler (8b) and the scheduled daily alert (section 8). Returns false
+// for any name we should NOT put in a notification. The board itself
+// still lists every row; this only suppresses unhelpful pushes.
 const looks86NameValid = (s) => {
     if (!s || typeof s !== "string") return false;
     const t = s.trim();
     if (!t) return false;
-    return !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t);
+    // GUID-shaped → the Toast scraper dropped a raw item guid it couldn't
+    // resolve. "🚫 86: d77ac06e-…" tells staff nothing — drop it.
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)) return false;
+    // 2026-06-06 — Andrew saw a 86 push that showed a bare item NUMBER
+    // instead of the name. Same failure mode as the GUID case: when the
+    // scraper can't resolve a menu name it falls back to a numeric id.
+    // A "🚫 86: 1234" ping is noise — suppress it exactly like a GUID.
+    if (/^\d+(\.\d+)?$/.test(t)) return false;
+    return true;
 };
 
 const realtime86Handler = (location) => async (event) => {
