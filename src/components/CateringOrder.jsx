@@ -803,11 +803,50 @@ export default function CateringOrder({ language, staffName }) {
                 </body></html>`;
             };
             const printOrder = (o) => {
-                const w = window.open('', '_blank', 'width=800,height=1100');
-                if (!w) { toast('Please allow popups to print this order, or use the Share button on your phone.'); return; }
-                w.document.write(buildInvoiceHTML(o));
-                w.document.close();
-                setTimeout(() => w.print(), 300);
+                const html = buildInvoiceHTML(o);
+                const isNative = !!(window?.Capacitor?.isNativePlatform?.());
+                // Web/desktop ONLY: a real popup window is the nicest UX (the
+                // invoice opens in its own tab and staff can re-print). We must
+                // NOT call window.open in the Capacitor wrap: on iOS WKWebView it
+                // returns null, and on Android the WebView hands target=_blank to
+                // an EXTERNAL browser — Andrew: "it takes me to a web browser, not
+                // a print screen". So only take this path on the web; native uses
+                // the in-app iframe below.
+                if (!isNative) {
+                    const w = window.open('', '_blank', 'width=800,height=1100');
+                    if (w) {
+                        w.document.write(html);
+                        w.document.close();
+                        setTimeout(() => w.print(), 300);
+                        return;
+                    }
+                    // popup blocked on web → fall through to the iframe path.
+                }
+                // 2026-06-05 — Native (iOS + Android) + web-popup-blocked. Render
+                // the invoice into a hidden same-origin iframe and print THAT
+                // document. iframe.contentWindow.print() fires the OS print sheet
+                // IN-APP — iOS's print/share sheet and Android's system print
+                // dialog (both modern WebViews drive the native print framework
+                // for a same-document window.print). No popup, no external browser.
+                document.getElementById('dd-print-frame')?.remove();
+                const frame = document.createElement('iframe');
+                frame.id = 'dd-print-frame';
+                Object.assign(frame.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' });
+                document.body.appendChild(frame);
+                const doc = frame.contentWindow && frame.contentWindow.document;
+                if (!doc) { frame.remove(); toast('Could not open the print view. Try the Share button on your phone.'); return; }
+                doc.open(); doc.write(html); doc.close();
+                let fired = false;
+                const fire = () => {
+                    if (fired) return;
+                    fired = true;
+                    try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+                    catch (e) { toast('Printing is not available here. Try the Share button on your phone.'); }
+                    // Leave the frame long enough for the print sheet to grab it.
+                    setTimeout(() => { try { frame.remove(); } catch (e) {} }, 2000);
+                };
+                frame.onload = () => setTimeout(fire, 150);
+                setTimeout(fire, 700); // safety net if onload doesn't fire after document.write
             };
             // Success screen
             if (pageTab === "catering" && submitted) {

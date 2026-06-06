@@ -52,7 +52,7 @@ function writeLockUntil(ts) {
 // the apply URL on flyers, Indeed listings, window decals, etc. The
 // onApplyClick prop is intentionally unused — left in the signature so
 // older App.jsx paths still mount cleanly during the deploy transition.
-export default function HomePage({ onSelectStaff, language, staffList, onApplyClick }) {
+export default function HomePage({ onSelectStaff, language, staffList, staffListReady = true, onApplyClick }) {
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
     const [collisionMatches, setCollisionMatches] = useState([]); // multi-staff PIN collision
@@ -92,18 +92,42 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
     useEffect(() => {
         if (pin.length !== 4) return;
         if (lockedUntil > now) return;
+        // Don't auto-submit against the placeholder DEFAULT_STAFF while
+        // /config/staff is still loading — every placeholder pin is "" so
+        // a real PIN would "fail" and burn a lockout attempt on a slow
+        // cold start. handlePinSubmit guards this too; bailing here keeps
+        // the 4th-digit auto-fire from looping while we connect.
+        if (!staffListReady) return;
         const id = setTimeout(() => { handlePinSubmit(); }, 120);
         return () => clearTimeout(id);
     // handlePinSubmit is stable enough (reads from the current pin state)
-    // that we only retrigger on actual pin changes.
+    // that we only retrigger on actual pin changes. staffListReady is in
+    // the deps so a PIN typed before staff loaded auto-fires once ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pin]);
+    }, [pin, staffListReady]);
 
     const isLocked = lockedUntil > now;
     const lockSecondsLeft = isLocked ? Math.ceil((lockedUntil - now) / 1000) : 0;
 
     const handlePinSubmit = () => {
         if (isLocked) return;
+        // 2026-06-05 — Android login fix (part 2 of 2). The staff list
+        // loads from /config/staff via onSnapshot; until it lands,
+        // staffList is the DEFAULT_STAFF placeholder where EVERY pin is
+        // "". Submitting a real PIN against that set returns zero matches
+        // → "Incorrect PIN" AND increments the lockout counter, so a staff
+        // member who taps their correct code during the cold-start /
+        // slow-network window can get locked out for nothing. (The
+        // firebase.js long-polling change shortens that window on the
+        // Android WebView; this makes the lock screen honest during it.)
+        // Bail with a neutral "Connecting…" note and DO NOT burn an
+        // attempt. staffListReady defaults true, so if a caller ever omits
+        // the prop we fail open to the old behavior — never wrongly locked.
+        if (!staffListReady) {
+            setError(isEs ? "Conectando… intenta de nuevo en un momento." : "Connecting… try again in a moment.");
+            setPin("");
+            return;
+        }
         // Find ALL staff with this PIN — guard against silent collisions.
         const matches = staffList.filter(s => s.pin === pin);
 
@@ -256,6 +280,17 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                     {isLocked && (
                         <div className="mb-3 px-3 py-1.5 rounded-full bg-red-100 border border-red-300 text-red-800 text-xs font-bold">
                             {isEs ? `Bloqueado ${lockSecondsLeft}s` : `Locked ${lockSecondsLeft}s`}
+                        </div>
+                    )}
+                    {/* Connecting indicator — staff list still loading from
+                        Firestore. Shown instead of letting a tapped PIN
+                        fail/lock during the cold-start window (see the
+                        guard in handlePinSubmit). Auto-clears the instant
+                        staff load. */}
+                    {!staffListReady && !isLocked && (
+                        <div className="mb-3 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold inline-flex items-center gap-1.5">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            {isEs ? "Conectando…" : "Connecting…"}
                         </div>
                     )}
                     {error && !isLocked && <p className="text-red-500 text-xs mb-2">{error}</p>}

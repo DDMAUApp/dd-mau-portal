@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
 
@@ -57,7 +57,20 @@ const app = initializeApp(firebaseConfig);
 //     }
 // }
 
-export const db = getFirestore(app);
+// 2026-06-05 — LOGIN FIX (Android Google Play app: "all the codes to log in
+// don't work"). The default getFirestore() uses Firestore's WebChannel
+// streaming transport. Inside the Android System WebView that stream
+// frequently fails to establish, so the /config/staff onSnapshot never
+// lands → staffList stays on DEFAULT_STAFF (every pin is "") → EVERY staff
+// PIN is rejected and nobody can unlock the app. experimentalAutoDetect-
+// LongPolling lets the SDK notice the stalled stream and fall back to
+// long-polling. On web + iOS WKWebView (where WebChannel works) it keeps
+// using WebChannel, so the web app and iPhone build are UNAFFECTED. This
+// must replace getFirestore() and run before any other Firestore call —
+// firebase.js is the single Firestore init site (grep-verified).
+export const db = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+});
 export const storage = getStorage(app);
 // Cloud Functions client (region must match the deploy region in
 // functions/index.js — us-central1). Currently used by chat

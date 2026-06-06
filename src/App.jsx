@@ -1572,6 +1572,7 @@ export default function App() {
             onSelectStaff={handleSelectStaff}
             language={language}
             staffList={staffList}
+            staffListReady={staffListReady}
         />;
     }
 
