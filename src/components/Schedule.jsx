@@ -4176,6 +4176,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 <title>${escape(personFilter)} — ${escape(weekRange)}</title>
 <style>
     @page { size: letter portrait; margin: 0.5in; }
+    /* 2026-06-06 — force background colors to print (browsers strip them by
+       default), so each shift row renders its mint fill instead of just the
+       left border line. */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; color: #1f2937; }
     .header { padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid #255a37; display: flex; justify-content: space-between; align-items: baseline; }
     h1 { font-size: 22px; margin: 0; color: #255a37; }
@@ -4251,6 +4255,10 @@ ${dayBlocks}
         let bodyRows = '';
         for (const s of rowsToShow) {
             let cells = '';
+            // Tier → solid role color in print, mirroring the on-screen
+            // ShiftCube (roleColors). All of one person's shifts share their
+            // tier color, exactly like the live grid.
+            const tierClass = roleColors(s.role, s.shiftLead).tier; // 'manager' | 'lead' | 'staff'
             for (const d of days) {
                 const dStr = toDateStr(d);
                 const cellShifts = (shiftsByCell.get(`${s.name}|${dStr}`) || [])
@@ -4273,7 +4281,7 @@ ${dayBlocks}
                         // the narrow weekday columns. Hours pill appended on
                         // the same line. Was: 10:00 AM–3:00 PM 5h (wrapped).
                         // Drafts get a dashed amber border + tiny DRAFT pill.
-                        return `<div class="shift${isDraft ? ' draft' : ''}">
+                        return `<div class="shift ${tierClass}${isDraft ? ' draft' : ''}">
                             <b>${escape(compactTime(sh.startTime))}–${escape(compactTime(sh.endTime))}</b>
                             <span class="hrs">${escape(formatHours(hrs))}</span>
                             ${isDraft ? '<span class="draft-pill">DRAFT</span>' : ''}
@@ -4316,7 +4324,11 @@ ${dayBlocks}
 <title>DD Mau Schedule — ${escape(weekRange)} — ${escape(sideLabel)}</title>
 <style>
     @page { size: letter landscape; margin: 0.4in; }
-    * { box-sizing: border-box; }
+    /* 2026-06-06 — force background colors to print. Browsers strip them by
+       default, which is why shifts printed as "just a box line" (border only,
+       no fill). With this every tint below (shifts, today, closed, hours
+       pills) actually renders on paper. */
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; color: #1f2937; }
     .header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #255a37; }
     h1 { font-size: 18px; margin: 0; color: #255a37; }
@@ -4335,8 +4347,14 @@ ${dayBlocks}
     .h-red { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
     .dow { font-size: 9px; text-transform: uppercase; color: #6b7280; }
     .dnum { font-size: 14px; font-weight: 700; color: #1f2937; }
+    /* Shifts get a solid role tint that mirrors the on-screen glass cubes
+       (roleColors): manager = orange, lead = green, staff = blue. Same hex
+       as the live grid so paper matches screen. Solid fills, not outlines. */
     .shift { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 3px; padding: 2px 4px; margin-bottom: 2px; }
-    .shift.draft { background: #fef3c7; border: 1px dashed #d97706; }
+    .shift.manager { background: #ffedd5; border-color: #fb923c; color: #7c2d12; }
+    .shift.lead    { background: #dcfce7; border-color: #4ade80; color: #166534; }
+    .shift.staff   { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
+    .shift.draft { background: #fef3c7; border: 1px dashed #d97706; color: #78350f; }
     .draft-pill { display: inline-block; margin-left: 3px; font-size: 7px; padding: 0 3px; background: #fde68a; color: #78350f; font-weight: 700; border-radius: 6px; letter-spacing: 0.3px; vertical-align: middle; }
     .shift b { font-size: 9px; }
     .shift .hrs { display: inline-block; margin-left: 4px; font-size: 8px; opacity: 0.7; }
@@ -5040,7 +5058,9 @@ ${dayBlocks}
             <style>{`
                 @media print {
                     @page { margin: 0.4in; }
-                    body { background: white !important; }
+                    /* Force the role-tinted cube backgrounds to print (Cmd+P
+                       of the live page) — browsers strip bg colors otherwise. */
+                    body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
                     .print\\:hidden { display: none !important; }
                     .schedule-grid-wrap { overflow: visible !important; }
                     .schedule-grid-wrap table { font-size: 9px !important; }
@@ -7379,6 +7399,56 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     });
     const [dragOverCell, setDragOverCell] = useState(null); // "staffName|date" while dragging
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
+
+    // ── Auto-scroll the page while dragging a shift near a screen edge ──
+    // 2026-06-06 — Andrew: "we can drag a shift from one staff to another
+    // but it gets hung up at the bottom of the page — no way to drag AND
+    // scroll down." Native HTML5 drag doesn't auto-scroll, so a cube dragged
+    // toward a staff row below the fold had nowhere to go. This document-
+    // level dragover watcher scrolls the window when the pointer enters a
+    // band near the top/bottom edge (faster the closer to the edge). Gated
+    // to OUR shift drags only by checking for the 'text/shift-id'
+    // dataTransfer type (set in ShiftCube.onDragStart) so it never hijacks
+    // text/file/other drags. The rAF loop keeps scrolling even when the
+    // pointer is held still at the edge; cleared on drop / dragend / unmount.
+    useEffect(() => {
+        let raf = null;
+        let vy = 0;            // scroll velocity, px/frame (+down / −up)
+        const EDGE = 100;      // px band at top & bottom that triggers scroll
+        const MAX = 24;        // max px/frame at the very edge
+        const tick = () => {
+            if (vy !== 0) {
+                window.scrollBy(0, vy);
+                raf = requestAnimationFrame(tick);
+            } else {
+                raf = null;
+            }
+        };
+        const onDragOver = (e) => {
+            const types = e.dataTransfer && e.dataTransfer.types;
+            if (!types || !Array.from(types).includes('text/shift-id')) return;
+            const h = window.innerHeight;
+            const y = e.clientY;
+            if (y >= h - EDGE) {
+                vy = Math.ceil(Math.min(1, (y - (h - EDGE)) / EDGE) * MAX);
+            } else if (y <= EDGE) {
+                vy = -Math.ceil(Math.min(1, (EDGE - y) / EDGE) * MAX);
+            } else {
+                vy = 0;
+            }
+            if (vy !== 0 && raf === null) raf = requestAnimationFrame(tick);
+        };
+        const stop = () => { vy = 0; if (raf) { cancelAnimationFrame(raf); raf = null; } };
+        document.addEventListener('dragover', onDragOver);
+        document.addEventListener('drop', stop);
+        document.addEventListener('dragend', stop);
+        return () => {
+            document.removeEventListener('dragover', onDragOver);
+            document.removeEventListener('drop', stop);
+            document.removeEventListener('dragend', stop);
+            stop();
+        };
+    }, []);
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
     const today = toDateStr(new Date());
 
