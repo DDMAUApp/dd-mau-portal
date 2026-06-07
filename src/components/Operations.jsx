@@ -4006,9 +4006,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 undoToast(
                     language === 'es' ? `🗑 Eliminado: ${itemName}` : `🗑 Deleted: ${itemName}`,
                     async () => {
+                        // 1. Remove the item from the master list (drift-safe by ID).
                         await mutateInventory((live) => live.map((cat, cIdx) =>
                             cIdx === catIdx ? { ...cat, items: cat.items.filter(it => it.id !== targetId) } : cat
                         ));
+                        // 2. Clean up the item's leftover count + count-meta so no
+                        //    orphan data lingers (and a future id reuse can't inherit
+                        //    a stale count). Best-effort — never blocks the delete.
+                        try {
+                            await updateDoc(inventoryDocRef(), {
+                                [`counts.${targetId}`]: deleteField(),
+                                [`countMeta.${targetId}`]: deleteField(),
+                            });
+                        } catch (e) { /* orphan count is harmless if this write fails */ }
                     },
                     { delayMs: 5000, undoLabel: language === 'es' ? 'Deshacer' : 'Undo', kind: 'warn' }
                 );
@@ -7688,6 +7698,18 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             <button onClick={() => saveInvEdit(catIdx, itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
                                                                             <button onClick={() => { setInvEditingIdx(null); setInvEditTargetCatIdx(null); setInvEditSubcat(""); setInvEditLocation(""); }} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                                         </div>
+                                                                        {/* 2026-06-07 — Andrew: delete an item from the edit
+                                                                            view. Admin-only + 5s undo toast (deleteInvItem)
+                                                                            so a fat-finger delete on a phone is recoverable;
+                                                                            also clears the item's count/countMeta. Full-width
+                                                                            red + separated from Save so it isn't mistapped. */}
+                                                                        {currentIsAdmin && (
+                                                                            <button
+                                                                                onClick={() => { deleteInvItem(catIdx, itemIdx); setInvEditingIdx(null); setInvEditTargetCatIdx(null); setInvEditSubcat(""); setInvEditLocation(""); }}
+                                                                                className="w-full mt-2 bg-red-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-red-700">
+                                                                                {language === "es" ? "🗑 Eliminar artículo" : "🗑 Delete item"}
+                                                                            </button>
+                                                                        )}
                                                                     </div>
                                                                 ) : (
                                                                     <div className="flex items-center justify-between">
