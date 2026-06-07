@@ -1149,28 +1149,23 @@ body.capacitor-native {
  * browser, so the existing body-scroll model + pull-to-refresh on
  * home / chat keep working.
  */
+/* 2026-06-07 — REVERTED the position:fixed scroll-lock (added 2026-06-01
+   round 4 to kill the rubber-band edge bounce). That lock, together with
+   capacitor.config ios.scrollEnabled:false, shifted iOS WKWebView touch
+   hit-targets while the soft keyboard was open — a tap on the chat send
+   arrow landed on the text box, so the arrow couldn't send with the keyboard
+   up (proven on-device: `composer tap → TEXTAREA`). Andrew chose arrow-works
+   over the no-bounce lock, so the native build is back to normal document
+   scroll (the pre-2026-06-01 behavior, which hit-tests correctly). The
+   rubber-band edge bounce returns as the accepted trade-off; scrollEnabled
+   is back to true in capacitor.config.ts to match. The rules below are
+   intentionally empty — kept as documented anchors so the history is clear. */
 html.capacitor-native,
 body.capacitor-native {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    overflow: hidden;
-    width: 100vw;
-    height: 100vh;
-    height: 100dvh;
+    /* no fixed lock — normal document scroll */
 }
 body.capacitor-native #root {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
+    /* no absolute scroll surface — normal flow */
 }
 /* 2026-06-01 update — Andrew moved the bar from edge-to-edge to a
  * floating Liquid Glass pill (left-3 right-3 + bottom: calc(safe + 8px)
@@ -1479,6 +1474,16 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
         background-color: #1F7A4D !important;  /* dd-green — brand, kept */
         color: #fff !important;
         border-color: #1F7A4D !important;
+        /* 2026-06-07 — kill the backdrop-filter inherited from
+           .ddmau-composer-btn. The send button is OPAQUE green, so the
+           blur was never visible — but on iOS WKWebView a backdrop-filter
+           promotes the element to its own compositing layer, and that
+           layer's touch hit-region can diverge from where it's painted.
+           That made the arrow un-tappable (a bare onClick still didn't
+           fire) while the no-filter textarea beside it tapped fine.
+           Removing it is a pure no-op visually and clears the gremlin. */
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
     }
     .ddmau-chat-shell .ddmau-composer-btn-send:hover {
         background-color: #166442 !important;  /* dd-green-700 */

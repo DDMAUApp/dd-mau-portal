@@ -74,7 +74,18 @@ const config: CapacitorConfig = {
         // index.css body.capacitor-native rules). The nav's
         // position:fixed is now anchored to the locked WebView frame
         // which genuinely cannot move during edge pulls.
-        scrollEnabled: false,
+        //
+        // 2026-06-07 — REVERTED to true. That scroll-lock (scrollEnabled:false
+        // + the fixed-body CSS) shifted iOS WKWebView touch hit-targets while
+        // the soft keyboard was open: a tap on the chat send ARROW landed on
+        // the text box instead, so the arrow couldn't send with the keyboard
+        // up (proven via an on-device capture log: `composer tap → TEXTAREA`).
+        // Andrew chose arrow-works over the no-bounce lock. Native scroll is
+        // back on (the pre-2026-06-01 state, which hit-tests correctly); the
+        // edge-pull rubber-band bounce returns as the accepted trade-off. The
+        // matching CSS revert is in index.css (the html/body.capacitor-native
+        // position:fixed lock + #root absolute scroll surface are neutralized).
+        scrollEnabled: true,
         limitsNavigationsToAppBoundDomains: false,
     },
 

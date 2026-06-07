@@ -2935,19 +2935,15 @@ function Composer({
     // keep the cursor in a state slot too so re-renders don't lose
     // our place between key + emoji input.
     const textareaRef = useRef(null);
-    // 2026-06-07 — chat send STILL reported dead on iOS. Belt-and-suspenders:
-    // fire the send on BOTH pointerDOWN (lands before any iOS click
-    // suppression + keeps the keyboard up via preventDefault) AND onClick
-    // (fallback for any engine where pointerdown doesn't fire, plus desktop
-    // + VoiceOver). This ref swallows the second of a pointerdown+click pair
-    // (within 700ms) so a single tap never double-sends.
-    const lastSendRef = useRef(0);
-    const fireSend = () => {
-        const t = Date.now();
-        if (t - lastSendRef.current < 700) return;
-        lastSendRef.current = t;
-        onSendText();
-    };
+    // 2026-06-07 (round 4) — single send chokepoint. Earlier rounds tried
+    // onMouseDown / onPointerDown + preventDefault to keep the soft keyboard
+    // up on tap; on iOS WKWebView that SUPPRESSED the click (preventDefault
+    // on a down-event cancels the synthetic click) so the arrow never fired.
+    // All preventDefault gymnastics are gone now: the button is a plain
+    // onClick (reliable everywhere) and the native soft keyboard's Enter key
+    // also sends (see onKeyDown). Overlapping / rapid sends are already
+    // guarded by sendingRef inside handleSendText, so no dedupe is needed.
+    const fireSend = () => { onSendText(); };
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     // Mobile-only attach drawer. On mobile the composer collapses to
     // [+] [textarea] [send] (standard messenger pattern); tapping +
@@ -3031,24 +3027,24 @@ function Composer({
         return () => clearInterval(t);
     }, [recording, recordStartMs]);
 
-    // 2026-06-03 — Andrew: on iOS, the green send arrow didn't fire
-    // (the keyboard Return key was sending instead). Two related
-    // changes to make Return == newline + green arrow == send:
-    //   1. Enter no longer triggers send. We deliberately do nothing
-    //      so the textarea inserts a literal newline like every other
-    //      iMessage / WhatsApp composer.
-    //   2. The send button below now uses onMouseDown to preventDefault
-    //      so the textarea doesn't blur, the soft keyboard stays up,
-    //      and the tap lands on the button instead of being eaten by
-    //      iOS's "dismiss keyboard then click" race.
-    // (Ctrl+Enter / Cmd+Enter still send — keyboard users on desktop
-    // expect that affordance and it doesn't conflict with the iOS
-    // soft keyboard.)
+    // 2026-06-07 (round 4) — iOS "arrow won't send", fixed for real by giving
+    // the phone a keyboard send path again. The on-screen arrow's tap target
+    // is unreliable in WKWebView (the composer is a sticky, GPU-layered bar;
+    // once the soft keyboard is up, iOS hit-testing diverges from the painted
+    // position, so taps on the visible arrow miss it). The Return key DID send
+    // on iOS before a prior change disabled it — so restore that:
+    //   • Native app (iPhone / iPad / Android): plain Enter SENDS, like
+    //     iMessage / WhatsApp. Shift+Enter inserts a newline (multi-line).
+    //   • Any platform: Cmd / Ctrl + Enter sends (desktop power-user affordance).
+    //   • Desktop WEB: plain Enter stays a newline (unchanged) — desktop users
+    //     send with the arrow click or Cmd / Ctrl + Enter.
+    const isNativeApp = typeof window !== 'undefined'
+        && !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
     function onKeyDown(e) {
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            onSendText();
-        }
+        if (e.key !== 'Enter') return;
+        if (e.metaKey || e.ctrlKey) { e.preventDefault(); fireSend(); return; }
+        if (e.shiftKey) return;                               // Shift+Enter = newline
+        if (isNativeApp) { e.preventDefault(); fireSend(); }  // phone/tablet Enter = send
     }
 
     // 2026-05-24 — Andrew: "if the message gets larger than 2 lines let
@@ -3156,9 +3152,32 @@ function Composer({
             // indicator (the padding pushes content up), but the
             // composer's surface flows all the way to the screen
             // bottom — no more sage strip below it.
-            className="sticky bottom-0 z-10 px-2 pt-2 pb-2 border-t border-dd-line bg-white shrink-0 relative"
+            // 2026-06-07 — was `sticky bottom-0`. On iOS WKWebView, a
+            // `position: sticky` bar under the fixed-body scroll-lock has a
+            // touch hit-region that diverges from where it's painted while
+            // the soft keyboard is open — so the small send arrow at the
+            // right edge couldn't be tapped (keyboard up = dead, keyboard
+            // down = fine; the textarea, being large, absorbed the offset).
+            // The sticky was redundant anyway: this bar is the last
+            // `shrink-0` child of a full-height flex column, so flex already
+            // pins it to the bottom. `relative z-10` keeps it stacked above
+            // the message list without the sticky hit-test bug.
+            className="relative z-10 px-2 pt-2 pb-2 border-t border-dd-line bg-white shrink-0"
             style={{
-                transform: 'translateZ(0)',
+                // 2026-06-07 — REMOVED `transform: translateZ(0)`. On iOS
+                // WKWebView, `position: sticky` + a `transform` on the SAME
+                // element breaks hit-testing: the painted position and the
+                // actual touch target diverge by a few px, so the large
+                // textarea still gets tapped but the small 44px send arrow
+                // at the right edge falls outside the shifted touch region
+                // and never fires. Confirmed empirically: a bare onClick
+                // with no preventDefault STILL didn't send on iOS, while the
+                // keyboard Return key (which never touches the button) sends
+                // fine. The translateZ was only an anti-flicker GPU-layer
+                // hint for momentum scroll — and iOS runs scrollEnabled:false
+                // (no WKWebView momentum scroll), so it bought nothing there.
+                // The composer stays pinned as the last child of the full-
+                // height flex column.
                 paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))',
             }}
         >
@@ -3457,27 +3476,29 @@ function Composer({
                 />
                 {canSend ? (
                     // Send arrow — shown when there's text OR a staged
-                    // attachment to dispatch. `onSendText` is wired in
-                    // the parent to a dispatcher (handleSend) that
-                    // routes to sendStagedAttachment() when an
-                    // attachment is parked, otherwise to handleSendText().
+                    // attachment to dispatch. `onSendText` is wired in the
+                    // parent to a dispatcher (handleSend) that routes to
+                    // sendStagedAttachment() when an attachment is parked,
+                    // otherwise to handleSendText().
                     //
-                    // 2026-06-03: keep the textarea focused on tap so the soft
-                    // keyboard doesn't dismiss (the layout shift was eating the
-                    // click). That used onMouseDown preventDefault + onClick.
-                    //
-                    // 2026-06-07 FIX — on iOS the arrow stopped sending entirely:
-                    // WKWebView suppresses the synthetic click when mousedown is
-                    // preventDefault'd, so onClick never fired. Enter-to-send still
-                    // worked (separate textarea onKeyDown path) — exactly the
-                    // reported symptom. Fire on pointerDOWN instead: it lands
-                    // BEFORE any click suppression, covers mouse + touch + pen on
-                    // every platform we ship, and preventDefault there still keeps
-                    // the textarea focused so the keyboard stays up. type="button"
-                    // is defensive against a future <form> wrapper auto-submitting.
+                    // 2026-06-07 (round 4) — plain onClick, no preventDefault.
+                    // Previous rounds preventDefault'd a down-event to keep the
+                    // soft keyboard up; on iOS WKWebView that cancels the click
+                    // so the arrow never fired. A bare onClick is the reliable
+                    // path on every engine. (Tapping send may dismiss the soft
+                    // keyboard — acceptable; Enter-to-send in onKeyDown is the
+                    // primary path on phones now.) type="button" guards against
+                    // a future <form> wrapper auto-submitting.
                     <button
                         type="button"
-                        onPointerDown={(e) => { e.preventDefault(); fireSend(); }}
+                        // 2026-06-07 — candidate fix: fire on pointerDOWN (no
+                        // preventDefault) in addition to click. pointerdown lands
+                        // at the very start of the touch — before iOS can divert
+                        // the gesture to dismiss the keyboard — which is the
+                        // suspected reason the arrow does nothing while the
+                        // keyboard is open. sendingRef in handleSendText swallows
+                        // the duplicate so a single tap still sends exactly once.
+                        onPointerDown={fireSend}
                         onClick={fireSend}
                         disabled={sending}
                         // `ddmau-composer-btn-send` keeps the brand green on
