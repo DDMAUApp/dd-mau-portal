@@ -2935,6 +2935,19 @@ function Composer({
     // keep the cursor in a state slot too so re-renders don't lose
     // our place between key + emoji input.
     const textareaRef = useRef(null);
+    // 2026-06-07 — chat send STILL reported dead on iOS. Belt-and-suspenders:
+    // fire the send on BOTH pointerDOWN (lands before any iOS click
+    // suppression + keeps the keyboard up via preventDefault) AND onClick
+    // (fallback for any engine where pointerdown doesn't fire, plus desktop
+    // + VoiceOver). This ref swallows the second of a pointerdown+click pair
+    // (within 700ms) so a single tap never double-sends.
+    const lastSendRef = useRef(0);
+    const fireSend = () => {
+        const t = Date.now();
+        if (t - lastSendRef.current < 700) return;
+        lastSendRef.current = t;
+        onSendText();
+    };
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     // Mobile-only attach drawer. On mobile the composer collapses to
     // [+] [textarea] [send] (standard messenger pattern); tapping +
@@ -3464,7 +3477,8 @@ function Composer({
                     // is defensive against a future <form> wrapper auto-submitting.
                     <button
                         type="button"
-                        onPointerDown={(e) => { e.preventDefault(); onSendText(); }}
+                        onPointerDown={(e) => { e.preventDefault(); fireSend(); }}
+                        onClick={fireSend}
                         disabled={sending}
                         // `ddmau-composer-btn-send` keeps the brand green on
                         // dark mobile (overrides the generic composer-btn
