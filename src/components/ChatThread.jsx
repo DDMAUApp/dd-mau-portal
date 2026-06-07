@@ -3449,18 +3449,22 @@ function Composer({
                     // routes to sendStagedAttachment() when an
                     // attachment is parked, otherwise to handleSendText().
                     //
-                    // 2026-06-03 iOS fix — onMouseDown preventDefault keeps
-                    // the textarea focused so the soft keyboard doesn't
-                    // dismiss before the click lands. Without this, iOS
-                    // dismisses the keyboard on tap, the layout shifts up
-                    // by ~336px, and the click event is lost because the
-                    // button is no longer under the tap point. type="button"
-                    // is defensive — no form here today, but if one is
-                    // added later this stops accidental form submit.
+                    // 2026-06-03: keep the textarea focused on tap so the soft
+                    // keyboard doesn't dismiss (the layout shift was eating the
+                    // click). That used onMouseDown preventDefault + onClick.
+                    //
+                    // 2026-06-07 FIX — on iOS the arrow stopped sending entirely:
+                    // WKWebView suppresses the synthetic click when mousedown is
+                    // preventDefault'd, so onClick never fired. Enter-to-send still
+                    // worked (separate textarea onKeyDown path) — exactly the
+                    // reported symptom. Fire on pointerDOWN instead: it lands
+                    // BEFORE any click suppression, covers mouse + touch + pen on
+                    // every platform we ship, and preventDefault there still keeps
+                    // the textarea focused so the keyboard stays up. type="button"
+                    // is defensive against a future <form> wrapper auto-submitting.
                     <button
                         type="button"
-                        onMouseDown={(e) => { e.preventDefault(); }}
-                        onClick={onSendText}
+                        onPointerDown={(e) => { e.preventDefault(); onSendText(); }}
                         disabled={sending}
                         // `ddmau-composer-btn-send` keeps the brand green on
                         // dark mobile (overrides the generic composer-btn
