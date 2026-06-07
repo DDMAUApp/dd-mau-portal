@@ -3027,24 +3027,19 @@ function Composer({
         return () => clearInterval(t);
     }, [recording, recordStartMs]);
 
-    // 2026-06-07 (round 4) — iOS "arrow won't send", fixed for real by giving
-    // the phone a keyboard send path again. The on-screen arrow's tap target
-    // is unreliable in WKWebView (the composer is a sticky, GPU-layered bar;
-    // once the soft keyboard is up, iOS hit-testing diverges from the painted
-    // position, so taps on the visible arrow miss it). The Return key DID send
-    // on iOS before a prior change disabled it — so restore that:
-    //   • Native app (iPhone / iPad / Android): plain Enter SENDS, like
-    //     iMessage / WhatsApp. Shift+Enter inserts a newline (multi-line).
-    //   • Any platform: Cmd / Ctrl + Enter sends (desktop power-user affordance).
-    //   • Desktop WEB: plain Enter stays a newline (unchanged) — desktop users
-    //     send with the arrow click or Cmd / Ctrl + Enter.
-    const isNativeApp = typeof window !== 'undefined'
-        && !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+    // 2026-06-07 — Andrew: "the return key is still sending, make it stop."
+    // We temporarily made Enter send on the native app as a workaround while
+    // the on-screen arrow was untappable with the keyboard open. That arrow
+    // bug is now fixed (scroll-lock revert — see capacitor.config / index.css),
+    // so the arrow is the send button on every platform and Return goes back
+    // to inserting a newline like a normal multi-line textarea. Only
+    // Cmd / Ctrl + Enter still sends (a desktop power-user affordance that no
+    // phone soft keyboard can trigger, so it doesn't affect mobile).
     function onKeyDown(e) {
-        if (e.key !== 'Enter') return;
-        if (e.metaKey || e.ctrlKey) { e.preventDefault(); fireSend(); return; }
-        if (e.shiftKey) return;                               // Shift+Enter = newline
-        if (isNativeApp) { e.preventDefault(); fireSend(); }  // phone/tablet Enter = send
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            fireSend();
+        }
     }
 
     // 2026-05-24 — Andrew: "if the message gets larger than 2 lines let
