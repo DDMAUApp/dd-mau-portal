@@ -4,6 +4,7 @@ import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimesta
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { subscribePrinterConfig, printFreeText } from '../data/labelPrinting';
+import { printViaNative } from '../capacitor-bridge';
 
 export default function ToastOrders({ language, staffName = '' }) {
     const [orders, setOrders] = useState([]);
@@ -423,6 +424,7 @@ export default function ToastOrders({ language, staffName = '' }) {
         <div style="margin-top:30px;font-size:11px;color:#bbb;border-top:1px solid #ddd;padding-top:10px;">Printed from DD Mau Staff Portal</div>
         </body></html>`;
 
+        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Order'); return; }
         const printWindow = window.open("", "_blank", "width=700,height=900");
         if (!printWindow) {
             toast(isEn

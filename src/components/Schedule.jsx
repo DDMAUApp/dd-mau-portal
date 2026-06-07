@@ -52,6 +52,7 @@ import {
     Printer, Calendar, Copy, Repeat, Ban,
 } from 'lucide-react';
 import ModalPortal from './ModalPortal';
+import { printViaNative, downloadFile } from '../capacitor-bridge';
 import ConfirmModal from './ConfirmModal';
 import OfferShiftModal from './OfferShiftModal';
 import TakeShiftModal from './TakeShiftModal';
@@ -4231,6 +4232,7 @@ ${dayBlocks}
 <div class="footer">Printed ${new Date().toLocaleString()} · DD Mau</div>
 <script>setTimeout(() => window.print(), 300);</script>
 </body></html>`;
+            if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(personHtml, 'DD Mau Schedule'); return; }
             const w = window.open('', '_blank', 'width=800,height=1000');
             if (!w) { toast(tx('Pop-up blocked.', 'Ventana bloqueada.')); return; }
             w.document.open(); w.document.write(personHtml); w.document.close();
@@ -4394,6 +4396,7 @@ ${dayBlocks}
 <script>setTimeout(() => window.print(), 300);</script>
 </body></html>`;
 
+        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Schedule'); return; }
         const w = window.open('', '_blank', 'width=1100,height=850');
         if (!w) {
             toast(tx('Pop-up blocked. Allow pop-ups for this site to print.', 'Ventana emergente bloqueada. Permite ventanas emergentes para imprimir.'));
@@ -4408,7 +4411,7 @@ ${dayBlocks}
     // Phase 4: each scheduled shift becomes a VEVENT. Filtered same as the view
     // (location + side + person filter). Imports cleanly into Apple Calendar,
     // Google Calendar, Outlook. No server needed.
-    const handleExportIcs = () => {
+    const handleExportIcs = async () => {
         const events = visibleShifts.filter(s => s.published !== false); // skip drafts
         if (events.length === 0) {
             toast(tx('No published shifts to export.', 'Sin turnos publicados para exportar.'));
@@ -4466,15 +4469,8 @@ ${dayBlocks}
         lines.push('END:VCALENDAR');
         const ics = lines.join('\r\n');
         const blob = new Blob([ics], { type: 'text/calendar' });
-        const url = URL.createObjectURL(blob);
         const filename = `dd-mau-${side}-${toDateStr(weekStart)}${personFilter ? '-' + personFilter.replace(/\s+/g, '_') : ''}.ics`;
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        await downloadFile({ data: blob, fileName: filename, mimeType: 'text/calendar' });
     };
 
     // ── Phase 3: bulk publish drafts in current week + side ──

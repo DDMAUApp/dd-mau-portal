@@ -6,6 +6,7 @@ import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin } from '../data/staff';
 import { toast } from '../toast';
+import { printViaNative } from '../capacitor-bridge';
 
 // Debounce helper — delays Firestore writes until tapping stops
 function useDebounce(fn, delay) {
@@ -389,6 +390,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         });
         // buttons are in sticky top bar
         html += `</body></html>`;
+        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Prep List'); return; }
         const w = window.open("", "_blank");
         if (!w) {
             toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
@@ -442,6 +444,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         });
         // buttons are in sticky top bar
         html += `</body></html>`;
+        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Prep Sheet'); return; }
         const w = window.open("", "_blank");
         if (!w) {
             toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");

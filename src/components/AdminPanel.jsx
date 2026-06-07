@@ -13,6 +13,7 @@ import {
 } from '../data/sms';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
+import { downloadFile, openExternalUrl } from '../capacitor-bridge';
 import ImportStaffModal from './ImportStaffModal';
 import OffsiteClockSection from './OffsiteClockSection';
 import StaffTodosAdmin from './StaffTodosAdmin';
@@ -1412,15 +1413,8 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     // Trigger download via blob URL — works on all
                     // mobile browsers, no extra deps.
                     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
                     const today = new Date().toISOString().slice(0, 10);
-                    a.href = url;
-                    a.download = `dd-mau-sms-optin-log-${today}.csv`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+                    await downloadFile({ data: blob, fileName: `dd-mau-sms-optin-log-${today}.csv`, mimeType: 'text/csv' });
                     toast(language === 'es'
                         ? `✓ Exportado: ${snap.docs.length} eventos`
                         : `✓ Exported ${snap.docs.length} events`);
@@ -2129,7 +2123,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     <p className="text-xs text-gray-500">{language === "es" ? "Enviado:" : "Submitted:"} {new Date(req.createdAt).toLocaleString()}</p>
                                                     {req.photoUrl && (
                                                         <img src={req.photoUrl} alt="Maintenance" loading="lazy" decoding="async" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{maxHeight: "200px"}}
-                                                            onClick={() => window.open(req.photoUrl, "_blank")} />
+                                                            onClick={() => openExternalUrl(req.photoUrl)} />
                                                     )}
                                                     {req.adminNote && <p className="text-xs bg-blue-50 border border-blue-200 rounded p-2 text-blue-700">💬 {req.adminNote}</p>}
 

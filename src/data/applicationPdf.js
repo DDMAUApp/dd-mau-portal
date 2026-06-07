@@ -20,6 +20,7 @@ import {
     STANDING_HOURS, EDUCATION_LEVELS, LANGUAGES,
     REFERENCE_RELATIONS, REFERRAL_SOURCES,
 } from './applyForm';
+import { downloadFile } from '../capacitor-bridge';
 
 function loadPdfLib() {
     return import('pdf-lib');
@@ -430,7 +431,7 @@ export async function buildApplicationPdf(app) {
 
 // Save Uint8Array PDF bytes as a browser download with a friendly
 // filename like "DD Mau Application - Jane Doe - 2026-05-29.pdf".
-export function downloadApplicationPdf(bytes, app) {
+export async function downloadApplicationPdf(bytes, app) {
     const safeName = (app.legalName || 'applicant').replace(/[^A-Za-z0-9 .'_-]/g, '_').trim();
     const submitted = (() => {
         try {
@@ -442,12 +443,5 @@ export function downloadApplicationPdf(bytes, app) {
     })();
     const filename = `DD Mau Application - ${safeName}${submitted ? ` - ${submitted}` : ''}.pdf`;
     const blob = new Blob([bytes], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await downloadFile({ data: blob, fileName: filename, mimeType: 'application/pdf' });
 }

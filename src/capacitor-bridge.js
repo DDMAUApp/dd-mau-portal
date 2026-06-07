@@ -338,6 +338,47 @@ async function blobToBase64(data, mimeType) {
     });
 }
 
+// Cross-platform "print this HTML document" — NATIVE path only.
+// The WebView can't print itself: window.open returns null on iOS
+// WKWebView, opens an EXTERNAL browser on Android, and window.print()
+// (even from a hidden iframe) is a NO-OP in the Android System WebView.
+// On native we hand the full HTML to @capgo/capacitor-printer, which
+// drives the real OS print sheet (UIPrintInteractionController on iOS /
+// PrintManager on Android) → Save-as-PDF / printer / Cancel. The HTML's
+// own `@media print` rules (e.g. hiding toolbars) still apply.
+//
+// USAGE — keeps every existing web path byte-for-byte unchanged:
+//   if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Prep'); return; }
+//   // ...existing window.open(...) + window.print() code, untouched...
+// Fire-and-forget (don't await) so callers stay synchronous.
+export async function printViaNative(html, name = 'DD Mau') {
+    try {
+        const { Printer } = await import('@capgo/capacitor-printer');
+        await Printer.printHtml({ name: String(name || 'DD Mau').trim(), html });
+    } catch (e) {
+        console.warn('[cap] printViaNative failed:', e?.message);
+    }
+}
+
+// Open a URL the right way per platform. Native: in-app browser
+// (@capacitor/browser) so the user stays inside the app and can swipe
+// back — window.open returns null on iOS and yanks the user into an
+// external browser on Android (losing the authenticated session).
+// Web: a normal new tab. Use for viewing photos / external links.
+export async function openExternalUrl(url) {
+    if (!url) return;
+    if (isNative()) {
+        try {
+            const { Browser } = await import('@capacitor/browser');
+            await Browser.open({ url: String(url) });
+        } catch (e) {
+            console.warn('[cap] openExternalUrl failed:', e?.message);
+        }
+        return;
+    }
+    try { window.open(url, '_blank', 'noopener'); } catch { /* ignore */ }
+}
+
 // Native share sheet on iOS / Android; falls back to Web Share API
 // on supporting browsers, then to clipboard as last resort.
 export async function shareText(text, title = '') {

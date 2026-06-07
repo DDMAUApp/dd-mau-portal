@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
+import { printViaNative } from '../capacitor-bridge';
 
 export default function InventoryHistory({ language, customInventory: customInventoryProp, storeLocation }) {
             const [historyDates, setHistoryDates] = useState([]);
@@ -290,6 +291,7 @@ export default function InventoryHistory({ language, customInventory: customInve
 
                 // buttons are in sticky top bar
                 html += `</body></html>`;
+                if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Inventory History'); return; }
                 const win = window.open("", "_blank");
                 if (!win) {
                     toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");

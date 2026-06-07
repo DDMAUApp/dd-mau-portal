@@ -8,6 +8,7 @@ import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
 import { useAiSearch } from '../data/aiSearch';
+import { printViaNative, openExternalUrl } from '../capacitor-bridge';
 const OrderMode = lazy(() => import('./OrderMode'));
 // 2026-05-20 — date-code label printing on Epson TM-L100. Lazy so the
 // ePOS-Print XML helper + preview only enter the Operations chunk
@@ -4323,6 +4324,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     html += `</tbody></table>`;
                 }
                 html += `</body></html>`;
+                if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Order Guide'); return; }
                 const win = window.open('', '_blank');
                 if (!win) { toast(language === 'es' ? "Permitir ventanas emergentes." : "Allow pop-ups to print."); return; }
                 win.document.write(html);
@@ -4533,6 +4535,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 html += `</div>`;
 
                 html += `</body></html>`;
+                if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Inventory'); return; }
                 const w = window.open("", "_blank");
                 if (!w) {
                     toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
@@ -4862,6 +4865,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 <div class="footer">Printed ${new Date().toLocaleString()} · DD Mau</div>
 <script>setTimeout(() => window.print(), 300);</script>
 </body></html>`;
+                if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Tasks'); return; }
                 const w = window.open("", "_blank", "width=800,height=1000");
                 if (!w) { toast(language === "es" ? "Ventana bloqueada." : "Pop-up blocked."); return; }
                 w.document.open(); w.document.write(html); w.document.close();
@@ -5538,10 +5542,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     </div>
                                                     <img src={photoUrl} alt={language === 'es' ? 'Foto de tarea' : 'Task photo'} loading="lazy" decoding="async" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
                                                         onClick={() => {
-                                                            const w = window.open(photoUrl, "_blank");
-                                                            if (!w) {
-                                                                toast(language === "es" ? "Por favor permita ventanas emergentes para ver la foto." : "Please allow pop-ups to view the photo.");
-                                                            }
+                                                            openExternalUrl(photoUrl);
                                                         }} />
                                                 </div>
                                             ) : (
@@ -9607,6 +9608,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         });
 
                                         html += `</body></html>`;
+                                        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Break Plan'); return; }
                                         const printWindow = window.open("", "_blank");
                                         if (!printWindow) {
                                             toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");

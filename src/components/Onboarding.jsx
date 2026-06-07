@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
 import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata, deleteObject } from 'firebase/storage';
+import { downloadFile } from '../capacitor-bridge';
 import {
     ONBOARDING_DOCS, DOC_STATUS, DOC_STATUS_META,
     HIRE_STATUS, HIRE_STATUS_META,
@@ -794,13 +795,7 @@ function HireDetail({ hire, isEs, staffName, docOverrides, onWriteAudit, onArchi
             const blob = await zip.generateAsync({ type: 'blob' });
             const safeName = String(hire.name).replace(/[^a-z0-9_-]+/gi, '_');
             const stamp = new Date().toISOString().slice(0, 10);
-            const dl = document.createElement('a');
-            dl.href = URL.createObjectURL(blob);
-            dl.download = `onboarding_${safeName}_${stamp}.zip`;
-            document.body.appendChild(dl);
-            dl.click();
-            dl.remove();
-            URL.revokeObjectURL(dl.href);
+            await downloadFile({ data: blob, fileName: `onboarding_${safeName}_${stamp}.zip`, mimeType: 'application/zip' });
             onWriteAudit('zip_exported', { hireId: hire.id, hireName: hire.name });
         } catch (e) {
             console.error('Export failed:', e);

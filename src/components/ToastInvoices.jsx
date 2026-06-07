@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { collection, query, where, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
+import { printViaNative } from '../capacitor-bridge';
 
 export default function ToastInvoices({ language }) {
     const [invoices, setInvoices] = useState([]);
@@ -118,6 +119,7 @@ export default function ToastInvoices({ language }) {
         <div style="margin-top:30px;font-size:11px;color:#bbb;border-top:1px solid #ddd;padding-top:10px;">Printed from DD Mau Staff Portal</div>
         </body></html>`;
 
+        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Invoice'); return; }
         const printWindow = window.open("", "_blank", "width=700,height=900");
         if (!printWindow) {
             toast(isEn

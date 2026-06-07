@@ -7,6 +7,7 @@ import { doc, getDoc, setDoc, addDoc, collection, getDocs, query, orderBy, limit
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin as checkIsAdmin } from '../data/staff';
+import { downloadFile } from '../capacitor-bridge';
 
 export default function InsuranceEnrollment({ language, staffName, staffList }) {
   const [loading, setLoading] = useState(true);
@@ -356,15 +357,10 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   ];
 
   // Style and download a workbook
-  const downloadWorkbook = (XLSX, wb, filename) => {
+  const downloadWorkbook = async (XLSX, wb, filename) => {
     const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    await downloadFile({ data: blob, fileName: filename, mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   };
 
   // Export all enrollments to Excel
