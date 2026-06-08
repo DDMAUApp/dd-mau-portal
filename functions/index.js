@@ -609,6 +609,14 @@ exports.dispatchNotification = onDocumentCreated(
             android: {
                 priority: "high",
                 notification: {
+                    // 2026-06-08 FIX — Android showed NO notification on push.
+                    // title/body lived ONLY in `data`, so on Android this was a
+                    // data-only message (nothing auto-displays when the app is
+                    // backgrounded/closed). iOS worked because apns.aps.alert
+                    // carried them. Putting title/body here makes it a real
+                    // notification message Android renders on dd_default_channel.
+                    title: pushTitle,
+                    body: pushBody,
                     channelId: "dd_default_channel",
                     sound: "default",
                     clickAction: "FLUTTER_NOTIFICATION_CLICK",
