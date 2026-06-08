@@ -108,6 +108,17 @@ async function loadNativePushPlugin() {
             requestPermissions: p.requestPermissions.bind(p),
             register: p.register.bind(p),
             addListener: p.addListener.bind(p),
+            // 2026-06-08 — bind createChannel so we can ENSURE the Android
+            // notification channel actually exists. AndroidManifest declares
+            // dd_default_channel as the FCM default channel id, but declaring
+            // ≠ creating: until the app creates the channel, Android routes
+            // pushes to the auto-generated "Miscellaneous" fallback at DEFAULT
+            // importance (shows in the shade, no heads-up pop) — and some OEM
+            // builds drop a notification whose channelId doesn't exist. The
+            // Cloud Function sends android.notification.channelId =
+            // "dd_default_channel", so we create that exact channel at HIGH
+            // importance below. createChannel is Android-only in the plugin.
+            createChannel: p.createChannel ? p.createChannel.bind(p) : null,
         };
     } catch (e) {
         console.warn("[push][native] @capacitor/push-notifications import failed:", e?.message);
@@ -264,6 +275,36 @@ async function enableNativePush(staffName, staffList, setStaffList) {
     }
     if (permResult?.receive !== "granted") {
         return { ok: false, reason: "permission-denied" };
+    }
+
+    // 1b) Ensure the Android notification channel EXISTS before any push
+    //     can arrive. Root cause of "no Android notifications" (2026-06-08):
+    //     the Cloud Function targets channelId "dd_default_channel" and the
+    //     manifest declares it as the FCM default — but nothing ever created
+    //     the channel, so on Android 13 pushes fell back to the unnamed
+    //     "Miscellaneous" channel at DEFAULT importance (no heads-up banner),
+    //     and could be suppressed outright on some OEM builds. Creating it
+    //     here at HIGH importance makes pushes POP as banners under a "DD Mau
+    //     Alerts" channel that matches the Cloud Function's channelId.
+    //     Android-only; createChannel is null on iOS (guarded). Idempotent —
+    //     creating an existing channel is a no-op, so re-running each sign-in
+    //     is safe. Rides OTA (no native rebuild needed).
+    if (Capacitor.getPlatform() === "android" && plugin.createChannel) {
+        try {
+            await plugin.createChannel({
+                id: "dd_default_channel",
+                name: "DD Mau Alerts",
+                description: "Chat messages, schedule changes, and urgent alerts",
+                importance: 4,   // IMPORTANCE_HIGH → heads-up banner + sound
+                visibility: 1,   // VISIBILITY_PUBLIC → full content on lock screen
+                sound: "default",
+                vibration: true,
+                lights: true,
+            });
+            console.log("[push][native] ensured dd_default_channel (importance=HIGH)");
+        } catch (e) {
+            console.warn("[push][native] createChannel failed (non-fatal):", e?.message);
+        }
     }
 
     // 2) Register with APNs (iOS) or FCM (Android) and wait for
