@@ -74,7 +74,7 @@ function emptyDays() {
 // fills it in). Stable ids so a re-seed never duplicates.
 function buildSeed(side) {
     if (side === 'boh') {
-        const pool = BOH_ITEMS.map(([en, es], i) => ({ id: `boh-${i}`, en, es, hours: null, note: '' }));
+        const pool = BOH_ITEMS.map(([en, es], i) => ({ id: `boh-${i}`, en, es, hours: null, note: '', addedAt: null, addedBy: 'system' }));
         return { pool, days: emptyDays() };
     }
     return { pool: [], days: emptyDays() };
@@ -196,7 +196,7 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         const nm = (name || '').trim();
         if (!nm) return;
         const id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        writeBoard(b => { b.pool.push({ id, en: nm, es: nm, hours: null, note: '' }); return b; });
+        writeBoard(b => { b.pool.push({ id, en: nm, es: nm, hours: null, note: '', addedAt: Date.now(), addedBy: staffName || '' }); return b; });
         setAddName('');
     };
     const resetBoard = () => {
@@ -222,6 +222,51 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
     }, [board.pool, filter]);
 
     const weekHours = useMemo(() => DAY_KEYS.reduce((a, k) => a + sumHours(board.days[k].items), 0), [board]);
+
+    // ── Save → history · Clear week · History viewer ────────────────
+    // Saved copies live in a SEPARATE doc (ops/prepBoard_{loc}_{side}_hist)
+    // so they don't bloat the hot board doc; read on demand, written on Save.
+    const [historyOpen, setHistoryOpen] = useState(false);
+    const [history, setHistory] = useState([]);
+    const histRef = useMemo(
+        () => (storeLocation ? doc(db, 'ops', `prepBoard_${storeLocation}_${side}_hist`) : null),
+        [storeLocation, side]
+    );
+    useEffect(() => {
+        if (!histRef) return;
+        const unsub = onSnapshot(histRef, (snap) => {
+            const saves = (snap.exists() && Array.isArray(snap.data()?.saves)) ? snap.data().saves : [];
+            setHistory(saves);
+        }, () => {});
+        return () => unsub();
+    }, [histRef]);
+
+    const saveSnapshot = async () => {
+        if (!histRef) return;
+        const snapshot = { savedAt: Date.now(), savedBy: staffName || '', pool: clone(board.pool), days: clone(board.days), weekHours };
+        try {
+            await runTransaction(db, async (t) => {
+                const s = await t.get(histRef);
+                const prev = (s.exists() && Array.isArray(s.data()?.saves)) ? s.data().saves : [];
+                t.set(histRef, { saves: [snapshot, ...prev].slice(0, 20), location: storeLocation || '', side });
+            });
+            toast(tx('Saved a copy to history ✓', 'Copia guardada en historial ✓'));
+        } catch (e) {
+            console.warn('[prepBoard] save failed:', e?.message);
+            toast(tx('Save failed — try again', 'Error al guardar'), { kind: 'error' });
+        }
+    };
+    const clearWeek = () => {
+        if (!confirm(tx('Clear the week? Everything goes back to the list (nothing is deleted). Save first if you want a copy.', '¿Limpiar la semana? Todo regresa a la lista (nada se elimina). Guarda primero si quieres una copia.'))) return;
+        setSelectedId(null);
+        writeBoard(b => { for (const k of DAY_KEYS) { for (const it of b.days[k].items) b.pool.push(it); b.days[k] = { items: [], note: '' }; } return b; });
+    };
+    const restoreSnapshot = (snap) => {
+        if (!confirm(tx('Load this saved copy? It replaces the current board (the saved copy is kept).', '¿Cargar esta copia? Reemplaza el tablero actual (la copia se conserva).'))) return;
+        setSelectedId(null);
+        writeBoard(() => ({ pool: clone(snap.pool || []), days: normalizeDays(snap.days) }));
+        setHistoryOpen(false);
+    };
 
     // ── Print week ──────────────────────────────────────────────────
     const printWeek = () => {
@@ -341,6 +386,15 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
                     {adminUser && <button type="button" onClick={resetBoard} title={tx('Reset / clear this side', 'Restablecer este lado')} className="text-sm font-bold text-dd-text-2 hover:text-red-600 px-1">↻</button>}
                 </div>
             </div>
+            {/* Save / Clear / History toolbar */}
+            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                <button type="button" onClick={saveSnapshot}
+                    className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-dd-green text-white">💾 {tx('Save', 'Guardar')}</button>
+                <button type="button" onClick={clearWeek}
+                    className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-white border border-dd-line text-dd-text">🧹 {tx('Clear', 'Limpiar')}</button>
+                <button type="button" onClick={() => setHistoryOpen(true)}
+                    className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-white border border-dd-line text-dd-text">📜 {tx('History', 'Historial')}{history.length > 0 ? ` (${history.length})` : ''}</button>
+            </div>
             <div className="text-[11px] text-dd-text-2 font-semibold mb-2">
                 {side === 'foh' && board.pool.length === 0 && DAY_KEYS.every(k => board.days[k].items.length === 0)
                     ? tx('Front of House is empty — tap "+ write in prep" to add items.', 'Frente está vacío — toca "+ escribir prep" para agregar.')
@@ -414,6 +468,15 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
                     onClose={() => setEditTarget(null)}
                 />
             )}
+
+            {historyOpen && (
+                <PrepHistoryModal
+                    saves={history}
+                    language={language}
+                    onRestore={restoreSnapshot}
+                    onClose={() => setHistoryOpen(false)}
+                />
+            )}
         </div>
     );
 }
@@ -477,6 +540,11 @@ function PrepEditModal({ target, board, language, onSaveItem, onDeleteItem, onSa
                             <label className="block text-xs font-bold text-dd-text-2 mb-0.5">{tx('Note', 'Nota')}</label>
                             <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} className="w-full text-base px-3 py-2 rounded-lg border border-dd-line" />
                         </div>
+                        {item.addedBy && item.addedBy !== 'system' && (
+                            <div className="text-[10px] text-dd-text-2 pt-0.5">
+                                {tx('Added by', 'Agregado por')} <b>{item.addedBy}</b>{item.addedAt ? ` · ${new Date(item.addedAt).toLocaleDateString()}` : ''}
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <textarea value={note} onChange={e => setNote(e.target.value)} rows={4} autoFocus
@@ -492,6 +560,42 @@ function PrepEditModal({ target, board, language, onSaveItem, onDeleteItem, onSa
                         <button onClick={save} className="text-sm font-bold px-4 py-2 rounded-lg bg-dd-green text-white">{tx('Save', 'Guardar')}</button>
                     </div>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+// ── History modal — list of saved copies, each stamped date + staff ─
+function PrepHistoryModal({ saves, language, onRestore, onClose }) {
+    const es = language === 'es';
+    const tx = (en, esT) => (es ? esT : en);
+    const fmt = (ms) => { try { return new Date(ms).toLocaleString(es ? 'es' : 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } };
+    const scheduled = (snap) => DAY_KEYS.reduce((a, k) => a + ((snap?.days?.[k]?.items?.length) || 0), 0);
+    return (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={onClose}>
+            <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl p-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}
+                style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom,0px))' }}>
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-black text-base">📜 {tx('Saved copies', 'Copias guardadas')}</h3>
+                    <button onClick={onClose} className="text-sm font-bold px-2 py-1 rounded-lg bg-dd-bg text-dd-text-2">✕</button>
+                </div>
+                {(!saves || saves.length === 0) ? (
+                    <div className="text-sm text-dd-text-2 text-center py-6">{tx('No saved copies yet. Tap 💾 Save to keep one.', 'Sin copias. Toca 💾 Guardar para crear una.')}</div>
+                ) : (
+                    <div className="space-y-2">
+                        {saves.map((snap, i) => (
+                            <div key={i} className="flex items-center gap-2 rounded-xl border border-dd-line px-3 py-2">
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-bold text-dd-text">{fmt(snap.savedAt)}</div>
+                                    <div className="text-[11px] text-dd-text-2 truncate">
+                                        {snap.savedBy || tx('Unknown', 'Desconocido')} · {scheduled(snap)} {tx('scheduled', 'programados')}{typeof snap.weekHours === 'number' && snap.weekHours > 0 ? ` · ${Number.isInteger(snap.weekHours) ? snap.weekHours : snap.weekHours.toFixed(1)}h` : ''}
+                                    </div>
+                                </div>
+                                <button onClick={() => onRestore(snap)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-dd-green text-white shrink-0">{tx('Load', 'Cargar')}</button>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );
