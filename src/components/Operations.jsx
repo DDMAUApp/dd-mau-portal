@@ -6268,8 +6268,12 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         const pick = (id) => { setActiveTab(id); setEditMode(false); setEditingIdx?.(null); setShowAddForm?.(false); };
                         return (
                             <>
-                                {/* MOBILE (<sm) — 2-row Apple-glass button grid, no sideways scroll */}
-                                <div className="sm:hidden grid grid-cols-4 gap-1.5 mb-4">
+                                {/* MOBILE + TABLET (<lg) — Apple-glass button grid, no sideways scroll.
+                                    Bumped sm:→lg: at ~640–750px the 7-tab desktop strip overflowed into a
+                                    horizontal scroll (Andrew: "subs still in a scrolling line"), so the
+                                    no-scroll grid now covers phones AND tablets. grid-cols-4 on phones
+                                    (2 rows), md:grid-cols-7 makes it a single clean row once there's room. */}
+                                <div className="lg:hidden grid grid-cols-4 md:grid-cols-7 gap-1.5 mb-4">
                                     {opsTabs.map(t2 => {
                                         const isActive = activeTab === t2.id;
                                         return (
@@ -6285,8 +6289,9 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         );
                                     })}
                                 </div>
-                                {/* DESKTOP (≥sm) — original underline tab strip, unchanged */}
-                                <div className="hidden sm:block border-b border-dd-line mb-4">
+                                {/* DESKTOP (≥lg) — original underline tab strip; at ≥1024px all 7 tabs
+                                    fit without scrolling, so the strip is safe here. */}
+                                <div className="hidden lg:block border-b border-dd-line mb-4">
                                     <div className="flex overflow-x-auto scrollbar-thin -mb-px">
                                         {opsTabs.map(t2 => {
                                             const isActive = activeTab === t2.id;
