@@ -4,22 +4,26 @@
 // prep, most pre-filled). Right = cubes Monday–Saturday. Tap a task to
 // highlight, tap a day cube to send it there; tap an assigned one to move it to
 // another day or back to the list. Make the week printable. Add notes to a day
-// or an item. Add anything that makes it more functional."
+// or an item." + "[20 BOH items] this is all back of house. The front of house
+// I'll get the list together, make the front all writable. Make all the items
+// editable."
 //
-// Model — Firestore ops/prepBoard_{location}:
-//   { pool: Item[], days: { mon:{items:Item[],note}, … sat }, seeded, updatedAt, updatedBy }
+// TWO independent boards per location — Back of House (seeded with the kitchen
+// list below) and Front of House (starts empty / fully writable). A toggle
+// switches sides. Every item is editable (name EN/ES, hours, note) + deletable
+// via the ✎ button; "+ write in prep" adds custom items.
+//
+// Model — Firestore ops/prepBoard_{location}_{side}  (side = 'boh' | 'foh'):
+//   { pool: Item[], days: { mon:{items:Item[],note}, … sat }, side, seeded, updatedAt, updatedBy }
 //   Item = { id, en, es, hours: number|null, note: string }
-// Each item lives in exactly ONE bucket (pool OR a single day) — moving is a
-// transfer, matching the tap-to-move flow. Seeded ONCE from PREP_STATIONS (the
-// existing master prep list) so most items are pre-filled. Standing WEEKLY
-// template (day-of-week, not dated).
+// Each item lives in exactly ONE bucket (pool OR a single day). Standing WEEKLY
+// template (day-of-week, not dated). Real-time synced via transactions.
 //
-// The legacy PrepList component + its ops/prepList_{loc} data are intentionally
-// left intact (this is a brand-new doc), so the change is fully revertible.
+// The legacy PrepList component + its ops/prepList_{loc} data are left intact
+// (these are brand-new docs), so the change is fully revertible.
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, onSnapshot, runTransaction, serverTimestamp } from 'firebase/firestore';
-import { PREP_STATIONS } from '../data/prepList';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin } from '../data/staff';
 import { toast } from '../toast';
@@ -35,6 +39,30 @@ const DAYS = [
 ];
 const DAY_KEYS = DAYS.map(d => d.key);
 
+// Back-of-house kitchen prep list (Andrew 2026-06-08). [English, Spanish].
+const BOH_ITEMS = [
+    ['Pork Egg Rolls', 'Rollitos de Cerdo'],
+    ['Vegetable Egg Rolls', 'Rollitos de Vegetales'],
+    ['Crab Rangoons', 'Rangoon de Cangrejo'],
+    ['Coconut Shrimp', 'Camarón con Coco'],
+    ['Fried Shrimp Rolls', 'Rollos de Camarón Frito'],
+    ['Fried Rice (Pork)', 'Arroz Frito con Cerdo'],
+    ['Beef Pho', 'Pho de Res'],
+    ['Chicken Pho', 'Pho de Pollo'],
+    ['Vegan Pho', 'Pho Vegano'],
+    ['Spicy Lemongrass Soup', 'Sopa Picante de Limoncillo'],
+    ['Chicken Breast', 'Pechuga de Pollo'],
+    ['Vegan Beef', 'Res Vegana'],
+    ['Vegan Shrimp', 'Camarón Vegano'],
+    ['Vegan Chicken', 'Pollo Vegano'],
+    ['Tofu & Mushroom', 'Tofu y Champiñones'],
+    ['Chicken Wings', 'Alitas de Pollo'],
+    ['Fried Fish', 'Pescado Frito'],
+    ['Cajun Salmon', 'Salmón Cajún'],
+    ['Thai Chili Pepper Seasoning', 'Sazón de Chile Tailandés'],
+    ['Seafood', 'Mariscos'],
+];
+
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 function emptyDays() {
@@ -42,16 +70,14 @@ function emptyDays() {
     for (const k of DAY_KEYS) d[k] = { items: [], note: '' };
     return d;
 }
-// Seed the pool from the master prep list (src/data/prepList.js). Runs once,
-// the first time the board doc is created for a location.
-function buildSeed() {
-    const pool = [];
-    for (const st of (PREP_STATIONS || [])) {
-        for (const it of (st.items || [])) {
-            pool.push({ id: it.id, en: it.name, es: it.nameEs || it.name, hours: null, note: '' });
-        }
+// Seed a side's pool. BOH = the kitchen list above; FOH starts empty (Andrew
+// fills it in). Stable ids so a re-seed never duplicates.
+function buildSeed(side) {
+    if (side === 'boh') {
+        const pool = BOH_ITEMS.map(([en, es], i) => ({ id: `boh-${i}`, en, es, hours: null, note: '' }));
+        return { pool, days: emptyDays() };
     }
-    return { pool, days: emptyDays() };
+    return { pool: [], days: emptyDays() };
 }
 // Defend against an older / partial day shape from Firestore.
 function normalizeDays(days) {
@@ -90,32 +116,46 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
     const tx = (en, esT) => (es ? esT : en);
     const adminUser = isAdmin(staffName, staffList);
 
-    const [board, setBoard] = useState(() => buildSeed());
+    // FOH vs BOH — two independent boards. Defaults to the staff member's own
+    // scheduleSide, then remembers the last choice per device.
+    const SIDE_KEY = 'ddmau:prepBoard:side';
+    const myScheduleSide = (staffList || []).find(s => s.name === staffName)?.scheduleSide;
+    const [side, setSide] = useState(() => {
+        try { const v = localStorage.getItem(SIDE_KEY); if (v === 'foh' || v === 'boh') return v; } catch (e) { /* ignore */ }
+        return myScheduleSide === 'foh' ? 'foh' : 'boh';
+    });
+    useEffect(() => { try { localStorage.setItem(SIDE_KEY, side); } catch (e) { /* ignore */ } }, [side]);
+
+    const [board, setBoard] = useState(() => buildSeed(side));
     const [selectedId, setSelectedId] = useState(null);
     const [filter, setFilter] = useState('');
     const [addName, setAddName] = useState('');
     const [editTarget, setEditTarget] = useState(null); // {type:'item',id} | {type:'day',key}
-    const seededRef = useRef(false);
+    const seededRef = useRef(new Set());
 
     const ref = useMemo(
-        () => (storeLocation ? doc(db, 'ops', 'prepBoard_' + storeLocation) : null),
-        [storeLocation]
+        () => (storeLocation ? doc(db, 'ops', `prepBoard_${storeLocation}_${side}`) : null),
+        [storeLocation, side]
     );
 
-    // ── Live sync + one-time seed ───────────────────────────────────
+    // ── Live sync + one-time seed (per side) ────────────────────────
     useEffect(() => {
         if (!ref) return;
+        // Show this side's seed immediately while the doc loads — avoids a flash
+        // of the other side's items when toggling FOH/BOH.
+        setBoard(buildSeed(side));
+        setSelectedId(null);
         const unsub = onSnapshot(ref, async (snap) => {
             if (snap.exists() && Array.isArray(snap.data()?.pool)) {
                 const data = snap.data();
                 setBoard({ pool: data.pool, days: normalizeDays(data.days) });
-            } else if (!seededRef.current) {
-                seededRef.current = true;
+            } else if (!seededRef.current.has(ref.path)) {
+                seededRef.current.add(ref.path);
                 try {
                     await runTransaction(db, async (t) => {
                         const s = await t.get(ref);
                         if (s.exists() && Array.isArray(s.data()?.pool)) return; // someone else seeded
-                        t.set(ref, { ...buildSeed(), seeded: true, updatedAt: serverTimestamp(), updatedBy: staffName || 'system' });
+                        t.set(ref, { ...buildSeed(side), seeded: true, side, updatedAt: serverTimestamp(), updatedBy: staffName || 'system' });
                     });
                 } catch (e) { console.warn('[prepBoard] seed failed:', e?.message); }
             }
@@ -134,10 +174,10 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
                 const s = await t.get(ref);
                 const base = (s.exists() && Array.isArray(s.data()?.pool))
                     ? { pool: s.data().pool, days: normalizeDays(s.data().days) }
-                    : buildSeed();
+                    : buildSeed(side);
                 const next = mutator(clone(base));
                 if (!next) return;
-                t.set(ref, { pool: next.pool, days: next.days, seeded: true, updatedAt: serverTimestamp(), updatedBy: staffName || '' });
+                t.set(ref, { pool: next.pool, days: next.days, seeded: true, side, updatedAt: serverTimestamp(), updatedBy: staffName || '' });
             });
         } catch (e) {
             console.warn('[prepBoard] write failed:', e?.message);
@@ -160,9 +200,12 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         setAddName('');
     };
     const resetBoard = () => {
-        if (!confirm(tx('Reset the whole board to the master prep list? This clears every day.', '¿Restablecer todo el tablero a la lista maestra? Esto borra cada día.'))) return;
+        const msg = side === 'boh'
+            ? tx('Reset Back-of-House to the default kitchen list? This clears every day.', '¿Restablecer Cocina a la lista predeterminada? Esto borra cada día.')
+            : tx('Clear the whole Front-of-House board? This removes every item and day.', '¿Borrar todo el tablero de Frente? Esto elimina cada artículo y día.');
+        if (!confirm(msg)) return;
         setSelectedId(null);
-        writeBoard(() => buildSeed());
+        writeBoard(() => buildSeed(side));
     };
 
     // ── Selection ───────────────────────────────────────────────────
@@ -185,6 +228,7 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         const now = new Date();
         const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
         const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        const sideLabel = side === 'boh' ? tx('Back of House', 'Cocina') : tx('Front of House', 'Frente');
         let html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DD Mau Prep Week</title><style>
             *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:16px;color:#111}
             h1{font-size:20px;margin:0 0 2px} .date{font-size:11px;color:#666;margin-bottom:12px}
@@ -201,7 +245,7 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
             @media print{.no-print{display:none!important} .day h2{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>`;
         html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">✕ ${esc(tx('Close', 'Cerrar'))}</button><button class="btn-print" onclick="window.print()">🖨️ ${esc(tx('Print', 'Imprimir'))}</button></div>`;
-        html += `<h1>${esc(tx('Weekly Prep', 'Prep Semanal'))} — ${esc(storeLocation || '')}</h1>`;
+        html += `<h1>${esc(tx('Weekly Prep', 'Prep Semanal'))} · ${esc(sideLabel)} — ${esc(storeLocation || '')}</h1>`;
         html += `<div class="date">${esc(dateStr)} · ${esc(timeStr)} · ${esc(tx('Total', 'Total'))}: ${fmtHrs(weekHours)}h</div>`;
         html += `<div class="grid">`;
         for (const day of DAYS) {
@@ -283,16 +327,24 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
     // ── Render ──────────────────────────────────────────────────────
     return (
         <div className="pb-2">
-            {/* Header */}
-            <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="text-[11px] text-dd-text-2 font-semibold min-w-0">
-                    {tx('Tap a prep, then a day to place it.', 'Toca un prep, luego un día.')}
+            {/* Header — FOH/BOH side toggle + actions */}
+            <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="inline-flex rounded-lg border border-dd-line overflow-hidden text-[11px] font-black shrink-0">
+                    <button type="button" onClick={() => setSide('boh')}
+                        className={`px-3 py-1 ${side === 'boh' ? 'bg-dd-green text-white' : 'bg-white text-dd-text-2'}`}>BOH</button>
+                    <button type="button" onClick={() => setSide('foh')}
+                        className={`px-3 py-1 border-l border-dd-line ${side === 'foh' ? 'bg-dd-green text-white' : 'bg-white text-dd-text-2'}`}>FOH</button>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                     {weekHours > 0 && <span className="text-[10px] font-bold text-dd-green">{fmtHrs(weekHours)}h/{tx('wk', 'sem')}</span>}
                     <button type="button" onClick={printWeek} className="glass-button-apple !px-2.5 !py-1.5 !text-xs">🖨 {tx('Print', 'Imprimir')}</button>
-                    {adminUser && <button type="button" onClick={resetBoard} title={tx('Reset to master list', 'Restablecer')} className="text-sm font-bold text-dd-text-2 hover:text-red-600 px-1">↻</button>}
+                    {adminUser && <button type="button" onClick={resetBoard} title={tx('Reset / clear this side', 'Restablecer este lado')} className="text-sm font-bold text-dd-text-2 hover:text-red-600 px-1">↻</button>}
                 </div>
+            </div>
+            <div className="text-[11px] text-dd-text-2 font-semibold mb-2">
+                {side === 'foh' && board.pool.length === 0 && DAY_KEYS.every(k => board.days[k].items.length === 0)
+                    ? tx('Front of House is empty — tap "+ write in prep" to add items.', 'Frente está vacío — toca "+ escribir prep" para agregar.')
+                    : tx('Tap a prep, then a day to place it.', 'Toca un prep, luego un día.')}
             </div>
 
             {/* Selection action bar */}
@@ -340,7 +392,7 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
                     </div>
                     <div className="p-1.5 max-h-[62vh] overflow-y-auto">
                         {filteredPool.length === 0
-                            ? <div className="text-[11px] text-dd-text-2 text-center py-3">{filter ? tx('No match.', 'Sin coincidencias.') : tx('All assigned.', 'Todo asignado.')}</div>
+                            ? <div className="text-[11px] text-dd-text-2 text-center py-3">{filter ? tx('No match.', 'Sin coincidencias.') : tx('Nothing here yet.', 'Nada aquí todavía.')}</div>
                             : filteredPool.map(renderChip)}
                     </div>
                 </div>
