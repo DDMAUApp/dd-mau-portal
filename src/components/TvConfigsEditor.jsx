@@ -22,6 +22,7 @@ import ModalPortal from './ModalPortal';
 // Lazy because the hit-zone editor pulls in a fair amount of UI
 // state + per-zone rendering that most admin views don't need.
 const HitZoneEditor = lazy(() => import('./HitZoneEditor'));
+const PictureEditor = lazy(() => import('./PictureEditor'));
 const DaypartEditor = lazy(() => import('./DaypartEditor'));
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
@@ -368,6 +369,13 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     // edge-to-edge guarantee, etc.).
     const [imageFit, setImageFit] = useState(initial?.imageFit === 'cover' ? 'cover' : 'contain');
     const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
+    // Per-picture edit recipes (crop / text / starburst), index-aligned with
+    // imageUrls. Each entry is { originalUrl, crop, texts[], bursts[] } | null.
+    // Non-destructive: imageUrls[i] holds the BAKED output; the recipe lets the
+    // admin reopen and re-edit. See PictureEditor + bakePictureEdits().
+    const [imageLayers, setImageLayers] = useState(Array.isArray(initial?.imageLayers) ? initial.imageLayers : []);
+    // Index of the image open in the per-picture editor, or null.
+    const [pictureEditorIdx, setPictureEditorIdx] = useState(null);
     const [dayparts, setDayparts] = useState(Array.isArray(initial?.dayparts) ? initial.dayparts : []);
     const [split, setSplit] = useState(initial?.split || {
         leftImageUrls: [],
@@ -482,8 +490,10 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             // PDF uploads still replace; image batches append.
             if (hasPdf) {
                 setImageUrls(newUrls);
+                setImageLayers([]);                                   // new menu set — drop old per-picture edits
             } else {
                 setImageUrls(prev => [...prev, ...newUrls]);
+                setImageLayers(prev => [...prev, ...newUrls.map(() => null)]);   // keep index-aligned
             }
             // Aggregate toast — one line summarizing the whole batch
             // rather than a flood of per-file toasts.
@@ -532,11 +542,12 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             `Remove all ${imageUrls.length} images? (Existing config saves stay until you click Save & Publish.)`,
             `¿Quitar las ${imageUrls.length} imágenes? (La configuración persiste hasta Guardar y publicar.)`,
         ));
-        if (ok) setImageUrls([]);
+        if (ok) { setImageUrls([]); setImageLayers([]); }
     };
 
     const removeImageAt = (idx) => {
         setImageUrls(prev => prev.filter((_, i) => i !== idx));
+        setImageLayers(prev => prev.filter((_, i) => i !== idx));
     };
     // Reorder helpers. We use ↑/↓ buttons rather than HTML5 drag-drop
     // because drag has rough touch support on iPad and a mixed
@@ -544,14 +555,17 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     // often editing on a phone. Up/down arrows work identically on
     // every device.
     const moveImage = (fromIdx, dir) => {
-        setImageUrls(prev => {
-            const toIdx = fromIdx + dir;
-            if (toIdx < 0 || toIdx >= prev.length) return prev;
-            const next = [...prev];
+        const toIdx = fromIdx + dir;
+        if (toIdx < 0 || toIdx >= imageUrls.length) return;
+        const move = (arr) => {
+            const next = [...arr];
             const [item] = next.splice(fromIdx, 1);
             next.splice(toIdx, 0, item);
             return next;
-        });
+        };
+        setImageUrls(prev => move(prev));
+        // Reorder the per-picture recipes in lock-step (pad to length first).
+        setImageLayers(prev => move(Array.from({ length: imageUrls.length }, (_, i) => prev[i] ?? null)));
     };
 
     // Split-mode upload handler — supports multi-file pickers
@@ -642,6 +656,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.imageShuffle = imageShuffle === true;
                 payload.imageFit = imageFit === 'cover' ? 'cover' : 'contain';
                 payload.imageHitZones = imageHitZones;
+                payload.imageLayers = imageLayers;
                 payload.dayparts = dayparts;
                 payload.split = null;
                 // Clear menu-mode fields on the saved doc to avoid stale data.
@@ -660,6 +675,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 // Hit zones still live at top level — they apply to the
                 // left (menu) side of the split.
                 payload.imageHitZones = imageHitZones;
+                payload.imageLayers = null;
                 payload.imageUrls = null;
                 payload.imageRotateSeconds = null;
                 payload.dayparts = null;
@@ -677,6 +693,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.imageUrls = null;
                 payload.imageRotateSeconds = null;
                 payload.imageHitZones = null;
+                payload.imageLayers = null;
                 payload.dayparts = null;
                 payload.split = null;
             }
@@ -1101,6 +1118,20 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                                         )}
                                                     </div>
                                                 )}
+                                                {/* Per-picture editor — crop / text / starbursts (images only, not video) */}
+                                                {!/\.(mp4|webm|mov|m4v)$/i.test(String(url).split('?')[0]) && (
+                                                    <>
+                                                        <button type="button" onClick={() => setPictureEditorIdx(idx)}
+                                                            title={tx('Edit picture', 'Editar imagen')}
+                                                            className="absolute bottom-1 left-1 px-1.5 h-5 rounded bg-violet-600 text-white text-[10px] font-black hover:bg-violet-700 flex items-center">
+                                                            ✏️ {tx('Edit', 'Editar')}
+                                                        </button>
+                                                        {Array.isArray(imageLayers) && imageLayers[idx] && (
+                                                            <span className="absolute top-1 left-7 bg-violet-600 text-white text-[9px] font-black px-1 rounded"
+                                                                title={tx('Has edits', 'Editada')}>★</span>
+                                                        )}
+                                                    </>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
@@ -1474,6 +1505,29 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                             }
                         }}
                         onClose={() => setHitZoneEditorOpen(false)} />
+                </Suspense>
+            )}
+
+            {/* Per-picture editor (crop / text / starbursts). Bakes edits into a
+                new image and stores the recipe in imageLayers for re-editing. */}
+            {pictureEditorIdx !== null && imageUrls[pictureEditorIdx] && (
+                <Suspense fallback={null}>
+                    <PictureEditor
+                        imageUrl={imageUrls[pictureEditorIdx]}
+                        originalUrl={imageLayers?.[pictureEditorIdx]?.originalUrl || imageUrls[pictureEditorIdx]}
+                        initialRecipe={imageLayers?.[pictureEditorIdx] || null}
+                        slugPrefix={`${(previewTvId || 'tv').replace(/[^a-z0-9-]/g, '-')}-p${pictureEditorIdx + 1}`}
+                        language={tx('en', 'es') === 'es' ? 'es' : 'en'}
+                        onSave={(newUrl, recipe) => {
+                            const idx = pictureEditorIdx;
+                            setImageUrls(prev => prev.map((u, i) => (i === idx ? newUrl : u)));
+                            setImageLayers(prev => {
+                                const next = Array.from({ length: Math.max(prev.length, idx + 1) }, (_, i) => prev[i] ?? null);
+                                next[idx] = recipe;
+                                return next;
+                            });
+                        }}
+                        onClose={() => setPictureEditorIdx(null)} />
                 </Suspense>
             )}
         </div>

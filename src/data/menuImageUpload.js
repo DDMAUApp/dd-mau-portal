@@ -15,6 +15,7 @@
 
 import { storage } from '../firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { burstUnitPoints, BURST_DEFAULT_FILL, BURST_DEFAULT_TEXT } from './burstShapes';
 
 // Lazy pdfjs loader — same pattern as OnboardingFillablePdf.jsx
 // so we share the chunk rather than splitting it.
@@ -360,6 +361,136 @@ export async function bakePriceOverlaysIntoImage({ imageUrl, priceZones, slugPre
     // theoretically re-link it if needed. (We don't surface that
     // path; the simple recovery is "re-upload the PDF".)
     const path = `tv_images/${slugPrefix}_baked_${Date.now()}.png`;
+    const pref = storageRef(storage, path);
+    await uploadBytes(pref, blob);
+    return await getDownloadURL(pref);
+}
+
+// Bake the picture-editor recipe (crop + text + starbursts) into a single flat
+// PNG and upload it, returning the new download URL. Non-destructive: the caller
+// keeps the originalUrl + recipe so the picture can be re-opened and re-edited.
+//
+// Coordinate model (matches PictureEditor): `crop` is fractions of the ORIGINAL
+// image; `texts`/`bursts` are fractions of the FINAL (cropped) output — x,y is
+// the element anchor, sizes are fractions of the output HEIGHT. So element
+// fractions map straight onto the output canvas with no conversion at bake time.
+//
+//   texts[]:  { x, y, text, size, color, align?, weight?, outline? }
+//   bursts[]: { x, y, size, shape, fill, textColor, text }
+export async function bakePictureEdits({ originalUrl, crop = null, texts = [], bursts = [], slugPrefix = 'pic' }) {
+    if (!originalUrl) throw new Error('originalUrl required');
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error(`failed to load image for baking: ${originalUrl}`));
+        img.src = originalUrl;
+    });
+
+    const natW = img.naturalWidth, natH = img.naturalHeight;
+    // Source rectangle (the crop), in original pixels. Default = whole image.
+    let sx = 0, sy = 0, sw = natW, sh = natH;
+    if (crop && typeof crop.w === 'number' && crop.w > 0 && crop.h > 0) {
+        sx = Math.round(Math.max(0, Math.min(1, crop.x)) * natW);
+        sy = Math.round(Math.max(0, Math.min(1, crop.y)) * natH);
+        sw = Math.round(Math.max(0.01, Math.min(1, crop.w)) * natW);
+        sh = Math.round(Math.max(0.01, Math.min(1, crop.h)) * natH);
+        sw = Math.min(sw, natW - sx);
+        sh = Math.min(sh, natH - sy);
+    }
+
+    // Output = source rect, downscaled to ≤ TV_MAX_IMAGE_WIDTH wide.
+    let outW = sw, outH = sh;
+    if (outW > TV_MAX_IMAGE_WIDTH) {
+        const scale = TV_MAX_IMAGE_WIDTH / outW;
+        outW = Math.round(outW * scale);
+        outH = Math.round(outH * scale);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, outW);
+    canvas.height = Math.max(1, outH);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('canvas 2d context unavailable');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, outW, outH);
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+
+    // Elements are stored as fractions of the ORIGINAL image (stable across
+    // re-crops). Convert each to output pixels through the crop window.
+    const cX = (crop && crop.w > 0) ? crop.x : 0;
+    const cY = (crop && crop.h > 0) ? crop.y : 0;
+    const cW = (crop && crop.w > 0) ? crop.w : 1;
+    const cH = (crop && crop.h > 0) ? crop.h : 1;
+    const toOutX = (ox) => ((ox - cX) / cW) * outW;
+    const toOutY = (oy) => ((oy - cY) / cH) * outH;
+    const outPx  = (origHeightFrac) => (origHeightFrac / cH) * outH;   // size frac → px
+
+    // ── Text elements ──────────────────────────────────────────
+    for (const t of (texts || [])) {
+        const str = String(t.text ?? '').trim();
+        if (!str) continue;
+        const fontPx = Math.max(8, outPx(t.size || 0.06));
+        ctx.font = `${t.weight || 900} ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
+        ctx.textAlign = t.align || 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        const px = toOutX(t.x ?? 0.5);
+        const lines = str.split('\n');
+        const lineH = fontPx * 1.12;
+        const startY = toOutY(t.y ?? 0.5) - ((lines.length - 1) * lineH) / 2;
+        lines.forEach((ln, i) => {
+            const ly = startY + i * lineH;
+            if (t.outline !== false) {
+                ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+                ctx.lineWidth = Math.max(1, fontPx * 0.16);
+                ctx.strokeText(ln, px, ly);
+            }
+            ctx.fillStyle = t.color || '#ffffff';
+            ctx.fillText(ln, px, ly);
+        });
+    }
+
+    // ── Starburst badges ───────────────────────────────────────
+    for (const b of (bursts || [])) {
+        const diameter = Math.max(12, outPx(b.size || 0.22));
+        const R = diameter / 2;
+        const cx = toOutX(b.x ?? 0.5);
+        const cy = toOutY(b.y ?? 0.5);
+        const pts = burstUnitPoints(b.shape || 'star');
+        ctx.beginPath();
+        pts.forEach((p, i) => {
+            const X = cx + p.x * R, Y = cy + p.y * R;
+            if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        });
+        ctx.closePath();
+        ctx.fillStyle = b.fill || BURST_DEFAULT_FILL;
+        ctx.fill();
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+        ctx.lineWidth = Math.max(1, R * 0.04);
+        ctx.stroke();
+
+        const str = String(b.text ?? '').trim();
+        if (str) {
+            const target = diameter * 0.62;           // fit single line to ~62% of diameter
+            let fontPx = diameter * 0.40;
+            ctx.font = `900 ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
+            const w = ctx.measureText(str).width || 1;
+            if (w > target) fontPx = Math.max(8, fontPx * (target / w));
+            ctx.font = `900 ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
+            ctx.fillStyle = b.textColor || BURST_DEFAULT_TEXT;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(str, cx, cy);
+        }
+    }
+
+    const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png', 0.95));
+    if (!blob) throw new Error('canvas.toBlob returned null (image may be tainted)');
+    const path = `tv_images/${slugPrefix || 'pic'}_edit_${Date.now()}.png`;
     const pref = storageRef(storage, path);
     await uploadBytes(pref, blob);
     return await getDownloadURL(pref);
