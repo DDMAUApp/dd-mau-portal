@@ -39,6 +39,7 @@ import {
     subscribeTvConfigs, subscribeTvHeartbeats, MODES,
     publishTvConfigDraft, discardTvConfigDraft,
 } from '../data/tvConfigs';
+import { openExternalUrl } from '../capacitor-bridge';
 
 // Heavy editor form lives in its existing file; we render it inline
 // below the dashboard for v1 so create + edit still work today.
@@ -582,7 +583,13 @@ function HealthStat({ label, value, tone = 'neutral' }) {
 // shadow lift so it still reads as tappable visually.
 function ScreenCard({ screen, baseUrl, isEs, staffName, onEdit, onShowHistory }) {
     const tx = (en, es) => (isEs ? es : en);
-    const url = `${baseUrl}/?tv=${screen.tvId}`;
+    const url = `${baseUrl}/?tv=${screen.tvId}`;          // local origin — for the live <iframe> preview only
+    // Canonical PUBLIC url for Open / Copy / putting on a Pi. In the native app
+    // `url` resolves to capacitor://localhost / https://localhost — useless off
+    // the device, and when "opened" the OS hands that bogus scheme to a random
+    // installed app (Andrew saw it jump to the US Foods app). The TVs always load
+    // the public site, so that's what we open / copy / share.
+    const publicUrl = `https://app.ddmaustl.com/?tv=${screen.tvId}`;
     // Draft + version state from the underlying tv_config doc.
     // Synthesized "default" / "ghost" screens never carry these
     // fields so the badges + buttons hide naturally for those rows.
@@ -643,13 +650,13 @@ function ScreenCard({ screen, baseUrl, isEs, staffName, onEdit, onShowHistory })
 
     async function copyUrl() {
         try {
-            await navigator.clipboard.writeText(url);
+            await navigator.clipboard.writeText(publicUrl);
         } catch {
             // Older browsers / iOS Safari w/o https — fall back to a
             // hidden textarea + execCommand so the button still does
             // something useful on legacy Pi browsers.
             const ta = document.createElement('textarea');
-            ta.value = url; document.body.appendChild(ta); ta.select();
+            ta.value = publicUrl; document.body.appendChild(ta); ta.select();
             try { document.execCommand('copy'); } finally { document.body.removeChild(ta); }
         }
     }
@@ -810,10 +817,10 @@ function ScreenCard({ screen, baseUrl, isEs, staffName, onEdit, onShowHistory })
                         }`}>
                         {screen.isGhost ? `🔗 ${tx('Adopt', 'Adoptar')}` : `✏ ${tx('Edit', 'Editar')}`}
                     </button>
-                    <a href={url} target="_blank" rel="noreferrer"
+                    <button type="button" onClick={() => openExternalUrl(publicUrl)}
                         className="px-2.5 py-1 rounded-lg bg-white border border-dd-line text-[11px] font-bold text-dd-text-2 hover:bg-dd-bg">
                         ↗ {tx('Open', 'Abrir')}
-                    </a>
+                    </button>
                     <button onClick={copyUrl}
                         className="px-2.5 py-1 rounded-lg bg-white border border-dd-line text-[11px] font-bold text-dd-text-2 hover:bg-dd-bg">
                         📋 {tx('Copy URL', 'Copiar URL')}

@@ -18,6 +18,7 @@ import { uploadMenuFile } from '../data/menuImageUpload';
 import { generatePromo } from '../data/aiGeneratePromo';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
+import { openExternalUrl } from '../capacitor-bridge';
 
 // Lazy because the hit-zone editor pulls in a fair amount of UI
 // state + per-zone rendering that most admin views don't need.
@@ -83,8 +84,21 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
     }, []);
 
     const baseUrl = useMemo(() => {
-        try { return `${window.location.origin}${window.location.pathname.replace(/[^/]*$/, '')}`.replace(/\/$/, ''); }
-        catch { return 'https://app.ddmaustl.com'; }
+        // The kiosk/preview URL is the PUBLIC site the TVs (Raspberry Pis) load.
+        // In the native app the origin is capacitor://localhost (iOS) /
+        // https://localhost (Android) — NOT a real web address — so a copied
+        // kiosk URL would be useless on a Pi, and tapping Preview hands that
+        // bogus scheme to the OS, which routes it to some random installed app
+        // (Andrew saw it jump to the US Foods app). Use the canonical public URL
+        // whenever we're in the app or on any localhost origin.
+        const CANON = 'https://app.ddmaustl.com';
+        try {
+            const origin = window.location.origin || '';
+            const isNative = !!(window.Capacitor?.isNativePlatform?.());
+            const isRealWeb = /^https?:\/\//i.test(origin) && !/\/\/localhost(?::\d+)?(?:$|\/)/i.test(origin);
+            if (isNative || !isRealWeb) return CANON;
+            return `${origin}${window.location.pathname.replace(/[^/]*$/, '')}`.replace(/\/$/, '');
+        } catch { return CANON; }
     }, []);
 
     return (
@@ -264,10 +278,10 @@ function TvConfigRow({ cfg, baseUrl, onEdit, tx }) {
                     )}
                 </div>
                 <div className="flex items-center gap-1">
-                    <a href={url} target="_blank" rel="noopener noreferrer"
+                    <button type="button" onClick={() => openExternalUrl(url)}
                         className="px-2.5 py-1 text-[11px] font-bold text-sky-700 hover:bg-sky-100 rounded transition flex items-center gap-1">
                         👁 {tx('Preview', 'Vista previa')}
-                    </a>
+                    </button>
                     <button onClick={onEdit}
                         className="px-2.5 py-1 text-[11px] font-bold text-sky-700 hover:bg-sky-100 rounded transition">
                         {tx('Edit', 'Editar')}
@@ -298,10 +312,10 @@ function KioskUrlRow({ url, label, tx }) {
             <code className="flex-1 text-[11px] text-sky-900 bg-white px-2 py-1 rounded border border-sky-200 truncate font-mono">
                 {url}
             </code>
-            <a href={url} target="_blank" rel="noopener noreferrer"
+            <button type="button" onClick={() => openExternalUrl(url)}
                 className="px-2 py-1 rounded-lg bg-white border border-sky-300 text-sky-700 text-[10px] font-bold hover:bg-sky-50 whitespace-nowrap">
                 👁 {tx('Preview', 'Vista previa')}
-            </a>
+            </button>
             <button onClick={copy}
                 className="px-2 py-1 rounded-lg bg-white border border-sky-300 text-sky-700 text-[10px] font-bold hover:bg-sky-50">
                 📋 {tx('Copy', 'Copiar')}
@@ -1430,10 +1444,10 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                     {tx('Kiosk URL for this TV', 'URL del kiosko')}
                                 </span>
                                 {(docExists || isPreset) && (
-                                    <a href={previewUrl} target="_blank" rel="noopener noreferrer"
+                                    <button type="button" onClick={() => openExternalUrl(previewUrl)}
                                         className="px-2 py-0.5 rounded bg-white border border-sky-300 text-sky-700 text-[10px] font-bold hover:bg-sky-100 whitespace-nowrap">
                                         👁 {tx('Preview', 'Vista previa')}
-                                    </a>
+                                    </button>
                                 )}
                             </div>
                             <code className="block text-[11px] text-sky-900 break-all font-mono">{previewUrl}</code>
