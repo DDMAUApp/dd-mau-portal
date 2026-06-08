@@ -29,7 +29,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { db } from '../firebase';
 import {
-    collection, doc, query, orderBy, limit, onSnapshot,
+    collection, doc, query, orderBy, limit, onSnapshot, getCountFromServer,
 } from 'firebase/firestore';
 import { subscribePrinterConfig, PRINTER_SLOTS } from '../data/labelPrinting';
 // 2026-05-27 Batch B — Apple-HIG page header. Visual only.
@@ -229,11 +229,14 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
     // ── Quick counts: staff, chats, shifts (current week) ────────
     const [chatCount, setChatCount] = useState(null);
     useEffect(() => {
-        // We don't paginate — chats is bounded (~50 per restaurant).
-        const unsub = onSnapshot(collection(db, 'chats'), (snap) => {
-            setChatCount(snap.size);
-        }, () => setChatCount(null));
-        return unsub;
+        // Admin-only count. Use a server-side aggregate instead of streaming
+        // every chat doc just to read snap.size — loads once on mount and
+        // never transfers the documents. (Was: live onSnapshot on /chats.)
+        let cancelled = false;
+        getCountFromServer(collection(db, 'chats'))
+            .then((snap) => { if (!cancelled) setChatCount(snap.data().count); })
+            .catch(() => { if (!cancelled) setChatCount(null); });
+        return () => { cancelled = true; };
     }, []);
 
     // Error / bug / AI-failure subscriptions live on the Error Report

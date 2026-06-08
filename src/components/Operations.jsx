@@ -4470,7 +4470,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     .btn-print{background:white;color:#2F5496} .btn-close{background:#ff4444;color:white}
                     @media print{body{padding:10px}h1{font-size:16px}.no-print{display:none !important}}
                 </style></head><body>`;
-                html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
+                html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                 html += `<h1>DD Mau Order Sheet</h1>`;
                 html += `<div class="meta">${esc(dateStr)} at ${esc(timeStr)} &mdash; ${esc(storeLocation)} &mdash; ${rows.length} items, ${totalQty} total</div>`;
 
@@ -9575,7 +9575,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             .btn-print { background: white; color: #2563eb; } .btn-close { background: #ff4444; color: white; }
                                             @media print { body { padding: 10px; } .no-print { display: none !important; } }
                                         </style></head><body>`;
-                                        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
+                                        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                                         html += `<h1>\u{1F35C} DD Mau Break Plan</h1><div class="date">${escH(today)}</div>`;
 
                                         // Stations

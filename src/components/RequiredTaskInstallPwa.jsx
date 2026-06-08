@@ -50,6 +50,7 @@ function detectEnv() {
     const isInStandalone = typeof window !== 'undefined' && (
         window.matchMedia?.('(display-mode: standalone)')?.matches === true
         || window.navigator.standalone === true
+        || window.Capacitor?.isNativePlatform?.() === true
     );
     return { ua, isIOS, isAndroid, isMobile, isSafariOnIOS, isInStandalone };
 }

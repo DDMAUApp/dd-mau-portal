@@ -1451,6 +1451,7 @@ export default function App() {
                 const standalone = (
                     (window.matchMedia?.('(display-mode: standalone)')?.matches === true)
                     || (window.navigator?.standalone === true)
+                    || (window.Capacitor?.isNativePlatform?.() === true)
                 );
                 const ua = window.navigator?.userAgent || '';
                 // Coarse platform tag — keeps the admin audit's

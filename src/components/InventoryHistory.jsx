@@ -251,7 +251,7 @@ export default function InventoryHistory({ language, customInventory: customInve
                         .btn-print { background: white; color: #2F5496; } .btn-close { background: #ff4444; color: white; }
                         @media print { body { padding: 10px; } h1 { font-size: 16px; } .no-print { display: none !important; } }
                     </style></head><body>`;
-                html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
+                html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                 html += `<h1>🍜 DD Mau — ${esc(titleName)}</h1>`;
                 html += `<div class="subtitle">${esc(dateLabel)} • ${language === "es" ? "Última actualización" : "Last updated"}: ${esc(new Date(dayData.date).toLocaleString())}</div>`;
 

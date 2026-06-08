@@ -4228,6 +4228,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         const isStandalone = typeof window !== 'undefined' && (
                             window.matchMedia?.('(display-mode: standalone)')?.matches
                             || window.navigator?.standalone === true
+                            || window.Capacitor?.isNativePlatform?.()
                         );
                         const iosBlocksPush = isIOS && !isStandalone;
                         const sendTestPush = async () => {

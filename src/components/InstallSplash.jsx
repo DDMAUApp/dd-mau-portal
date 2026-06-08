@@ -36,7 +36,8 @@ export default function InstallSplash({ onSkip, language = 'en' }) {
     // would see the splash even though they're already done.
     useEffect(() => {
         const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
-            || window.navigator?.standalone === true;
+            || window.navigator?.standalone === true
+            || window.Capacitor?.isNativePlatform?.();
         if (standalone) onSkip?.();
     }, [onSkip]);
 

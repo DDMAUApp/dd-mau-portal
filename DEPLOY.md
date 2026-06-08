@@ -58,3 +58,29 @@ That's it. From then on, `npm run deploy` pushes the `production` bundle and eve
 2. `npm run build`.
 3. commit the version bump + `git push` → web.
 4. `npx @capgo/cli bundle upload --channel production --bundle <version>` → iOS + Android (skipped if `CAPGO_TOKEN` is unset).
+
+---
+
+## ⚠️ Version strategy — keep the NATIVE version BELOW the OTA train
+
+Capgo only serves an OTA bundle whose version is **newer** than the version baked into the **installed native app**. So the two numbers are linked:
+
+| Number | Where | Rule |
+|---|---|---|
+| **OTA bundle version** | `package.json` (auto-bumped by `npm run deploy`) | climbs every deploy: 1.0.5 → 1.0.6 → … |
+| **Native app version** | iOS `MARKETING_VERSION` (pbxproj) · Android `versionName` (build.gradle) | must stay **≤** the OTA bundles you want delivered |
+
+**Do NOT bump native `MARKETING_VERSION` / `versionName` up to match the OTA bundle** (e.g. to `1.0.7`). If native == bundle, the bundle is no longer "newer" and **Capgo stops delivering OTA**. Native is currently `1.0` — leave it; the 1.0.x OTA train rides on top.
+
+The App Store **build number** (`CURRENT_PROJECT_VERSION`) and Play **`versionCode`** must still increase **per upload** — those are independent of Capgo and safe to bump. Only the marketing / `versionName` *string* is the one tied to OTA. To make a native release supersede the OTA train, bump native **and** start the next OTA bundle above it.
+
+## Test before you ship (staging) + rollback
+
+`npm run deploy` ships straight to **production** (all phones), with no gate. To verify a bundle first:
+
+```bash
+npm run build && npm run capgo:upload-dev    # uploads to the 'dev' channel only
+```
+Point your own device at the `dev` channel (Capgo dashboard → Devices), confirm it's good, then run the real `npm run deploy`.
+
+**Rollback (kill-switch):** if a bad bundle ships, open **console.capgo.app → com.ddmau.staff → Channels → production** and set the channel's active bundle back to the previous version — phones revert on next open.

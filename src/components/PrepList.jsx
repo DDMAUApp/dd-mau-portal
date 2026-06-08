@@ -358,7 +358,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             .btn-print{background:white;color:#7c3aed} .btn-close{background:#ff4444;color:white}
             @media print{.no-print{display:none !important} .day-header,.station{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>`;
-        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print</button></div>`;
+        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">\u{2715} Close</button><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print</button></div>`;
         // FIX (review 2026-05-14, real): escape every user-controlled
         // string (item names, station names, custom prep names) before
         // interpolating into the print HTML. Without this, a staff
@@ -428,7 +428,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             .btn-print{background:white;color:#7c3aed} .btn-close{background:#ff4444;color:white}
             @media print{.no-print{display:none !important}}
         </style></head><body>`;
-        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print</button></div>`;
+        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">\u{2715} Close</button><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print</button></div>`;
         // FIX (review 2026-05-14, real): escape every user-controlled
         // string before interpolating into the print HTML. See printCart
         // for the threat model.
