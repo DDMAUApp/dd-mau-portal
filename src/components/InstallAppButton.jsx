@@ -27,7 +27,11 @@ export default function InstallAppButton({ language, compact = false }) {
         return () => window.removeEventListener('pwainstallready', handler);
     }, []);
 
-    if (isStandalone) return null; // Already running as app
+    // Inside the native iOS/Android app shell there is nothing to install
+    // (display-mode:standalone and navigator.standalone are both false in the
+    // WebView), so check Capacitor too — otherwise the "Install app" button
+    // shows up inside an app the user already installed from the store.
+    if (isStandalone || window.Capacitor?.isNativePlatform?.()) return null; // Already running as app
 
     const handleInstall = async () => {
         if (deferredInstallPrompt) {

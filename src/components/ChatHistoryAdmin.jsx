@@ -422,10 +422,10 @@ function renderMessageBody(m, isEs) {
             <div>
                 {m.mediaUrl ? (
                     t === 'image' ? (
-                        <img src={m.mediaUrl} alt=""
+                        <img src={m.mediaUrl} alt="" loading="lazy" decoding="async"
                             className="max-h-40 rounded border border-gray-200" />
                     ) : (
-                        <video src={m.mediaUrl} controls
+                        <video src={m.mediaUrl} controls preload="none"
                             className="max-h-40 rounded border border-gray-200" />
                     )
                 ) : (
@@ -531,7 +531,7 @@ function renderMessageBody(m, isEs) {
                     [{isEs ? 'Foto/Issue' : 'Photo issue'}]
                 </div>
                 {m.mediaUrl && (
-                    <img src={m.mediaUrl} alt=""
+                    <img src={m.mediaUrl} alt="" loading="lazy" decoding="async"
                         className="max-h-40 rounded border border-gray-200" />
                 )}
                 {m.text && <div className="text-[12px] text-gray-700 mt-1">{m.text}</div>}

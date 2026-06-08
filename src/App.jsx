@@ -1393,6 +1393,11 @@ export default function App() {
             (typeof window !== 'undefined') && (
                 (window.matchMedia?.('(display-mode: standalone)')?.matches === true)
                 || (window.navigator?.standalone === true)
+                // Native iOS/Android app shell: display-mode is never
+                // 'standalone' inside the WebView, so without this the
+                // install_pwa gate is UNSATISFIABLE for native-app users and
+                // would lock them out. Treat the native app as installed.
+                || (window.Capacitor?.isNativePlatform?.() === true)
             )
         );
         if (!isStandalone) return;

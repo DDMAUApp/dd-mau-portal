@@ -7,7 +7,7 @@ import { doc, getDoc, setDoc, addDoc, collection, getDocs, query, orderBy, limit
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin as checkIsAdmin } from '../data/staff';
-import { downloadFile } from '../capacitor-bridge';
+import { downloadFile, printViaNative } from '../capacitor-bridge';
 
 export default function InsuranceEnrollment({ language, staffName, staffList }) {
   const [loading, setLoading] = useState(true);
@@ -503,6 +503,9 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     <div class="row"><span class="label">Signature</span><span class="val" style="font-style:italic">${esc(f.signature || "—")}</span></div>
     <div class="row"><span class="label">Date</span><span class="val">${esc(f.signatureDate || "—")}</span></div>
     </div></body></html>`;
+    // Native iOS/Android: window.open returns null inside the WebView, so route
+    // through the printer bridge like the app's other ~12 print paths do.
+    if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Insurance Enrollment'); return; }
     const win = window.open("", "_blank");
     if (!win) {
       toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");

@@ -17,3 +17,12 @@ backups/
 vitest.config.js.timestamp-*
 **/google-services.json
 **/GoogleService-Info.plist
+
+# Android release signing secrets — NEVER commit these
+android/keystore.properties
+android/app/upload-keystore.jks
+*.jks
+*.keystore
+# Android IDE / build artifacts
+android/.idea/
+android/app/release/

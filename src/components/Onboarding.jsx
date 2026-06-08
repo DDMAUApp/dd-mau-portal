@@ -20,7 +20,7 @@ import {
 } from 'firebase/firestore';
 import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
 import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata, deleteObject } from 'firebase/storage';
-import { downloadFile } from '../capacitor-bridge';
+import { downloadFile, printViaNative } from '../capacitor-bridge';
 import {
     ONBOARDING_DOCS, DOC_STATUS, DOC_STATUS_META,
     HIRE_STATUS, HIRE_STATUS_META,
@@ -2771,9 +2771,7 @@ function HiringQrPanel({ isEs }) {
         // Open a new window with a print-friendly layout: big QR + the URL +
         // hire-now headline. Stick it on a window, give it to staff for
         // referral handoffs, etc.
-        const w = window.open('', '_blank');
-        if (!w) return;
-        w.document.write(`
+        const html = `
             <html>
                 <head>
                     <title>DD Mau — Hiring QR</title>
@@ -2795,7 +2793,13 @@ function HiringQrPanel({ isEs }) {
                     <div class="tag">Or visit the link above</div>
                 </body>
             </html>
-        `);
+        `;
+        // Native iOS/Android: window.open returns null inside the WebView, so
+        // route through the printer bridge like the app's other print paths.
+        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Hiring QR'); return; }
+        const w = window.open('', '_blank');
+        if (!w) return;
+        w.document.write(html);
         w.document.close();
         setTimeout(() => { try { w.print(); } catch {} }, 300);
     };

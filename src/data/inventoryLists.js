@@ -239,7 +239,10 @@ export async function deactivateAll({ byName }) {
 // Live subscription to every list in the collection — feeds the admin
 // page's "All lists" grid.
 export function subscribeAllLists(cb) {
-    const q = query(collection(db, 'inventory_lists'), orderBy('createdAt', 'desc'));
+    // limit(100): defense-in-depth. Old lists are hard-deleted so this stays
+    // tiny in practice, but cap the live read so a future bug that stops
+    // deleting can't stream an unbounded collection to every admin client.
+    const q = query(collection(db, 'inventory_lists'), orderBy('createdAt', 'desc'), limit(100));
     return onSnapshot(q, (snap) => {
         const list = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() }));
