@@ -252,6 +252,47 @@ export async function uploadImageBlobs({ blobs, folder, slugPrefix }) {
     return urls;
 }
 
+// Load an image so it can be drawn to a <canvas> and read back (toBlob)
+// WITHOUT tainting it. Prefers fetch → blob → object URL: a blob: URL is
+// same-origin, so the canvas stays clean even if the original response was
+// cached earlier WITHOUT CORS headers (e.g. an <img> that displayed it first —
+// a well-known WebKit/Chromium taint gotcha). Falls back to a classic
+// crossOrigin <img>. Either path needs this origin in the bucket CORS
+// allowlist (cors.json) — incl. the Capacitor native origins
+// capacitor://localhost (iOS) and https://localhost (Android).
+// Returns { img, release } — call release() once the canvas draw is done.
+async function loadImageForCanvas(url) {
+    try {
+        const resp = await fetch(url, { mode: 'cors', cache: 'reload' });
+        if (resp.ok) {
+            const blob = await resp.blob();
+            const objUrl = URL.createObjectURL(blob);
+            try {
+                const img = await new Promise((resolve, reject) => {
+                    const im = new Image();
+                    im.onload = () => resolve(im);
+                    im.onerror = () => reject(new Error('decode failed'));
+                    im.src = objUrl;
+                });
+                return { img, release: () => { try { URL.revokeObjectURL(objUrl); } catch {} } };
+            } catch (e) {
+                try { URL.revokeObjectURL(objUrl); } catch {}
+                throw e;
+            }
+        }
+    } catch {
+        // fetch blocked / network issue → fall back to crossOrigin <img>
+    }
+    const img = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.crossOrigin = 'anonymous';
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error(`failed to load image for baking: ${url}`));
+        im.src = url;
+    });
+    return { img, release: () => {} };
+}
+
 // Bake price overlays directly into a menu image, returning the
 // download URL of the new (rendered) image.
 //
@@ -289,14 +330,9 @@ export async function bakePriceOverlaysIntoImage({ imageUrl, priceZones, slugPre
         return imageUrl;   // nothing to bake — return original
     }
 
-    // Load image with CORS so canvas is exportable.
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = () => reject(new Error(`failed to load image for baking: ${imageUrl}`));
-        img.src = imageUrl;
-    });
+    // Load image so the canvas stays exportable (untainted) — see
+    // loadImageForCanvas; works on web + the Capacitor native origins.
+    const { img, release } = await loadImageForCanvas(imageUrl);
 
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth;
@@ -306,6 +342,7 @@ export async function bakePriceOverlaysIntoImage({ imageUrl, priceZones, slugPre
 
     // Paint the original image first.
     ctx.drawImage(img, 0, 0);
+    release();   // pixels are on the canvas now — free the blob URL
 
     // Layout constants — mirror the runtime PriceOverlay component
     // so the baked image looks identical to the live overlay.
@@ -380,13 +417,7 @@ export async function bakePriceOverlaysIntoImage({ imageUrl, priceZones, slugPre
 export async function bakePictureEdits({ originalUrl, crop = null, texts = [], bursts = [], slugPrefix = 'pic' }) {
     if (!originalUrl) throw new Error('originalUrl required');
 
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = () => reject(new Error(`failed to load image for baking: ${originalUrl}`));
-        img.src = originalUrl;
-    });
+    const { img, release } = await loadImageForCanvas(originalUrl);
 
     const natW = img.naturalWidth, natH = img.naturalHeight;
     // Source rectangle (the crop), in original pixels. Default = whole image.
@@ -417,6 +448,7 @@ export async function bakePictureEdits({ originalUrl, crop = null, texts = [], b
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, outW, outH);
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+    release();   // pixels are on the canvas now — free the blob URL
 
     // Elements are stored as fractions of the ORIGINAL image (stable across
     // re-crops). Convert each to output pixels through the crop window.

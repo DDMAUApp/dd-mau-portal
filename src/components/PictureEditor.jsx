@@ -255,7 +255,7 @@ export default function PictureEditor({
                     ))}
                 </div>
 
-                <div className="flex-1 flex min-h-0">
+                <div className="flex-1 flex flex-col sm:flex-row min-h-0">
                     {/* Stage */}
                     <div className="flex-1 overflow-auto p-4 bg-stone-800 flex items-center justify-center min-h-0">
                         {src ? (
@@ -266,7 +266,7 @@ export default function PictureEditor({
                                 onPointerMove={onPointerMove}
                                 onPointerUp={onPointerUp}>
                                 <img ref={imgRef} src={src} alt="picture" draggable={false} onLoad={onImgLoad}
-                                    className="block" style={{ maxWidth: '100%', maxHeight: '74vh' }} />
+                                    className="block max-w-full max-h-[44vh] sm:max-h-[74vh]" />
 
                                 {/* Crop dim overlays (outside = darkened) */}
                                 {liveCrop && (
@@ -330,8 +330,11 @@ export default function PictureEditor({
                         )}
                     </div>
 
-                    {/* Inspector */}
-                    <div className="w-64 flex-shrink-0 border-l border-dd-line bg-white overflow-y-auto p-3 hidden sm:block">
+                    {/* Inspector — desktop: right sidebar (always shown). Mobile: a
+                        bottom panel that appears whenever an element is selected.
+                        Adding Text/Starburst auto-selects, so it pops up ready to
+                        edit — this is where you type the words / price. */}
+                    <div className={`w-full sm:w-64 flex-shrink-0 border-t sm:border-t-0 sm:border-l border-dd-line bg-white overflow-y-auto p-3 max-h-[44vh] sm:max-h-none ${selId ? 'block' : 'hidden'} sm:block`}>
                         {!selId && (
                             <div className="text-[12px] text-dd-text-2 leading-relaxed">
                                 <p className="font-bold text-dd-text mb-1">{tx('No element selected', 'Nada seleccionado')}</p>
@@ -349,8 +352,9 @@ export default function PictureEditor({
                                 </div>
                                 <textarea value={selectedText.text}
                                     onChange={(e) => updateText(selId, { text: e.target.value })}
-                                    rows={2}
-                                    className="w-full px-2 py-1.5 rounded border border-dd-line text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-300" />
+                                    rows={2} autoFocus
+                                    placeholder={tx('Type your words…', 'Escribe tus palabras…')}
+                                    className="w-full px-2 py-1.5 rounded border border-dd-line text-base resize-none focus:outline-none focus:ring-2 focus:ring-violet-300" />
                                 <label className="block">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Size', 'Tamaño')}</span>
                                     <input type="range" min="0.02" max="0.30" step="0.005"
@@ -390,7 +394,7 @@ export default function PictureEditor({
                                 <input type="text" value={selectedBurst.text}
                                     onChange={(e) => updateBurst(selId, { text: e.target.value })}
                                     placeholder={tx('e.g. $5.99', 'ej. $5.99')}
-                                    className="w-full px-2 py-1.5 rounded border border-dd-line text-sm font-bold text-center focus:outline-none focus:ring-2 focus:ring-violet-300" />
+                                    className="w-full px-2 py-1.5 rounded border border-dd-line text-base font-bold text-center focus:outline-none focus:ring-2 focus:ring-violet-300" />
                                 <div>
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Shape', 'Forma')}</span>
                                     <div className="flex gap-1.5 mt-1">
