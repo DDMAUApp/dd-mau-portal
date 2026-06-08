@@ -28,6 +28,7 @@ import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin } from '../data/staff';
 import { toast } from '../toast';
 import { printViaNative } from '../capacitor-bridge';
+import { DEFAULT_SAUCES } from '../data/sauces';
 
 const DAYS = [
     { key: 'mon', en: 'Monday',    es: 'Lunes' },
@@ -72,9 +73,16 @@ function emptyDays() {
 }
 // Seed a side's pool. BOH = the kitchen list above; FOH starts empty (Andrew
 // fills it in). Stable ids so a re-seed never duplicates.
+// Bump SEED_VERSION whenever BOH_ITEMS / the sauce list changes, so already-
+// seeded boards merge in the new items (see the seed-merge in the effect).
+const SEED_VERSION = 2;
 function buildSeed(side) {
     if (side === 'boh') {
-        const pool = BOH_ITEMS.map(([en, es], i) => ({ id: `boh-${i}`, en, es, hours: null, note: '', addedAt: null, addedBy: 'system' }));
+        const pool = [
+            ...BOH_ITEMS.map(([en, es], i) => ({ id: `boh-${i}`, en, es, hours: null, note: '', addedAt: null, addedBy: 'system' })),
+            // All sauces from the Sauce Log (src/data/sauces.js). Andrew 2026-06-08.
+            ...DEFAULT_SAUCES.map(s => ({ id: `sauce-${s.id}`, en: s.nameEn, es: s.nameEs || s.nameEn, hours: null, note: '', addedAt: null, addedBy: 'system' })),
+        ];
         return { pool, days: emptyDays() };
     }
     return { pool: [], days: emptyDays() };
@@ -132,6 +140,7 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
     const [addName, setAddName] = useState('');
     const [editTarget, setEditTarget] = useState(null); // {type:'item',id} | {type:'day',key}
     const seededRef = useRef(new Set());
+    const migratedRef = useRef(new Set());
 
     const ref = useMemo(
         () => (storeLocation ? doc(db, 'ops', `prepBoard_${storeLocation}_${side}`) : null),
@@ -145,17 +154,37 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         // of the other side's items when toggling FOH/BOH.
         setBoard(buildSeed(side));
         setSelectedId(null);
-        const unsub = onSnapshot(ref, async (snap) => {
+        const r = ref;
+        const unsub = onSnapshot(r, async (snap) => {
             if (snap.exists() && Array.isArray(snap.data()?.pool)) {
                 const data = snap.data();
                 setBoard({ pool: data.pool, days: normalizeDays(data.days) });
-            } else if (!seededRef.current.has(ref.path)) {
-                seededRef.current.add(ref.path);
+                // One-time seed-merge: when the seed gains items (e.g. the sauces
+                // added in v2), push any that are MISSING into an already-seeded
+                // board without disturbing the user's existing layout.
+                if (side === 'boh' && (data.seedVersion || 1) < SEED_VERSION && !migratedRef.current.has(r.path)) {
+                    migratedRef.current.add(r.path);
+                    try {
+                        await runTransaction(db, async (t) => {
+                            const s = await t.get(r);
+                            if (!s.exists() || !Array.isArray(s.data()?.pool)) return;
+                            const cur = s.data();
+                            if ((cur.seedVersion || 1) >= SEED_VERSION) return; // already merged
+                            const days = normalizeDays(cur.days);
+                            const present = new Set(cur.pool.map(i => i.id));
+                            for (const k of DAY_KEYS) days[k].items.forEach(i => present.add(i.id));
+                            const additions = buildSeed('boh').pool.filter(it => !present.has(it.id));
+                            t.set(r, { pool: [...cur.pool, ...additions], days, seeded: true, side: 'boh', seedVersion: SEED_VERSION, updatedAt: serverTimestamp(), updatedBy: 'system' });
+                        });
+                    } catch (e) { console.warn('[prepBoard] seed-merge failed:', e?.message); }
+                }
+            } else if (!seededRef.current.has(r.path)) {
+                seededRef.current.add(r.path);
                 try {
                     await runTransaction(db, async (t) => {
-                        const s = await t.get(ref);
+                        const s = await t.get(r);
                         if (s.exists() && Array.isArray(s.data()?.pool)) return; // someone else seeded
-                        t.set(ref, { ...buildSeed(side), seeded: true, side, updatedAt: serverTimestamp(), updatedBy: staffName || 'system' });
+                        t.set(r, { ...buildSeed(side), seeded: true, side, seedVersion: SEED_VERSION, updatedAt: serverTimestamp(), updatedBy: staffName || 'system' });
                     });
                 } catch (e) { console.warn('[prepBoard] seed failed:', e?.message); }
             }
