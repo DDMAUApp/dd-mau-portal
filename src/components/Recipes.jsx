@@ -15,7 +15,7 @@ const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 // Re-PIN window — staff must re-enter PIN if no recipe was opened in this many ms.
 const REPIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 // Auto-collapse — after this many ms of no activity, expanded recipe closes.
-const AUTO_COLLAPSE_MS = 90 * 1000; // 90s
+// AUTO_COLLAPSE_MS removed 2026-06-08 — recipe auto-close disabled (Andrew).
 // "Quick blur" window — iOS taking a screenshot causes a brief blur → focus
 // pattern (the system grabs focus to show the screenshot thumbnail). If a
 // blur event is followed by focus inside this window, we count it as a
@@ -272,29 +272,9 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // Pending-recipe-id we tried to expand right before the PIN prompt fired.
     // We re-open it after a successful unlock so the user doesn't lose context.
     const [pendingExpandId, setPendingExpandId] = useState(null);
-    const autoCollapseTimerRef = useRef(null);
-
-    // Auto-collapse — close the open recipe after 90s of no scroll/touch/click.
-    // Reduces the "phone left face-up on the prep counter" attack window.
-    useEffect(() => {
-        if (!expandedRecipe) {
-            if (autoCollapseTimerRef.current) clearTimeout(autoCollapseTimerRef.current);
-            return;
-        }
-        const reset = () => {
-            if (autoCollapseTimerRef.current) clearTimeout(autoCollapseTimerRef.current);
-            autoCollapseTimerRef.current = setTimeout(() => {
-                setExpandedRecipe(null);
-            }, AUTO_COLLAPSE_MS);
-        };
-        reset();
-        const events = ['scroll', 'touchstart', 'touchmove', 'mousemove', 'click', 'keydown'];
-        events.forEach(ev => window.addEventListener(ev, reset, { passive: true }));
-        return () => {
-            if (autoCollapseTimerRef.current) clearTimeout(autoCollapseTimerRef.current);
-            events.forEach(ev => window.removeEventListener(ev, reset));
-        };
-    }, [expandedRecipe]);
+    // 2026-06-08 — Auto-collapse REMOVED (Andrew: "recipe auto-closes too soon
+    // … take off the auto close"). An expanded recipe now stays open until the
+    // cook taps the header to close it. (Was: collapse after 90s of idle.)
 
     // Scale ingredient quantities. Handles:
     //   - Plain integers, decimals: "12", "12.5"
@@ -319,11 +299,25 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
             '⅕': 0.2, '⅖': 0.4, '⅗': 0.6, '⅘': 0.8,
         };
         const FRACS = Object.keys(FRAC_MAP).join('');
-        // Match the leading quantity (most specific first).
+        // Match EVERY quantity in the line (global g flag), not just the
+        // leading one, so mid-sentence amounts scale too — e.g.
+        // "1 gallon and 9 cups" or "Set aside: 1 cup". Most-specific
+        // alternatives first so mixed numbers ("1 1/2", "2½") match as one unit.
         const re = new RegExp(
-            '^(\\d+\\s*[' + FRACS + ']|\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|[' + FRACS + ']|\\d+\\.?\\d*)'
+            '(\\d+\\s*[' + FRACS + ']|\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|[' + FRACS + ']|\\d+\\.?\\d*)',
+            'g'
         );
-        const replaced = body.replace(re, (match) => {
+        const replaced = body.replace(re, (match, _p1, offset, full) => {
+            // Skip numbers that AREN'T batch quantities, so they don't wrongly
+            // multiply:
+            //   • glued to a word — the "8" in "V8"
+            //   • a hyphenated fixed size — "5-gallon" bucket, "1 (2-quart)"
+            //   • a per-unit pack size — "2 cans (5 lb each)" keeps "5 lb each"
+            const before = offset > 0 ? full[offset - 1] : '';
+            if (/[A-Za-z]/.test(before)) return match;
+            const after = full.slice(offset + match.length);
+            if (/^-[A-Za-z]/.test(after)) return match;
+            if (/^(\s+[A-Za-z.]+)?\s+each\b/i.test(after)) return match;
             let num;
             const noWs = match.replace(/\s+/g, '');
             // Mixed Unicode like "1½"
