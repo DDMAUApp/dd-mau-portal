@@ -6239,40 +6239,71 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             The scrollbar-thin pattern matches every other
                             horizontally-scrollable strip in the app
                             (ChatCenter sub-tabs, Schedule day strip). */}
-                    <div className="border-b border-dd-line mb-4">
-                        <div className="flex overflow-x-auto scrollbar-thin -mb-px">
-                            {[
-                                { id: 'checklist', en: 'Tasks',     es: 'Tareas',     icon: '✓' },
-                                // Mgr Tasks sub-tab removed 2026-05-28 —
-                                // Andrew: "take out the managers task. i
-                                // want to do this in the task tab." The
-                                // manager/shift-lead-only kanban now
-                                // renders INSIDE the Tasks tab body
-                                // alongside the existing checklist
-                                // (see renderChecklist).
-                                { id: 'assign',    en: 'Assign',    es: 'Asignar',    icon: '🎯' },
-                                { id: 'wall',      en: 'Wall',      es: 'Muro',       icon: '📺' },
-                                { id: 'saucelog',  en: 'Sauce Log', es: 'Salsas',     icon: '🥢' },
-                                { id: 'inventory', en: t('inventory', 'en'), es: t('inventory', 'es'), icon: '📦' },
-                                { id: 'breaks',    en: 'Breaks',    es: 'Descansos',  icon: '☕' },
-                                { id: 'prep',      en: 'Prep',      es: 'Prep',       icon: '🔪' },
-                            ].map(t2 => {
-                                const isActive = activeTab === t2.id;
-                                return (
-                                    <button key={t2.id}
-                                        onClick={() => { setActiveTab(t2.id); setEditMode(false); setEditingIdx?.(null); setShowAddForm?.(false); }}
-                                        className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-bold whitespace-nowrap transition border-b-2 flex items-center gap-1.5 ${
-                                            isActive
-                                                ? 'text-dd-green border-dd-green'
-                                                : 'text-dd-text-2 border-transparent hover:text-dd-text hover:border-dd-line'
-                                        }`}>
-                                        <span className="opacity-90">{t2.icon}</span>
-                                        <span>{language === "es" ? t2.es : t2.en}</span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
+                    {/* 2026-06-08 — Operations sub-nav. Andrew: on a phone the
+                        7 tabs overflowed into a sideways scroll (had to swipe
+                        right to reach Inventory/Prep). MOBILE now shows a 2-row
+                        Apple-glass button grid (no horizontal scroll); DESKTOP
+                        keeps the original underline tab strip, unchanged. One
+                        shared tab list feeds both so they never drift. */}
+                    {(() => {
+                        const opsTabs = [
+                            { id: 'checklist', en: 'Tasks',     es: 'Tareas',     icon: '✓' },
+                            // Mgr Tasks sub-tab removed 2026-05-28 — the
+                            // manager/shift-lead kanban now renders INSIDE the
+                            // Tasks tab body (see renderChecklist).
+                            { id: 'assign',    en: 'Assign',    es: 'Asignar',    icon: '🎯' },
+                            { id: 'wall',      en: 'Wall',      es: 'Muro',       icon: '📺' },
+                            { id: 'saucelog',  en: 'Sauce Log', es: 'Salsas',     icon: '🥢' },
+                            { id: 'inventory', en: t('inventory', 'en'), es: t('inventory', 'es'), icon: '📦' },
+                            { id: 'breaks',    en: 'Breaks',    es: 'Descansos',  icon: '☕' },
+                            { id: 'prep',      en: 'Prep',      es: 'Prep',       icon: '🔪' },
+                        ];
+                        // Identical behavior to before — switch tab + reset the
+                        // edit/add affordances so a half-open form doesn't bleed
+                        // across tabs.
+                        const pick = (id) => { setActiveTab(id); setEditMode(false); setEditingIdx?.(null); setShowAddForm?.(false); };
+                        return (
+                            <>
+                                {/* MOBILE (<sm) — 2-row Apple-glass button grid, no sideways scroll */}
+                                <div className="sm:hidden grid grid-cols-4 gap-1.5 mb-4">
+                                    {opsTabs.map(t2 => {
+                                        const isActive = activeTab === t2.id;
+                                        return (
+                                            <button key={t2.id} type="button"
+                                                aria-pressed={isActive}
+                                                onClick={() => pick(t2.id)}
+                                                className={`glass-button-apple !flex-col !gap-0.5 !px-1 !py-2 !text-[11px] rounded-2xl min-h-[3.4rem] font-bold text-center leading-tight ${
+                                                    isActive ? '!text-dd-green ring-2 ring-dd-green/70' : '!text-dd-text-2'
+                                                }`}>
+                                                <span className="text-lg leading-none">{t2.icon}</span>
+                                                <span className="break-words">{language === "es" ? t2.es : t2.en}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                {/* DESKTOP (≥sm) — original underline tab strip, unchanged */}
+                                <div className="hidden sm:block border-b border-dd-line mb-4">
+                                    <div className="flex overflow-x-auto scrollbar-thin -mb-px">
+                                        {opsTabs.map(t2 => {
+                                            const isActive = activeTab === t2.id;
+                                            return (
+                                                <button key={t2.id}
+                                                    onClick={() => pick(t2.id)}
+                                                    className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-bold whitespace-nowrap transition border-b-2 flex items-center gap-1.5 ${
+                                                        isActive
+                                                            ? 'text-dd-green border-dd-green'
+                                                            : 'text-dd-text-2 border-transparent hover:text-dd-text hover:border-dd-line'
+                                                    }`}>
+                                                    <span className="opacity-90">{t2.icon}</span>
+                                                    <span>{language === "es" ? t2.es : t2.en}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </>
+                        );
+                    })()}
 
                     {/* {"\u{2500}"}{"\u{2500}"} TASK DEADLINE ALERTS {"\u{2500}"}{"\u{2500}"} */}
                     {activeAlerts.length > 0 && (
