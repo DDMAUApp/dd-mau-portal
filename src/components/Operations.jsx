@@ -26,6 +26,10 @@ import { escapeHtml as escH } from '../data/htmlEscape';
 // chunk loaded on first navigation to its tab.
 const InventoryHistory   = lazy(() => import('./InventoryHistory'));
 const PrepList           = lazy(() => import('./PrepList'));
+// 2026-06-08 — Prep tab now renders the weekly PrepBoard (2-col planner).
+// PrepList kept imported for easy one-line revert; its ops/prepList_ data is
+// untouched.
+const PrepBoard          = lazy(() => import('./PrepBoard'));
 const SauceLog           = lazy(() => import('./SauceLog'));
 // SauceLogBohBanner stays eager — it's small (128 lines) and renders
 // inline as a banner above the Tasks list, not behind a sub-tab.
@@ -9660,7 +9664,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                     {activeTab === "prep" && (
                         <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>
-                            <PrepList
+                            <PrepBoard
                                 language={language}
                                 staffName={staffName}
                                 storeLocation={storeLocation}
