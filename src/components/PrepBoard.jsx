@@ -15,9 +15,13 @@
 //
 // Model — Firestore ops/prepBoard_{location}_{side}  (side = 'boh' | 'foh'):
 //   { pool: Item[], days: { mon:{items:Item[],note}, … sat }, side, seeded, updatedAt, updatedBy }
-//   Item = { id, en, es, hours: number|null, note: string }
-// Each item lives in exactly ONE bucket (pool OR a single day). Standing WEEKLY
-// template (day-of-week, not dated). Real-time synced via transactions.
+//   Item = { id, en, es, hours: number|null, note: string, srcId? }
+// The POOL is the permanent master list — items NEVER leave it. Assigning a
+// master to a day adds a COPY there (fresh id + srcId → master) so the SAME prep
+// can be scheduled on MULTIPLE days (Andrew 2026-06-08: "items can be prepped
+// multiple days, keep the item on the list when copied"). Each day-copy carries
+// its own hours/note. Standing WEEKLY template (day-of-week, not dated).
+// Real-time synced via transactions.
 //
 // The legacy PrepList component + its ops/prepList_{loc} data are left intact
 // (these are brand-new docs), so the change is fully revertible.
@@ -73,9 +77,12 @@ function emptyDays() {
 }
 // Seed a side's pool. BOH = the kitchen list above; FOH starts empty (Andrew
 // fills it in). Stable ids so a re-seed never duplicates.
-// Bump SEED_VERSION whenever BOH_ITEMS / the sauce list changes, so already-
-// seeded boards merge in the new items (see the seed-merge in the effect).
-const SEED_VERSION = 2;
+// Bump SEED_VERSION whenever BOH_ITEMS / the sauce list changes (already-seeded
+// boards merge in the new items — see the seed-merge in the effect).
+//   v2: added Sauce Log sauces.  v3: copy-model migration — guarantee every seed
+//   master is in the POOL (restores any that the old move-model had pulled into a
+//   day) and tag stray day items with a srcId so they read as copies.
+const SEED_VERSION = 3;
 function buildSeed(side) {
     if (side === 'boh') {
         const pool = [
@@ -118,6 +125,10 @@ function findItem(b, id) {
 const itemHours = (it) => (typeof it.hours === 'number' && isFinite(it.hours) ? it.hours : 0);
 const sumHours = (items) => items.reduce((a, it) => a + itemHours(it), 0);
 const fmtHrs = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+// Each day holds COPIES of pool masters — a fresh unique id + a srcId back to the
+// master, so one master can sit on many days and each copy is removable on its own.
+const copyId = (srcId) => `${srcId}__${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+const isMaster = (b, id) => b.pool.some(i => i.id === id);
 
 export default function PrepBoard({ language, staffName, storeLocation, staffList }) {
     const es = language === 'es';
@@ -171,9 +182,20 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
                             const cur = s.data();
                             if ((cur.seedVersion || 1) >= SEED_VERSION) return; // already merged
                             const days = normalizeDays(cur.days);
-                            const present = new Set(cur.pool.map(i => i.id));
-                            for (const k of DAY_KEYS) days[k].items.forEach(i => present.add(i.id));
-                            const additions = buildSeed('boh').pool.filter(it => !present.has(it.id));
+                            const seedPool = buildSeed('boh').pool;
+                            const seedIds = new Set(seedPool.map(i => i.id));
+                            // v3 copy-model migration: a stray day item that IS a seed master
+                            // (placed by the old move-model, no srcId) becomes a COPY — tag it
+                            // with srcId + a fresh id so the master id is free for the pool.
+                            for (const k of DAY_KEYS) {
+                                days[k].items = days[k].items.map(it =>
+                                    (!it.srcId && seedIds.has(it.id)) ? { ...it, srcId: it.id, id: copyId(it.id) } : it
+                                );
+                            }
+                            // Guarantee every seed master is in the POOL (restores any the old
+                            // model had pulled into a day, plus any brand-new seed items).
+                            const poolIds = new Set(cur.pool.map(i => i.id));
+                            const additions = seedPool.filter(it => !poolIds.has(it.id));
                             t.set(r, { pool: [...cur.pool, ...additions], days, seeded: true, side: 'boh', seedVersion: SEED_VERSION, updatedAt: serverTimestamp(), updatedBy: 'system' });
                         });
                     } catch (e) { console.warn('[prepBoard] seed-merge failed:', e?.message); }
@@ -215,11 +237,47 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
     };
 
     // ── Mutators ────────────────────────────────────────────────────
+    // Clearing a day drops its copies (the master stays on the list), but RESCUES
+    // any item with no surviving master back to the pool (legacy/orphan items from
+    // the old move-model) so nothing is ever lost.
+    const dropOrRescue = (b, it) => {
+        const masterAlive = (it.srcId && b.pool.some(p => p.id === it.srcId)) || b.pool.some(p => p.id === it.id);
+        if (!masterAlive) { const m = { ...it }; delete m.srcId; b.pool.push(m); }
+    };
     const moveToDay = (id, dayKey) => writeBoard(b => { const it = pluck(b, id); if (it) b.days[dayKey].items.push(it); return b; });
-    const moveToPool = (id) => writeBoard(b => { const it = pluck(b, id); if (it) b.pool.push(it); return b; });
-    const clearDay = (dayKey) => writeBoard(b => { for (const it of b.days[dayKey].items) b.pool.push(it); b.days[dayKey].items = []; return b; });
-    const removeItem = (id) => writeBoard(b => { pluck(b, id); return b; });
-    const updateItem = (id, patch) => writeBoard(b => { const it = findItem(b, id); if (it) Object.assign(it, patch); return b; });
+    // COPY a pool master into a day (master stays on the list → multi-day prep).
+    // Re-tapping the same day toggles the copy OFF. The id is generated ONCE here
+    // so the optimistic + transaction passes write the same value.
+    const toggleCopyInDay = (masterId, dayKey) => {
+        const newId = copyId(masterId);
+        const stamp = Date.now();
+        writeBoard(b => {
+            const day = b.days[dayKey];
+            const at = day.items.findIndex(i => i.srcId === masterId || i.id === masterId);
+            if (at >= 0) { day.items.splice(at, 1); return b; }            // toggle off
+            const master = b.pool.find(i => i.id === masterId);
+            if (!master) return b;
+            day.items.push({ ...clone(master), id: newId, srcId: masterId, addedAt: stamp, addedBy: staffName || '' });
+            return b;
+        });
+    };
+    const clearDay = (dayKey) => writeBoard(b => { for (const it of b.days[dayKey].items) dropOrRescue(b, it); b.days[dayKey].items = []; return b; });
+    // Deleting a POOL master also purges every day-copy of it; deleting a day-copy
+    // just removes that one.
+    const removeItem = (id) => writeBoard(b => {
+        const wasMaster = isMaster(b, id);
+        pluck(b, id);
+        if (wasMaster) for (const k of DAY_KEYS) b.days[k].items = b.days[k].items.filter(i => i.srcId !== id);
+        return b;
+    });
+    // Editing a POOL master propagates the bilingual name to its day-copies
+    // (hours / notes stay per-day).
+    const updateItem = (id, patch) => writeBoard(b => {
+        const it = findItem(b, id); if (!it) return b;
+        Object.assign(it, patch);
+        if (isMaster(b, id)) for (const k of DAY_KEYS) b.days[k].items.forEach(c => { if (c.srcId === id) { c.en = it.en; c.es = it.es; } });
+        return b;
+    });
     const setDayNote = (dayKey, note) => writeBoard(b => { b.days[dayKey].note = note; return b; });
     const addPrep = (name) => {
         const nm = (name || '').trim();
@@ -240,9 +298,18 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
     // ── Selection ───────────────────────────────────────────────────
     const selectedItem = findItem(board, selectedId);
     const selectedDayKey = DAY_KEYS.find(k => board.days[k].items.some(i => i.id === selectedId)) || null;
+    const selectedIsMaster = !!selectedItem && isMaster(board, selectedId);
     const toggleSelect = (id) => setSelectedId(prev => (prev === id ? null : id));
-    const assignToDay = (dayKey) => { if (selectedId) { moveToDay(selectedId, dayKey); setSelectedId(null); } };
-    const returnToList = () => { if (selectedId) { moveToPool(selectedId); setSelectedId(null); } };
+    // Tap a day with something selected: a POOL master COPIES into that day and
+    // STAYS selected (so you can tap more days for a multi-day prep); a DAY-copy
+    // MOVES to the tapped day.
+    const assignToDay = (dayKey) => {
+        if (!selectedId) return;
+        if (selectedIsMaster) { toggleCopyInDay(selectedId, dayKey); }
+        else { moveToDay(selectedId, dayKey); setSelectedId(null); }
+    };
+    // Take a selected day-copy off its day (the master stays on the list).
+    const returnToList = () => { if (selectedId && selectedDayKey) { removeItem(selectedId); setSelectedId(null); } };
 
     const filteredPool = useMemo(() => {
         const q = filter.trim().toLowerCase();
@@ -286,9 +353,9 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         }
     };
     const clearWeek = () => {
-        if (!confirm(tx('Clear the week? Everything goes back to the list (nothing is deleted). Save first if you want a copy.', '¿Limpiar la semana? Todo regresa a la lista (nada se elimina). Guarda primero si quieres una copia.'))) return;
+        if (!confirm(tx('Clear all days? Your prep list stays — only the day assignments are removed. Save first if you want a copy.', '¿Limpiar todos los días? Tu lista de prep permanece — solo se quitan las asignaciones. Guarda primero si quieres una copia.'))) return;
         setSelectedId(null);
-        writeBoard(b => { for (const k of DAY_KEYS) { for (const it of b.days[k].items) b.pool.push(it); b.days[k] = { items: [], note: '' }; } return b; });
+        writeBoard(b => { for (const k of DAY_KEYS) { for (const it of b.days[k].items) dropOrRescue(b, it); b.days[k] = { items: [], note: '' }; } return b; });
     };
     const restoreSnapshot = (snap) => {
         if (!confirm(tx('Load this saved copy? It replaces the current board (the saved copy is kept).', '¿Cargar esta copia? Reemplaza el tablero actual (la copia se conserva).'))) return;
@@ -369,15 +436,18 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         const d = board.days[day.key];
         const total = sumHours(d.items);
         const isTarget = !!selectedId;
+        // Master selected AND already scheduled on this day → tapping toggles it off.
+        const hasSelected = selectedIsMaster && d.items.some(i => i.srcId === selectedId || i.id === selectedId);
         return (
             <div key={day.key} className="rounded-xl border border-dd-line bg-dd-surface overflow-hidden">
                 <button type="button" onClick={() => assignToDay(day.key)} disabled={!selectedId}
-                    className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left transition ${isTarget ? 'bg-dd-green/10 ring-1 ring-inset ring-dd-green/40' : 'bg-dd-bg/40'}`}>
+                    className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left transition ${hasSelected ? 'bg-dd-green/20 ring-1 ring-inset ring-dd-green/60' : isTarget ? 'bg-dd-green/10 ring-1 ring-inset ring-dd-green/40' : 'bg-dd-bg/40'}`}>
                     <span className="font-black text-[13px] text-dd-text">{tx(day.en, day.es)}</span>
                     <span className="text-[10px] font-bold text-dd-text-2 flex items-center gap-1.5">
                         <span>{d.items.length}</span>
                         {total > 0 && <span className="text-dd-green">{fmtHrs(total)}h</span>}
-                        {isTarget && <span className="text-dd-green">→ {tx('here', 'aquí')}</span>}
+                        {hasSelected ? <span className="text-dd-green">✓ {tx('on · tap off', 'sí · quitar')}</span>
+                            : isTarget ? <span className="text-dd-green">+ {tx('add', 'agregar')}</span> : null}
                     </span>
                 </button>
                 {d.note && <div className="px-2.5 py-1 text-[11px] italic text-dd-text-2 border-b border-dd-line/60">📝 {d.note}</div>}
@@ -427,20 +497,22 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
             <div className="text-[11px] text-dd-text-2 font-semibold mb-2">
                 {side === 'foh' && board.pool.length === 0 && DAY_KEYS.every(k => board.days[k].items.length === 0)
                     ? tx('Front of House is empty — tap "+ write in prep" to add items.', 'Frente está vacío — toca "+ escribir prep" para agregar.')
-                    : tx('Tap a prep, then a day to place it.', 'Toca un prep, luego un día.')}
+                    : tx('Tap a prep, then tap each day to schedule it — it stays on the list.', 'Toca un prep, luego cada día — permanece en la lista.')}
             </div>
 
             {/* Selection action bar */}
             {selectedItem && (
                 <div className="sticky top-0 z-10 mb-2 rounded-xl border border-dd-green bg-dd-green/10 px-2.5 py-2 flex items-center gap-2 flex-wrap backdrop-blur">
                     <span className="text-[12px] font-bold text-dd-text flex-1 min-w-0 break-words">
-                        {tx('Moving', 'Moviendo')}: {es ? (selectedItem.es || selectedItem.en) : selectedItem.en}
+                        {selectedIsMaster
+                            ? <>{tx('Adding', 'Agregando')}: {es ? (selectedItem.es || selectedItem.en) : selectedItem.en} <span className="font-normal text-dd-text-2">— {tx('tap each day', 'toca cada día')}</span></>
+                            : <>{tx('Moving', 'Moviendo')}: {es ? (selectedItem.es || selectedItem.en) : selectedItem.en}</>}
                     </span>
                     {selectedDayKey && (
-                        <button type="button" onClick={returnToList} className="text-[11px] font-bold px-2 py-1 rounded-lg bg-white border border-dd-line">↩ {tx('List', 'Lista')}</button>
+                        <button type="button" onClick={returnToList} className="text-[11px] font-bold px-2 py-1 rounded-lg bg-white border border-dd-line text-red-600">✕ {tx('Off day', 'Quitar')}</button>
                     )}
                     <button type="button" onClick={() => setEditTarget({ type: 'item', id: selectedId })} className="text-[11px] font-bold px-2 py-1 rounded-lg bg-white border border-dd-line">✎</button>
-                    <button type="button" onClick={() => setSelectedId(null)} className="text-[11px] font-bold px-2 py-1 rounded-lg bg-white border border-dd-line">✕</button>
+                    <button type="button" onClick={() => setSelectedId(null)} className="text-[11px] font-bold px-2 py-1 rounded-lg bg-white border border-dd-line">{tx('Done', 'Listo')}</button>
                 </div>
             )}
 
@@ -454,8 +526,8 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
                     </div>
                     {selectedDayKey && (
                         <button type="button" onClick={returnToList}
-                            className="w-full text-[11px] font-bold text-dd-green bg-dd-green/10 ring-1 ring-inset ring-dd-green/40 py-1.5">
-                            ↩ {tx('Tap to return here', 'Regresar aquí')}
+                            className="w-full text-[11px] font-bold text-red-600 bg-red-50 ring-1 ring-inset ring-red-200 py-1.5">
+                            ✕ {tx('Tap to take this off the day', 'Quitar del día')}
                         </button>
                     )}
                     <div className="p-1.5 space-y-1 border-b border-dd-line/60">
