@@ -1172,16 +1172,48 @@ function SplitModeLayout({
 // When the text is wider than the screen, scrolls horizontally
 // like a marquee so long promos stay legible without truncating.
 function PromoStrip({ promoStrip }) {
-    if (!promoStrip || promoStrip.enabled === false) return null;
-    const textEn = String(promoStrip.textEn || '').trim();
-    const textEs = String(promoStrip.textEs || '').trim();
+    // Compute everything BEFORE the hooks + the early return, guarding nulls —
+    // the hooks below must run unconditionally on every render (Rules of Hooks),
+    // so the "nothing to show" return has to come AFTER them.
+    const textEn = String(promoStrip?.textEn || '').trim();
+    const textEs = String(promoStrip?.textEs || '').trim();
     // We don't have a language signal at this layer (the TV display
     // is anonymous public). Show both languages separated by a wide
     // bullet when both are set; otherwise just the one that exists.
     const text = textEn && textEs
         ? `${textEn}   •   ${textEs}`
         : (textEn || textEs);
-    if (!text) return null;
+    const enabled = !!promoStrip && promoStrip.enabled !== false && !!text;
+
+    const speed = Number(promoStrip?.speed) || 0;
+    const isScrolling = enabled && speed > 0;
+
+    // Marquee speed as a CONSTANT pixels-per-second per tier, so the three tiers
+    // are clearly different AND the on-screen speed stays the same no matter how
+    // long the promo text is. Andrew: slow/med/fast all looked the same — make
+    // them distinct and the fast genuinely fast. (The old `100 - speed` formula
+    // gave 60/40/20s loops, which on a long marquee read nearly identical.)
+    const pxPerSec = speed >= 80 ? 240 : speed >= 60 ? 120 : 55;   // fast / medium / slow
+    const scrollRef = useRef(null);
+    const [loopSeconds, setLoopSeconds] = useState(16);
+    useEffect(() => {
+        if (!isScrolling) return undefined;
+        const measure = () => {
+            const el = scrollRef.current;
+            if (!el) return;
+            // The row holds TWO copies of the text; one seamless loop travels
+            // half the row's width (the keyframe runs translateX 0 → -50%).
+            const distance = el.getBoundingClientRect().width / 2;
+            if (distance > 0) setLoopSeconds(Math.max(4, distance / pxPerSec));
+        };
+        measure();
+        // Re-measure once after the webfont settles (text width changes) + on resize.
+        const t = setTimeout(measure, 400);
+        window.addEventListener('resize', measure);
+        return () => { clearTimeout(t); window.removeEventListener('resize', measure); };
+    }, [text, isScrolling, pxPerSec]);
+
+    if (!enabled) return null;
 
     const position = promoStrip.position === 'top' ? 'top' : 'bottom';
     const styleKey = ['sage', 'red', 'amber', 'sky', 'dark'].includes(promoStrip.style)
@@ -1199,18 +1231,16 @@ function PromoStrip({ promoStrip }) {
         dark:  'bg-stone-900 text-white',
     }[styleKey];
 
-    const speed = Number(promoStrip.speed) || 0;
-    const isScrolling = speed > 0;
-
     return (
         <div className={`fixed left-0 right-0 z-30 overflow-hidden px-6 py-2 font-sans font-black tracking-wide text-[clamp(14px,2vw,28px)] shadow-md ${STYLE_CLASS}`}
             style={{ [position]: 0 }}>
             {isScrolling ? (
-                <div className="whitespace-nowrap"
+                <div ref={scrollRef} className="whitespace-nowrap w-max"
                     style={{
-                        animation: `dd-mau-promo-scroll ${Math.max(8, 100 - speed)}s linear infinite`,
+                        animation: `dd-mau-promo-scroll ${loopSeconds}s linear infinite`,
                     }}>
-                    {/* Duplicate the text so the scroll loops seamlessly */}
+                    {/* Duplicate the text so the scroll loops seamlessly (w-max
+                        keeps the row at content width so -50% = exactly one copy) */}
                     {text}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{text}
                 </div>
             ) : (
