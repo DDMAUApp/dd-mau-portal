@@ -22,6 +22,7 @@ import {
     resetWallTasks,
 } from '../data/wallTasks';
 import { inferStaffSide } from '../data/assignedTasks';
+import { publicAppBase } from '../capacitor-bridge';
 
 const tx = (en, es, isEs) => (isEs ? es : en);
 
@@ -117,8 +118,10 @@ export default function WallTasksAdmin({
     // tablet's kiosk browser. Uses the current origin so dev → dev and
     // prod → prod without manual edits.
     const displayUrl = useMemo(() => {
-        if (typeof window === 'undefined') return '';
-        return `${window.location.origin}${window.location.pathname}?display=walltasks&side=${side}&location=${location}`;
+        // Off-device kiosk link (copied/scanned onto a wall tablet) — must be the
+        // public site, not capacitor://localhost / https://localhost from inside
+        // the native app. See publicAppBase().
+        return `${publicAppBase()}/?display=walltasks&side=${side}&location=${location}`;
     }, [side, location]);
 
     function copyDisplayUrl() {

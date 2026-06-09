@@ -63,14 +63,16 @@ export default function ModalPortal({ children, onBackPress }) {
         document.body.style.overflow = 'hidden';
         return () => { document.body.style.overflow = prev; };
     }, []);
-    // Register a back-stack handler if the caller wants the Android
-    // hardware back gesture to close this modal. Skipped silently
-    // when onBackPress is omitted so existing callers stay unchanged.
+    // Claim the Android hardware-back gesture for as long as this modal is
+    // mounted, so Back NEVER falls through to the bridge's "go to home" / "exit
+    // app" while a modal is still on screen (that read as a crash — the app
+    // would jump to Home or exit with the modal still rendered). If the caller
+    // passed an onBackPress, run it to close the modal; otherwise just swallow
+    // the press (the user closes via the modal's own ✕ / scrim). Popped on
+    // unmount. No-op on web (the back stack is only consulted on native).
     useEffect(() => {
-        if (typeof onBackPress !== 'function') return;
-        const pop = pushBackHandler(() => {
-            try { onBackPress(); } finally { pop(); }
-        });
+        const onBack = (typeof onBackPress === 'function') ? onBackPress : () => {};
+        const pop = pushBackHandler(() => { onBack(); });
         return pop;
     }, [onBackPress]);
     if (typeof document === 'undefined') return null;   // SSR guard

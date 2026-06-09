@@ -217,6 +217,26 @@ export async function initCapacitor() {
         console.warn('[cap] back button init failed:', e?.message);
     }
 
+    // ── External links (a[target="_blank"]) ──────────────────────
+    // In WKWebView a plain `target="_blank"` anchor opens NOTHING; on Android
+    // the OS can hand the URL to a random app. Delegate every such click to the
+    // in-app browser (openExternalUrl). Native only — the web build keeps its
+    // normal new-tab behavior. Capture phase so we run before React onClicks;
+    // we only preventDefault (no stopPropagation) so any sibling handlers still
+    // fire. Only intercepts real http(s) URLs, so internal routing is untouched.
+    try {
+        document.addEventListener('click', (ev) => {
+            const a = ev.target?.closest?.('a[target="_blank"]');
+            if (!a) return;
+            const href = a.getAttribute('href') || '';
+            if (!/^https?:\/\//i.test(href)) return;
+            ev.preventDefault();
+            openExternalUrl(href);
+        }, true);
+    } catch (e) {
+        console.warn('[cap] external-link delegate failed:', e?.message);
+    }
+
     // ── Capgo OTA check ──────────────────────────────────────────
     // Live updates from Capgo. The plugin auto-checks on every
     // foreground per autoUpdate:true in capacitor.config.ts; calling
@@ -377,6 +397,22 @@ export async function openExternalUrl(url) {
         return;
     }
     try { window.open(url, '_blank', 'noopener'); } catch { /* ignore */ }
+}
+
+// The PUBLIC, off-device base URL for shareable / kiosk / QR / invite links.
+// In the native app `window.location.origin` is `capacitor://localhost` (iOS) /
+// `https://localhost` (Android) — useless off-device, and the OS may hand such
+// a URL to a random installed app. Dev runs on a localhost origin too. So in
+// the app (or on any localhost origin) fall back to the canonical public site;
+// real web origins (app.ddmaustl.com, github.io) pass through unchanged.
+export function publicAppBase() {
+    const CANON = 'https://app.ddmaustl.com';
+    try {
+        const origin = (typeof window !== 'undefined' && window.location.origin) || '';
+        const isRealWeb = /^https?:\/\//i.test(origin) && !/\/\/localhost(?::\d+)?(?:$|\/)/i.test(origin);
+        if (isNative() || !isRealWeb) return CANON;
+        return `${origin}${window.location.pathname.replace(/[^/]*$/, '')}`.replace(/\/$/, '');
+    } catch { return CANON; }
 }
 
 // Native share sheet on iOS / Android; falls back to Web Share API

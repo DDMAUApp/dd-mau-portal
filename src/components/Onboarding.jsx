@@ -20,7 +20,7 @@ import {
 } from 'firebase/firestore';
 import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
 import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata, deleteObject } from 'firebase/storage';
-import { downloadFile, printViaNative } from '../capacitor-bridge';
+import { downloadFile, printViaNative, publicAppBase } from '../capacitor-bridge';
 import {
     ONBOARDING_DOCS, DOC_STATUS, DOC_STATUS_META,
     HIRE_STATUS, HIRE_STATUS_META,
@@ -91,10 +91,10 @@ function fmtOpenedAgo(hire, isEs) {
 }
 
 function buildInviteUrl(token) {
-    const base = typeof window !== 'undefined'
-        ? window.location.origin + window.location.pathname.replace(/\/$/, '')
-        : '';
-    return `${base}/?onboard=${token}`;
+    // This link is handed OFF the device (QR the hire scans, SMS, mailto,
+    // clipboard) so it must be the public site — never capacitor://localhost /
+    // https://localhost from inside the native app. See publicAppBase().
+    return `${publicAppBase()}/?onboard=${token}`;
 }
 
 export default function Onboarding({ language, staffName, staffList, storeLocation, onBack }) {
@@ -2711,7 +2711,11 @@ function HiringQrPanel({ isEs }) {
     //     long query-string version
     // Local dev / preview build fallback uses window.location so QR
     // testing still works without leaving localhost.
-    const isProdLike = typeof window !== 'undefined' && /ddmaustl\.com|github\.io/.test(window.location.hostname);
+    // Native app counts as prod-like — its origin is capacitor://localhost /
+    // https://localhost, which is useless on the QR/scan link off-device.
+    const isProdLike = typeof window !== 'undefined' && (
+        !!window.Capacitor?.isNativePlatform?.() || /ddmaustl\.com|github\.io/.test(window.location.hostname)
+    );
     const url = isProdLike
         ? 'https://apply.ddmaustl.com'
         : `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}/?apply=1`;

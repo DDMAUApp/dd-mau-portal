@@ -461,6 +461,17 @@ export default function ChatCenter({
         if (activeChatId) setMobileShowList(false);
     }, [activeChatId]);
 
+    // Android hardware-Back inside an open thread → go back to the chat LIST,
+    // not all the way to the Home tab. Only claim Back while a thread is open
+    // (registered on open, popped on close), so on the list view Back still
+    // falls through to the bridge's normal "go home". (Replaces the old
+    // commented-out stub above.)
+    useEffect(() => {
+        if (!activeChatId) return undefined;
+        const pop = pushBackHandler(() => { setActiveChatId(null); setMobileShowList(true); });
+        return pop;
+    }, [activeChatId]);
+
     // 2026-05-27 — Andrew: "when in a chat room the bottom navigation
     // bar at the bottom can disappear." Toggle a body data attribute
     // when a chat thread is active so the AppShellV2's MobileBottomNav
