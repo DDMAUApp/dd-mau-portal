@@ -20,6 +20,7 @@ import {
     BURST_PRESETS, BURST_PRESET_KEYS, BURST_DEFAULT_FILL, BURST_DEFAULT_TEXT,
     BURST_FILL_SWATCHES, burstSvgPoints,
 } from '../data/burstShapes';
+import { EDITOR_FONTS, DEFAULT_FONT_KEY, getEditorFont, ensureEditorFontsLink } from '../data/editorFonts';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
 
@@ -56,6 +57,11 @@ export default function PictureEditor({
     const imgRef = useRef(null);
     const stageRef = useRef(null);
     const dragRef = useRef(null);                        // active drag descriptor
+
+    // Pull in the Google display/script fonts once the editor opens so the
+    // picker chips + live text render in their real faces (web-safe fonts
+    // need nothing). Idempotent across re-opens.
+    useEffect(() => { ensureEditorFontsLink(); }, []);
 
     // ── displayed-size tracking (for on-screen font/badge sizing) ──
     useEffect(() => {
@@ -105,7 +111,7 @@ export default function PictureEditor({
 
     const addText = () => {
         const c = center();
-        const t = { id: nextId(), x: c.x, y: c.y, text: tx('NEW', 'NUEVO'), size: 0.08, color: '#ffffff', align: 'center', outline: true };
+        const t = { id: nextId(), x: c.x, y: c.y, text: tx('NEW', 'NUEVO'), size: 0.08, color: '#ffffff', align: 'center', outline: true, font: DEFAULT_FONT_KEY };
         setTexts(prev => [...prev, t]);
         setSelId(t.id); setTool('select');
     };
@@ -280,13 +286,16 @@ export default function PictureEditor({
                                 )}
 
                                 {/* Text elements */}
-                                {texts.map(t => (
+                                {texts.map(t => {
+                                    const f = getEditorFont(t.font);
+                                    return (
                                     <div key={t.id} data-elid={t.id}
                                         className={`absolute whitespace-pre text-center leading-tight ${selId === t.id ? 'ring-2 ring-violet-400' : ''}`}
                                         style={{
                                             left: `${t.x * 100}%`, top: `${t.y * 100}%`,
                                             transform: 'translate(-50%,-50%)',
-                                            fontWeight: 900,
+                                            fontFamily: f.stack,
+                                            fontWeight: t.weight || f.weight || 900,
                                             fontSize: `${pxH(t.size)}px`,
                                             color: t.color || '#fff',
                                             textShadow: t.outline === false ? 'none' : '0 0 2px rgba(0,0,0,.9), 0 1px 3px rgba(0,0,0,.7)',
@@ -296,7 +305,8 @@ export default function PictureEditor({
                                         }}>
                                         {t.text || ' '}
                                     </div>
-                                ))}
+                                    );
+                                })}
 
                                 {/* Burst elements */}
                                 {bursts.map(b => {
@@ -355,6 +365,22 @@ export default function PictureEditor({
                                     rows={2} autoFocus
                                     placeholder={tx('Type your words…', 'Escribe tus palabras…')}
                                     className="w-full px-2 py-1.5 rounded border border-dd-line text-base resize-none focus:outline-none focus:ring-2 focus:ring-violet-300" />
+                                <div>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Font', 'Fuente')}</span>
+                                    <div className="grid grid-cols-2 gap-1.5 mt-1">
+                                        {EDITOR_FONTS.map(f => {
+                                            const sel = (selectedText.font || DEFAULT_FONT_KEY) === f.key;
+                                            return (
+                                                <button key={f.key} onClick={() => updateText(selId, { font: f.key })}
+                                                    title={f.label}
+                                                    className={`px-2 py-2 rounded-lg border truncate transition ${sel ? 'border-violet-600 bg-violet-50 ring-1 ring-violet-300' : 'border-dd-line bg-white hover:bg-dd-bg'}`}
+                                                    style={{ fontFamily: f.stack, fontWeight: f.weight, fontSize: '15px', lineHeight: 1 }}>
+                                                    {f.label}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
                                 <label className="block">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Size', 'Tamaño')}</span>
                                     <input type="range" min="0.02" max="0.30" step="0.005"

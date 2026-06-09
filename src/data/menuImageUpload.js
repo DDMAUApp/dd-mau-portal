@@ -16,6 +16,7 @@
 import { storage } from '../firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { burstUnitPoints, BURST_DEFAULT_FILL, BURST_DEFAULT_TEXT } from './burstShapes';
+import { getEditorFont, ensureFontsForTexts } from './editorFonts';
 
 // Lazy pdfjs loader — same pattern as OnboardingFillablePdf.jsx
 // so we share the chunk rather than splitting it.
@@ -461,11 +462,16 @@ export async function bakePictureEdits({ originalUrl, crop = null, texts = [], b
     const outPx  = (origHeightFrac) => (origHeightFrac / cH) * outH;   // size frac → px
 
     // ── Text elements ──────────────────────────────────────────
+    // Webfonts must be DOWNLOADED before canvas fillText, or it silently
+    // paints a default face. Pre-load every font these texts use (best-
+    // effort, internally timed out so a blocked CDN can't hang Save).
+    await ensureFontsForTexts(texts, Math.max(24, outH * 0.1));
     for (const t of (texts || [])) {
         const str = String(t.text ?? '').trim();
         if (!str) continue;
+        const fnt = getEditorFont(t.font);
         const fontPx = Math.max(8, outPx(t.size || 0.06));
-        ctx.font = `${t.weight || 900} ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
+        ctx.font = `${t.weight || fnt.weight || 900} ${fontPx}px ${fnt.stack}`;
         ctx.textAlign = t.align || 'center';
         ctx.textBaseline = 'middle';
         ctx.lineJoin = 'round';
