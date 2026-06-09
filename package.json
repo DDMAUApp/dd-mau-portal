@@ -21,7 +21,9 @@
     "capgo:upload": "npx @capgo/cli@latest bundle upload --apikey $CAPGO_TOKEN",
     "capgo:upload-dev": "npx @capgo/cli@latest bundle upload --apikey $CAPGO_TOKEN --channel dev",
     "ship": "npm run build && git push && npx cap sync && npx @capgo/cli@latest bundle upload --apikey $CAPGO_TOKEN",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh",
+    "deploy:staging": "bash scripts/deploy-staging.sh",
+    "rollback": "bash scripts/rollback.sh"
   },
   "dependencies": {
     "@capgo/capacitor-printer": "^8.0.14",

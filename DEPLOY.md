@@ -76,11 +76,20 @@ The App Store **build number** (`CURRENT_PROJECT_VERSION`) and Play **`versionCo
 
 ## Test before you ship (staging) + rollback
 
-`npm run deploy` ships straight to **production** (all phones), with no gate. To verify a bundle first:
+`npm run deploy` ships straight to **production** (all phones), with no gate. Two safety tools sit alongside it — **neither touches the production deploy path**, so the one-command flow above is unchanged.
 
+### Preview on one phone first — `npm run deploy:staging`
 ```bash
-npm run build && npm run capgo:upload-dev    # uploads to the 'dev' channel only
+npm run deploy:staging      # builds + uploads to the 'dev' channel ONLY
 ```
-Point your own device at the `dev` channel (Capgo dashboard → Devices), confirm it's good, then run the real `npm run deploy`.
+Staff phones follow the `production` channel, so a staging bundle **cannot** reach them. **One-time setup:** point your own test phone at the `dev` channel — console.capgo.app → **com.ddmau.staff → Devices → (your device) → channel = `dev`**. Then the cautious flow is:
+1. commit your change
+2. `npm run deploy:staging` → lands on your dev-channel phone only
+3. looks good? → `npm run deploy` (ships the **same committed code** to everyone)
 
-**Rollback (kill-switch):** if a bad bundle ships, open **console.capgo.app → com.ddmau.staff → Channels → production** and set the channel's active bundle back to the previous version — phones revert on next open.
+### Undo a bad release — `npm run rollback`  ← the kill-switch
+```bash
+npm run rollback                # shows what production serves now + recent versions
+npm run rollback 1.0.31         # roll production back to 1.0.31
+```
+Re-points the `production` channel at the version you name (with a y/N confirm); phones revert on next open. It deletes nothing and changes no other setting — fully reversible (roll forward the same way, or `npm run deploy` a new fix). The equivalent dashboard path still works too: console.capgo.app → Channels → production → set active bundle.
