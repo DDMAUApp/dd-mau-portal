@@ -1187,9 +1187,10 @@ function PromoStrip({ promoStrip }) {
     const styleKey = ['sage', 'red', 'amber', 'sky', 'dark'].includes(promoStrip.style)
         ? promoStrip.style : 'sage';
     const STYLE_CLASS = {
-        // Andrew 2026-06-08: the green announcement → mint green (#2BB673),
-        // bold white text. Key stays 'sage' so existing TV configs keep working.
-        sage:  'bg-[#2BB673] text-white',
+        // Andrew 2026-06-08: announcement green → sage green (#647D5B), a muted
+        // dusty green with bold white text. (Tried mint #2BB673 first; he wanted
+        // softer/sage.) Key stays 'sage' so existing TV configs keep working.
+        sage:  'bg-[#647D5B] text-white',
         red:   'bg-red-700 text-white',
         amber: 'bg-amber-500 text-amber-950',
         sky:   'bg-sky-700 text-white',

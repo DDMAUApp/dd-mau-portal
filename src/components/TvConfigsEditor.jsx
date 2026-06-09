@@ -926,7 +926,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                     <select value={promoStrip?.style || 'sage'}
                                         onChange={(e) => setPromoStrip(p => ({ ...p, style: e.target.value }))}
                                         className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white">
-                                        <option value="sage">🟢 Mint Green</option>
+                                        <option value="sage">🟢 Sage Green</option>
                                         <option value="red">🔴 Red</option>
                                         <option value="amber">🟡 Amber</option>
                                         <option value="sky">🔵 Blue</option>
