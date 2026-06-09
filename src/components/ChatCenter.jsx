@@ -472,6 +472,19 @@ export default function ChatCenter({
         return pop;
     }, [activeChatId]);
 
+    // Stable per-row handlers so the memoized <ChatListItem> rows don't ALL
+    // re-render on every keystroke / chat-list snapshot (the row passes its own
+    // `chat` back). Pairs with switching ChatListItemInner → ChatListItem below.
+    const handleSelectChat = useCallback((c) => {
+        breadcrumb('chat.open', c.id, {
+            type: c.type || 'unknown',
+            memberCount: Array.isArray(c.members) ? c.members.length : 0,
+        });
+        setActiveChatId(c.id);
+        setMobileShowList(false);
+    }, []);
+    const handleLongPressChat = useCallback((c) => setLongPressedChat(c), []);
+
     // 2026-05-27 — Andrew: "when in a chat room the bottom navigation
     // bar at the bottom can disappear." Toggle a body data attribute
     // when a chat thread is active so the AppShellV2's MobileBottomNav
@@ -710,20 +723,13 @@ export default function ChatCenter({
                         </div>
                     ) : (
                         filteredChats.map(c => (
-                            <ChatListItemInner
+                            <ChatListItem
                                 key={c.id}
                                 chat={c}
                                 viewerName={staffName}
                                 active={c.id === activeChatId}
-                                onClick={() => {
-                                    breadcrumb('chat.open', c.id, {
-                                        type: c.type || 'unknown',
-                                        memberCount: Array.isArray(c.members) ? c.members.length : 0,
-                                    });
-                                    setActiveChatId(c.id);
-                                    setMobileShowList(false);
-                                }}
-                                onLongPress={() => setLongPressedChat(c)}
+                                onClick={handleSelectChat}
+                                onLongPress={handleLongPressChat}
                                 isEs={isEs}
                             />
                         ))
@@ -1023,7 +1029,7 @@ function ChatListItemInner({ chat, viewerName, active, onClick, onLongPress, isE
         pressTimer.current = setTimeout(() => {
             pressTimer.current = null;
             longPressFired.current = true;
-            onLongPress?.();
+            onLongPress?.(chat);
         }, 500);
     }
     function pressCancel() {
@@ -1041,13 +1047,13 @@ function ChatListItemInner({ chat, viewerName, active, onClick, onLongPress, isE
                     e.preventDefault();
                     return;
                 }
-                onClick?.();
+                onClick?.(chat);
             }}
             onTouchStart={pressStart}
             onTouchEnd={pressCancel}
             onTouchMove={pressCancel}
             onTouchCancel={pressCancel}
-            onContextMenu={(e) => { e.preventDefault(); onLongPress?.(); }}
+            onContextMenu={(e) => { e.preventDefault(); onLongPress?.(chat); }}
             className={`w-full flex items-start gap-3 px-3 py-3 border-b border-dd-line/60 text-left transition ${active ? 'bg-dd-sage-50' : 'hover:bg-dd-bg active:bg-dd-bg'}`}
         >
             <ChatAvatar chat={chat} viewerName={viewerName} size={44} />
