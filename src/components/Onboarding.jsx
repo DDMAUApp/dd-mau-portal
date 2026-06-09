@@ -1599,7 +1599,7 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                                 className="text-[10px] px-2 py-1 rounded bg-blue-100 text-blue-700 font-bold hover:bg-blue-200">
                                 {tx('View', 'Ver')}
                             </a>
-                            <a href={f.url} download={f.name}
+                            <a href={f.url} download={f.name} target="_blank" rel="noopener noreferrer"
                                 onClick={() => onWriteAudit('doc_downloaded', { hireId: hire.id, docId: docDef.id, file: f.name })}
                                 className="text-[10px] px-2 py-1 rounded bg-dd-green text-white font-bold">
                                 ↓
@@ -2051,7 +2051,10 @@ function InviteSheet({ hire, token, url, isEs, onClose }) {
                 copiedTimerRef.current = null;
                 setCopied(false);
             }, 2000);
-        } catch (e) { console.warn('clipboard write failed', e); }
+        } catch (e) {
+            console.warn('clipboard write failed', e);
+            toast(tx('Copy failed — long-press the link to copy', 'No se pudo copiar — mantén presionado el enlace'), { kind: 'error' });
+        }
     };
 
     const smsLink = hire.phone
@@ -2759,15 +2762,27 @@ function HiringQrPanel({ isEs }) {
                 copiedTimerRef.current = null;
                 setCopied(false);
             }, 2000);
-        } catch {}
+        } catch {
+            // Clipboard can reject in a WebView (focus/permission) — surface it
+            // so the user copies manually instead of a silent no-op.
+            toast(tx('Copy failed — long-press the link to copy', 'No se pudo copiar — mantén presionado el enlace'), { kind: 'error' });
+        }
     };
 
-    const download = () => {
+    const download = async () => {
         if (!qrDataUrl) return;
-        const a = document.createElement('a');
-        a.href = qrDataUrl;
-        a.download = 'dd-mau-hiring-qr.png';
-        a.click();
+        // The anchor `download` attribute is a no-op in iOS WKWebView. Route the
+        // PNG through the bridge's downloadFile (web = same anchor behavior;
+        // native = Filesystem + Share sheet so it saves to Files/Photos).
+        try {
+            const blob = await (await fetch(qrDataUrl)).blob();
+            await downloadFile({ data: blob, fileName: 'dd-mau-hiring-qr.png', mimeType: 'image/png' });
+        } catch {
+            const a = document.createElement('a');
+            a.href = qrDataUrl;
+            a.download = 'dd-mau-hiring-qr.png';
+            a.click();
+        }
     };
 
     const printQr = () => {

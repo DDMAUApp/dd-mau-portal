@@ -203,7 +203,7 @@ export default function OffsiteClockPrompt({
                         </div>
                         {currentShift.clockedInAt && (
                             <div>
-                                ▶️ {tx('Clocked in', 'Entrada')}: <b>{new Date(currentShift.clockedInAt.toMillis()).toLocaleString(locale, { hour: 'numeric', minute: '2-digit' })}</b>
+                                ▶️ {tx('Clocked in', 'Entrada')}: <b>{new Date(currentShift.clockedInAt?.toMillis?.() ?? currentShift.clockedInAt).toLocaleString(locale, { hour: 'numeric', minute: '2-digit' })}</b>
                             </div>
                         )}
                         {currentShift.notes && (

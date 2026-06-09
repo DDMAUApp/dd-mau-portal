@@ -1131,9 +1131,16 @@ function ChatThreadInner({
     function handleCopyText(message) {
         const text = message?.text || '';
         if (!text) return;
-        try {
-            navigator.clipboard.writeText(text);
-        } catch {}
+        // The old bare try/catch could not catch the async rejection (it leaked
+        // an unhandled promise rejection) and gave the user zero feedback.
+        // Handle both branches and confirm the copy.
+        if (!navigator.clipboard?.writeText) {
+            toast(tx('Copy not supported here', 'Copiar no disponible aquí'), { kind: 'error' });
+            return;
+        }
+        navigator.clipboard.writeText(text)
+            .then(() => toast(tx('Copied', 'Copiado'), { kind: 'success' }))
+            .catch(() => toast(tx('Copy failed', 'No se pudo copiar'), { kind: 'error' }));
     }
 
     // ── Edit a previously-sent message (own + within window) ─────

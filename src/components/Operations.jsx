@@ -3541,6 +3541,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
             };
 
+            // Stable-identity wrapper for the inventory rows. updateInventoryCount
+            // is recreated every Operations render (it closes over staffName /
+            // storeLocation / customInventory), which silently defeated the
+            // React.memo on the ~250 LocationItemRow rows — every count tap
+            // re-rendered ALL rows. A ref holds the latest fn; this wrapper's
+            // identity never changes, so memo'd rows only re-render when THEIR
+            // own props change. Behavior is identical (it calls the latest
+            // closure). Audit 2026-06-09.
+            const updateInventoryCountRef = useRef(null);
+            updateInventoryCountRef.current = updateInventoryCount;
+            const stableUpdateInventoryCount = useCallback((itemId, newCount, delta = null) => {
+                return updateInventoryCountRef.current?.(itemId, newCount, delta);
+            }, []);
+
             // Load + recompute the "last ordered per item" summary from
             // the inventoryHistory collection. Walks every snapshot
             // newest-first; for each itemId records the FIRST non-zero
@@ -8311,7 +8325,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         pack={item.pack || ''}
                                                         count={inventory[item.id] || 0}
                                                         language={language}
-                                                        onUpdate={updateInventoryCount}
+                                                        onUpdate={stableUpdateInventoryCount}
                                                     />
                                                 ))}
                                             </div>
