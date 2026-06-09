@@ -3715,6 +3715,37 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setShowSaveConfirm(false);
             };
 
+            // Clear ALL live counts (master inventory + vendor-only) without saving
+            // a snapshot — the "Clear" twin of the Save button. Mirrors the cart's
+            // Empty action but wipes vendorCounts too so it's a true clean slate.
+            // Confirm-gated; persists counts:{} + vendorCounts:{} to the canonical
+            // doc (updateDoc preserves customInventory + schema).
+            const clearAllInventoryCounts = async () => {
+                const masterN = Object.values(inventory).filter(v => v > 0).length;
+                const vendorN = Object.values(vendorCounts).filter(v => v > 0).length;
+                const total = masterN + vendorN;
+                if (total === 0) {
+                    toast(language === 'es' ? 'El conteo ya está vacío' : 'Counts are already empty');
+                    return;
+                }
+                const ok = window.confirm(language === 'es'
+                    ? `¿Limpiar todo el conteo (${total} artículos)? Esto no se puede deshacer. Guarda primero si quieres una copia.`
+                    : `Clear all counts (${total} items)? This cannot be undone. Save first if you want a copy.`);
+                if (!ok) return;
+                setInventory({});
+                setInvCountMeta({});
+                setVendorCounts({});
+                try {
+                    await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
+                        counts: {}, countMeta: {}, vendorCounts: {}, date: new Date().toISOString(),
+                    });
+                    toast(language === 'es' ? '✓ Conteo limpiado' : '✓ Counts cleared', { kind: 'success' });
+                } catch (e) {
+                    console.warn('clear counts persist failed:', e);
+                    toast(language === 'es' ? 'Error al limpiar' : 'Could not clear', { kind: 'error' });
+                }
+            };
+
             // One-shot data healer: when the load merge had to rewrite ids (because a
             // category was renamed or moved between releases), persist the corrected
             // shape — customInventory with new ids, counts/countMeta keyed off the new
@@ -6987,8 +7018,8 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             {/* ── SEARCH BAR ── */}
                             {!invEditMode && (
                                 <>
-                                <div className="flex items-center gap-2">
-                                    <div className="relative flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <div className="relative flex-1 min-w-[160px]">
                                         <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
                                             placeholder={invAiOn
                                                 ? (language === "es" ? "\u{1F50D} Buscar cualquier cosa (\"seco\", \"verde\", \"vegano\")" : "\u{1F50D} Search anything (\"dry\", \"green\", \"vegan\")")
@@ -7013,6 +7044,31 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
                                         ✨ {language === "es" ? "IA" : "AI"}
                                     </button>
+                                    {/* Quick Save + Clear — copies of the bottom "Save & Reset"
+                                        and the cart "Empty", sized ~2× the AI button so you
+                                        can save/clear the count without scrolling. Hidden in
+                                        pricing view (counts don't apply there). Andrew
+                                        2026-06-09. */}
+                                    {invViewMode !== "pricing" && (
+                                        <>
+                                            <button disabled={inventorySaving}
+                                                onClick={() => {
+                                                    const ok = window.confirm(language === "es"
+                                                        ? "¿Ya REVISASTE? Guardar y reiniciar los conteos."
+                                                        : "Did you LOOK? Save & reset the counts.");
+                                                    if (ok) saveAndResetInventory();
+                                                }}
+                                                title={language === "es" ? "Guardar y reiniciar el conteo" : "Save & reset the count"}
+                                                className="flex-shrink-0 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-mint-700 text-white border-mint-800 hover:bg-mint-800 active:scale-95 transition disabled:opacity-50">
+                                                💾 {inventorySaving ? (language === "es" ? "Guardando…" : "Saving…") : (language === "es" ? "Guardar" : "Save")}
+                                            </button>
+                                            <button onClick={clearAllInventoryCounts}
+                                                title={language === "es" ? "Limpiar todo el conteo" : "Clear all counts"}
+                                                className="flex-shrink-0 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-white text-red-700 border-red-200 hover:bg-red-50 active:scale-95 transition">
+                                                🗑 {language === "es" ? "Limpiar" : "Clear"}
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
                                 {invSearch.trim() && invAiOn && (
                                     <div className="text-[11px] mt-1">

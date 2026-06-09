@@ -130,6 +130,44 @@ const fmtHrs = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 const copyId = (srcId) => `${srcId}__${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 const isMaster = (b, id) => b.pool.some(i => i.id === id);
 
+// ── Activity log (every move, timestamped + who) ────────────────────
+// A rolling, newest-first list lives on the board doc itself (`log`),
+// so it syncs with the board and costs no extra reads/writes — each move
+// already does a transactional board write. Capped so the hot doc stays
+// small; each 💾 Save snapshots the log too, so older history is retained
+// inside saved copies. Event = { at, by, action, en?, es?, day?, from?, n? }.
+const LOG_CAP = 80;
+function pushLog(b, ev) {
+    if (!ev) return b;
+    b.log = [ev, ...(Array.isArray(b.log) ? b.log : [])].slice(0, LOG_CAP);
+    return b;
+}
+const dayLabel = (key, es) => { const d = DAYS.find(x => x.key === key); return d ? (es ? d.es : d.en) : (key || ''); };
+// Build a human, bilingual one-liner for an activity event.
+function describeEvent(e, es) {
+    if (!e) return '';
+    const nm = es ? (e.es || e.en || '') : (e.en || e.es || '');
+    const d = e.day ? dayLabel(e.day, es) : '';
+    switch (e.action) {
+        case 'addDay':     return `${nm} → ${d}`;
+        case 'offDay':     return `${nm} ✕ ${d}`;
+        case 'move':       return `${nm}: ${e.from ? dayLabel(e.from, es) : '?'} → ${d}`;
+        case 'addItem':    return `${es ? 'Agregó' : 'Added'} ${nm}`;
+        case 'removeItem': return `${es ? 'Eliminó' : 'Removed'} ${nm}`;
+        case 'editItem':   return `${es ? 'Editó' : 'Edited'} ${nm}`;
+        case 'dayNote':    return `${es ? 'Nota' : 'Note'} · ${d}`;
+        case 'clearDay':   return `${es ? 'Limpió' : 'Cleared'} ${d}${e.n ? ` (${e.n})` : ''}`;
+        case 'clearWeek':  return es ? 'Limpió la semana' : 'Cleared the week';
+        case 'load':       return es ? 'Cargó una copia guardada' : 'Loaded a saved copy';
+        case 'reset':      return es ? 'Restableció el tablero' : 'Reset the board';
+        default:           return e.action || '';
+    }
+}
+const actionIcon = (action) => ({
+    addDay: '➕', offDay: '➖', move: '🔀', addItem: '🆕', removeItem: '🗑',
+    editItem: '✎', dayNote: '📝', clearDay: '🧹', clearWeek: '🧹', load: '📜', reset: '↻',
+}[action] || '•');
+
 export default function PrepBoard({ language, staffName, storeLocation, staffList }) {
     const es = language === 'es';
     const tx = (en, esT) => (es ? esT : en);
@@ -169,7 +207,7 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         const unsub = onSnapshot(r, async (snap) => {
             if (snap.exists() && Array.isArray(snap.data()?.pool)) {
                 const data = snap.data();
-                setBoard({ pool: data.pool, days: normalizeDays(data.days) });
+                setBoard({ pool: data.pool, days: normalizeDays(data.days), log: Array.isArray(data.log) ? data.log : [] });
                 // One-time seed-merge: when the seed gains items (e.g. the sauces
                 // added in v2), push any that are MISSING into an already-seeded
                 // board without disturbing the user's existing layout.
@@ -224,11 +262,11 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
             await runTransaction(db, async (t) => {
                 const s = await t.get(ref);
                 const base = (s.exists() && Array.isArray(s.data()?.pool))
-                    ? { pool: s.data().pool, days: normalizeDays(s.data().days) }
-                    : buildSeed(side);
+                    ? { pool: s.data().pool, days: normalizeDays(s.data().days), log: Array.isArray(s.data().log) ? s.data().log : [] }
+                    : { ...buildSeed(side), log: [] };
                 const next = mutator(clone(base));
                 if (!next) return;
-                t.set(ref, { pool: next.pool, days: next.days, seeded: true, side, updatedAt: serverTimestamp(), updatedBy: staffName || '' });
+                t.set(ref, { pool: next.pool, days: next.days, log: Array.isArray(next.log) ? next.log.slice(0, LOG_CAP) : [], seeded: true, side, updatedAt: serverTimestamp(), updatedBy: staffName || '' });
             });
         } catch (e) {
             console.warn('[prepBoard] write failed:', e?.message);
@@ -244,46 +282,79 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         const masterAlive = (it.srcId && b.pool.some(p => p.id === it.srcId)) || b.pool.some(p => p.id === it.id);
         if (!masterAlive) { const m = { ...it }; delete m.srcId; b.pool.push(m); }
     };
-    const moveToDay = (id, dayKey) => writeBoard(b => { const it = pluck(b, id); if (it) b.days[dayKey].items.push(it); return b; });
+    // Build a stamped activity event. Computed ONCE per action (outside
+    // writeBoard) so the optimistic + transaction passes log the SAME event —
+    // the Firestore doc ends up with exactly one copy. `at`/`by` always set;
+    // pass { en, es, day, from, n } as relevant.
+    const ev = (action, extra = {}) => ({ at: Date.now(), by: staffName || '', action, ...extra });
+
+    // MOVE a day-copy to another day (logs the from→to).
+    const moveToDay = (id, dayKey) => {
+        const it = findItem(board, id);
+        const from = DAY_KEYS.find(k => board.days[k].items.some(i => i.id === id)) || null;
+        const event = it ? ev('move', { en: it.en, es: it.es, day: dayKey, from }) : null;
+        writeBoard(b => { const item = pluck(b, id); if (item) { b.days[dayKey].items.push(item); pushLog(b, event); } return b; });
+    };
     // COPY a pool master into a day (master stays on the list → multi-day prep).
-    // Re-tapping the same day toggles the copy OFF. The id is generated ONCE here
-    // so the optimistic + transaction passes write the same value.
+    // Re-tapping the same day toggles the copy OFF. The id + event are generated
+    // ONCE here so the optimistic + transaction passes write the same values.
     const toggleCopyInDay = (masterId, dayKey) => {
         const newId = copyId(masterId);
         const stamp = Date.now();
+        const master = board.pool.find(i => i.id === masterId);
+        const already = board.days[dayKey].items.some(i => i.srcId === masterId || i.id === masterId);
+        const event = { at: stamp, by: staffName || '', action: already ? 'offDay' : 'addDay', en: master?.en || '', es: master?.es || '', day: dayKey };
         writeBoard(b => {
             const day = b.days[dayKey];
             const at = day.items.findIndex(i => i.srcId === masterId || i.id === masterId);
-            if (at >= 0) { day.items.splice(at, 1); return b; }            // toggle off
-            const master = b.pool.find(i => i.id === masterId);
-            if (!master) return b;
-            day.items.push({ ...clone(master), id: newId, srcId: masterId, addedAt: stamp, addedBy: staffName || '' });
+            if (at >= 0) { day.items.splice(at, 1); pushLog(b, event); return b; }            // toggle off
+            const m = b.pool.find(i => i.id === masterId);
+            if (!m) return b;
+            day.items.push({ ...clone(m), id: newId, srcId: masterId, addedAt: stamp, addedBy: staffName || '' });
+            pushLog(b, event);
             return b;
         });
     };
-    const clearDay = (dayKey) => writeBoard(b => { for (const it of b.days[dayKey].items) dropOrRescue(b, it); b.days[dayKey].items = []; return b; });
+    const clearDay = (dayKey) => {
+        const event = ev('clearDay', { day: dayKey, n: board.days[dayKey]?.items.length || 0 });
+        writeBoard(b => { for (const it of b.days[dayKey].items) dropOrRescue(b, it); b.days[dayKey].items = []; pushLog(b, event); return b; });
+    };
     // Deleting a POOL master also purges every day-copy of it; deleting a day-copy
     // just removes that one.
-    const removeItem = (id) => writeBoard(b => {
-        const wasMaster = isMaster(b, id);
-        pluck(b, id);
-        if (wasMaster) for (const k of DAY_KEYS) b.days[k].items = b.days[k].items.filter(i => i.srcId !== id);
-        return b;
-    });
+    const removeItem = (id) => {
+        const it = findItem(board, id);
+        const event = it ? ev('removeItem', { en: it.en, es: it.es }) : null;
+        writeBoard(b => {
+            const wasMaster = isMaster(b, id);
+            pluck(b, id);
+            if (wasMaster) for (const k of DAY_KEYS) b.days[k].items = b.days[k].items.filter(i => i.srcId !== id);
+            pushLog(b, event);
+            return b;
+        });
+    };
     // Editing a POOL master propagates the bilingual name to its day-copies
     // (hours / notes stay per-day).
-    const updateItem = (id, patch) => writeBoard(b => {
-        const it = findItem(b, id); if (!it) return b;
-        Object.assign(it, patch);
-        if (isMaster(b, id)) for (const k of DAY_KEYS) b.days[k].items.forEach(c => { if (c.srcId === id) { c.en = it.en; c.es = it.es; } });
-        return b;
-    });
-    const setDayNote = (dayKey, note) => writeBoard(b => { b.days[dayKey].note = note; return b; });
+    const updateItem = (id, patch) => {
+        const cur = findItem(board, id);
+        const event = cur ? ev('editItem', { en: patch.en || cur.en, es: patch.es || cur.es }) : null;
+        writeBoard(b => {
+            const it = findItem(b, id); if (!it) return b;
+            Object.assign(it, patch);
+            if (isMaster(b, id)) for (const k of DAY_KEYS) b.days[k].items.forEach(c => { if (c.srcId === id) { c.en = it.en; c.es = it.es; } });
+            pushLog(b, event);
+            return b;
+        });
+    };
+    const setDayNote = (dayKey, note) => {
+        const event = ev('dayNote', { day: dayKey });
+        writeBoard(b => { b.days[dayKey].note = note; pushLog(b, event); return b; });
+    };
     const addPrep = (name) => {
         const nm = (name || '').trim();
         if (!nm) return;
         const id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        writeBoard(b => { b.pool.push({ id, en: nm, es: nm, hours: null, note: '', addedAt: Date.now(), addedBy: staffName || '' }); return b; });
+        const event = ev('addItem', { en: nm, es: nm });
+        writeBoard(b => { b.pool.push({ id, en: nm, es: nm, hours: null, note: '', addedAt: Date.now(), addedBy: staffName || '' }); pushLog(b, event); return b; });
         setAddName('');
     };
     const resetBoard = () => {
@@ -292,7 +363,8 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
             : tx('Clear the whole Front-of-House board? This removes every item and day.', '¿Borrar todo el tablero de Frente? Esto elimina cada artículo y día.');
         if (!confirm(msg)) return;
         setSelectedId(null);
-        writeBoard(() => buildSeed(side));
+        const event = ev('reset');
+        writeBoard(() => { const seed = buildSeed(side); seed.log = [event]; return seed; });
     };
 
     // ── Selection ───────────────────────────────────────────────────
@@ -337,9 +409,12 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
         return () => unsub();
     }, [histRef]);
 
+    const [viewSnap, setViewSnap] = useState(null);   // saved copy open in the read-only viewer
     const saveSnapshot = async () => {
         if (!histRef) return;
-        const snapshot = { savedAt: Date.now(), savedBy: staffName || '', pool: clone(board.pool), days: clone(board.days), weekHours };
+        // Snapshot the move log too, so each saved copy retains the activity
+        // trail up to that moment (older than the rolling LOG_CAP on the board).
+        const snapshot = { savedAt: Date.now(), savedBy: staffName || '', pool: clone(board.pool), days: clone(board.days), weekHours, log: clone(board.log || []) };
         try {
             await runTransaction(db, async (t) => {
                 const s = await t.get(histRef);
@@ -355,22 +430,31 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
     const clearWeek = () => {
         if (!confirm(tx('Clear all days? Your prep list stays — only the day assignments are removed. Save first if you want a copy.', '¿Limpiar todos los días? Tu lista de prep permanece — solo se quitan las asignaciones. Guarda primero si quieres una copia.'))) return;
         setSelectedId(null);
-        writeBoard(b => { for (const k of DAY_KEYS) { for (const it of b.days[k].items) dropOrRescue(b, it); b.days[k] = { items: [], note: '' }; } return b; });
+        const event = ev('clearWeek');
+        writeBoard(b => { for (const k of DAY_KEYS) { for (const it of b.days[k].items) dropOrRescue(b, it); b.days[k] = { items: [], note: '' }; } pushLog(b, event); return b; });
     };
     const restoreSnapshot = (snap) => {
         if (!confirm(tx('Load this saved copy? It replaces the current board (the saved copy is kept).', '¿Cargar esta copia? Reemplaza el tablero actual (la copia se conserva).'))) return;
         setSelectedId(null);
-        writeBoard(() => ({ pool: clone(snap.pool || []), days: normalizeDays(snap.days) }));
+        const event = ev('load');
+        // Mutate (don't replace) so the live activity log carries forward + records the load.
+        writeBoard(b => { b.pool = clone(snap.pool || []); b.days = normalizeDays(snap.days); pushLog(b, event); return b; });
         setHistoryOpen(false);
+        setViewSnap(null);
     };
 
-    // ── Print week ──────────────────────────────────────────────────
-    const printWeek = () => {
-        const now = new Date();
-        const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-        const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    // ── Print ───────────────────────────────────────────────────────
+    // Build the printable HTML for a set of days. opts.savedAt → it's a saved
+    // copy (header says "Saved …"); opts.log → append a "Move history" section
+    // (used when printing a saved copy so the trail prints too).
+    const buildPrepHtml = (days, opts = {}) => {
+        const stamp = new Date(opts.savedAt || Date.now());
+        const dateStr = stamp.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+        const timeStr = stamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         const sideLabel = side === 'boh' ? tx('Back of House', 'Cocina') : tx('Front of House', 'Frente');
-        let html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DD Mau Prep Week</title><style>
+        const total = DAY_KEYS.reduce((a, k) => a + sumHours(days[k].items), 0);
+        const titleWord = opts.savedAt ? tx('Saved Prep', 'Prep Guardado') : tx('Weekly Prep', 'Prep Semanal');
+        let html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DD Mau Prep</title><style>
             *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:16px;color:#111}
             h1{font-size:20px;margin:0 0 2px} .date{font-size:11px;color:#666;margin-bottom:12px}
             .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -380,19 +464,21 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
             table{width:100%;border-collapse:collapse} td{font-size:12px;padding:4px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top}
             td.h{text-align:right;color:#888;width:42px;white-space:nowrap} td.n{color:#777;font-size:10px;font-style:italic}
             .empty{font-size:11px;color:#aaa;padding:8px 10px}
+            h2.logh{font-size:14px;margin:18px 0 6px;border-top:2px solid #255a37;padding-top:10px}
+            table.logt td{font-size:11px} td.lt{color:#666;white-space:nowrap;width:120px} td.lb{color:#255a37;font-weight:bold;text-align:right;white-space:nowrap}
             .no-print{position:sticky;top:0;background:#255a37;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
             .no-print button{padding:10px 20px;font-size:15px;font-weight:bold;border:none;border-radius:8px;margin:0 6px;cursor:pointer}
             .btn-print{background:#fff;color:#255a37} .btn-close{background:#ef4444;color:#fff}
             @media print{.no-print{display:none!important} .day h2{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>`;
         html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">✕ ${esc(tx('Close', 'Cerrar'))}</button><button class="btn-print" onclick="window.print()">🖨️ ${esc(tx('Print', 'Imprimir'))}</button></div>`;
-        html += `<h1>${esc(tx('Weekly Prep', 'Prep Semanal'))} · ${esc(sideLabel)} — ${esc(storeLocation || '')}</h1>`;
-        html += `<div class="date">${esc(dateStr)} · ${esc(timeStr)} · ${esc(tx('Total', 'Total'))}: ${fmtHrs(weekHours)}h</div>`;
+        html += `<h1>${esc(titleWord)} · ${esc(sideLabel)} — ${esc(storeLocation || '')}</h1>`;
+        html += `<div class="date">${opts.savedAt ? esc(tx('Saved', 'Guardado')) + ': ' : ''}${esc(dateStr)} · ${esc(timeStr)} · ${esc(tx('Total', 'Total'))}: ${fmtHrs(total)}h</div>`;
         html += `<div class="grid">`;
         for (const day of DAYS) {
-            const d = board.days[day.key];
-            const total = sumHours(d.items);
-            html += `<div class="day"><h2><span>${esc(tx(day.en, day.es))}</span><span>${d.items.length} · ${fmtHrs(total)}h</span></h2>`;
+            const d = days[day.key];
+            const dayTotal = sumHours(d.items);
+            html += `<div class="day"><h2><span>${esc(tx(day.en, day.es))}</span><span>${d.items.length} · ${fmtHrs(dayTotal)}h</span></h2>`;
             if (d.note) html += `<div class="note">${esc(d.note)}</div>`;
             if (d.items.length === 0) {
                 html += `<div class="empty">—</div>`;
@@ -406,12 +492,26 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
             }
             html += `</div>`;
         }
-        html += `</div></body></html>`;
-        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Prep Week'); return; }
+        html += `</div>`;   // close grid
+        if (Array.isArray(opts.log) && opts.log.length > 0) {
+            html += `<h2 class="logh">${esc(tx('Move history', 'Historial de movimientos'))}</h2><table class="logt">`;
+            for (const e of opts.log) {
+                const when = (() => { try { return new Date(e.at).toLocaleString(es ? 'es' : 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return ''; } })();
+                html += `<tr><td class="lt">${esc(when)}</td><td>${esc(actionIcon(e.action))} ${esc(describeEvent(e, es))}</td><td class="lb">${esc(e.by || '')}</td></tr>`;
+            }
+            html += `</table>`;
+        }
+        html += `</body></html>`;
+        return html;
+    };
+    const printPrepHtml = (html, name) => {
+        if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, name); return; }
         const w = window.open('', '_blank');
         if (!w) { toast(tx('Please allow pop-ups to print.', 'Permita ventanas emergentes para imprimir.')); return; }
         w.document.write(html); w.document.close(); w.print();
     };
+    const printWeek = () => printPrepHtml(buildPrepHtml(board.days), 'DD Mau Prep Week');
+    const printSnapshot = (snap) => printPrepHtml(buildPrepHtml(normalizeDays(snap.days), { savedAt: snap.savedAt, log: snap.log || [] }), 'DD Mau Prep (saved)');
 
     // ── Chip (used in both columns) ─────────────────────────────────
     const renderChip = (it) => {
@@ -573,9 +673,21 @@ export default function PrepBoard({ language, staffName, storeLocation, staffLis
             {historyOpen && (
                 <PrepHistoryModal
                     saves={history}
+                    liveLog={board.log || []}
                     language={language}
                     onRestore={restoreSnapshot}
+                    onView={(snap) => setViewSnap(snap)}
                     onClose={() => setHistoryOpen(false)}
+                />
+            )}
+
+            {viewSnap && (
+                <PrepSnapshotViewer
+                    snap={viewSnap}
+                    language={language}
+                    onLoad={restoreSnapshot}
+                    onPrint={printSnapshot}
+                    onClose={() => setViewSnap(null)}
                 />
             )}
         </div>
@@ -666,37 +778,162 @@ function PrepEditModal({ target, board, language, onSaveItem, onDeleteItem, onSa
     );
 }
 
-// ── History modal — list of saved copies, each stamped date + staff ─
-function PrepHistoryModal({ saves, language, onRestore, onClose }) {
+// ── History modal — two tabs: saved copies (View / Load) + the live
+//    activity feed (every move, stamped time + who). ──────────────────
+function PrepHistoryModal({ saves, liveLog, language, onRestore, onView, onClose }) {
     const es = language === 'es';
     const tx = (en, esT) => (es ? esT : en);
+    const [tab, setTab] = useState('saves');
     const fmt = (ms) => { try { return new Date(ms).toLocaleString(es ? 'es' : 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } };
     const scheduled = (snap) => DAY_KEYS.reduce((a, k) => a + ((snap?.days?.[k]?.items?.length) || 0), 0);
+    const log = Array.isArray(liveLog) ? liveLog : [];
+    const TabBtn = ({ id, children }) => (
+        <button onClick={() => setTab(id)}
+            className={`flex-1 text-[12px] font-bold px-3 py-1.5 rounded-lg transition ${tab === id ? 'bg-dd-green text-white' : 'bg-dd-bg text-dd-text-2'}`}>
+            {children}
+        </button>
+    );
     return (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={onClose}>
             <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl p-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}
                 style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom,0px))' }}>
                 <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-black text-base">📜 {tx('Saved copies', 'Copias guardadas')}</h3>
+                    <h3 className="font-black text-base">📜 {tx('History', 'Historial')}</h3>
                     <button onClick={onClose} className="text-sm font-bold px-2 py-1 rounded-lg bg-dd-bg text-dd-text-2">✕</button>
                 </div>
-                {(!saves || saves.length === 0) ? (
-                    <div className="text-sm text-dd-text-2 text-center py-6">{tx('No saved copies yet. Tap 💾 Save to keep one.', 'Sin copias. Toca 💾 Guardar para crear una.')}</div>
+                <div className="flex gap-1.5 mb-3">
+                    <TabBtn id="saves">{tx('Saved copies', 'Copias')}{saves?.length ? ` (${saves.length})` : ''}</TabBtn>
+                    <TabBtn id="activity">{tx('Activity', 'Actividad')}{log.length ? ` (${log.length})` : ''}</TabBtn>
+                </div>
+
+                {tab === 'saves' ? (
+                    (!saves || saves.length === 0) ? (
+                        <div className="text-sm text-dd-text-2 text-center py-6">{tx('No saved copies yet. Tap 💾 Save to keep one.', 'Sin copias. Toca 💾 Guardar para crear una.')}</div>
+                    ) : (
+                        <div className="space-y-2">
+                            {saves.map((snap, i) => (
+                                <div key={i} className="flex items-center gap-2 rounded-xl border border-dd-line px-3 py-2">
+                                    <button onClick={() => onView(snap)} className="flex-1 min-w-0 text-left">
+                                        <div className="text-sm font-bold text-dd-text">{fmt(snap.savedAt)}</div>
+                                        <div className="text-[11px] text-dd-text-2 truncate">
+                                            {snap.savedBy || tx('Unknown', 'Desconocido')} · {scheduled(snap)} {tx('scheduled', 'programados')}{typeof snap.weekHours === 'number' && snap.weekHours > 0 ? ` · ${Number.isInteger(snap.weekHours) ? snap.weekHours : snap.weekHours.toFixed(1)}h` : ''}
+                                        </div>
+                                    </button>
+                                    <button onClick={() => onView(snap)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white border border-dd-line text-dd-text shrink-0">👁 {tx('View', 'Ver')}</button>
+                                    <button onClick={() => onRestore(snap)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-dd-green text-white shrink-0">{tx('Load', 'Cargar')}</button>
+                                </div>
+                            ))}
+                        </div>
+                    )
                 ) : (
-                    <div className="space-y-2">
-                        {saves.map((snap, i) => (
-                            <div key={i} className="flex items-center gap-2 rounded-xl border border-dd-line px-3 py-2">
-                                <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-bold text-dd-text">{fmt(snap.savedAt)}</div>
-                                    <div className="text-[11px] text-dd-text-2 truncate">
-                                        {snap.savedBy || tx('Unknown', 'Desconocido')} · {scheduled(snap)} {tx('scheduled', 'programados')}{typeof snap.weekHours === 'number' && snap.weekHours > 0 ? ` · ${Number.isInteger(snap.weekHours) ? snap.weekHours : snap.weekHours.toFixed(1)}h` : ''}
+                    log.length === 0 ? (
+                        <div className="text-sm text-dd-text-2 text-center py-6">{tx('No moves recorded yet. Every change shows here with who & when.', 'Sin movimientos. Cada cambio aparece aquí con quién y cuándo.')}</div>
+                    ) : (
+                        <div className="space-y-1">
+                            {log.map((e, i) => (
+                                <div key={i} className="flex items-start gap-2 rounded-lg border border-dd-line/70 px-2.5 py-1.5">
+                                    <span className="text-[13px] leading-none mt-0.5 shrink-0">{actionIcon(e.action)}</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[12px] font-semibold text-dd-text leading-tight break-words">{describeEvent(e, es)}</div>
+                                        <div className="text-[10px] text-dd-text-2">{fmt(e.at)} · {e.by || tx('Unknown', 'Desconocido')}</div>
                                     </div>
                                 </div>
-                                <button onClick={() => onRestore(snap)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-dd-green text-white shrink-0">{tx('Load', 'Cargar')}</button>
-                            </div>
-                        ))}
-                    </div>
+                            ))}
+                        </div>
+                    )
                 )}
+            </div>
+        </div>
+    );
+}
+
+// ── Snapshot viewer — open a saved copy read-only: look through every
+//    day, then Print or Load. The "new window" Andrew asked for. ───────
+function PrepSnapshotViewer({ snap, language, onLoad, onPrint, onClose }) {
+    const es = language === 'es';
+    const tx = (en, esT) => (es ? esT : en);
+    const fmt = (ms) => { try { return new Date(ms).toLocaleString(es ? 'es' : 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } };
+    const days = normalizeDays(snap.days);
+    const pool = Array.isArray(snap.pool) ? snap.pool : [];
+    const log = Array.isArray(snap.log) ? snap.log : [];
+    const total = DAY_KEYS.reduce((a, k) => a + sumHours(days[k].items), 0);
+    return (
+        <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4" onClick={onClose}>
+            <div className="w-full sm:max-w-2xl bg-white rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[92vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div className="px-4 py-3 bg-dd-green text-white flex items-center justify-between shrink-0">
+                    <div className="min-w-0">
+                        <div className="font-black text-base truncate">📋 {tx('Saved prep', 'Prep guardado')}</div>
+                        <div className="text-[11px] opacity-90 truncate">
+                            {fmt(snap.savedAt)} · {snap.savedBy || tx('Unknown', 'Desconocido')} · {total > 0 ? `${fmtHrs(total)}h` : '—'}
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 font-black shrink-0">✕</button>
+                </div>
+
+                {/* Scrollable body — all days + the pool + the move history */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-dd-bg/30">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {DAYS.map(day => {
+                            const d = days[day.key];
+                            const t = sumHours(d.items);
+                            return (
+                                <div key={day.key} className="rounded-xl border border-dd-line bg-white overflow-hidden">
+                                    <div className="px-2.5 py-1.5 bg-dd-green/10 border-b border-dd-line flex items-center justify-between">
+                                        <span className="font-black text-[12px] text-dd-text">{tx(day.en, day.es)}</span>
+                                        <span className="text-[10px] font-bold text-dd-text-2">{d.items.length}{t > 0 ? ` · ${fmtHrs(t)}h` : ''}</span>
+                                    </div>
+                                    {d.note && <div className="px-2.5 py-1 text-[11px] italic text-dd-text-2 border-b border-dd-line/60">📝 {d.note}</div>}
+                                    <div className="p-1.5">
+                                        {d.items.length === 0
+                                            ? <div className="text-[11px] text-dd-text-2 text-center py-1.5">—</div>
+                                            : d.items.map((it, i) => (
+                                                <div key={i} className="flex items-center gap-1.5 text-[12px] py-0.5">
+                                                    <span className="flex-1 min-w-0 break-words">{es ? (it.es || it.en) : it.en}</span>
+                                                    {itemHours(it) > 0 && <span className="text-[10px] font-bold text-dd-green shrink-0">{fmtHrs(itemHours(it))}h</span>}
+                                                    {it.note && <span className="text-[10px]" title={it.note}>📝</span>}
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="rounded-xl border border-dd-line bg-white p-2.5">
+                        <div className="text-[11px] font-black uppercase tracking-wide text-dd-text-2 mb-1">{tx('Prep list', 'Lista de prep')} ({pool.length})</div>
+                        <div className="flex flex-wrap gap-1">
+                            {pool.length === 0
+                                ? <span className="text-[11px] text-dd-text-2">—</span>
+                                : pool.map((it, i) => (
+                                    <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-dd-bg border border-dd-line">{es ? (it.es || it.en) : it.en}</span>
+                                ))}
+                        </div>
+                    </div>
+
+                    {log.length > 0 && (
+                        <div className="rounded-xl border border-dd-line bg-white p-2.5">
+                            <div className="text-[11px] font-black uppercase tracking-wide text-dd-text-2 mb-1">{tx('Move history', 'Historial de movimientos')} ({log.length})</div>
+                            <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                                {log.map((e, i) => (
+                                    <div key={i} className="flex items-start gap-1.5 text-[11px] py-0.5 border-b border-dd-line/40 last:border-0">
+                                        <span className="leading-none mt-0.5 shrink-0">{actionIcon(e.action)}</span>
+                                        <span className="flex-1 min-w-0 break-words">{describeEvent(e, es)}</span>
+                                        <span className="text-dd-text-2 whitespace-nowrap shrink-0">{fmt(e.at)} · {e.by || ''}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer actions */}
+                <div className="border-t border-dd-line p-3 flex items-center gap-2 shrink-0">
+                    <button onClick={onClose} className="px-3 py-2 rounded-lg bg-dd-bg text-dd-text-2 font-bold text-sm">{tx('Close', 'Cerrar')}</button>
+                    <div className="flex-1" />
+                    <button onClick={() => onPrint(snap)} className="px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text font-bold text-sm">🖨 {tx('Print', 'Imprimir')}</button>
+                    <button onClick={() => onLoad(snap)} className="px-4 py-2 rounded-lg bg-dd-green text-white font-bold text-sm">{tx('Load', 'Cargar')}</button>
+                </div>
             </div>
         </div>
     );
