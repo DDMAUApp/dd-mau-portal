@@ -48,7 +48,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
     Users, Bell, BellOff, Smartphone, MonitorOff,
-    Check, AlertTriangle, Clock, ChevronDown, MonitorSmartphone, Wifi,
+    Check, AlertTriangle, Clock, ChevronDown, MonitorSmartphone, Wifi, Globe,
     MessageSquare, Send, PhoneOff, Phone,
 } from 'lucide-react';
 import { composeSetupReminderSmsUrl, stampSetupReminderSent } from '../data/notify';
@@ -176,6 +176,10 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                 lastSeenMs,
                 platform: s.lastSignInPlatform || '',
                 standalone: s.lastSignInStandalone === true,
+                // TRUE = last opened the DOWNLOADED native app (iOS/Android).
+                // Undefined on staff who haven't signed in since this shipped →
+                // they read as "web" until their next session stamps it.
+                native: s.lastSignInNative === true,
                 notif,
                 installed,
                 ready,
@@ -203,7 +207,8 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
         const activeToday = rows.filter((r) => r.lastSeenMs && (now - r.lastSeenMs) < 24 * 60 * 60 * 1000).length;
         const activeWeek = rows.filter((r) => r.lastSeenMs && (now - r.lastSeenMs) < 7 * 24 * 60 * 60 * 1000).length;
         const inactive7d = rows.filter((r) => !r.lastSeenMs || (now - r.lastSeenMs) > 7 * 24 * 60 * 60 * 1000).length;
-        return { total, notif, installed, ready, activeToday, activeWeek, inactive7d };
+        const onApp = rows.filter((r) => r.native).length;
+        return { total, notif, installed, ready, activeToday, activeWeek, inactive7d, onApp };
     }, [rows]);
 
     const filtered = useMemo(() => {
@@ -242,8 +247,8 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                         </h3>
                         <p className="text-caption-md text-dd-text-2">
                             {tx(
-                                `${stats.activeToday} active today · ${stats.ready}/${stats.total} fully set up · ${stats.inactive7d} inactive 7d+`,
-                                `${stats.activeToday} hoy · ${stats.ready}/${stats.total} listos · ${stats.inactive7d} inactivos 7d+`
+                                `${stats.activeToday} active today · ${stats.onApp} on app / ${stats.total - stats.onApp} on web · ${stats.ready}/${stats.total} set up`,
+                                `${stats.activeToday} hoy · ${stats.onApp} en app / ${stats.total - stats.onApp} en web · ${stats.ready}/${stats.total} listos`
                             )}
                         </p>
                     </div>
@@ -260,7 +265,7 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                 <>
                     {/* Aggregate stats — 6 chips covering the at-a-glance
                         health of the team's app engagement. */}
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mt-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 mt-4">
                         <StatChip
                             label={tx('Active today', 'Hoy')}
                             value={`${stats.activeToday}/${stats.total}`}
@@ -280,10 +285,16 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                             Icon={Bell}
                         />
                         <StatChip
+                            label={tx('On the app', 'En la app')}
+                            value={`${stats.onApp}/${stats.total}`}
+                            tone="green"
+                            Icon={Smartphone}
+                        />
+                        <StatChip
                             label={tx('PWA installed', 'PWA inst.')}
                             value={`${stats.installed}/${stats.total}`}
                             tone={stats.installed === stats.total ? 'green' : 'amber'}
-                            Icon={Smartphone}
+                            Icon={MonitorSmartphone}
                         />
                         <StatChip
                             label={tx('Fully set up', 'Listos')}
@@ -347,11 +358,14 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                                     · {s.role}
                                                 </span>
                                             )}
-                                            {s.platform && (
-                                                <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-dd-text-2 bg-dd-bg/80 border border-dd-line px-1.5 py-0.5 rounded-full">
-                                                    <MonitorSmartphone size={9} strokeWidth={2.5} aria-hidden="true" />
-                                                    {s.platform}
-                                                    {s.standalone && <span className="ml-0.5 text-dd-green-700">·PWA</span>}
+                                            {(s.native || s.platform) && (
+                                                <span className={`ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${s.native ? 'bg-dd-sage-50 text-dd-green-700 border-dd-green/40' : 'bg-dd-bg/80 text-dd-text-2 border-dd-line'}`}>
+                                                    {s.native
+                                                        ? <Smartphone size={9} strokeWidth={2.5} aria-hidden="true" />
+                                                        : <Globe size={9} strokeWidth={2.5} aria-hidden="true" />}
+                                                    {s.native
+                                                        ? `${s.platform || ''} ${tx('App', 'App')}`.trim()
+                                                        : `${tx('Web', 'Web')}${s.standalone ? ' · PWA' : (s.platform ? ` · ${s.platform}` : '')}`}
                                                 </span>
                                             )}
                                         </div>

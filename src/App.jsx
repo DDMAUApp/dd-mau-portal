@@ -1448,10 +1448,16 @@ export default function App() {
                     const ms = typeof prev === 'number' ? prev : Date.parse(prev);
                     if (Number.isFinite(ms) && Date.now() - ms < 30 * 60 * 1000) return;
                 }
+                // TRUE only inside the downloaded native app (Capacitor iOS/
+                // Android wrapper). standalone below stays broader (also true
+                // for a home-screen PWA) for backward compat — the admin usage
+                // audit uses lastSignInNative to tell "downloaded the app" apart
+                // from "web / PWA in a browser".
+                const isNative = (window.Capacitor?.isNativePlatform?.() === true);
                 const standalone = (
                     (window.matchMedia?.('(display-mode: standalone)')?.matches === true)
                     || (window.navigator?.standalone === true)
-                    || (window.Capacitor?.isNativePlatform?.() === true)
+                    || isNative
                 );
                 const ua = window.navigator?.userAgent || '';
                 // Coarse platform tag — keeps the admin audit's
@@ -1471,6 +1477,7 @@ export default function App() {
                         lastSignInAt: Date.now(),
                         lastSignInPlatform: platform,
                         lastSignInStandalone: standalone,
+                        lastSignInNative: isNative,
                     }
                     : s);
                 await setDoc(ref, { list: next });
