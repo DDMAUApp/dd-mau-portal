@@ -25,6 +25,7 @@
 // Capacitor isn't loaded (web build), the helpers no-op gracefully.
 
 import { Capacitor } from '@capacitor/core';
+import { toast } from './toast';
 
 function isNative() {
     try { return Capacitor.isNativePlatform(); }
@@ -58,6 +59,10 @@ const _subscriptions = [];
 // calls the top handler (LIFO) — matching how the native back
 // stack on Android works.
 const _backHandlers = [];
+
+// Set true once Capgo has DOWNLOADED a newer OTA bundle that's waiting to be
+// applied (see the updateAvailable listener in initCapacitor).
+let _otaPending = false;
 
 export function pushBackHandler(fn) {
     if (typeof fn !== 'function') return () => {};
@@ -249,6 +254,43 @@ export async function initCapacitor() {
     try {
         const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
         await CapacitorUpdater.notifyAppReady();
+
+        // ── OTA refresh trigger — no more "close + reopen twice" ──────
+        // With autoUpdate, Capgo downloads a newer bundle in the background but
+        // only APPLIES it on the next COLD launch — so a fresh deploy needed two
+        // relaunches (one to download, one to apply). Instead we:
+        //   (a) show a one-tap "Refresh" toast the moment a bundle is ready, and
+        //   (b) auto-apply when the app next returns to the foreground after
+        //       being away a few seconds (a genuine reopen — not a quick
+        //       tab-away, which would interrupt mid-task).
+        // reload() swaps the WebView onto the downloaded bundle in-session.
+        const applyOta = async () => {
+            try { await CapacitorUpdater.reload(); }
+            catch (e) { console.warn('[cap] OTA reload failed:', e?.message); }
+        };
+        const updHandle = await CapacitorUpdater.addListener('updateAvailable', () => {
+            _otaPending = true;
+            try {
+                toast('✨ New version ready · Nueva versión lista', {
+                    kind: 'info',
+                    duration: 0,                 // sticky until tapped / dismissed
+                    actionLabel: 'Refresh',
+                    onAction: applyOta,
+                });
+            } catch { /* toast is best-effort */ }
+        });
+        _subscriptions.push(updHandle);
+
+        // Auto-apply on a real reopen (foreground after >8s away). Separate from
+        // App.jsx's relock appStateChange listener — both coexist fine.
+        let otaBgAt = 0;
+        const { App: CapOtaApp } = await import('@capacitor/app');
+        const otaStateHandle = await CapOtaApp.addListener('appStateChange', ({ isActive }) => {
+            if (!isActive) { otaBgAt = Date.now(); return; }
+            if (_otaPending && otaBgAt > 0 && Date.now() - otaBgAt > 8000) applyOta();
+            otaBgAt = 0;
+        });
+        _subscriptions.push(otaStateHandle);
     } catch (e) {
         console.warn('[cap] Capgo notifyAppReady failed:', e?.message);
     }
