@@ -4300,7 +4300,7 @@ ${dayBlocks}
                 <td class="staff-cell">
                     <div class="staff-name">${escape(s.name)}${s.shiftLead ? ' 🛡️' : ''}${s.isMinor ? ' 🔑' : ''}</div>
                     <div class="staff-meta">${escape(s.role || '')}</div>
-                    <div class="hours ${hoursClass}">${escape(formatHours(s.totalHours))}</div>
+                    ${canEdit ? `<div class="hours ${hoursClass}">${escape(formatHours(s.totalHours))}</div>` : ''}
                 </td>
                 ${cells}
             </tr>`;
@@ -7949,12 +7949,14 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                         </span>
                                     </span>
                                 </button>
-                                {/* Per-staff weekly-hours pill — managers + admins only.
-                                    Andrew (2026-05-17): "weekly hours need
-                                    to only be seen by managers and up".
-                                    Was canEdit-gated; tightened to drop
-                                    shift-lead-scheduler visibility. */}
-                                {isManagerOrAdmin && (
+                                {/* Per-staff weekly-hours pill — ADMINS + SCHEDULE EDITORS only.
+                                    Andrew (2026-06-09): "only let the admin and schedule
+                                    editors see the staff's hours count under their name."
+                                    canEdit = isAdmin OR has the canEditScheduleFOH/BOH toggle
+                                    (see canEditSchedule). A manager WITHOUT a schedule-edit
+                                    toggle no longer sees this — grant the toggle in the Admin
+                                    Panel if they should. (Prior 2026-05-17 rule: isManagerOrAdmin.) */}
+                                {canEdit && (
                                     <div className={`text-[10px] font-bold mt-1 inline-block px-1.5 py-0.5 rounded-md border ${hoursColor(s.totalHours)}`}>
                                         {formatHours(s.totalHours)}
                                     </div>
