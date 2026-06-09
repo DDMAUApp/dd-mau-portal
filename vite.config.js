@@ -157,6 +157,14 @@ export default defineConfig({
       ? 'hidden'
       : false,
     chunkSizeWarningLimit: 800,
+    // Keep the lazy Sentry chunk OUT of the entry's modulepreload list. Vite
+    // walks one level of dynamic imports and would otherwise <link rel=
+    // "modulepreload"> vendor-sentry — which re-introduces the eager fetch +
+    // compile we're avoiding. It's dynamic-imported at idle (data/sentryClient),
+    // so it doesn't need to preload.
+    modulePreload: {
+      resolveDependencies: (_filename, deps) => deps.filter((d) => !/vendor-sentry/.test(d)),
+    },
     rollupOptions: {
       output: {
         entryFileNames: `assets/[name]-${buildId}-[hash].js`,
@@ -239,6 +247,13 @@ export default defineConfig({
             id.includes('/qrcode/')
           ) {
             return;
+          }
+          // Sentry SDK is imported LAZILY (dynamic import in data/sentryClient)
+          // so it stays out of the eager entry. Give it its own async chunk;
+          // because nothing imports it statically, this chunk is NOT preloaded
+          // → zero first-paint cost (was ~150KB of eager vendor-misc).
+          if (id.includes('@sentry/') || id.includes('@sentry-internal/')) {
+            return 'vendor-sentry';
           }
           // Everything else from node_modules → generic vendor chunk.
           return 'vendor-misc';

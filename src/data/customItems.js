@@ -18,7 +18,7 @@
 
 import { db } from '../firebase';
 import {
-    doc, collection, getDoc, setDoc, deleteDoc, onSnapshot, serverTimestamp,
+    doc, collection, getDoc, setDoc, deleteDoc, onSnapshot, serverTimestamp, query, limit,
 } from 'firebase/firestore';
 import { recordAudit } from './audit';
 
@@ -28,7 +28,9 @@ const COLLECTION = 'custom_items';
 // order. Each entry has the same shape getAllMenuItems() returns
 // so the search index can treat them uniformly.
 export function subscribeAllCustomItems(cb) {
-    return onSnapshot(collection(db, COLLECTION), (snap) => {
+    // limit(200) — defense-in-depth bound. Admin-curated (house sauces / prep
+    // items), realistically dozens, but no live listener should be unbounded.
+    return onSnapshot(query(collection(db, COLLECTION), limit(200)), (snap) => {
         const list = [];
         snap.forEach(d => list.push({ ...d.data(), id: d.id, isCustom: true }));
         list.sort((a, b) => (a.nameEn || '').localeCompare(b.nameEn || ''));

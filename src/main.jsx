@@ -129,7 +129,15 @@ try {
     }
 } catch (_) { /* no-op — non-fatal if Capacitor global isn't there */ }
 
-try { initSentry(); } catch (e) { console.warn('initSentry failed:', e?.message); }
+// Sentry init is deferred to idle (after first paint) and the SDK lazy-loads,
+// so the ~150KB @sentry chunk never blocks the lock screen / first paint. Early
+// errors are still caught by logger.js's global window.onerror +
+// unhandledrejection handlers.
+{
+    const startSentry = () => { initSentry().catch((e) => console.warn('initSentry failed:', e?.message)); };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(startSentry, { timeout: 4000 });
+    else setTimeout(startSentry, 1500);
+}
 try { setupPWA(); } catch (e) { console.warn('setupPWA failed:', e?.message); }
 // Fire-and-forget: the Capacitor init reads platform state then
 // wires listeners. Web builds skip the body of every function via

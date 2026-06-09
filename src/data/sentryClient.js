@@ -33,8 +33,20 @@
 // Sentry's servers — defense in depth on top of our codebase
 // conventions. See `scrubSentryEvent` below for what's scrubbed.
 
-import * as Sentry from '@sentry/react';
 import { redactString, redactStack, redactObject } from './redact';
+
+// @sentry/react is loaded LAZILY (dynamic import in loadSentry below) so the
+// ~150KB SDK stays OUT of the eager entry chunk and never blocks first paint /
+// the lock screen. initSentry() loads it at idle after first paint; every other
+// export below no-ops until then — early errors are still captured by
+// logger.js's global window.onerror/unhandledrejection handlers + the error
+// boundaries' own Firestore writes.
+let Sentry = null;
+async function loadSentry() {
+    if (Sentry) return Sentry;
+    try { Sentry = await import('@sentry/react'); } catch { Sentry = null; }
+    return Sentry;
+}
 
 // Build constant — set in vite.config.js. Falls back to 'dev' when not
 // available (test runners, the rare SSR path).
@@ -169,7 +181,7 @@ export function scrubSentryEvent(event) {
 //     leak PII. We turn it off permanently.
 //   • sendDefaultPii: false — Sentry's default is to forward user IPs
 //     and some browser data we don't need.
-export function initSentry() {
+export async function initSentry() {
     const dsn = getDsn();
     if (!dsn) {
         // Quiet no-op in dev or when DSN hasn't been set yet.
@@ -185,6 +197,11 @@ export function initSentry() {
         if (import.meta.env?.DEV) environment = 'dev';
         else if (import.meta.env?.MODE) environment = import.meta.env.MODE;
     } catch {}
+
+    // Load the SDK now — its own lazy chunk. We're past first paint by the time
+    // initSentry() runs (scheduled at idle from main.jsx).
+    await loadSentry();
+    if (!Sentry) return;
 
     Sentry.init({
         dsn,
@@ -258,7 +275,7 @@ export function initSentry() {
 // We pass id + username (staff name) but NEVER email. The redactor
 // would scrub email if it appeared, but better to not set it at all.
 export function setSentryIdentity({ staffId, staffName, role, location } = {}) {
-    if (!isSentryEnabled()) return;
+    if (!isSentryEnabled() || !Sentry) return;
     try {
         if (!staffId && !staffName) {
             Sentry.setUser(null);
@@ -284,7 +301,7 @@ export function setSentryIdentity({ staffId, staffName, role, location } = {}) {
 // an error and DON'T want it to propagate (e.g. a background sync
 // that handles its own failure but still wants Sentry to know).
 export function captureException(err, opts) {
-    if (!isSentryEnabled()) return null;
+    if (!isSentryEnabled() || !Sentry) return null;
     try {
         return Sentry.captureException(err, opts);
     } catch {
@@ -297,7 +314,7 @@ export function captureException(err, opts) {
 // breadcrumb() so call sites only have to remember one. Pass-through
 // to Sentry; no-op if disabled.
 export function sentryBreadcrumb({ type, category, message, data, level } = {}) {
-    if (!isSentryEnabled()) return;
+    if (!isSentryEnabled() || !Sentry) return;
     try {
         Sentry.addBreadcrumb({
             type: type || 'default',

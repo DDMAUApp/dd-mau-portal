@@ -225,14 +225,17 @@ export async function initCapacitor() {
     // we only preventDefault (no stopPropagation) so any sibling handlers still
     // fire. Only intercepts real http(s) URLs, so internal routing is untouched.
     try {
-        document.addEventListener('click', (ev) => {
+        const extLinkHandler = (ev) => {
             const a = ev.target?.closest?.('a[target="_blank"]');
             if (!a) return;
             const href = a.getAttribute('href') || '';
             if (!/^https?:\/\//i.test(href)) return;
             ev.preventDefault();
             openExternalUrl(href);
-        }, true);
+        };
+        document.addEventListener('click', extLinkHandler, true);
+        // Tearable down by cleanupCapacitor() like the plugin listeners.
+        _subscriptions.push({ remove: () => document.removeEventListener('click', extLinkHandler, true) });
     } catch (e) {
         console.warn('[cap] external-link delegate failed:', e?.message);
     }
