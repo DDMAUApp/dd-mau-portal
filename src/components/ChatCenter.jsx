@@ -1306,7 +1306,7 @@ function NewChatModal({
 
                 {/* Picked chips */}
                 {picked.length > 0 && (
-                    <div className="px-3 py-2 border-b border-dd-line flex flex-wrap gap-1.5 shrink-0 max-h-24 overflow-y-auto">
+                    <div className="px-3 py-2 border-b border-dd-line flex flex-wrap gap-1.5 shrink-0 max-h-28 md:max-h-52 overflow-y-auto overscroll-contain">
                         {picked.map(n => (
                             <button
                                 key={n}
