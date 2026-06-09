@@ -1187,10 +1187,12 @@ function PromoStrip({ promoStrip }) {
     const styleKey = ['sage', 'red', 'amber', 'sky', 'dark'].includes(promoStrip.style)
         ? promoStrip.style : 'sage';
     const STYLE_CLASS = {
-        // Andrew 2026-06-08: announcement green → sage green (#647D5B), a muted
-        // dusty green with bold white text. (Tried mint #2BB673 first; he wanted
-        // softer/sage.) Key stays 'sage' so existing TV configs keep working.
-        sage:  'bg-[#647D5B] text-white',
+        // Andrew 2026-06-08: announcement green → the HOME SCREEN's background
+        // sage (dd-sage #C9DBC9, the .ddmau-app-backdrop glow). It's a light
+        // tint, so the text flips to dark green for contrast. (Arc: mint #2BB673
+        // → sage #647D5B → match the app backdrop.) Key stays 'sage' so existing
+        // TV configs keep working.
+        sage:  'bg-dd-sage text-dd-green-700',
         red:   'bg-red-700 text-white',
         amber: 'bg-amber-500 text-amber-950',
         sky:   'bg-sky-700 text-white',
