@@ -3934,7 +3934,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     reviewedAt: serverTimestamp(),
                 });
             });
-            const range = start + (end !== start ? ` → ${end}` : '');
+            // Was `start + (end !== start ? …)` — neither identifier exists in
+            // this scope (they live in handleSubmitPtoRequest), so every approve
+            // threw a ReferenceError HERE, after the transaction committed: PTO
+            // saved as approved, but the staff notify below never fired and the
+            // manager saw a false "Could not approve" toast. Same expression as
+            // handleDenyPto. Audit 2026-06-09.
+            const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
             await notify(entry.staffName, 'pto_approved',
                 { en: 'Time-off approved', es: 'Tiempo libre aprobado' },
                 { en: `Your time-off for ${range} was approved.`,

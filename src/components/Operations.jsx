@@ -10168,7 +10168,10 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
 
     // Filter by date string OR id. Search is case-insensitive substring
     // match — admins typing "may 1" or "05-01" both find that day.
-    const filteredRows = history
+    // Memoized — every keystroke re-renders via setSearchTerm; without this
+    // the 100-row map/filter (Object.entries + new Date + toLocaleDateString
+    // per row) re-ran on every render.
+    const filteredRows = useMemo(() => history
         .map(h => {
             const filledItems = Object.entries(h.counts || {})
                 .filter(([_, q]) => Number(q) > 0);
@@ -10187,7 +10190,7 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
             return iso?.toLowerCase().includes(needle)
                 || r.h.id?.toLowerCase().includes(needle)
                 || dateLabel.toLowerCase().includes(needle);
-        });
+        }), [history, searchTerm, isEs]);
 
     return (
         <ModalPortal>
