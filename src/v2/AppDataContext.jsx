@@ -54,6 +54,7 @@ import { createContext, useContext, useState, useEffect, useMemo, useRef } from 
 import { db } from '../firebase';
 import { collection, doc, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 import { postEightySixToChat } from '../data/eightySixChat';
+import { canViewLabor } from '../data/staff';
 
 const AppDataContext = createContext(null);
 
@@ -76,7 +77,7 @@ const hydrateSplhFromCache = (loc) => {
     }
 };
 
-export function AppDataProvider({ staffName, storeLocation, staffListReady = false, children }) {
+export function AppDataProvider({ staffName, storeLocation, staffList = [], staffListReady = false, children }) {
     const [notifications, setNotifications] = useState([]);
     const [shifts14, setShifts14] = useState([]);
     const [timeOff, setTimeOff] = useState([]);
@@ -90,6 +91,20 @@ export function AppDataProvider({ staffName, storeLocation, staffListReady = fal
         webster:  hydrateSplhFromCache('webster'),
         maryland: hydrateSplhFromCache('maryland'),
     }));
+
+    // Labor data is gated to staff WITH labor access — the same `canViewLabor`
+    // switch the labor UI already uses (set by the Admin Panel "Labor %"
+    // toggle). Gating the LISTENERS (not just the display) means line cooks /
+    // cashiers stop pulling ~3k laborHistory docs on every cold open. Because
+    // `staffList` is live, when an admin flips someone's "Labor %" ON, this
+    // flips true, the labor effects (which depend on it) re-run, and their
+    // labor data subscribes with NO reload. Managers/owners default on;
+    // everyone else defaults off. canViewLabor(undefined) === false, so a
+    // not-yet-loaded staffName is safe (subscribes once the list lands).
+    const canSeeLabor = useMemo(
+        () => canViewLabor((staffList || []).find(s => s.name === staffName)),
+        [staffList, staffName],
+    );
 
     // notifications — per user. Skipped if no staffName signed in.
     //
@@ -275,8 +290,10 @@ export function AppDataProvider({ staffName, storeLocation, staffListReady = fal
         }
     }, [eightySix, staffName, staffListReady]);
 
-    // ops/labor_{loc} — same pattern.
+    // ops/labor_{loc} — gated on canSeeLabor (see above). Re-subscribes when
+    // labor access is granted, tears down + clears when revoked.
     useEffect(() => {
+        if (!canSeeLabor) { setLabor({ webster: null, maryland: null }); return undefined; }
         const unsubW = onSnapshot(doc(db, 'ops', 'labor_webster'), (snap) => {
             setLabor(prev => ({ ...prev, webster: snap.exists() ? snap.data() : null }));
         }, (err) => console.warn('labor_webster snapshot failed:', err));
@@ -284,7 +301,7 @@ export function AppDataProvider({ staffName, storeLocation, staffListReady = fal
             setLabor(prev => ({ ...prev, maryland: snap.exists() ? snap.data() : null }));
         }, (err) => console.warn('labor_maryland snapshot failed:', err));
         return () => { unsubW(); unsubM(); };
-    }, []);
+    }, [canSeeLabor]);
 
     // laborHistory_{loc} — last 28 days of hourly snapshots used for SPLH
     // (sales per labor hour) analysis. Subscribes for whichever
@@ -312,6 +329,7 @@ export function AppDataProvider({ staffName, storeLocation, staffListReady = fal
     // labor pattern above and means an admin flipping the location
     // toggle sees no flicker.
     useEffect(() => {
+        if (!canSeeLabor) { setLaborHistory({ webster: [], maryland: [] }); return undefined; }
         const subscribeLoc = (loc) => {
             const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
             const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
