@@ -292,11 +292,7 @@ export default function PictureEditor({
                 floating card with rounded corners on desktop. */}
             <div className="bg-white rounded-none sm:rounded-2xl w-full max-w-6xl h-[100dvh] sm:h-auto sm:max-h-[96vh] flex flex-col overflow-hidden shadow-2xl">
                 {/* Header */}
-                {/* NOT the `safe-top` class — it OVERRIDES padding-top (cascade
-                    wins over py-3), zeroing the header padding on desktop.
-                    calc() genuinely adds the notch inset on top of the 12px. */}
-                <header className="bg-violet-600 text-white px-4 pb-3 flex items-center justify-between flex-shrink-0"
-                    style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))' }}>
+                <header className="bg-violet-600 text-white px-4 py-3 safe-top flex items-center justify-between flex-shrink-0">
                     <div>
                         <div className="text-base font-black">🖼 {tx('Edit picture', 'Editar imagen')}</div>
                         <div className="text-[11px] opacity-90">

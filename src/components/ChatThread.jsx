@@ -1714,7 +1714,7 @@ function ChatThreadInner({
                 a divider line. ddmau-header-back-puck /
                 ddmau-header-chip / ddmau-header-action-puck are the
                 CSS hooks for the layered dark fills (see index.css). */}
-            <header className="safe-top px-3 pt-2.5 pb-2 bg-white flex items-center gap-2 shrink-0">
+            <header className="safe-top [--safe-top-base:0.625rem] px-3 pt-2.5 pb-2 bg-white flex items-center gap-2 shrink-0">
                 <button
                     onClick={onBack}
                     className="ddmau-header-back-puck md:hidden w-10 h-10 rounded-full flex items-center justify-center shrink-0 active:scale-95 transition"

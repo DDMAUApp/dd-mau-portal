@@ -59,7 +59,7 @@ export default function InventoryListsAdmin({
                 lists window is opened i cant scroll".) */}
             <div className="bg-white w-full sm:max-w-4xl h-[100dvh] sm:h-[85vh] sm:rounded-2xl flex flex-col overflow-hidden">
                 {/* Header */}
-                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top">
+                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top [--safe-top-base:1rem]">
                     <div className="flex items-center gap-2">
                         {view === 'edit' && (
                             <button onClick={() => { setView('grid'); setEditingId(null); }}

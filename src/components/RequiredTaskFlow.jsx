@@ -192,7 +192,7 @@ export default function RequiredTaskFlow({
             </div>
 
             {/* Footer — sign-out escape hatch */}
-            <div className="border-t border-dd-line bg-white px-4 py-2 safe-bottom">
+            <div className="border-t border-dd-line bg-white px-4 py-2 safe-bottom [--safe-bottom-base:0.5rem]">
                 <button onClick={onSignOut}
                     className="w-full text-[11px] text-dd-text-2 hover:text-dd-text underline">
                     {isEs

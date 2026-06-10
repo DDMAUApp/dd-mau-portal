@@ -582,7 +582,7 @@ function AddPhoneSheet({ staff, isEs, onClose, onSave }) {
                 className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top">
+                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top [--safe-top-base:1rem]">
                     <h3 className="text-lg font-black text-dd-text">
                         📱 {tx('Add phone number', 'Añadir teléfono')}
                     </h3>

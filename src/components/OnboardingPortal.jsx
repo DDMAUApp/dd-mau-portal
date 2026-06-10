@@ -510,7 +510,7 @@ function CompletedExitCard({ isEs, hireName, signedAt, typedSignature }) {
         try { window.location.replace('/'); } catch { window.location.href = '/'; }
     };
     return (
-        <div className="min-h-screen flex items-center justify-center bg-dd-sage p-4 safe-top safe-bottom">
+        <div className="min-h-screen flex items-center justify-center bg-dd-sage p-4 safe-top safe-bottom [--safe-top-base:1rem] [--safe-bottom-base:1rem]">
             <div className="max-w-md w-full bg-white rounded-3xl border-2 border-dd-green shadow-xl p-6 sm:p-8 text-center space-y-4">
                 <p className="text-6xl">🎉</p>
                 <h1 className="text-2xl font-black text-dd-green-700">

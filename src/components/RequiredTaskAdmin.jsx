@@ -198,7 +198,7 @@ export default function RequiredTaskAdmin({ staffList, staffName, language, onCl
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-2xl max-h-[100dvh] sm:max-h-[90vh] sm:rounded-2xl flex flex-col overflow-hidden">
                 {/* Header */}
-                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top">
+                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top [--safe-top-base:1rem]">
                     <h2 className="text-lg font-bold text-dd-text">
                         📌 {tx('Required Tasks', 'Tareas Requeridas')}
                     </h2>

@@ -1208,16 +1208,25 @@ body.capacitor-native .ddmau-mobile-bottom-nav {
  * places that LOOKED safe were actually still being clipped by the
  * iPhone notch / Dynamic Island on PWA installs.
  *
- * These utilities ADD safe-area padding to fixed/sticky modal headers
- * (top) and bottom bars (bottom). The env(..., 0px) fallback resolves
- * to 0 on desktop / non-notched screens, so applying these is a no-op
- * outside iPhone/iPad-with-notch PWAs.
+ * 2026-06-10 FIX — these classes are emitted AFTER Tailwind's utilities
+ * layer, so on any element written as `py-3 safe-top` they were
+ * OVERRIDING the Tailwind padding-top instead of adding to it: every
+ * such header rendered 0px top padding on desktop / non-notched
+ * Android (env() = 0 there). All ~31 usage sites pair the class with a
+ * padding utility, so all of them lost their base padding.
+ *
+ * Now: padding = max(base, notch inset). On notched iPhones the inset
+ * (≥ 44px) exceeds the base, so the rendering is IDENTICAL to before —
+ * on flat screens the intended base padding comes back. The base
+ * defaults to 0.75rem (py-3 / p-3, the most common pairing); sites with
+ * a different padding scale set the variable inline via a Tailwind
+ * arbitrary property, e.g. `p-4 safe-top [--safe-top-base:1rem]`.
  */
 .safe-top {
-    padding-top: env(safe-area-inset-top, 0px);
+    padding-top: max(var(--safe-top-base, 0.75rem), env(safe-area-inset-top, 0px));
 }
 .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-bottom: max(var(--safe-bottom-base, 0.75rem), env(safe-area-inset-bottom, 0px));
 }
 
 @keyframes flash-yellow {

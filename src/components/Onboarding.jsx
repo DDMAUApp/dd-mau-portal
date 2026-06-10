@@ -1130,7 +1130,7 @@ function OfferLetterEditor({ hire, isEs, staffName, onWriteAudit, onClose }) {
         <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[95vh] flex flex-col">
-                <div className="border-b border-dd-line p-4 flex items-start justify-between gap-2 flex-shrink-0 safe-top">
+                <div className="border-b border-dd-line p-4 flex items-start justify-between gap-2 flex-shrink-0 safe-top [--safe-top-base:1rem]">
                     <div className="min-w-0">
                         <h3 className="text-lg font-black text-dd-text flex items-center gap-2">
                             ✉️ {tx('Edit offer letter', 'Editar carta de oferta')}
@@ -1837,7 +1837,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                 — they were getting pushed off-screen on mobile when the
                 Custom preset was selected. */}
             <form onSubmit={submit} className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
-                <div className="border-b border-dd-line p-4 flex items-center justify-between flex-shrink-0 safe-top">
+                <div className="border-b border-dd-line p-4 flex items-center justify-between flex-shrink-0 safe-top [--safe-top-base:1rem]">
                     <h3 className="text-lg font-black text-dd-text">
                         {isEditing
                             ? <>✏️ {tx('Edit hire', 'Editar contratación')}</>
@@ -2074,7 +2074,7 @@ function InviteSheet({ hire, token, url, isEs, onClose }) {
         <ModalPortal>
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
-                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top">
+                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top [--safe-top-base:1rem]">
                     <h3 className="text-lg font-black text-dd-text">
                         🔗 {tx('Invite ready', 'Invitación lista')}
                     </h3>

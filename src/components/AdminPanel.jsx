@@ -3128,7 +3128,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         affordance is reachable from any scroll
                                         position. Bottom Done stays as a
                                         secondary tap target. */}
-                                    <div className="border-b border-gray-200 p-3 sm:p-4 sticky top-0 bg-white z-10 safe-top">
+                                    <div className="border-b border-gray-200 p-3 sm:p-4 sticky top-0 bg-white z-10 safe-top sm:[--safe-top-base:1rem]">
                                         <div className="flex items-center justify-between gap-2">
                                             <h3 className="text-base sm:text-lg font-bold text-purple-700 truncate">🏷 {language === "es" ? "Etiquetar Personal" : "Bulk Tag Staff"}</h3>
                                             <button onClick={() => { setShowBulkTag(false); setBulkSearch(""); }}
