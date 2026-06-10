@@ -1,21 +1,27 @@
 // PictureEditor — in-app editor for a single image-mode TV picture.
-// Crop (16:9), drop TEXT, and STARBURST callouts ("$5.99", "NEW", "SPICY").
+// Crop (16:9), ADJUST (brightness/contrast/color), drop TEXT, and STARBURST
+// callouts ("$5.99", "NEW", "SPICY").
 //
 // Andrew 2026-06-07: "the webster tv 3 is just pictures — make each picture
 // editable, crop, add words, starbursts."
+// Andrew 2026-06-10: "some of the photos are good and some come out too
+// bright or too contrasted" → per-photo Adjust sliders. Live preview is a
+// CSS filter on the <img> only (overlays stay unfiltered); Save bakes the
+// identical math into the photo pixels before overlays are drawn.
 //
 // Design (mirrors HitZoneEditor):
-//   • Edits are stored as a non-destructive RECIPE { crop, texts[], bursts[] }
-//     in ORIGINAL-image fractions, plus the originalUrl. On Save we bake the
-//     recipe into a flat PNG (bakePictureEdits) and hand back the new URL +
-//     recipe. Reopening loads the original + recipe so nothing is ever lost.
+//   • Edits are stored as a non-destructive RECIPE { crop, adjust, texts[],
+//     bursts[] } in ORIGINAL-image fractions, plus the originalUrl. On Save we
+//     bake the recipe into a flat image (bakePictureEdits) and hand back the
+//     new URL + recipe. Reopening loads the original + recipe so nothing is
+//     ever lost.
 //   • The stage shows the ORIGINAL image at all times; the crop is drawn as a
 //     bright frame with the outside dimmed (that's what the TV will show).
 //     Text/burst elements sit at their original-fraction anchors directly on
 //     the image, so there's no coordinate drift when the crop changes.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { bakePictureEdits } from '../data/menuImageUpload';
+import { bakePictureEdits, normalizeAdjust } from '../data/menuImageUpload';
 import {
     BURST_PRESETS, BURST_PRESET_KEYS, BURST_DEFAULT_FILL, BURST_DEFAULT_TEXT,
     BURST_FILL_SWATCHES, burstSvgPoints,
@@ -45,9 +51,15 @@ export default function PictureEditor({
     const src = originalUrl || imageUrl;
 
     const [crop, setCrop] = useState(initialRecipe?.crop || null);
+    // Photo adjustments, as PERCENTS (100 = unchanged). Brightness/contrast
+    // ±50%, saturation 0 (B&W) to 200 (vivid).
+    const [adjust, setAdjust] = useState(() => ({
+        brightness: 100, contrast: 100, saturation: 100,
+        ...(initialRecipe?.adjust || {}),
+    }));
     const [texts, setTexts] = useState(() => (initialRecipe?.texts || []).map(t => ({ id: nextId(), ...t })));
     const [bursts, setBursts] = useState(() => (initialRecipe?.bursts || []).map(b => ({ id: nextId(), ...b })));
-    const [tool, setTool] = useState('select');         // 'select' | 'crop'
+    const [tool, setTool] = useState('select');         // 'select' | 'crop' | 'adjust'
     const [selId, setSelId] = useState(null);
     const [saving, setSaving] = useState(false);
     const [cropDraft, setCropDraft] = useState(null);   // { x, y, w, h } during a crop drag
@@ -266,10 +278,15 @@ export default function PictureEditor({
         try {
             const recipeTexts = texts.map(({ id, ...rest }) => rest).filter(t => String(t.text || '').trim());
             const recipeBursts = bursts.map(({ id, ...rest }) => rest);
+            // Only persist adjust when it actually changes something — null
+            // keeps old recipes byte-identical and the footer/⟲ logic simple.
+            const recipeAdjust = adjNorm
+                ? { brightness: adjust.brightness, contrast: adjust.contrast, saturation: adjust.saturation }
+                : null;
             const newUrl = await bakePictureEdits({
-                originalUrl: src, crop, texts: recipeTexts, bursts: recipeBursts, slugPrefix,
+                originalUrl: src, crop, adjust: recipeAdjust, texts: recipeTexts, bursts: recipeBursts, slugPrefix,
             });
-            onSave(newUrl, { originalUrl: src, crop: crop || null, texts: recipeTexts, bursts: recipeBursts });
+            onSave(newUrl, { originalUrl: src, crop: crop || null, adjust: recipeAdjust, texts: recipeTexts, bursts: recipeBursts });
             toast(tx('✓ Picture saved', '✓ Imagen guardada'), { kind: 'success' });
             onClose();
         } catch (err) {
@@ -283,6 +300,17 @@ export default function PictureEditor({
     // on-screen px size of a height-fraction
     const pxH = (f) => Math.max(2, (f || 0) * (disp.h || 0));
     const liveCrop = cropDraft || crop;
+
+    // Live preview of the photo adjustments — the same brightness → contrast
+    // → saturate chain (and clamping) the bake applies, so what you see in
+    // the editor is what the TV gets. Filter sits on the <img> ONLY: text and
+    // starburst overlays are separate DOM nodes above it, mirroring the bake
+    // order (adjust the photo, then draw overlays).
+    const adjNorm = normalizeAdjust(adjust);   // null when all sliders are at 100%
+    const adjustFilter = adjNorm
+        ? `brightness(${adjNorm.b}) contrast(${adjNorm.c}) saturate(${adjNorm.s})`
+        : undefined;
+    const resetAdjust = () => setAdjust({ brightness: 100, contrast: 100, saturation: 100 });
 
     return (
         <ModalPortal onBackPress={onClose}>
@@ -319,6 +347,10 @@ export default function PictureEditor({
                             ⟲ {tx('Reset crop', 'Quitar recorte')}
                         </button>
                     )}
+                    <button onClick={() => { setTool(t => t === 'adjust' ? 'select' : 'adjust'); setSelId(null); setFreshId(null); }}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border ${tool === 'adjust' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-dd-text border-dd-line hover:bg-dd-bg'}`}>
+                        🎚 {tx('Adjust', 'Ajustar')}{adjNorm ? ' •' : ''}
+                    </button>
                     <span className="w-px h-6 bg-dd-line mx-1" />
                     <button onClick={addText}
                         className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white text-dd-text border border-dd-line hover:bg-dd-bg">
@@ -345,8 +377,12 @@ export default function PictureEditor({
                                 onPointerMove={onPointerMove}
                                 onPointerUp={onPointerUp}
                                 onPointerCancel={onPointerCancel}>
+                                {/* bg-white: the bake flattens transparency onto white BEFORE
+                                    adjusting, and CSS filter covers an element's background too —
+                                    so transparent PNGs preview exactly like they'll bake. */}
                                 <img ref={imgRef} src={src} alt="picture" draggable={false} onLoad={onImgLoad}
-                                    className="block max-w-full max-h-[50vh] sm:max-h-[74vh]" />
+                                    className="block max-w-full max-h-[50vh] sm:max-h-[74vh] bg-white"
+                                    style={adjustFilter ? { filter: adjustFilter } : undefined} />
 
                                 {/* Crop dim overlays (outside = darkened) */}
                                 {liveCrop && (
@@ -418,12 +454,46 @@ export default function PictureEditor({
                         bottom panel that appears whenever an element is selected.
                         Adding Text/Starburst auto-selects, so it pops up ready to
                         edit — this is where you type the words / price. */}
-                    <div className={`w-full sm:w-64 flex-shrink-0 border-t sm:border-t-0 sm:border-l border-dd-line bg-white overflow-y-auto p-3 max-h-[44vh] sm:max-h-none ${selId ? 'block' : 'hidden'} sm:block`}>
-                        {!selId && (
+                    <div className={`w-full sm:w-64 flex-shrink-0 border-t sm:border-t-0 sm:border-l border-dd-line bg-white overflow-y-auto p-3 max-h-[44vh] sm:max-h-none ${selId || tool === 'adjust' ? 'block' : 'hidden'} sm:block`}>
+                        {!selId && tool !== 'adjust' && (
                             <div className="text-[12px] text-dd-text-2 leading-relaxed">
                                 <p className="font-bold text-dd-text mb-1">{tx('No element selected', 'Nada seleccionado')}</p>
-                                <p>{tx('Use the toolbar to crop, add text, or add a starburst — then click it here to edit.',
-                                    'Usa la barra para recortar, agregar texto o una estrella — luego haz clic para editar.')}</p>
+                                <p>{tx('Use the toolbar to crop, adjust brightness, add text, or add a starburst — then click it here to edit.',
+                                    'Usa la barra para recortar, ajustar el brillo, agregar texto o una estrella — luego haz clic para editar.')}</p>
+                            </div>
+                        )}
+
+                        {/* Adjust inspector — whole-photo brightness / contrast / color.
+                            Element selection takes over the panel; tapping empty image
+                            (or the 🎚 button) brings the sliders back. */}
+                        {!selId && tool === 'adjust' && (
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs font-black uppercase tracking-wider text-violet-700">{tx('Adjust photo', 'Ajustar foto')}</span>
+                                    {adjNorm && (
+                                        <button onClick={resetAdjust} className="text-[11px] font-bold text-red-600 hover:underline">⟲ {tx('Reset', 'Restablecer')}</button>
+                                    )}
+                                </div>
+                                {[
+                                    { key: 'brightness', label: tx('Brightness', 'Brillo'), min: 50, max: 150 },
+                                    { key: 'contrast',   label: tx('Contrast', 'Contraste'), min: 50, max: 150 },
+                                    { key: 'saturation', label: tx('Color', 'Color'), min: 0, max: 200 },
+                                ].map(({ key, label, min, max }) => (
+                                    <label key={key} className="block">
+                                        <span className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
+                                            <span>{label}</span>
+                                            <span className={adjust[key] !== 100 ? 'text-violet-700' : ''}>{adjust[key]}%</span>
+                                        </span>
+                                        <input type="range" min={min} max={max} step="1"
+                                            value={adjust[key]}
+                                            onChange={(e) => setAdjust(a => ({ ...a, [key]: Number(e.target.value) }))}
+                                            className="w-full accent-violet-600" />
+                                    </label>
+                                ))}
+                                <p className="text-[11px] text-dd-text-2 leading-relaxed">
+                                    {tx('For photos that show up too bright or too harsh on the TV. Words and starbursts on top are not affected. Baked into the picture on Save.',
+                                        'Para fotos que se ven muy brillantes o muy duras en la TV. Las palabras y estrellas no cambian. Se guarda en la imagen.')}
+                                </p>
                             </div>
                         )}
 
@@ -544,7 +614,7 @@ export default function PictureEditor({
                 {/* Footer */}
                 <footer className="border-t border-dd-line p-3 flex items-center gap-2 flex-shrink-0">
                     <span className="text-[11px] text-dd-text-2">
-                        {texts.length} {tx('text', 'texto')} · {bursts.length} {tx('starburst', 'estrella')}{crop ? ` · ${tx('cropped', 'recortado')}` : ''}
+                        {texts.length} {tx('text', 'texto')} · {bursts.length} {tx('starburst', 'estrella')}{crop ? ` · ${tx('cropped', 'recortado')}` : ''}{adjNorm ? ` · ${tx('adjusted', 'ajustada')}` : ''}
                     </span>
                     <button onClick={onClose} disabled={saving}
                         className="ml-auto px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-bg disabled:opacity-40">

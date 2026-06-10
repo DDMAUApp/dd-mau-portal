@@ -410,18 +410,70 @@ export async function bakePriceOverlaysIntoImage({ imageUrl, priceZones, slugPre
     return await getDownloadURL(pref);
 }
 
-// Bake the picture-editor recipe (crop + text + starbursts) into a single flat
-// PNG and upload it, returning the new download URL. Non-destructive: the caller
-// keeps the originalUrl + recipe so the picture can be re-opened and re-edited.
+// Normalize a PictureEditor `adjust` recipe ({ brightness, contrast,
+// saturation } as PERCENTS, 100 = unchanged) into multipliers, or null
+// when the whole thing is a no-op / malformed. Exported so PictureEditor
+// can share the "is this actually doing anything" decision.
+export function normalizeAdjust(adjust) {
+    if (!adjust || typeof adjust !== 'object') return null;
+    const b = Number(adjust.brightness ?? 100) / 100;
+    const c = Number(adjust.contrast ?? 100) / 100;
+    const s = Number(adjust.saturation ?? 100) / 100;
+    if (![b, c, s].every(Number.isFinite)) return null;
+    if (b === 1 && c === 1 && s === 1) return null;
+    return { b, c, s };
+}
+
+// Apply brightness → contrast → saturation to the pixels already on the
+// canvas. Pixel math instead of ctx.filter: WKWebView (the iPhone app,
+// where Andrew edits photos) has no reliable CanvasRenderingContext2D
+// .filter support, and CPU math gives the identical result everywhere.
+// The math mirrors the CSS filter functions the editor previews with —
+// each stage clamps to 0..255 before the next, same as the spec:
+//   brightness(b): v' = v·b
+//   contrast(c):   v' = (v − 127.5)·c + 127.5
+//   saturate(s):   per-pixel mix toward Rec.709 luma
+function applyAdjustToCanvas(ctx, w, h, { b, c, s }) {
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+    // brightness + contrast are per-channel curves → one 256-entry LUT
+    // (Uint8ClampedArray assignment rounds + clamps for free).
+    const lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) {
+        let x = v * b;
+        x = x < 0 ? 0 : x > 255 ? 255 : x;
+        lut[v] = (x - 127.5) * c + 127.5;
+    }
+    const needSat = s !== 1;
+    for (let i = 0; i < d.length; i += 4) {
+        let r = lut[d[i]], g = lut[d[i + 1]], bl = lut[d[i + 2]];
+        if (needSat) {
+            const luma = 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+            r = luma + (r - luma) * s;
+            g = luma + (g - luma) * s;
+            bl = luma + (bl - luma) * s;
+        }
+        d[i] = r; d[i + 1] = g; d[i + 2] = bl;
+    }
+    ctx.putImageData(imgData, 0, 0);
+}
+
+// Bake the picture-editor recipe (crop + adjust + text + starbursts) into a
+// single flat image and upload it, returning the new download URL.
+// Non-destructive: the caller keeps the originalUrl + recipe so the picture
+// can be re-opened and re-edited.
 //
 // Coordinate model (matches PictureEditor): `crop` is fractions of the ORIGINAL
 // image; `texts`/`bursts` are fractions of the FINAL (cropped) output — x,y is
 // the element anchor, sizes are fractions of the output HEIGHT. So element
 // fractions map straight onto the output canvas with no conversion at bake time.
 //
+//   adjust:   { brightness, contrast, saturation } — percents, 100 = unchanged.
+//             Applied to the PHOTO only, before text/bursts are drawn (same as
+//             the editor preview, where the CSS filter sits on the <img>).
 //   texts[]:  { x, y, text, size, color, align?, weight?, outline? }
 //   bursts[]: { x, y, size, shape, fill, textColor, text }
-export async function bakePictureEdits({ originalUrl, crop = null, texts = [], bursts = [], slugPrefix = 'pic' }) {
+export async function bakePictureEdits({ originalUrl, crop = null, adjust = null, texts = [], bursts = [], slugPrefix = 'pic' }) {
     if (!originalUrl) throw new Error('originalUrl required');
 
     const { img, release } = await loadImageForCanvas(originalUrl);
@@ -456,6 +508,11 @@ export async function bakePictureEdits({ originalUrl, crop = null, texts = [], b
     ctx.fillRect(0, 0, outW, outH);
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
     release();   // pixels are on the canvas now — free the blob URL
+
+    // Brightness / contrast / saturation — photo only, BEFORE overlays, so
+    // dimming a too-bright photo never dims the words on top of it.
+    const adj = normalizeAdjust(adjust);
+    if (adj) applyAdjustToCanvas(ctx, canvas.width, canvas.height, adj);
 
     // Elements are stored as fractions of the ORIGINAL image (stable across
     // re-crops). Convert each to output pixels through the crop window.

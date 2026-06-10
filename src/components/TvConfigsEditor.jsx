@@ -383,8 +383,8 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     // edge-to-edge guarantee, etc.).
     const [imageFit, setImageFit] = useState(initial?.imageFit === 'cover' ? 'cover' : 'contain');
     const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
-    // Per-picture edit recipes (crop / text / starburst), index-aligned with
-    // imageUrls. Each entry is { originalUrl, crop, texts[], bursts[] } | null.
+    // Per-picture edit recipes (crop / adjust / text / starburst), index-aligned
+    // with imageUrls. Each entry is { originalUrl, crop, adjust, texts[], bursts[] } | null.
     // Non-destructive: imageUrls[i] holds the BAKED output; the recipe lets the
     // admin reopen and re-edit. See PictureEditor + bakePictureEdits().
     const [imageLayers, setImageLayers] = useState(Array.isArray(initial?.imageLayers) ? initial.imageLayers : []);
