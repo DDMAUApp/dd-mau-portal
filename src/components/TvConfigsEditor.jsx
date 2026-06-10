@@ -686,7 +686,13 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                     setSaving(false);
                     return;
                 }
-                payload.split = split;
+                // Coerce the rotate fields at save — the inputs hold raw
+                // strings while typing (see the transition-ms comment).
+                payload.split = {
+                    ...split,
+                    leftRotateSeconds: Math.max(3, Math.min(60, Number(split.leftRotateSeconds) || 12)),
+                    rightRotateSeconds: Math.max(3, Math.min(60, Number(split.rightRotateSeconds) || 8)),
+                };
                 // Hit zones still live at top level — they apply to the
                 // left (menu) side of the split.
                 payload.imageHitZones = imageHitZones;
@@ -1052,10 +1058,10 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                                         </span>
                                                         <input type="number"
                                                             min={3} max={60}
-                                                            value={split[side === 'left' ? 'leftRotateSeconds' : 'rightRotateSeconds'] || (side === 'left' ? 12 : 8)}
+                                                            value={split[side === 'left' ? 'leftRotateSeconds' : 'rightRotateSeconds'] ?? (side === 'left' ? 12 : 8)}
                                                             onChange={(e) => setSplit(s => ({
                                                                 ...s,
-                                                                [side === 'left' ? 'leftRotateSeconds' : 'rightRotateSeconds']: Number(e.target.value) || 8,
+                                                                [side === 'left' ? 'leftRotateSeconds' : 'rightRotateSeconds']: e.target.value,
                                                             }))}
                                                             className="w-full px-1.5 py-0.5 rounded border border-sky-200 text-[11px] font-mono bg-white" />
                                                     </label>
@@ -1171,7 +1177,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                                 {tx('Seconds per slide', 'Segundos por imagen')}
                                             </span>
                                             <input type="number" value={imageRotateSeconds}
-                                                onChange={(e) => setImageRotateSeconds(Number(e.target.value) || DEFAULT_IMAGE_ROTATE_SECONDS)}
+                                                onChange={(e) => setImageRotateSeconds(e.target.value)}
                                                 min={3} max={60} step={1}
                                                 className="w-full px-2 py-1.5 rounded border border-sky-300 text-sm bg-white font-mono" />
                                         </label>
@@ -1214,8 +1220,14 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                                 <span className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-0.5">
                                                     {tx('Transition speed (ms)', 'Velocidad transición (ms)')}
                                                 </span>
+                                                {/* Store the RAW string while typing — coercing per
+                                                    keystroke (Number(...) || 700) snapped the field
+                                                    back to 700 the moment you cleared it, so you
+                                                    could never type a new number (Andrew 2026-06-10:
+                                                    "i cant erase the 7 to add 2000"). The save path
+                                                    clamps to 100–3000 anyway. */}
                                                 <input type="number" value={imageTransitionMs}
-                                                    onChange={(e) => setImageTransitionMs(Number(e.target.value) || 700)}
+                                                    onChange={(e) => setImageTransitionMs(e.target.value)}
                                                     min={100} max={3000} step={100}
                                                     className="w-full px-2 py-1.5 rounded border border-sky-300 text-sm bg-white font-mono" />
                                                 <span className="block text-[10px] text-sky-700/70 mt-0.5">
