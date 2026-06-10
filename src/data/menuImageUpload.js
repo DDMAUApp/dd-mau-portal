@@ -59,21 +59,23 @@ export async function renderPdfPagesToBlobs(file, opts = {}) {
 }
 
 // Max width (in pixels) we'll let through to Firebase Storage for
-// TV signage. 1920px covers 1080p TVs at native resolution; anything
-// larger than this is paying Storage bytes + Pi-side decode time for
-// pixels the TV can't display. Most modern phone cameras produce
-// 4000-6000px images, so this is the common case.
-const TV_MAX_IMAGE_WIDTH = 1920;
-// JPEG quality used when re-encoding downsized images. 0.85 is the
-// usual sweet spot — visually indistinguishable from the original
-// at TV viewing distance, ~50% smaller bytes.
-const TV_JPEG_QUALITY = 0.85;
+// TV signage. Andrew 2026-06-10: the webster-photos TV is a 4K panel
+// (Pi 5 outputs 3840×2160) and 1920px uploads looked visibly softer
+// than the same photo on his phone — raised 1920 → 3840 so photos
+// keep native-4K detail. Most modern phone cameras produce 4000-6000px
+// images, so the resize still runs; bytes roughly 3-4× but it's a
+// handful of signage photos, not user content at scale.
+const TV_MAX_IMAGE_WIDTH = 3840;
+// JPEG quality used when re-encoding downsized images. Bumped 0.85 →
+// 0.9 alongside the 4K raise — at TV size, compression artifacts read
+// as "cheap screen" faster than they do on a phone.
+const TV_JPEG_QUALITY = 0.9;
 // Minimum dimensions we expect for a "looks good on TV" upload.
-// Smaller than this and the image will be visibly soft on a 1080p
+// Smaller than this and the image will be visibly soft on a 4K
 // screen viewed from across the restaurant; we surface a warning
 // to the caller but still allow the upload (the admin might
 // genuinely WANT a small / pixelated retro look).
-const TV_MIN_GOOD_WIDTH = 1280;
+const TV_MIN_GOOD_WIDTH = 1920;
 // Auto-crop tolerance band. 16:9 = 1.7778. We crop anything OUTSIDE
 // this band to fill the TV without letterboxing — phone-portrait
 // (0.5625), square (1.0), 4:3 (1.333), and ultrawide (> 1.95) all
@@ -181,6 +183,10 @@ export async function optimizeImageForTv(file, opts = {}) {
         canvas.width  = destW;
         canvas.height = destH;
         const ctx = canvas.getContext('2d');
+        // High-quality resampling for the downscale — the default
+        // bilinear pass visibly softens fine detail (menu text, food
+        // texture) on big TV panels.
+        ctx.imageSmoothingQuality = 'high';
         // White background — keeps transparent PNGs from rendering
         // black after JPEG re-encode (JPEG has no alpha channel).
         ctx.fillStyle = '#ffffff';
@@ -526,9 +532,13 @@ export async function bakePictureEdits({ originalUrl, crop = null, texts = [], b
         }
     }
 
-    const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png', 0.95));
+    // JPEG, not PNG — the canvas is always painted on an opaque white
+    // background (no alpha to preserve), and a 3840px photo as PNG is
+    // 10-25 MB vs ~2-3 MB at JPEG 0.92. At TV viewing distance 0.92 is
+    // indistinguishable; the Pi decodes + caches it far faster too.
+    const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92));
     if (!blob) throw new Error('canvas.toBlob returned null (image may be tainted)');
-    const path = `tv_images/${slugPrefix || 'pic'}_edit_${Date.now()}.png`;
+    const path = `tv_images/${slugPrefix || 'pic'}_edit_${Date.now()}.jpg`;
     const pref = storageRef(storage, path);
     await uploadBytes(pref, blob);
     return await getDownloadURL(pref);
