@@ -37,7 +37,7 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, limit, Timestamp } from 'firebase/firestore';
 import {
     subscribeTvConfigs, subscribeTvHeartbeats, MODES,
-    publishTvConfigDraft, discardTvConfigDraft,
+    publishTvConfigDraft, discardTvConfigDraft, requestTvReload,
 } from '../data/tvConfigs';
 import { openExternalUrl } from '../capacitor-bridge';
 
@@ -628,6 +628,23 @@ function ScreenCard({ screen, baseUrl, isEs, staffName, onEdit, onShowHistory })
             setBusyAction(null);
         }
     }
+    async function handleReloadTv() {
+        if (busyAction) return;
+        const ok = window.confirm(tx(
+            'Reload this TV now? The screen refreshes itself within a few seconds and comes back with the newest version.',
+            '¿Recargar esta TV ahora? La pantalla se refresca sola en unos segundos con la versión más reciente.',
+        ));
+        if (!ok) return;
+        setBusyAction('reload');
+        setErrMsg(null);
+        try {
+            await requestTvReload(screen.tvId, staffName);
+        } catch (e) {
+            setErrMsg(e?.message || 'Reload failed');
+        } finally {
+            setBusyAction(null);
+        }
+    }
     // Status comes from the heartbeat, not the config — admins want
     // to know "is the screen actually showing my menu right now?",
     // not "did I edit this last week?". The two distinct meanings of
@@ -836,6 +853,23 @@ function ScreenCard({ screen, baseUrl, isEs, staffName, onEdit, onShowHistory })
                             className="px-2.5 py-1 rounded-lg bg-white border border-dd-line text-[11px] font-bold text-dd-text-2 hover:bg-dd-bg">
                             🕰 {tx('History', 'Historial')}
                         </button>
+                    )}
+                    {/* Remote reload — Andrew 2026-06-10: "how can i
+                        reset the pi without unpluging it". Stamps
+                        reloadRequestedAt on the config doc; any TV on
+                        v1.0.40+ refreshes itself within seconds (and
+                        picks up the newest OTA bundle on the way).
+                        Hidden for synth defaults (no doc to stamp). */}
+                    {!screen.isDefault && !screen.isGhost && (
+                        <button onClick={handleReloadTv}
+                            disabled={busyAction === 'reload'}
+                            title={tx('Make this TV refresh itself (picks up new updates)', 'Hace que esta TV se refresque sola')}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-dd-line text-[11px] font-bold text-dd-text-2 hover:bg-dd-bg disabled:opacity-60">
+                            {busyAction === 'reload' ? tx('Reloading…', 'Recargando…') : `⟳ ${tx('Reload TV', 'Recargar TV')}`}
+                        </button>
+                    )}
+                    {!hasDraft && errMsg && (
+                        <span className="basis-full text-[10px] text-red-700 font-bold">⚠ {errMsg}</span>
                     )}
                 </div>
             </div>

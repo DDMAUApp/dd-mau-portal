@@ -320,6 +320,26 @@ function MenuDisplayInner({ tvId = 'webster' }) {
         return unsub;
     }, [tvId]);
 
+    // Remote reload — Andrew 2026-06-10: "how can i reset the pi
+    // without unpluging it". Admin taps ⟳ Reload on the Menu Screens
+    // card → requestTvReload stamps reloadRequestedAt on the config
+    // doc → this effect sees the value CHANGE and refreshes the page
+    // (picking up new OTA bundles with nobody touching the Pi).
+    // Change-detection against the boot-time value — NOT a clock
+    // comparison — so a TV with a skewed clock can never reload-loop.
+    // The first observed value (from cache or the first snapshot) is
+    // the baseline; only a LATER change triggers.
+    const reloadSeenRef = useRef(undefined);
+    useEffect(() => {
+        const ts = tvConfig?.reloadRequestedAt;
+        const ms = ts?.toMillis?.() ?? (ts?.seconds ? ts.seconds * 1000 : null);
+        if (reloadSeenRef.current === undefined) { reloadSeenRef.current = ms; return; }
+        if (ms && ms !== reloadSeenRef.current) {
+            reloadSeenRef.current = ms;
+            try { window.location.reload(); } catch { /* ignore */ }
+        }
+    }, [tvConfig]);
+
     // 2026-05-23 Holiday Scheduler: subscribe to /tv_holidays and pick
     // the active one (if any) for THIS tvId + location. Cached to
     // localStorage so a Pi reboot during Tết keeps showing festive

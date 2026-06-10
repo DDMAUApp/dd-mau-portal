@@ -425,6 +425,29 @@ function normalizeTvId(tvId) {
         .slice(0, 48) || 'tv';
 }
 
+// ── Remote reload ─────────────────────────────────────────────
+// Andrew 2026-06-10: "how can i reset the pi without unpluging it".
+// Stamps reloadRequestedAt on the config doc; every TV watches the
+// field (MenuDisplay) and calls location.reload() when it CHANGES
+// from the value it booted with. Change-detection, not a clock
+// comparison, so a Pi with a skewed clock can never reload-loop.
+// Note: saveTvConfig wholesale-replaces the doc, so the stamp doesn't
+// survive an editor save — fine, the next press writes a fresh one.
+export async function requestTvReload(tvId, byName) {
+    const id = normalizeTvId(tvId);
+    // Merge-writing onto a MISSING doc would create a config with no
+    // location/layout and break the reserved-default fallback — only
+    // allow reload for screens that have a real saved config.
+    const snap = await getDoc(doc(db, COLLECTION, id));
+    if (!snap.exists()) {
+        throw new Error('This TV has no saved settings yet — open Edit and Save once first.');
+    }
+    await setDoc(doc(db, COLLECTION, id), {
+        reloadRequestedAt: serverTimestamp(),
+        reloadRequestedBy: byName || null,
+    }, { merge: true });
+}
+
 export async function saveTvConfig({ tvId, payload, byName }) {
     if (!tvId) throw new Error('tvId required');
     const cleanId = normalizeTvId(tvId);
