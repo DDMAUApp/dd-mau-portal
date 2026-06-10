@@ -64,3 +64,16 @@ ssh $PI 'sudo rm /etc/systemd/system/lightdm.service.d/hdmi-full-range.conf && s
 - Remote management: `ssh ddmau@<pi>.local` works from the Mac on the same
   Wi-Fi (key + passwordless sudo installed). The in-app "⟳ Reload TV" button
   (Menu Screens) refreshes the page; SSH `sudo reboot` for a full restart.
+
+## Wi-Fi power save (add this on every Wi-Fi TV)
+
+Pi Wi-Fi power saving naps the radio between packets — routers drop the
+association and the TV blinks offline. Disable it permanently:
+
+```bash
+scp wifi-powersave-off.conf $PI:/tmp/
+ssh $PI 'sudo install -m644 /tmp/wifi-powersave-off.conf /etc/NetworkManager/conf.d/ && sudo iw dev wlan0 set power_save off'
+# verify: ssh $PI 'sudo iw dev wlan0 get power_save'   → "Power save: off"
+```
+
+(Irrelevant on Ethernet — one more reason to wire the menu TVs.)
