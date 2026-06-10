@@ -23,14 +23,14 @@
  *   • Add/edit/delete shifts: admin OR staff with role containing "Manager"
  *     (see canEditSchedule() in src/data/staff.js)
  */
-import { useState, useEffect, useMemo, useRef, memo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { db } from '../firebase';
 import { toast, undoToast } from '../toast';
 import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
     setDoc, serverTimestamp, writeBatch, runTransaction, arrayUnion,
-    orderBy, limit, getDocs,
+    orderBy, limit, getDocs, deleteField,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
@@ -533,6 +533,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Time-off entries (Phase 2: admin-entered on behalf of staff. Phase 3: staff self-serve).
     const [timeOff, setTimeOff] = useState([]);
     const [showTimeOffModal, setShowTimeOffModal] = useState(false);
+    // { staffName, dateStr } from a tapped 🌴/⏳ chip in the weekly grid —
+    // opens PtoDetailsModal (editors only; chip is inert for staff).
+    const [ptoChipTarget, setPtoChipTarget] = useState(null);
+    // STABLE identity — ModalPortal re-pushes its Android back handler when
+    // onBackPress changes; an inline arrow here would hoist this modal's
+    // handler above ConfirmModal's on every Schedule re-render, making
+    // hardware-back close the wrong layer.
+    const closePtoChipModal = useCallback(() => setPtoChipTarget(null), []);
     // DC-2, 2026-05-30: removed showAutoFillModal state — only ever set
     // to `false` from inside the success path; the modal was migrated to
     // a different gate and the open-trigger no longer wired this state.
@@ -3750,13 +3758,35 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
-    const handleRemoveTimeOff = async (id) => {
+    // 2026-06-10 reversibility pass: delete is now a first-class manager
+    // action (🗑 chips in TimeOffModal / PtoView / PtoDetailsModal), so it
+    // behaves like its siblings — glass ConfirmModal via askRemoveTimeOff
+    // (the old native confirm() here is gone: iOS Safari can dismiss it on
+    // a background tap mid-decision), staff notification when a live entry
+    // vanishes, and a loud toast on failure instead of a silent
+    // console.error. Accepts the full entry (preferred) or a bare id
+    // (legacy callers — no notification possible without the entry).
+    const handleRemoveTimeOff = async (entry) => {
         if (!canEdit) return;
-        if (!confirm(tx('Remove this time-off?', '¿Quitar este tiempo libre?'))) return;
+        const id = typeof entry === 'string' ? entry : entry?.id;
+        if (!id) return;
         try {
             await deleteDoc(doc(db, 'time_off', id));
+            // Deleting an approved/pending entry changes someone's plans —
+            // ping them. Denied entries vanish silently (nothing changes
+            // for the staff member). Locked-on type so it can't be muted.
+            if (typeof entry === 'object' && entry.staffName && entry.staffName !== staffName && (entry.status || 'approved') !== 'denied') {
+                const range = (entry.startDate || entry.date) + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+                notify(entry.staffName, 'pto_denied',
+                    { en: 'Time-off entry removed', es: 'Tiempo libre eliminado' },
+                    { en: `Your time-off entry for ${range} was removed by ${staffName}. Talk to a manager if this is a problem.`,
+                      es: `Tu tiempo libre del ${range} fue eliminado por ${staffName}. Habla con un gerente si es un problema.` }
+                ).catch(() => {});
+            }
+            toast(tx('✓ Removed', '✓ Eliminado'), { kind: 'success', duration: 2000 });
         } catch (e) {
             console.error('Remove time-off failed:', e);
+            toast(tx('Could not remove: ', 'No se pudo eliminar: ') + (e.message || 'unknown'), { kind: 'error' });
         }
     };
 
@@ -3964,6 +3994,104 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             toast(tx('Could not approve: ', 'No se pudo aprobar: ') + (e.message || 'unknown'));
         }
     };
+    // ── PTO reversals — change an already-decided request ──
+    // Andrew 2026-06-10: "the timeoff request need to be reversible... either
+    // change it to deny or delete it all together or send it back to pending."
+    // First decisions on PENDING requests stay on handleApprovePto/handleDenyPto
+    // (queue-tuned copy + idempotency); this handles every OTHER transition and
+    // tells the staff member their time-off CHANGED — they may have already
+    // made plans on the old answer.
+    const handleChangePtoStatus = async (entry, newStatus) => {
+        if (!canEdit) return;
+        if (!entry?.id || !['pending', 'approved', 'denied'].includes(newStatus)) return;
+        const fromStatus = entry.status || 'pending';
+        if (fromStatus === newStatus) return;
+        try {
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'time_off', entry.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) {
+                    throw new Error(tx_msg(
+                        'This request no longer exists',
+                        'La solicitud ya no existe',
+                    ));
+                }
+                const live = snap.data() || {};
+                // Guard against a concurrent manager: only flip from the
+                // status THIS manager was looking at when they clicked.
+                if ((live.status || 'pending') !== fromStatus) {
+                    const liveEs = live.status === 'approved' ? 'aprobada' : live.status === 'denied' ? 'negada' : 'pendiente';
+                    throw new Error(tx_msg(
+                        `Request is now "${live.status}" (changed by ${live.reviewedBy || 'someone'}) — review it again`,
+                        `La solicitud ahora está "${liveEs}" (cambiada por ${live.reviewedBy || 'alguien'}) — revísala de nuevo`,
+                    ));
+                }
+                if (newStatus === 'pending') {
+                    txn.update(ref, {
+                        status: 'pending',
+                        // Clear the decision so queues treat it as fresh…
+                        reviewedBy: deleteField(),
+                        reviewedAt: deleteField(),
+                        // …but keep who sent it back for the audit trail.
+                        reopenedBy: staffName,
+                        reopenedAt: serverTimestamp(),
+                    });
+                } else {
+                    txn.update(ref, {
+                        status: newStatus,
+                        reviewedBy: staffName,
+                        reviewedAt: serverTimestamp(),
+                    });
+                }
+            });
+            const range = (entry.startDate || entry.date) + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+            const copy = {
+                approved: {
+                    type: 'pto_approved',
+                    title: { en: 'Time-off approved', es: 'Tiempo libre aprobado' },
+                    body: { en: `Update: your time-off for ${range} is now APPROVED.`,
+                            es: `Actualización: tu tiempo libre del ${range} ahora está APROBADO.` },
+                },
+                denied: {
+                    type: 'pto_denied',
+                    title: { en: 'Time-off changed to denied', es: 'Tiempo libre cambiado a negado' },
+                    body: { en: `Update: your time-off for ${range} was changed to DENIED${fromStatus === 'approved' ? ' (it was approved before)' : ''}. Talk to a manager if this is a problem.`,
+                            es: `Actualización: tu tiempo libre del ${range} fue cambiado a NEGADO${fromStatus === 'approved' ? ' (antes estaba aprobado)' : ''}. Habla con un gerente si es un problema.` },
+                },
+                pending: {
+                    // 'pto_reopened' (NOT 'pto_request') — pto_request is the
+                    // mutable mgmt-queue type staff can opt out of; a revoked
+                    // approval must always reach the person it affects, so
+                    // this type is in LOCKED_ON_TYPE_IDS (notificationTypes.js
+                    // + functions/index.js dispatchNotification).
+                    type: 'pto_reopened',
+                    title: { en: 'Time-off back under review', es: 'Tiempo libre en revisión otra vez' },
+                    body: { en: `Your time-off for ${range} went back to PENDING — a manager will decide again.`,
+                            es: `Tu tiempo libre del ${range} volvió a PENDIENTE — un gerente decidirá de nuevo.` },
+                },
+            }[newStatus];
+            await notify(entry.staffName, copy.type, copy.title, copy.body);
+            // Mgmt rollup so every manager sees the reversal (and a
+            // back-to-pending re-alerts the queue). Tag is per-target-status
+            // so repeated flips collapse sensibly instead of stacking.
+            notifyManagement({
+                type: copy.type,
+                title: { en: `🔁 PTO ${newStatus === 'pending' ? 'back to pending' : newStatus}: ${entry.staffName}`,
+                         es: `🔁 PTO ${newStatus === 'pending' ? 'a pendiente' : newStatus === 'approved' ? 'aprobado' : 'negado'}: ${entry.staffName}` },
+                body: { en: `${range} · was ${fromStatus} · by ${staffName}`,
+                        es: `${range} · era ${fromStatus === 'approved' ? 'aprobado' : fromStatus === 'denied' ? 'negado' : 'pendiente'} · por ${staffName}` },
+                link: '/schedule',
+                deepLink: 'schedule',
+                tag: `pto_change_mgmt:${entry.id}:${newStatus}`,
+                createdBy: staffName,
+            }).catch(() => {});
+            toast(tx('✓ Time-off updated', '✓ Tiempo libre actualizado'), { kind: 'success', duration: 2500 });
+        } catch (e) {
+            console.error('Change PTO status failed:', e);
+            toast(tx('Could not update: ', 'No se pudo actualizar: ') + (e.message || 'unknown'));
+        }
+    };
+
     const handleDenyPto = async (entry) => {
         if (!canEdit) return;
         try {
@@ -4966,6 +5094,93 @@ ${dayBlocks}
             onConfirm: () => handleDenyPto(entry),
         });
     };
+    // Glass-confirm wrapper for the 🗑 Delete chip — consistent with the
+    // other three chips (the handler no longer carries its own confirm).
+    const askRemoveTimeOff = (entry) => {
+        if (!entry?.id) return;
+        const status = entry.status || 'approved';
+        const range = (entry.startDate || entry.date) + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+        setConfirmDialog({
+            title: tx('Delete this time-off entry?', '¿Borrar este tiempo libre?'),
+            body: status === 'denied'
+                ? tx(
+                    `Permanently delete ${entry.staffName}'s denied request for ${range}? No record will remain.`,
+                    `¿Borrar permanentemente la solicitud negada de ${entry.staffName} del ${range}? No quedará registro.`
+                )
+                : tx(
+                    `Permanently delete ${entry.staffName}'s ${status} time-off for ${range}? No record will remain — they will be notified.`,
+                    `¿Borrar permanentemente el tiempo libre (${status === 'approved' ? 'aprobado' : 'pendiente'}) de ${entry.staffName} del ${range}? No quedará registro — será notificado.`
+                ),
+            confirmLabel: tx('Delete', 'Borrar'),
+            tone: 'danger',
+            onConfirm: () => handleRemoveTimeOff(entry),
+        });
+    };
+
+    // One confirm wrapper for the full PTO status matrix. First decisions on
+    // pending requests route to the original ask/handle pair (conflict-aware
+    // copy, queue semantics); reversals route to handleChangePtoStatus.
+    const askSetPtoStatus = (entry, newStatus) => {
+        if (!entry) return;
+        const fromStatus = entry.status || 'pending';
+        if (fromStatus === newStatus) return;
+        if (fromStatus === 'pending' && newStatus === 'approved') return askApprovePto(entry);
+        if (fromStatus === 'pending' && newStatus === 'denied') return askDenyPto(entry);
+        const start = entry.startDate || entry.date;
+        const end = entry.endDate || entry.date;
+        const range = start + (end !== start ? ` → ${end}` : '');
+        const fromEs = fromStatus === 'approved' ? 'aprobado' : fromStatus === 'denied' ? 'negado' : 'pendiente';
+        let title, body, confirmLabel, tone = 'primary';
+        if (newStatus === 'approved') {
+            // Same uncovered-shift warning as askApprovePto — approving PTO
+            // over published shifts orphans them no matter which path got here.
+            const conflicts = shifts.filter(sh =>
+                sh.staffName === entry.staffName && sh.published !== false &&
+                sh.date >= start && sh.date <= end);
+            title = tx('Change to approved?', '¿Cambiar a aprobado?');
+            body = tx(
+                `${entry.staffName}'s time-off for ${range} is currently ${fromStatus} — approve it instead? They will be notified.`,
+                `El tiempo libre de ${entry.staffName} del ${range} está ${fromEs} — ¿aprobarlo? Será notificado.`
+            );
+            if (conflicts.length > 0) {
+                const lines = conflicts.slice(0, 6).map(sh =>
+                    `· ${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`
+                ).join('\n');
+                const more = conflicts.length > 6 ? tx(`\n· ...and ${conflicts.length - 6} more`, `\n· ...y ${conflicts.length - 6} más`) : '';
+                body += tx(
+                    `\n\n⚠️ This will leave ${conflicts.length} published shift(s) UNCOVERED:\n${lines}${more}\n\nYou will need to reassign these.`,
+                    `\n\n⚠️ Esto dejará ${conflicts.length} turno(s) SIN CUBRIR:\n${lines}${more}\n\nTendrás que reasignarlos.`
+                );
+                tone = 'danger';
+            }
+            confirmLabel = tx('Approve', 'Aprobar');
+        } else if (newStatus === 'denied') {
+            title = tx('Change to denied?', '¿Cambiar a negado?');
+            body = fromStatus === 'approved'
+                ? tx(
+                    `${entry.staffName}'s time-off for ${range} is currently APPROVED. Deny it instead? They will be notified — they may have already made plans.`,
+                    `El tiempo libre de ${entry.staffName} del ${range} está APROBADO. ¿Negarlo? Será notificado — puede que ya tenga planes.`
+                )
+                : tx(
+                    `Deny ${entry.staffName}'s time-off for ${range}? They will be notified.`,
+                    `¿Negar el tiempo libre de ${entry.staffName} del ${range}? Será notificado.`
+                );
+            confirmLabel = tx('Deny', 'Negar');
+            tone = 'danger';
+        } else {
+            title = tx('Send back to pending?', '¿Devolver a pendiente?');
+            body = tx(
+                `${entry.staffName}'s time-off for ${range} (currently ${fromStatus}) will go back to the pending queue for a fresh decision. They will be notified.`,
+                `El tiempo libre de ${entry.staffName} del ${range} (ahora ${fromEs}) volverá a la cola de pendientes. Será notificado.`
+            );
+            confirmLabel = tx('Back to pending', 'A pendiente');
+        }
+        setConfirmDialog({
+            title, body, confirmLabel, tone,
+            onConfirm: () => handleChangePtoStatus(entry, newStatus),
+        });
+    };
+
     const askCancelOwnPto = (entry) => {
         if (!entry) return;
         const status = entry.status || 'pending';
@@ -6021,6 +6236,7 @@ ${dayBlocks}
                                 onUpdateShiftTimes={handleUpdateShiftTimes}
                                 isStaffOffOn={isStaffOffOn}
                                 timeOff={viewerTimeOff}
+                                onPtoChipClick={canEdit ? (sn, dStr) => setPtoChipTarget({ staffName: sn, dateStr: dStr }) : null}
                                 onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
                                 onToggleDateOpen={staffIsAdmin ? handleToggleDateOpen : null}
                                 dateHasOpenOverride={dateHasOpenOverride}
@@ -6090,9 +6306,8 @@ ${dayBlocks}
                                         isEn={isEn}
                                         currentStaffName={staffName}
                                         canEdit={canEdit}
-                                        onApprove={askApprovePto}
-                                        onDeny={askDenyPto}
-                                        onRemove={handleRemoveTimeOff}
+                                        onRemove={askRemoveTimeOff}
+                                        onSetStatus={askSetPtoStatus}
                                     />
                                 )}
                             </div>
@@ -6248,11 +6463,32 @@ ${dayBlocks}
                 <TimeOffModal
                     onClose={() => setShowTimeOffModal(false)}
                     onAdd={handleAddTimeOff}
-                    onRemove={handleRemoveTimeOff}
+                    onRemove={askRemoveTimeOff}
+                    onSetStatus={askSetPtoStatus}
                     entries={timeOff}
                     staffList={staffList}
                     isEn={isEn}
                     canEdit={canEdit}
+                />
+            )}
+            {/* Calendar-chip popup — entries derived live from the timeOff
+                snapshot so a status change updates the open modal in place.
+                Renders BEFORE the confirmDialog block below so ConfirmModal
+                mounts later → stacks on top. */}
+            {ptoChipTarget && (
+                <PtoDetailsModal
+                    target={ptoChipTarget}
+                    entries={(timeOff || []).filter(t => {
+                        if (t.staffName !== ptoChipTarget.staffName) return false;
+                        const s = t.startDate || t.date;
+                        const e = t.endDate || t.date;
+                        return ptoChipTarget.dateStr >= s && ptoChipTarget.dateStr <= e;
+                    })}
+                    isEn={isEn}
+                    canEdit={canEdit}
+                    onSetStatus={askSetPtoStatus}
+                    onRemove={askRemoveTimeOff}
+                    onClose={closePtoChipModal}
                 />
             )}
             {showPtoRequestModal && (
@@ -7361,7 +7597,7 @@ function QuickAddSlot({ dateStr, isEn, onAddSlot }) {
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes, onPtoChipClick,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
@@ -7391,9 +7627,14 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
         }
         return map;
     }, [weekNeeds]);
-    // Helper: is staff PENDING (not approved) for date? Visual only — doesn't block.
-    const isStaffPendingOff = (staffName, dateStr) => (timeOff || []).some(t => {
-        if (t.status !== 'pending') return false;
+    // Helper: status-aware PTO lookup for the VISUAL chips. Do NOT use the
+    // isStaffOffOn prop here — that guard deliberately counts PENDING as off
+    // too (autofill / drag-drop safety), which made "!off && pending"
+    // unreachable: pending cells rendered the approved 🌴 look and the ⏳
+    // chip was dead code. Visual only — doesn't block anything. Entries
+    // with no status field are legacy admin-entered pre-approvals.
+    const staffPtoOn = (staffName, dateStr, status) => (timeOff || []).some(t => {
+        if ((t.status || 'approved') !== status) return false;
         if (t.staffName !== staffName) return false;
         const start = t.startDate || t.date;
         const end = t.endDate || t.date;
@@ -7985,8 +8226,8 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                 const closedReason = cellMeta.reason;
                                 const cellKey = `${s.name}|${dStr}`;
                                 const isDragOver = dragOverCell === cellKey;
-                                const onPTO = isStaffOffOn && isStaffOffOn(s.name, dStr);
-                                const onPendingPTO = !onPTO && isStaffPendingOff(s.name, dStr);
+                                const onPTO = staffPtoOn(s.name, dStr, 'approved');
+                                const onPendingPTO = !onPTO && staffPtoOn(s.name, dStr, 'pending');
                                 return (
                                     <td key={i}
                                         onClick={() => {
@@ -8026,11 +8267,38 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             </div>
                                         )}
                                         <div className="relative space-y-1">
-                                            {onPTO && cellShifts.length === 0 && (
-                                                <div className="text-center text-amber-700 text-[9px] font-bold py-1">🌴 {isEn ? 'Time Off' : 'Libre'}</div>
+                                            {/* Andrew 2026-06-10: time-off chips in the grid are
+                                                now TAPPABLE for schedule editors — opens the
+                                                PtoDetailsModal to approve/deny a pending request
+                                                or reverse a decided one right from the calendar.
+                                                Pending also renders when the day already has
+                                                shifts (it used to hide behind them — exactly the
+                                                cell a manager must act on before approving). */}
+                                            {/* Editors get the chip even when the cell has shifts —
+                                                an approved-PTO-over-published-shifts cell is exactly
+                                                where the reversal entry point matters most. Non-
+                                                editor 🌴 keeps the legacy empty-cell-only render. */}
+                                            {onPTO && (
+                                                onPtoChipClick ? (
+                                                    <button onClick={(e) => { e.stopPropagation(); onPtoChipClick(s.name, dStr); }}
+                                                        className="w-full text-center text-amber-700 text-[9px] font-bold py-1 rounded hover:bg-amber-100 active:bg-amber-200 print:hidden">
+                                                        🌴 {isEn ? 'Time Off' : 'Libre'}
+                                                    </button>
+                                                ) : (
+                                                    cellShifts.length === 0 && (
+                                                        <div className="text-center text-amber-700 text-[9px] font-bold py-1">🌴 {isEn ? 'Time Off' : 'Libre'}</div>
+                                                    )
+                                                )
                                             )}
-                                            {onPendingPTO && cellShifts.length === 0 && (
-                                                <div className="text-center text-yellow-700 text-[9px] font-bold py-1">⏳ {isEn ? 'Time off pending' : 'Libre pendiente'}</div>
+                                            {onPendingPTO && (
+                                                onPtoChipClick ? (
+                                                    <button onClick={(e) => { e.stopPropagation(); onPtoChipClick(s.name, dStr); }}
+                                                        className="w-full text-center text-yellow-800 text-[9px] font-bold py-1 rounded bg-yellow-100/80 border border-yellow-300 hover:bg-yellow-200 active:bg-yellow-300 print:hidden">
+                                                        ⏳ {isEn ? 'Pending — review' : 'Pendiente — revisar'}
+                                                    </button>
+                                                ) : (
+                                                    <div className="text-center text-yellow-700 text-[9px] font-bold py-1">⏳ {isEn ? 'Time off pending' : 'Libre pendiente'}</div>
+                                                )
                                             )}
                                             {/* Availability badge — MANAGER ONLY (canEdit gate).
                                                 2026-05-15 — Andrew: "when a staff adds there
@@ -8929,28 +9197,14 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
     const renderPtoLine = (t) => t.startDate + (t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : '') + (t.reason ? ` · ${t.reason}` : '');
 
     // 2026-05-27 — Andrew: "lets put a time stamp on when the time off
-    // request was put in." The PTO doc has a submittedAt serverTimestamp
-    // (set at request creation in handleSubmitPtoRequest). Format:
-    //   • today      → "Today at 3:42 PM"
-    //   • yesterday  → "Yesterday at 3:42 PM"
-    //   • older      → "Mar 15 at 3:42 PM"
-    // Locale flips with isEn. Returns '' for missing/invalid timestamps
-    // so older requests (created before submittedAt was added) just don't
-    // render a timestamp instead of showing "Invalid Date."
+    // request was put in." Core date math lives in the module-level
+    // fmtPtoWhen (shared with TimeOffModal / PtoView / PtoDetailsModal);
+    // this just prepends the verb. Returns '' for missing/invalid
+    // timestamps so legacy requests skip the line instead of showing
+    // "Invalid Date."
     const fmtSubmittedAt = (ts) => {
-        if (!ts) return '';
-        const d = ts?.toDate ? ts.toDate() : (ts instanceof Date ? ts : new Date(ts));
-        if (!d || isNaN(d.getTime())) return '';
-        const locale = isEn ? 'en-US' : 'es';
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const ymd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-        const diffDays = Math.round((today - ymd) / 86400000);
-        const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
-        if (diffDays === 0) return tx(`Submitted today at ${time}`, `Enviado hoy a las ${time}`);
-        if (diffDays === 1) return tx(`Submitted yesterday at ${time}`, `Enviado ayer a las ${time}`);
-        const date = d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
-        return tx(`Submitted ${date} at ${time}`, `Enviado ${date} a las ${time}`);
+        const when = fmtPtoWhen(ts, isEn);
+        return when ? tx(`Submitted ${when}`, `Enviado ${when}`) : '';
     };
 
     // Reusable card chrome — clean white card with semantic accent stripe.
@@ -9971,9 +10225,142 @@ function BlockRow({ block, onRemove, isEn }) {
 }
 
 
+// ── Shared PTO row helpers ─────────────────────────────────────────────────
+// "today at 3:42 PM" / "yesterday at…" / "Mar 15 at 3:42 PM" (localized), or
+// '' for missing/invalid timestamps so legacy docs just skip the line.
+// Callers prepend their own verb ("Submitted …", "by Maria · …").
+function fmtPtoWhen(ts, isEn) {
+    if (!ts) return '';
+    const d = ts?.toDate ? ts.toDate() : (ts instanceof Date ? ts : new Date(ts));
+    if (!d || isNaN(d.getTime())) return '';
+    const locale = isEn ? 'en-US' : 'es';
+    const now = new Date();
+    const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const ymd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((todayMid - ymd) / 86400000);
+    const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+    if (diffDays === 0) return isEn ? `today at ${time}` : `hoy a las ${time}`;
+    if (diffDays === 1) return isEn ? `yesterday at ${time}` : `ayer a las ${time}`;
+    const date = d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+    return isEn ? `${date} at ${time}` : `${date} a las ${time}`;
+}
+
+// Status + decision-trail + submitted lines under a time-off row. The
+// submitted line is gated by showSubmitted — Andrew 2026-06-10: "let the
+// schedule editors also able to see when the request was put in" (editors
+// only; staff already know when they asked).
+function PtoMetaLines({ entry, isEn, showSubmitted }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const status = entry.status || 'pending';
+    const submitted = fmtPtoWhen(entry.submittedAt || entry.createdAt, isEn);
+    const decided = fmtPtoWhen(entry.reviewedAt, isEn);
+    return (
+        <div className="text-[10px] mt-0.5 space-y-0.5">
+            <div className={`font-bold uppercase tracking-wide ${status === 'approved' ? 'text-green-700' : status === 'denied' ? 'text-red-700' : 'text-amber-700'}`}>
+                {status === 'approved' ? `✅ ${tx('approved', 'aprobado')}` : status === 'denied' ? `❌ ${tx('denied', 'negado')}` : `⏳ ${tx('pending', 'pendiente')}`}
+                {status !== 'pending' && entry.reviewedBy ? tx(` by ${entry.reviewedBy}`, ` por ${entry.reviewedBy}`) : ''}
+                {status !== 'pending' && decided ? ` · ${decided}` : ''}
+            </div>
+            {showSubmitted && submitted && (
+                <div className="text-dd-text-2/80 normal-case">
+                    {tx(`Submitted ${submitted}`, `Enviado ${submitted}`)}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// Manager status-change chips for one time-off entry: every status EXCEPT
+// the current one, plus delete. onSetStatus/onRemove run their own confirm
+// flows (askSetPtoStatus → ConfirmModal; handleRemoveTimeOff → confirm()).
+function PtoActionChips({ entry, isEn, onSetStatus, onRemove }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const status = entry.status || 'pending';
+    const btn = 'px-2 py-1 rounded-md text-[10px] font-bold border transition';
+    return (
+        <div className="flex flex-wrap gap-1 print:hidden">
+            {status !== 'approved' && (
+                <button onClick={() => onSetStatus(entry, 'approved')}
+                    className={`${btn} bg-dd-green text-white border-dd-green hover:bg-dd-green-700`}>
+                    ✓ {tx('Approve', 'Aprobar')}
+                </button>
+            )}
+            {status !== 'denied' && (
+                <button onClick={() => onSetStatus(entry, 'denied')}
+                    className={`${btn} bg-white text-red-700 border-red-200 hover:bg-red-50`}>
+                    ✕ {tx('Deny', 'Negar')}
+                </button>
+            )}
+            {status !== 'pending' && (
+                <button onClick={() => onSetStatus(entry, 'pending')}
+                    className={`${btn} bg-white text-amber-700 border-amber-300 hover:bg-amber-50`}>
+                    ⏳ {tx('To pending', 'A pendiente')}
+                </button>
+            )}
+            <button onClick={() => onRemove(entry)}
+                className={`${btn} bg-white text-dd-text-2 border-dd-line hover:bg-red-50 hover:text-red-700`}>
+                🗑 {tx('Delete', 'Borrar')}
+            </button>
+        </div>
+    );
+}
+
+// ── PtoDetailsModal ────────────────────────────────────────────────────────
+// Opened by tapping a 🌴/⏳ time-off chip in the weekly grid (editors only).
+// Shows every request covering that staff + day with the full trail and the
+// status-change chips, so approve/deny/reverse happens right from the
+// calendar. Entries are derived live from the timeOff snapshot by the
+// caller, so a status change updates this list in place.
+function PtoDetailsModal({ target, entries, isEn, canEdit, onSetStatus, onRemove, onClose }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const statusTone = (s) =>
+        s === 'approved' ? 'bg-green-50 border-green-300'
+        : s === 'denied' ? 'bg-red-50 border-red-200'
+        : 'bg-amber-50 border-amber-300';
+    return (
+        <ModalPortal onBackPress={onClose}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-2 sm:p-4 pt-16 sm:pt-20"
+            onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+            <div className="glass-sheet w-full sm:max-w-md rounded-2xl max-h-[calc(100vh-90px)] overflow-hidden flex flex-col shadow-2xl">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between shrink-0">
+                    <div>
+                        <h3 className="text-lg font-bold text-amber-700">🌴 {tx('Time Off', 'Tiempo Libre')} — {target.staffName}</h3>
+                        <div className="text-[11px] text-dd-text-2">{target.dateStr}</div>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    {entries.length === 0 ? (
+                        <p className="text-center text-gray-400 text-sm py-6">
+                            {tx('No time-off covers this day anymore.', 'Ya no hay tiempo libre para este día.')}
+                        </p>
+                    ) : entries.map(t => (
+                        <div key={t.id} className={`rounded-lg border p-2.5 ${statusTone(t.status || 'pending')}`}>
+                            <div className="text-xs font-bold text-dd-text">
+                                {t.startDate}{t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : ''}
+                            </div>
+                            {t.reason && <div className="text-[11px] text-gray-700 italic">"{t.reason}"</div>}
+                            <PtoMetaLines entry={t} isEn={isEn} showSubmitted={canEdit} />
+                            {canEdit && (
+                                <div className="mt-2">
+                                    <PtoActionChips entry={t} isEn={isEn} onSetStatus={onSetStatus} onRemove={onRemove} />
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+                <div className="border-t border-gray-200 p-3 shrink-0">
+                    <button onClick={onClose} className="w-full py-2 rounded-lg bg-amber-600 text-white font-bold">{tx('Close', 'Cerrar')}</button>
+                </div>
+            </div>
+        </div>
+        </ModalPortal>
+    );
+}
+
 // ── TimeOffModal ───────────────────────────────────────────────────────────
 // Phase 2: admin-entered. Phase 3 will add staff self-serve form + manager queue.
-function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canEdit }) {
+function TimeOffModal({ onClose, onAdd, onRemove, onSetStatus, entries, staffList, isEn, canEdit }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
     const [form, setForm] = useState({
@@ -10031,24 +10418,23 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canE
                         </button>
                     </div>
                     )}
+                    {/* Andrew 2026-06-10: every row — upcoming AND past — is now
+                        fully editable for schedule editors: flip the decision,
+                        send back to pending, or delete. Full trail (status, who
+                        decided, when submitted) shown per row. */}
                     {upcoming.length > 0 && (
                         <div>
                             <div className="text-xs font-bold text-gray-700 mb-1">{tx("Upcoming", "Próximos")}</div>
                             <div className="space-y-1">
                                 {upcoming.map(e => (
-                                    <div key={e.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-amber-50 border-amber-300 text-xs">
-                                        <div className="min-w-0 flex-1">
-                                            <div className="font-bold text-gray-800">{e.staffName}</div>
-                                            <div className="text-gray-600">{e.startDate}{e.endDate && e.endDate !== e.startDate ? ` → ${e.endDate}` : ""}{e.reason ? ` · ${e.reason}` : ""}</div>
-                                            {e.status && e.status !== "approved" && (
-                                                <div className="text-[10px] mt-0.5 font-bold uppercase">
-                                                    {e.status === "pending" ? `⏳ ${tx("pending", "pendiente")}` : `❌ ${tx("denied", "negado")}`}
-                                                </div>
-                                            )}
-                                        </div>
+                                    <div key={e.id} className="p-2 rounded border bg-amber-50 border-amber-300 text-xs">
+                                        <div className="font-bold text-gray-800">{e.staffName}</div>
+                                        <div className="text-gray-600">{e.startDate}{e.endDate && e.endDate !== e.startDate ? ` → ${e.endDate}` : ""}{e.reason ? ` · ${e.reason}` : ""}</div>
+                                        <PtoMetaLines entry={e} isEn={isEn} showSubmitted={canEdit} />
                                         {canEdit && (
-                                            <button onClick={() => onRemove(e.id)}
-                                                className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
+                                            <div className="mt-1.5">
+                                                <PtoActionChips entry={e} isEn={isEn} onSetStatus={onSetStatus} onRemove={onRemove} />
+                                            </div>
                                         )}
                                     </div>
                                 ))}
@@ -10058,16 +10444,16 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canE
                     {past.length > 0 && (
                         <details>
                             <summary className="text-xs font-bold text-gray-500 cursor-pointer">{tx("Past", "Pasados")} ({past.length})</summary>
-                            <div className="space-y-1 mt-1 opacity-60">
+                            <div className="space-y-1 mt-1 opacity-80">
                                 {past.map(e => (
-                                    <div key={e.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-gray-50 border-gray-300 text-xs">
-                                        <div className="min-w-0 flex-1">
-                                            <div className="font-bold text-gray-800">{e.staffName}</div>
-                                            <div className="text-gray-600">{e.startDate}{e.endDate && e.endDate !== e.startDate ? ` → ${e.endDate}` : ""}{e.reason ? ` · ${e.reason}` : ""}</div>
-                                        </div>
+                                    <div key={e.id} className="p-2 rounded border bg-gray-50 border-gray-300 text-xs">
+                                        <div className="font-bold text-gray-800">{e.staffName}</div>
+                                        <div className="text-gray-600">{e.startDate}{e.endDate && e.endDate !== e.startDate ? ` → ${e.endDate}` : ""}{e.reason ? ` · ${e.reason}` : ""}</div>
+                                        <PtoMetaLines entry={e} isEn={isEn} showSubmitted={canEdit} />
                                         {canEdit && (
-                                            <button onClick={() => onRemove(e.id)}
-                                                className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
+                                            <div className="mt-1.5">
+                                                <PtoActionChips entry={e} isEn={isEn} onSetStatus={onSetStatus} onRemove={onRemove} />
+                                            </div>
                                         )}
                                     </div>
                                 ))}
@@ -10743,7 +11129,7 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
 // ── PtoView ────────────────────────────────────────────────────────────────
 // 4th view mode (next to Grid/Day/List). Calendar of all time-off entries
 // for the current week + side, color-coded by status.
-function PtoView({ weekStart, timeOff, locationStaffNames, sideStaffNames, isEn, currentStaffName, canEdit, onApprove, onDeny, onRemove }) {
+function PtoView({ weekStart, timeOff, locationStaffNames, sideStaffNames, isEn, currentStaffName, canEdit, onRemove, onSetStatus }) {
     const tx = (en, es) => (isEn ? en : es);
     const days = [0,1,2,3,4,5,6].map(i => addDays(weekStart, i));
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
@@ -10820,25 +11206,35 @@ function PtoView({ weekStart, timeOff, locationStaffNames, sideStaffNames, isEn,
                                     {list.map(t => {
                                         const b = statusBadge(t.status);
                                         const isMine = t.staffName === currentStaffName;
+                                        // Editors see when the request came in (Andrew
+                                        // 2026-06-10) + get the full status-change chips
+                                        // on every entry — approve, deny, back to
+                                        // pending, delete — so a decision is never
+                                        // locked in. onSetStatus runs the confirm flow.
+                                        const submitted = canEdit ? fmtPtoWhen(t.submittedAt || t.createdAt, isEn) : '';
                                         return (
-                                            <div key={t.id} className={`flex items-center justify-between gap-2 p-2 rounded border ${b.border} ${b.bg}`}>
-                                                <div className="min-w-0 flex-1">
-                                                    <div className={`font-bold text-xs ${b.text}`}>
-                                                        {b.icon} {isMine && '✓ '}{t.staffName}
-                                                    </div>
-                                                    <div className="text-[10px] text-gray-700">
-                                                        {t.startDate}{t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : ''}
-                                                        {t.reason && <span className="italic ml-2">"{t.reason}"</span>}
-                                                    </div>
+                                            <div key={t.id} className={`p-2 rounded border ${b.border} ${b.bg}`}>
+                                                <div className={`font-bold text-xs ${b.text}`}>
+                                                    {b.icon} {isMine && '✓ '}{t.staffName}
+                                                    {t.status !== 'pending' && t.reviewedBy ? (
+                                                        <span className="font-normal opacity-80">
+                                                            {' '}· {isEn ? `by ${t.reviewedBy}` : `por ${t.reviewedBy}`}
+                                                        </span>
+                                                    ) : null}
                                                 </div>
-                                                {canEdit && t.status === 'pending' && (
-                                                    <div className="flex gap-1 print:hidden">
-                                                        <button onClick={() => onApprove(t)} className="px-2 py-1 rounded bg-green-600 text-white text-[10px] font-bold">✓</button>
-                                                        <button onClick={() => onDeny(t)} className="px-2 py-1 rounded bg-gray-300 text-gray-700 text-[10px] font-bold">✕</button>
+                                                <div className="text-[10px] text-gray-700">
+                                                    {t.startDate}{t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : ''}
+                                                    {t.reason && <span className="italic ml-2">"{t.reason}"</span>}
+                                                </div>
+                                                {submitted && (
+                                                    <div className="text-[10px] text-gray-500">
+                                                        {isEn ? `Submitted ${submitted}` : `Enviado ${submitted}`}
                                                     </div>
                                                 )}
-                                                {canEdit && t.status !== 'pending' && (
-                                                    <button onClick={() => onRemove(t.id)} className="px-2 py-1 rounded bg-red-100 text-red-700 text-[10px] font-bold print:hidden">×</button>
+                                                {canEdit && (
+                                                    <div className="mt-1.5">
+                                                        <PtoActionChips entry={t} isEn={isEn} onSetStatus={onSetStatus} onRemove={onRemove} />
+                                                    </div>
                                                 )}
                                             </div>
                                         );

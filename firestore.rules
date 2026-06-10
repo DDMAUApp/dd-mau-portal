@@ -834,18 +834,22 @@ service cloud.firestore {
       allow delete: if true;
     }
 
-    // ── PTO / time off — shape-validated, no delete ────────────────────
+    // ── PTO / time off — shape-validated ───────────────────────────────
     // /time_off rows are PTO requests with staff name + date range +
-    // approval status. Block delete so the request history stays in
-    // place even if a manager later decides to "tidy up". Updates
-    // are open shape so the existing approve/deny flow still works.
+    // approval status. Updates are open shape so the approve / deny /
+    // reverse flow works. Delete is a DELIBERATE feature (Andrew
+    // 2026-06-10: managers can delete a request outright, and staff can
+    // cancel their own) — it previously said `if false` here but worked
+    // anyway via the {document=**} catch-all; made explicit so Phase 2
+    // hardening of the catch-all doesn't silently kill the delete flows
+    // (PtoActionChips 🗑, handleRemoveTimeOff, handleCancelOwnPto).
     match /time_off/{requestId} {
       allow read: if true;
       allow create: if request.resource.data is map
                     && (request.resource.data.createdAt == null
                         || request.resource.data.createdAt == request.time);
       allow update: if request.resource.data is map;
-      allow delete: if false;
+      allow delete: if true;
     }
 
     // ── /insurance — benefits enrollment (CR-1, 2026-05-30) ──────────────

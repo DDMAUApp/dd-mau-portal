@@ -51,6 +51,7 @@ export const NOTIFICATION_TYPES = [
     { id: 'shift_time_changed', category: 'schedule', en: 'Your shift time changed',   es: 'La hora de tu turno cambió', lockedOn: true },
     { id: 'pto_approved',       category: 'schedule', en: 'Your PTO approved',         es: 'Tu PTO aprobado',            lockedOn: true },
     { id: 'pto_denied',         category: 'schedule', en: 'Your PTO denied',           es: 'Tu PTO negado',              lockedOn: true },
+    { id: 'pto_reopened',       category: 'schedule', en: 'Your PTO back to pending',  es: 'Tu PTO a pendiente',         lockedOn: true },
     { id: 'swap_approved',      category: 'schedule', en: 'Your swap approved',        es: 'Tu cambio aprobado',         lockedOn: true },
     { id: 'swap_denied',        category: 'schedule', en: 'Your swap denied',          es: 'Tu cambio negado',           lockedOn: true },
     { id: 'coverage_approved',  category: 'schedule', en: 'Your coverage approved',    es: 'Cobertura aprobada',         lockedOn: true },

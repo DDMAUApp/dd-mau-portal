@@ -281,7 +281,7 @@ exports.dispatchNotification = onDocumentCreated(
             "shift_reminder_1h",
             "shift_added", "shift_deleted", "shift_reassigned",
             "shift_date_changed", "shift_time_changed",
-            "pto_approved", "pto_denied",
+            "pto_approved", "pto_denied", "pto_reopened",
             "swap_approved", "swap_denied",
             "coverage_approved", "coverage_denied",
             "week_published",
