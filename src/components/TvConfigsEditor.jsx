@@ -406,6 +406,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
         textEs: '',
         style: 'sage',
         speed: 0,
+        fontSize: 'small',
     });
     // AI promo generation state
     const [aiHint, setAiHint] = useState('');
@@ -907,7 +908,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                 )}
                             </div>
 
-                            <div className="grid grid-cols-3 gap-2">
+                            <div className="grid grid-cols-2 gap-2">
                                 <label className="block">
                                     <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
                                         {tx('Position', 'Posición')}
@@ -944,6 +945,19 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                         <option value="40">{tx('Slow', 'Lento')}</option>
                                         <option value="60">{tx('Medium', 'Medio')}</option>
                                         <option value="80">{tx('Fast', 'Rápido')}</option>
+                                    </select>
+                                </label>
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
+                                        {tx('Text size', 'Tamaño de letra')}
+                                    </span>
+                                    <select value={promoStrip?.fontSize || 'small'}
+                                        onChange={(e) => setPromoStrip(p => ({ ...p, fontSize: e.target.value }))}
+                                        className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white">
+                                        <option value="small">{tx('Small', 'Pequeño')}</option>
+                                        <option value="medium">{tx('Medium', 'Mediano')}</option>
+                                        <option value="large">{tx('Large', 'Grande')}</option>
+                                        <option value="xl">{tx('Extra large', 'Extra grande')}</option>
                                     </select>
                                 </label>
                             </div>

@@ -14,7 +14,7 @@
 //     Text/burst elements sit at their original-fraction anchors directly on
 //     the image, so there's no coordinate drift when the crop changes.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { bakePictureEdits } from '../data/menuImageUpload';
 import {
     BURST_PRESETS, BURST_PRESET_KEYS, BURST_DEFAULT_FILL, BURST_DEFAULT_TEXT,
@@ -57,6 +57,37 @@ export default function PictureEditor({
     const imgRef = useRef(null);
     const stageRef = useRef(null);
     const dragRef = useRef(null);                        // active drag descriptor
+
+    // Andrew 2026-06-10: on touchscreens, tapping a text to MOVE it used to
+    // autofocus the inspector textarea → on-screen keyboard popped up and
+    // shrank the photo. Now the keyboard only opens for a JUST-ADDED element
+    // (you do want to type its words right away); selecting an existing one
+    // to drag never steals focus, and grabbing any element dismisses an open
+    // keyboard so the full photo is visible while you position it.
+    const [freshId, setFreshId] = useState(null);
+    const freshInputRef = useRef(null);
+    // useLayoutEffect, NOT useEffect — layout effects run synchronously in
+    // the same discrete-event commit as the Add-button tap, keeping focus()
+    // inside the user-gesture stack so iOS actually opens the keyboard
+    // (a passive effect runs after paint, where WebKit may focus silently).
+    useLayoutEffect(() => {
+        if (freshId && selId === freshId && freshInputRef.current) {
+            freshInputRef.current.focus();
+            freshInputRef.current.select?.();
+        }
+    }, [freshId, selId]);
+    // Only TEXT-ENTRY fields summon the on-screen keyboard. The inspector is
+    // full of inputs that don't (range sliders, checkboxes, color pickers) —
+    // blurring those is fine, but they must not trigger the "tap only
+    // dismisses the keyboard" touch path.
+    const dismissKeyboard = () => {
+        const a = document.activeElement;
+        if (!a) return false;
+        const isTextEntry = a.tagName === 'TEXTAREA'
+            || (a.tagName === 'INPUT' && /^(text|search|tel|url|email|password|number)$/i.test(a.type || 'text'));
+        if (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT') a.blur();
+        return isTextEntry;
+    };
 
     // Pull in the Google display/script fonts once the editor opens so the
     // picker chips + live text render in their real faces (web-safe fonts
@@ -113,13 +144,13 @@ export default function PictureEditor({
         const c = center();
         const t = { id: nextId(), x: c.x, y: c.y, text: tx('NEW', 'NUEVO'), size: 0.08, color: '#ffffff', align: 'center', outline: true, font: DEFAULT_FONT_KEY };
         setTexts(prev => [...prev, t]);
-        setSelId(t.id); setTool('select');
+        setSelId(t.id); setFreshId(t.id); setTool('select');
     };
     const addBurst = (shape = 'star') => {
         const c = center();
         const b = { id: nextId(), x: c.x, y: c.y, size: 0.24, shape, fill: BURST_DEFAULT_FILL, textColor: BURST_DEFAULT_TEXT, text: '$5' };
         setBursts(prev => [...prev, b]);
-        setSelId(b.id); setTool('select');
+        setSelId(b.id); setFreshId(b.id); setTool('select');
     };
 
     // ── pointer handlers on the stage ──────────────────────────
@@ -133,20 +164,42 @@ export default function PictureEditor({
             return;
         }
         if (elId) {
-            // start moving an element
+            setFreshId(null);
+            // pointerType of THIS gesture, not matchMedia('pointer: coarse')
+            // (which reflects the primary pointer — wrong on a touchscreen
+            // laptop where a mouse is attached but the finger is dragging).
+            const isTouch = e.pointerType === 'touch';
+            // If the on-screen keyboard is open, a TOUCH tap just dismisses it —
+            // closing the keyboard resizes the WebView mid-gesture, which would
+            // shift the image rect under the finger and corrupt the drag. Select
+            // the element and let the NEXT tap do the moving. (Mouse/pen have no
+            // keyboard resize, so there we blur and drag in the same gesture.)
+            if (dismissKeyboard() && isTouch) {
+                setSelId(elId);
+                e.stopPropagation();
+                return;
+            }
             const f = frac(e); if (!f) return;
             const t = texts.find(x => x.id === elId);
             const b = bursts.find(x => x.id === elId);
             const anchor = t || b;
             if (!anchor) return;
-            setSelId(elId);
-            dragRef.current = { kind: 'move', id: elId, dx: f.x - anchor.x, dy: f.y - anchor.y };
+            // TOUCH: selId is set on RELEASE — on mobile the inspector panel
+            // mounts when selId is set, which reflows the stage mid-drag and
+            // makes the dragged element jump (frac() reads the moved rect).
+            // MOUSE/PEN: select immediately (the desktop sidebar is always
+            // rendered, so no reflow — and the ring should track the click).
+            if (!isTouch) setSelId(elId);
+            dragRef.current = { kind: 'move', id: elId, dx: f.x - anchor.x, dy: f.y - anchor.y, deferSelect: isTouch };
             try { stageRef.current?.setPointerCapture?.(e.pointerId); } catch {}
             e.stopPropagation();
             return;
         }
         // clicked empty image → deselect
+        dismissKeyboard();
+        dragRef.current = null;
         setSelId(null);
+        setFreshId(null);
     };
 
     const onPointerMove = (e) => {
@@ -174,9 +227,27 @@ export default function PictureEditor({
         }
     };
 
+    // Shared by pointerup AND pointercancel (system edge gesture, palm
+    // rejection) so a cancelled tap still lands the selection. The existence
+    // check guards a multi-touch edge: finger 2 can hit the inspector's
+    // Delete mid-drag — re-selecting a deleted id would strand the mobile
+    // inspector on an empty panel.
+    const commitDeferredSelect = (d) => {
+        if (d?.kind !== 'move' || !d.deferSelect) return;
+        if (texts.some(t => t.id === d.id) || bursts.some(b => b.id === d.id)) setSelId(d.id);
+    };
+
+    const onPointerCancel = () => {
+        const d = dragRef.current;
+        dragRef.current = null;
+        commitDeferredSelect(d);
+        if (d?.kind === 'crop') setCropDraft(null);
+    };
+
     const onPointerUp = () => {
         const d = dragRef.current;
         dragRef.current = null;
+        commitDeferredSelect(d);
         if (d?.kind === 'crop' && cropDraft) {
             if (cropDraft.w > 0.04 && cropDraft.h > 0.04) {
                 setCrop({
@@ -214,12 +285,18 @@ export default function PictureEditor({
     const liveCrop = cropDraft || crop;
 
     return (
-        <ModalPortal>
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/70"
+        <ModalPortal onBackPress={onClose}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-3 bg-black/70"
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-            <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[96vh] flex flex-col overflow-hidden shadow-2xl">
+            {/* Full-screen on phones/tablets so the photo gets every pixel;
+                floating card with rounded corners on desktop. */}
+            <div className="bg-white rounded-none sm:rounded-2xl w-full max-w-6xl h-[100dvh] sm:h-auto sm:max-h-[96vh] flex flex-col overflow-hidden shadow-2xl">
                 {/* Header */}
-                <header className="bg-violet-600 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
+                {/* NOT the `safe-top` class — it OVERRIDES padding-top (cascade
+                    wins over py-3), zeroing the header padding on desktop.
+                    calc() genuinely adds the notch inset on top of the 12px. */}
+                <header className="bg-violet-600 text-white px-4 pb-3 flex items-center justify-between flex-shrink-0"
+                    style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))' }}>
                     <div>
                         <div className="text-base font-black">🖼 {tx('Edit picture', 'Editar imagen')}</div>
                         <div className="text-[11px] opacity-90">
@@ -270,9 +347,10 @@ export default function PictureEditor({
                                 style={{ cursor: tool === 'crop' ? 'crosshair' : 'default' }}
                                 onPointerDown={onPointerDown}
                                 onPointerMove={onPointerMove}
-                                onPointerUp={onPointerUp}>
+                                onPointerUp={onPointerUp}
+                                onPointerCancel={onPointerCancel}>
                                 <img ref={imgRef} src={src} alt="picture" draggable={false} onLoad={onImgLoad}
-                                    className="block max-w-full max-h-[44vh] sm:max-h-[74vh]" />
+                                    className="block max-w-full max-h-[50vh] sm:max-h-[74vh]" />
 
                                 {/* Crop dim overlays (outside = darkened) */}
                                 {liveCrop && (
@@ -362,7 +440,7 @@ export default function PictureEditor({
                                 </div>
                                 <textarea value={selectedText.text}
                                     onChange={(e) => updateText(selId, { text: e.target.value })}
-                                    rows={2} autoFocus
+                                    rows={2} ref={freshInputRef}
                                     placeholder={tx('Type your words…', 'Escribe tus palabras…')}
                                     className="w-full px-2 py-1.5 rounded border border-dd-line text-base resize-none focus:outline-none focus:ring-2 focus:ring-violet-300" />
                                 <div>
@@ -417,7 +495,7 @@ export default function PictureEditor({
                                     <span className="text-xs font-black uppercase tracking-wider text-violet-700">{tx('Starburst', 'Estrella')}</span>
                                     <button onClick={deleteSelected} className="text-[11px] font-bold text-red-600 hover:underline">🗑 {tx('Delete', 'Borrar')}</button>
                                 </div>
-                                <input type="text" value={selectedBurst.text}
+                                <input type="text" value={selectedBurst.text} ref={freshInputRef}
                                     onChange={(e) => updateBurst(selId, { text: e.target.value })}
                                     placeholder={tx('e.g. $5.99', 'ej. $5.99')}
                                     className="w-full px-2 py-1.5 rounded border border-dd-line text-base font-bold text-center focus:outline-none focus:ring-2 focus:ring-violet-300" />

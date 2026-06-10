@@ -113,6 +113,7 @@
 //     textEs:   string?
 //     style:    'sage'|'red'|'amber'|'sky'|'dark'   // background tint
 //     speed:    number?                              // scroll px/sec; null = static
+//     fontSize: 'small'|'medium'|'large'|'xl'?       // text size tier; default small
 //   }?
 //
 //   updatedAt:    serverTimestamp

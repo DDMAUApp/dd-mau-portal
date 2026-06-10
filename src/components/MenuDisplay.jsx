@@ -1188,6 +1188,17 @@ function PromoStrip({ promoStrip }) {
     const speed = Number(promoStrip?.speed) || 0;
     const isScrolling = enabled && speed > 0;
 
+    // Andrew 2026-06-10 (Pi 5 photos TV): "scroll the whole tv" + "control the
+    // font size". Size tiers are admin-picked per TV; 'small' is the original
+    // clamp so existing configs look identical until changed.
+    const FONT_SIZES = {
+        small:  'clamp(14px, 2vw, 28px)',
+        medium: 'clamp(18px, 2.8vw, 40px)',
+        large:  'clamp(24px, 3.8vw, 56px)',
+        xl:     'clamp(30px, 5vw, 72px)',
+    };
+    const fontSize = FONT_SIZES[promoStrip?.fontSize] || FONT_SIZES.small;
+
     // Marquee speed as a CONSTANT pixels-per-second per tier, so the three tiers
     // are clearly different AND the on-screen speed stays the same no matter how
     // long the promo text is. Andrew: slow/med/fast all looked the same — make
@@ -1196,22 +1207,36 @@ function PromoStrip({ promoStrip }) {
     const pxPerSec = speed >= 80 ? 240 : speed >= 60 ? 120 : 55;   // fast / medium / slow
     const scrollRef = useRef(null);
     const [loopSeconds, setLoopSeconds] = useState(16);
+    // Andrew 2026-06-10: with a fixed 2 copies, a SHORT promo (narrower than
+    // the screen) only ever traversed the left part of the TV — the row is
+    // content-width and the loop travels half of it. Now we repeat the text
+    // enough times that half the row spans the full screen, so the marquee
+    // sweeps edge to edge no matter how short the text is.
+    const [copies, setCopies] = useState(1);                       // copies PER HALF
     useEffect(() => {
         if (!isScrolling) return undefined;
         const measure = () => {
             const el = scrollRef.current;
-            if (!el) return;
-            // The row holds TWO copies of the text; one seamless loop travels
-            // half the row's width (the keyframe runs translateX 0 → -50%).
-            const distance = el.getBoundingClientRect().width / 2;
-            if (distance > 0) setLoopSeconds(Math.max(4, distance / pxPerSec));
+            if (!el || !el.childElementCount) return;
+            // All copy <span>s are identical, so one unit = row / rendered count.
+            const unitW = el.scrollWidth / el.childElementCount;
+            if (!(unitW > 0)) return;
+            const needed = Math.max(1, Math.ceil((window.innerWidth || 0) / unitW));
+            // Hysteresis: scrollWidth is integer-rounded, so when the screen
+            // width sits exactly on a unit boundary the ceil can flip between
+            // n and n+1 across re-measures — only move when clearly needed.
+            const next = (needed > copies || needed < copies - 1) ? needed : copies;
+            if (next !== copies) setCopies(next);
+            // One seamless loop travels half the row = `next` units
+            // (the keyframe runs translateX 0 → -50%).
+            setLoopSeconds(Math.max(4, (next * unitW) / pxPerSec));
         };
         measure();
         // Re-measure once after the webfont settles (text width changes) + on resize.
         const t = setTimeout(measure, 400);
         window.addEventListener('resize', measure);
         return () => { clearTimeout(t); window.removeEventListener('resize', measure); };
-    }, [text, isScrolling, pxPerSec]);
+    }, [text, isScrolling, pxPerSec, copies, fontSize]);
 
     if (!enabled) return null;
 
@@ -1232,16 +1257,21 @@ function PromoStrip({ promoStrip }) {
     }[styleKey];
 
     return (
-        <div className={`fixed left-0 right-0 z-30 overflow-hidden px-6 py-2 font-sans font-black tracking-wide text-[clamp(14px,2vw,28px)] shadow-md ${STYLE_CLASS}`}
-            style={{ [position]: 0 }}>
+        // px-0 while scrolling — with side padding the row clips at the
+        // padding box and the left gutter flashes empty at every loop wrap.
+        <div className={`fixed left-0 right-0 z-30 overflow-hidden ${isScrolling ? 'px-0' : 'px-6'} py-2 font-sans font-black tracking-wide shadow-md ${STYLE_CLASS}`}
+            style={{ [position]: 0, fontSize }}>
             {isScrolling ? (
                 <div ref={scrollRef} className="whitespace-nowrap w-max"
                     style={{
                         animation: `dd-mau-promo-scroll ${loopSeconds}s linear infinite`,
                     }}>
-                    {/* Duplicate the text so the scroll loops seamlessly (w-max
-                        keeps the row at content width so -50% = exactly one copy) */}
-                    {text}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{text}
+                    {/* Two identical halves of `copies` units each, so the
+                        0 → -50% keyframe loops seamlessly (w-max keeps the row
+                        at content width). The gap scales with the font (em). */}
+                    {Array.from({ length: copies * 2 }, (_, i) => (
+                        <span key={i} className="inline-block" style={{ paddingRight: '3em' }}>{text}</span>
+                    ))}
                 </div>
             ) : (
                 <div className="text-center truncate">{text}</div>
