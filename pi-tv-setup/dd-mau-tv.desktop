@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=DD Mau TV
+Exec=/usr/local/bin/dd-mau-kiosk.sh
+X-GNOME-Autostart-enabled=true
