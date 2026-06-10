@@ -16,11 +16,14 @@
 //
 // Endpoint: http://<printer-ip>/cgi-bin/epos/service.cgi?devid=<id>&timeout=<ms>
 // Body:     SOAP envelope wrapping an <epos-print> document
-// CORS:     The printer's HTTP server has its own CORS allow-list
-//           (config'd via the printer's web UI at http://<ip>/). For
-//           prod, set it to the GitHub Pages domain OR `*`. If a
-//           print 0-times-out / CORS-fails, that's the first place
-//           to check.
+// CORS:     CORRECTED 2026-06-10 — the TM-L100 has NO CORS allow-list
+//           setting (verified against the Technical Reference Guide
+//           Rev.B + ePOS-Print XML manual Rev.AF; the ePOS service is
+//           designed to be called cross-origin and answers any
+//           origin). What actually blocks BROWSER printing is mixed
+//           content: an HTTPS page may not fetch http://<printer-ip>.
+//           The native apps bypass that via CapacitorHttp (below);
+//           web/PWA cannot print directly — use the phone/iPad app.
 //
 // Connectivity: the browser must be on the same LAN as the printer.
 // Staff devices use the restaurant Wi-Fi → the printer's static IP
@@ -55,7 +58,7 @@ import { db } from '../firebase';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import {
     doc, collection, getDoc, setDoc, addDoc, onSnapshot, serverTimestamp,
-    query, orderBy, limit as fsLimit,
+    query, orderBy, limit as fsLimit, deleteField,
 } from 'firebase/firestore';
 import { recordAudit } from './audit';
 import { getLabelFormat } from './labelFormat';
@@ -399,7 +402,7 @@ export async function savePrinterConfig({
     location, slot = DEFAULT_PRINTER_SLOT,
     name, ip, port, deviceId, model, enabled, byName,
     type = DEFAULT_PRINTER_TYPE,
-    labelWidthMm, labelHeightMm,
+    labelWidthMm, labelHeightMm, paperWidthMm,
 }) {
     if (!location) throw new Error('location required');
     const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
@@ -409,10 +412,13 @@ export async function savePrinterConfig({
         throw new Error('printer ip looks malformed');
     }
     const defaultModel = safeType === PRINTER_TYPES.BROTHER_QL ? 'QL-820NWB' : 'TM-L100';
+    // Integer 1–65535 or the default — a bad port saved here breaks
+    // EVERY print for the location with a cryptic URL-parse error.
+    const portNum = Math.trunc(Number(port));
     const payload = {
         name: String(name || '').slice(0, 100) || `${location} ${safeSlot} printer`,
         ip: trimmedIp,
-        port: Number.isFinite(Number(port)) ? Number(port) : DEFAULT_PRINTER_PORT,
+        port: (Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535) ? portNum : DEFAULT_PRINTER_PORT,
         deviceId: String(deviceId || DEFAULT_DEVICE_ID).slice(0, 64),
         model: String(model || defaultModel).slice(0, 64),
         slot: safeSlot,
@@ -429,6 +435,18 @@ export async function savePrinterConfig({
         const h = Number(labelHeightMm);
         payload.labelWidthMm  = Number.isFinite(w) && w > 0 ? w : DEFAULT_BROTHER_LABEL_WIDTH_MM;
         payload.labelHeightMm = Number.isFinite(h) && h > 0 ? h : DEFAULT_BROTHER_LABEL_HEIGHT_MM;
+    }
+    // Epson roll width (TM-L100 supports 80/58/40 mm; 80 is the
+    // standard liner-free roll). Stored so the admin UI + future
+    // per-width label layouts agree with the physical roll — the
+    // printer itself auto-detects 58/80 from the roll guides.
+    if (safeType === PRINTER_TYPES.EPSON_LINERLESS) {
+        const pw = Number(paperWidthMm);
+        payload.paperWidthMm = [40, 58, 80].includes(pw) ? pw : 80;
+    } else {
+        // Switching a row to Brother must not strand a stale Epson
+        // width on the doc (merge:true never deletes keys).
+        payload.paperWidthMm = deleteField();
     }
     await setDoc(doc(db, 'config', printerDocPath(location, safeSlot)), payload, { merge: true });
     recordAudit({
@@ -1521,11 +1539,11 @@ export async function printFreeText({
 // Sends the SOAP envelope to the printer. Returns { ok, status,
 // responseXml }.
 //
-// IMPORTANT — this fires from the browser. The printer must be:
-//   • reachable on the local LAN (browser is on restaurant Wi-Fi)
-//   • CORS-permissive for our origin (configure via printer web UI)
-// Either failure mode = network/fetch error, surfaced to the
-// caller for a toast.
+// IMPORTANT — the printer must be reachable on the local LAN. On
+// native (iOS/Android) the request bypasses the WebView entirely;
+// from a plain web browser it fails on HTTPS→HTTP mixed content
+// (the TM-L100 has no CORS setting — that was never the blocker).
+// Failure = network/fetch error, surfaced to the caller for a toast.
 export async function sendToPrinter(printer, eposXml, meta = {}) {
     // Capture the start time so the print job log records latency.
     // Useful when diagnosing "is the printer slow today?" — Pi bridges

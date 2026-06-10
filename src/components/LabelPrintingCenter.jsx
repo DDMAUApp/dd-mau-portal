@@ -48,7 +48,7 @@ function humanizeError(code, isEs) {
         case 'printer_disabled':      return tx('Printer is disabled in admin', 'Impresora deshabilitada');
         case 'empty_text':            return tx('Tried to print blank text', 'Texto vacío');
         case 'text_too_long':         return tx('Label too long (>2000 chars)', 'Etiqueta muy larga');
-        case 'network_error':         return tx('Network error — Wi-Fi / CORS / printer offline?', 'Error de red — ¿Wi-Fi / CORS / impresora apagada?');
+        case 'network_error':         return tx('Network error — printer off / wrong Wi-Fi? (Web browsers can\'t print — use the phone/iPad app)', 'Error de red — ¿impresora apagada / otra Wi-Fi? (Desde el navegador no se imprime — usa la app)');
         default:
             if (code.startsWith('http_')) return tx(`Printer rejected (HTTP ${code.slice(5)})`, `Impresora rechazó (HTTP ${code.slice(5)})`);
             return code;

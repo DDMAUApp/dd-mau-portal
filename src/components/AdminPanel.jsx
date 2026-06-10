@@ -102,10 +102,55 @@ function PrintersConfigSection({ language, byName }) {
                     />
                 ))}
             </div>
+            {/* ── TM-L100 drivers & downloads ──────────────────────
+                Andrew 2026-06-10 (printer arriving): official Epson
+                resources, every URL verified live. NOTE deliberately
+                absent: a CORS setting — the TM-L100 has none (verified
+                against the Technical Reference + ePOS manuals); the
+                thing that blocks browser printing is HTTPS→HTTP mixed
+                content, which the native app bypasses via the OS
+                network stack. There is NO macOS driver for this model
+                — Mac/web print through the app's direct path. */}
+            <details className="mt-3 text-[11px] bg-purple-50/50 border border-purple-200 rounded-md">
+                <summary className="cursor-pointer px-2.5 py-2 font-bold text-purple-800 select-none hover:bg-purple-100/60 rounded-md">
+                    📥 {tx('Epson TM-L100 — drivers, apps & manuals', 'Epson TM-L100 — drivers, apps y manuales')}
+                </summary>
+                <div className="px-3 pb-3 pt-1 space-y-1.5">
+                    <p className="text-[10.5px] text-purple-700/90 italic">
+                        {tx(
+                            'The app prints to the TM-L100 with NO driver. These are only for setup, Windows printing, and reference. There is no Mac driver for this model.',
+                            'La app imprime al TM-L100 SIN driver. Esto es solo para configuración, impresión desde Windows y referencia. No existe driver para Mac.',
+                        )}
+                    </p>
+                    {[
+                        { icon: '📱', en: 'Epson TM Utility — iPhone/iPad (Wi-Fi setup, settings, firmware)', es: 'Epson TM Utility — iPhone/iPad', url: 'https://apps.apple.com/us/app/epson-tm-utility/id726122574' },
+                        { icon: '🤖', en: 'Epson TM Utility — Android', es: 'Epson TM Utility — Android', url: 'https://play.google.com/store/apps/details?id=com.epson.tmutility' },
+                        { icon: '🪟', en: 'Windows printer driver (Advanced Printer Driver 6.12)', es: 'Driver de Windows (APD 6.12)', url: 'https://ftp.epson.com/drivers/APD_612_L100_WM.exe' },
+                        { icon: '🛠', en: 'TM-L100 Utility for Windows (deep settings: 40 mm paper, logos, paper saving)', es: 'TM-L100 Utility para Windows (configuración avanzada)', url: 'https://ftp.epson.com/drivers/pos/TM-L100Utility120.exe' },
+                        { icon: '📄', en: 'Technical Reference Guide (PDF — every setting explained)', es: 'Guía técnica de referencia (PDF)', url: 'https://files.support.epson.com/pdf/pos/bulk/tm-l100_trg_en_revb.pdf' },
+                        { icon: '🌐', en: 'Epson US support page (all downloads & warranty)', es: 'Página de soporte de Epson US', url: 'https://epson.com/Support/Point-of-Sale/Label-Printers/Epson-OmniLink-TM-L100-Liner-free-Compatible/s/SPT_C31CJ52001' },
+                    ].map((l) => (
+                        <button key={l.url} type="button"
+                            onClick={() => openExternalUrl(l.url)}
+                            className="w-full text-left px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-purple-900 font-bold hover:bg-purple-50 active:scale-[0.99] transition flex items-center gap-2">
+                            <span>{l.icon}</span>
+                            <span className="flex-1 min-w-0 leading-tight">{tx(l.en, l.es)}</span>
+                            <span className="text-purple-400">↗</span>
+                        </button>
+                    ))}
+                    <p className="text-[10px] text-purple-700/70 mt-1">
+                        {tx(
+                            'Firmware updates: easiest from the TM Utility phone app (Settings → Firmware Update).',
+                            'Actualizaciones de firmware: lo más fácil es desde la app TM Utility.',
+                        )}
+                    </p>
+                </div>
+            </details>
+
             <p className="text-[10px] text-purple-700/70 italic mt-2">
                 {tx(
-                    'Epson troubleshooting: if a test print times out, confirm the printer is on the restaurant Wi-Fi, its local IP matches, and CORS is set to allow ddmauapp.github.io in the printer\'s web UI. Brother troubleshooting: if the Brother doesn\'t show up in the AirPrint list, confirm the printer is on the same Wi-Fi as the iPad and Bonjour/mDNS is allowed on the network.',
-                    'Epson: si la prueba falla, confirma que la impresora esté en la Wi-Fi del restaurante, que la IP coincida, y que el CORS permita ddmauapp.github.io. Brother: si no aparece en la lista de AirPrint, confirma que esté en la misma Wi-Fi que el iPad y que Bonjour/mDNS esté permitido.',
+                    'Epson troubleshooting: if a test print times out, confirm the printer is powered on, on the restaurant network, and the IP above matches its status sheet (Status button on the back prints it). Printing only works from the phone/iPad APP, not a web browser — browsers block the HTTPS→HTTP hop to the printer. Brother troubleshooting: if the Brother doesn\'t show up in the AirPrint list, confirm the printer is on the same Wi-Fi as the iPad and Bonjour/mDNS is allowed on the network.',
+                    'Epson: si la prueba falla, confirma que la impresora esté encendida, en la red del restaurante, y que la IP coincida con su hoja de estado (botón Status atrás). Solo se imprime desde la APP del teléfono/iPad, no desde el navegador. Brother: si no aparece en AirPrint, confirma que esté en la misma Wi-Fi que el iPad y que Bonjour/mDNS esté permitido.',
                 )}
             </p>
 
@@ -268,6 +313,16 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
     const [labelWMm, setLabelWMm] = useState(62);
     const [labelHMm, setLabelHMm] = useState(90);
     const [enabled, setEnabled] = useState(true);
+    // Epson connection details — exposed for "adding new printers"
+    // (Andrew 2026-06-10, TM-L100 arriving). Defaults match the
+    // printer's factory values, so most admins never touch them.
+    const [portDraft, setPortDraft] = useState('80');
+    const [deviceIdDraft, setDeviceIdDraft] = useState('local_printer');
+    // Paper width loaded in the printer. The TM-L100 auto-detects
+    // 58 vs 80 mm from the roll guides; 40 mm additionally needs the
+    // TM-L100 Utility. Stored so labels + admin agree on the roll.
+    const [paperWidthMm, setPaperWidthMm] = useState(80);
+    const [showEpsonGuide, setShowEpsonGuide] = useState(false);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     // Brother-only — expandable "first-time setup" guide. Collapsed by
@@ -290,6 +345,19 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
 
     const isBrother = typeDraft === 'brother_ql';
 
+    // Normalize whatever the admin typed into a clean host + port.
+    // Accepts "192.168.1.42", "192.168.1.42:8080", "http://192.168.1.42/".
+    // The print URL builder appends :port itself, so a colon left in the
+    // IP would produce http://ip:8080:80/... and break every print.
+    const parseEpsonAddress = () => {
+        let host = ipDraft.trim().replace(/^https?:\/\//i, '').replace(/[/\s].*$/, '');
+        let port = Math.trunc(Number(portDraft));
+        const m = host.match(/^(.+):(\d{1,5})$/);
+        if (m) { host = m[1]; port = Math.trunc(Number(m[2])); }
+        if (!(Number.isInteger(port) && port >= 1 && port <= 65535)) port = 80;
+        return { host, port };
+    };
+
     useEffect(() => {
         let mounted = true;
         (async () => {
@@ -304,6 +372,9 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                 setLabelWMm(Number(got?.labelWidthMm) || 62);
                 setLabelHMm(Number(got?.labelHeightMm) || 90);
                 setEnabled(got?.enabled !== false);
+                setPortDraft(String(got?.port || 80));
+                setDeviceIdDraft(got?.deviceId || 'local_printer');
+                setPaperWidthMm(Number(got?.paperWidthMm) || 80);
             } catch (e) {
                 console.warn('printer config load failed:', e);
             } finally {
@@ -318,11 +389,15 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
         setSaving(true);
         try {
             const mod = await import('../data/labelPrinting');
+            const { host, port } = parseEpsonAddress();
             await mod.savePrinterConfig({
                 location, slot,
                 type: typeDraft,
                 name: nameDraft,
-                ip: ipDraft.trim(),
+                ip: host,
+                port,
+                deviceId: deviceIdDraft.trim() || 'local_printer',
+                paperWidthMm,
                 labelWidthMm: labelWMm,
                 labelHeightMm: labelHMm,
                 enabled,
@@ -330,6 +405,12 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
             });
             const fresh = await mod.getPrinterConfig(location, slot);
             setCfg(fresh);
+            // Re-sync drafts so the form shows what was actually SAVED
+            // (port '' → 80, "ip:8080" split into the two fields, etc.).
+            setIpDraft(fresh?.ip || '');
+            setPortDraft(String(fresh?.port || 80));
+            setDeviceIdDraft(fresh?.deviceId || 'local_printer');
+            setPaperWidthMm(Number(fresh?.paperWidthMm) || 80);
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
         } catch (e) {
             console.warn('save printer config failed:', e);
@@ -508,18 +589,115 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                         className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
                 </label>
 
-                {/* ── Epson-specific: IP ─────────────────────────── */}
+                {/* ── Epson-specific: connection + paper + settings ── */}
                 {!isBrother && (
-                    <label className="block">
-                        <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
-                            {tx('Printer IP on local Wi-Fi', 'IP de impresora en Wi-Fi')}
-                        </span>
-                        <input type="text" value={ipDraft}
-                            onChange={(e) => setIpDraft(e.target.value)}
-                            placeholder="192.168.1.42"
-                            inputMode="decimal"
-                            className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
-                    </label>
+                    <>
+                        <label className="block">
+                            <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                                {tx('Printer IP on local Wi-Fi', 'IP de impresora en Wi-Fi')}
+                            </span>
+                            <input type="text" value={ipDraft}
+                                onChange={(e) => setIpDraft(e.target.value)}
+                                placeholder="192.168.1.42"
+                                inputMode="decimal"
+                                className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
+                        </label>
+
+                        <div className="grid grid-cols-3 gap-2">
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                                    {tx('Port', 'Puerto')}
+                                </span>
+                                <input type="number" value={portDraft}
+                                    onChange={(e) => setPortDraft(e.target.value)}
+                                    placeholder="80" min={1} max={65535} step={1}
+                                    className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
+                            </label>
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                                    {tx('Device ID', 'ID de dispositivo')}
+                                </span>
+                                <input type="text" value={deviceIdDraft}
+                                    onChange={(e) => setDeviceIdDraft(e.target.value)}
+                                    placeholder="local_printer"
+                                    className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
+                            </label>
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                                    {tx('Paper width', 'Ancho de papel')}
+                                </span>
+                                <select value={paperWidthMm}
+                                    onChange={(e) => setPaperWidthMm(Number(e.target.value))}
+                                    className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white">
+                                    <option value={80}>80 mm (3")</option>
+                                    <option value={58}>58 mm</option>
+                                    <option value={40}>40 mm</option>
+                                </select>
+                            </label>
+                        </div>
+                        <p className="text-[10px] text-purple-700/80 leading-snug -mt-1">
+                            {tx(
+                                'Port 80 + device ID "local_printer" are the TM-L100 factory defaults — only change them if you changed them on the printer. Paper width: 58 vs 80 mm is set with the roll guides; 40 mm also needs a one-time switch in the TM-L100 Utility. Never go back to a wider roll after running a narrow one (wears the head and cutter). Labels are formatted for the 80 mm roll today — this setting is saved for upcoming per-width layouts.',
+                                'Puerto 80 + ID "local_printer" son los valores de fábrica del TM-L100. Ancho: 58 vs 80 mm se fija con las guías del rollo; 40 mm requiere un cambio único en el TM-L100 Utility. Nunca vuelvas a un rollo más ancho después de usar uno angosto (desgasta el cabezal y la cuchilla). Hoy las etiquetas se formatean para el rollo de 80 mm.',
+                            )}
+                        </p>
+
+                        {/* Density, speed, paper-saving, margins etc. are
+                            settings stored ON the printer, not in the app —
+                            one tap opens its built-in settings page. */}
+                        <div className="flex items-center gap-2">
+                            <button type="button"
+                                disabled={!ipDraft.trim()}
+                                onClick={() => {
+                                    const { host, port } = parseEpsonAddress();
+                                    if (!host) return;
+                                    openExternalUrl(`http://${host}${port !== 80 ? `:${port}` : ''}/`);
+                                }}
+                                className="px-3 py-2 rounded-lg bg-purple-600 text-white text-[11px] font-bold hover:bg-purple-700 active:scale-95 transition disabled:opacity-40">
+                                🔧 {tx('Open printer settings page', 'Abrir configuración de la impresora')}
+                            </button>
+                            <span className="text-[10px] text-purple-700/80 leading-snug flex-1">
+                                {tx('Login: user "epson" · password = the printer\'s serial number (bottom sticker; very old firmware uses "epson"). Density, speed, paper saving and network live here. Same settings are also in the free "Epson TM Utility" phone app.',
+                                    'Usuario "epson" · contraseña = número de serie (etiqueta inferior; firmware muy viejo usa "epson"). Densidad, velocidad, ahorro de papel y red están ahí. También en la app "Epson TM Utility".')}
+                            </span>
+                        </div>
+
+                        {/* First-time setup guide — mirrors the Brother one.
+                            Opens the day the TM-L100 arrives, then never again. */}
+                        <details
+                            open={showEpsonGuide}
+                            onToggle={(e) => setShowEpsonGuide(e.currentTarget.open)}
+                            className="text-[11px] bg-white/80 border-2 border-purple-200 rounded-md">
+                            <summary className="cursor-pointer px-2.5 py-2 font-bold text-purple-800 select-none hover:bg-purple-50 rounded-md">
+                                📖 {tx('First-time setup guide (day the TM-L100 arrives)', 'Guía de configuración inicial')}
+                            </summary>
+                            <div className="px-3 pb-3 pt-1 space-y-3 text-purple-900/90 leading-snug">
+                                <div>
+                                    <div className="font-black text-purple-900 mb-1">1. {tx('Load paper + power on', 'Carga papel y enciende')}</div>
+                                    <ul className="space-y-1 pl-4 list-disc marker:text-purple-400">
+                                        <li>{tx('Drop in the 80 mm liner-free roll (certified roll: ICONEX 9023 series), close the cover, power on.', 'Coloca el rollo sin liner de 80 mm, cierra la tapa y enciende.')}</li>
+                                    </ul>
+                                </div>
+                                <div>
+                                    <div className="font-black text-purple-900 mb-1">2. {tx('Get it on the restaurant network', 'Conéctala a la red del restaurante')}</div>
+                                    <ul className="space-y-1 pl-4 list-disc marker:text-purple-400">
+                                        <li><span className="font-bold">{tx('Ethernet (easiest)', 'Ethernet (lo más fácil)')}:</span> {tx('plug a cable into the router — the printer grabs an address by itself (DHCP).', 'conecta un cable al router — la impresora toma una dirección sola (DHCP).')}</li>
+                                        <li><span className="font-bold">Wi-Fi:</span> {tx('install the "Epson TM Utility" app (links below), tap Wi-Fi Setup Wizard, follow it.', 'instala la app "Epson TM Utility" (enlaces abajo), toca el asistente Wi-Fi y síguelo.')}</li>
+                                        <li>{tx('Press the Status button on the back — it prints a sheet with the printer\'s IP.', 'Presiona el botón Status atrás — imprime una hoja con la IP.')}</li>
+                                        <li>{tx('In the router, RESERVE that IP for the printer so it never changes (same as the TVs).', 'En el router, RESERVA esa IP para que nunca cambie (igual que las TVs).')}</li>
+                                    </ul>
+                                </div>
+                                <div>
+                                    <div className="font-black text-purple-900 mb-1">3. {tx('Save it here + test', 'Guárdala aquí y prueba')}</div>
+                                    <ul className="space-y-1 pl-4 list-disc marker:text-purple-400">
+                                        <li>{tx('Type the IP above, leave Port/Device ID at defaults, Enabled ON, Save.', 'Escribe la IP arriba, deja Puerto/ID por defecto, Activada, Guardar.')}</li>
+                                        <li>{tx('Hit Test print FROM THE PHONE/IPAD APP — a label pops out in seconds. (Printing from a web browser is blocked by browser security; the app talks to the printer directly.)', 'Toca Probar DESDE LA APP del teléfono/iPad — sale una etiqueta en segundos. (Desde el navegador web está bloqueado; la app habla directo con la impresora.)')}</li>
+                                        <li>{tx('No drivers needed for the app — drivers below are only for printing from a Windows PC.', 'La app no necesita drivers — los de abajo son solo para imprimir desde una PC con Windows.')}</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </details>
+                    </>
                 )}
 
                 {/* ── Brother-specific: DK label dimensions ──────── */}
