@@ -637,8 +637,8 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                         </div>
                         <p className="text-[10px] text-purple-700/80 leading-snug -mt-1">
                             {tx(
-                                'Port 80 + device ID "local_printer" are the TM-L100 factory defaults — only change them if you changed them on the printer. Paper width: 58 vs 80 mm is set with the roll guides; 40 mm also needs a one-time switch in the TM-L100 Utility. Never go back to a wider roll after running a narrow one (wears the head and cutter). Labels are formatted for the 80 mm roll today — this setting is saved for upcoming per-width layouts.',
-                                'Puerto 80 + ID "local_printer" son los valores de fábrica del TM-L100. Ancho: 58 vs 80 mm se fija con las guías del rollo; 40 mm requiere un cambio único en el TM-L100 Utility. Nunca vuelvas a un rollo más ancho después de usar uno angosto (desgasta el cabezal y la cuchilla). Hoy las etiquetas se formatean para el rollo de 80 mm.',
+                                'Port 80 + device ID "local_printer" are the TM-L100 factory defaults — only change them if you changed them on the printer. Set this to match the roll you loaded: the labels resize to fit it (set it wrong and prints come out cut off or tiny). 58 vs 80 mm is set with the roll guides; 40 mm also needs a one-time switch in the TM-L100 Utility. Never go back to a wider roll after running a narrow one (wears the head and cutter).',
+                                'Puerto 80 + ID "local_printer" son los valores de fábrica del TM-L100. Ajústalo al rollo que cargaste: las etiquetas se redimensionan para caber (si lo pones mal, salen cortadas o diminutas). 58 vs 80 mm se fija con las guías del rollo; 40 mm requiere un cambio único en el TM-L100 Utility. Nunca vuelvas a un rollo más ancho después de usar uno angosto (desgasta el cabezal y la cuchilla).',
                             )}
                         </p>
 

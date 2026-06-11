@@ -483,6 +483,10 @@ export function buildLabelPayload({
     // admin's saved label preferences — section toggles, sizes, text
     // overrides, date/time formats. Defaults applied when missing.
     format = null,
+    // Epson linerless roll width (mm). Sizes the dividers + clamps the
+    // date/title magnification so content fits a narrow roll instead of
+    // running off the right edge. Defaults to the 80 mm standard roll.
+    paperWidthMm = 80,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -518,8 +522,26 @@ export function buildLabelPayload({
         return `${h}:${m}${ampm}`;
     };
 
+    // ── Width-aware sizing ────────────────────────────────────────
+    // cols = printable Font-A columns for this roll. We clamp the date
+    // and title magnification so each line's char-count × magnification
+    // never exceeds cols (the printer hard-wraps overflow mid-character,
+    // which reads as "cut off"). The configured scales are treated as a
+    // CEILING — a narrow roll can only ever shrink them, never grow.
+    const cols = paperColumns(paperWidthMm);
+    const prepDateNumberStr = fmtDate(prepDate);
+    const cfgDateScale  = Number(format?.dateNumberScale) || 5;
+    const cfgTitleScale = Number(format?.titleScale) || 2;
+    // Date: largest magnification that keeps the whole date on one line.
+    const fitDateScale = Math.max(2, Math.min(cfgDateScale,
+        Math.floor(cols / Math.max(1, prepDateNumberStr.length))));
+    // Title: keep at least ~8 chars per line of room before shrinking.
+    const fitTitleScale = Math.max(1, Math.min(cfgTitleScale,
+        Math.max(1, Math.floor(cols / 8))));
+    const titleWrap = Math.max(6, Math.floor(cols / fitTitleScale));
+
     const titleLine = (isEs && itemNameEs) ? itemNameEs : itemName;
-    const titleLines = wrapWords(String(titleLine || 'Item').toUpperCase(), 18);
+    const titleLines = wrapWords(String(titleLine || 'Item').toUpperCase(), titleWrap);
 
     // Big prep date at the top — for FIFO scanning. Format-aware:
     // admin can override the "PREPPED" prefix text (e.g. "MADE",
@@ -577,9 +599,14 @@ export function buildLabelPayload({
         ingredients: ingredientList,
         notes: format?.showNotes === false ? '' : String(notes || '').slice(0, 120),
         footer,
-        // Pass through size scales so renderers can apply them.
-        dateNumberScale: Number(format?.dateNumberScale) || 5,
-        titleScale:      Number(format?.titleScale) || 2,
+        // Printable columns for this roll — sizes the Epson dividers so
+        // they span the label exactly instead of wrapping to a 2nd row.
+        cols,
+        // Width-clamped size scales (configured value capped to what the
+        // roll can show). On the standard 80 mm roll these equal the
+        // admin's chosen scales; on a narrow roll they shrink to fit.
+        dateNumberScale: fitDateScale,
+        titleScale:      fitTitleScale,
         // Bug fix 2026-05-20: forward the preset's physical dims +
         // id from the format to the payload. printPrepLabel /
         // printFreeText / buildBrotherPrintDoc all read these off
@@ -592,6 +619,23 @@ export function buildLabelPayload({
         _presetWidthMm:  format?._presetWidthMm  || null,
         _presetHeightMm: format?._presetHeightMm || null,
     };
+}
+
+// TM-L100 print columns (Font A, 12-dot chars) by linerless roll
+// width. Print area ≈ roll − side margins at 203 dpi (8 dots/mm):
+//   80 mm → 576 dots → 48 cols  (standard liner-free roll)
+//   58 mm → 408 dots → 34 cols
+//   40 mm → ~256 dots → 21 cols (narrow roll; needs TM-L100 Utility)
+// Drives divider length + text-magnification clamps so a label laid
+// out for 80 mm never overruns the right edge of a narrower roll
+// (the "it prints but it's cut off" symptom). Andrew 2026-06-11 —
+// fresh TM-L100 was on a 40 mm roll; the 80 mm-wide date + dividers
+// overflowed. paperWidthMm (saved per printer) finally drives layout.
+export function paperColumns(paperWidthMm) {
+    const w = Number(paperWidthMm);
+    if (w === 40) return 21;
+    if (w === 58) return 34;
+    return 48; // 80 mm default (also the safe fallback)
 }
 
 // Soft word-wrap so long names don't get truncated. We split by
@@ -649,6 +693,12 @@ function escapeXml(s) {
 // "what got made when" at a glance. Item name stays prominent below.
 function renderPrepLabelBody(payload) {
     const lines = [];
+    // Dividers span the printable width of THIS roll. Hardcoded 30 was
+    // an 80 mm assumption; on a 40 mm roll it wrapped to a second ragged
+    // row. `cols` comes from paperColumns() via buildLabelPayload.
+    const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+    const divEq = '='.repeat(cols);
+    const divDash = '-'.repeat(cols);
 
     // ── HUGE prep date at the top ────────────────────────────
     // 2026-05-20 — Andrew: "lets make the date at the very top in
@@ -683,7 +733,7 @@ function renderPrepLabelBody(payload) {
     }
     // Divider
     lines.push(`<text width="1" height="1"/>`);
-    lines.push(`<text>==============================&#10;</text>`);
+    lines.push(`<text>${divEq}&#10;</text>`);
 
     // ── Item title (admin-scalable) ──────────────────────────
     if (payload.titleLines && payload.titleLines.length > 0) {
@@ -694,7 +744,7 @@ function renderPrepLabelBody(payload) {
         }
         lines.push(`<text width="1" height="1"/>`);
         lines.push(`<text align="left"/>`);
-        lines.push(`<text>------------------------------&#10;</text>`);
+        lines.push(`<text>${divDash}&#10;</text>`);
     } else {
         lines.push(`<text align="left"/>`);
     }
@@ -706,23 +756,23 @@ function renderPrepLabelBody(payload) {
         }
     }
     if (payload.allergens.length > 0) {
-        lines.push(`<text>------------------------------&#10;</text>`);
+        lines.push(`<text>${divDash}&#10;</text>`);
         lines.push(`<text em="true"/>`);
         lines.push(`<text>ALLERGENS: ${escapeXml(payload.allergens.join(', '))}&#10;</text>`);
         lines.push(`<text em="false"/>`);
     }
     if (payload.ingredients.length > 0) {
-        lines.push(`<text>------------------------------&#10;</text>`);
+        lines.push(`<text>${divDash}&#10;</text>`);
         for (const ing of payload.ingredients) {
             lines.push(`<text>- ${escapeXml(ing.slice(0, 30))}&#10;</text>`);
         }
     }
     if (payload.notes) {
-        lines.push(`<text>------------------------------&#10;</text>`);
+        lines.push(`<text>${divDash}&#10;</text>`);
         lines.push(`<text>${escapeXml(payload.notes)}&#10;</text>`);
     }
     if (payload.footer) {
-        lines.push(`<text>------------------------------&#10;</text>`);
+        lines.push(`<text>${divDash}&#10;</text>`);
         lines.push(`<text align="center"/>`);
         lines.push(`<text em="true"/>`);
         lines.push(`<text>${escapeXml(payload.footer)}&#10;</text>`);
@@ -1364,14 +1414,24 @@ function renderFreeTextBody(freePayload) {
     const dim = sizeDim(freePayload.size);
     const align = ['left', 'center', 'right'].includes(freePayload.align)
         ? freePayload.align : 'center';
-    lines.push(`<text align="${align}"/>`);
-    lines.push(`<text width="${dim.width}" height="${dim.height}"/>`);
-    if (freePayload.bold) lines.push(`<text em="true"/>`);
 
     // Split user text on newlines + trim trailing whitespace. Empty
     // lines render as feed gaps — useful for spacing.
     const rawText = String(freePayload.text || '');
     const textLines = rawText.split(/\r?\n/).map(l => l.slice(0, 80));
+
+    // Clamp magnification so the LONGEST line fits the roll width
+    // instead of wrapping mid-word ("cut off"). On 80 mm this almost
+    // never bites; on a 40 mm roll it shrinks 'huge'/'large' to fit.
+    const cols = paperColumns(freePayload.paperWidthMm);
+    const longest = textLines.reduce((m, l) => Math.max(m, l.length), 1);
+    let width = dim.width;
+    while (width > 1 && longest * width > cols) width--;
+    const height = Math.min(dim.height, width);
+
+    lines.push(`<text align="${align}"/>`);
+    lines.push(`<text width="${width}" height="${height}"/>`);
+    if (freePayload.bold) lines.push(`<text em="true"/>`);
     for (const t of textLines) {
         // Empty lines become a small feed so vertical spacing is
         // preserved without a blank `<text>` (which the printer
@@ -1463,6 +1523,7 @@ export async function printFreeText({
         const freePayload = {
             text: trimmed, size, bold, align,
             copies: c, stampDate, stampSignature, signature, footer,
+            paperWidthMm: printer.paperWidthMm,
         };
         // Resolve preset dimensions for Brother @page sizing. Free-
         // text printing doesn't go through buildLabelPayload so we
@@ -1766,6 +1827,7 @@ export async function printPrepLabel({
             language,
             notes,
             format,
+            paperWidthMm: printer.paperWidthMm,
         });
 
         let res;
@@ -1888,6 +1950,7 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
             language: 'en',
             notes: 'Test print from DD Mau app',
             format,
+            paperWidthMm: printer.paperWidthMm,
         });
 
         let res;
