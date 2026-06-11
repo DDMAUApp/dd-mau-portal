@@ -76,6 +76,28 @@ export function subscribeLabelFormat(cb) {
     });
 }
 
+// Hot-path cached read — Andrew 2026-06-11: "the print for the
+// stickers is kinda sticky". Every print awaited a fresh Firestore
+// round-trip for this rarely-changing doc. First call starts a live
+// subscription; every later call resolves instantly from the cached
+// (always-current) value. Falls back to the one-shot read while the
+// first snapshot is still in flight.
+let _fmtCache = { value: undefined, ready: false, started: false };
+export function getLabelFormatFast() {
+    if (!_fmtCache.started) {
+        _fmtCache.started = true;
+        try {
+            subscribeLabelFormat((fmt) => { _fmtCache.value = fmt; _fmtCache.ready = true; });
+        } catch { /* fall through to one-shot below */ }
+    }
+    if (_fmtCache.ready) return Promise.resolve(_fmtCache.value);
+    return getLabelFormat().then((f) => {
+        // Don't clobber a fresher snapshot that landed mid-flight.
+        if (!_fmtCache.ready) { _fmtCache.value = f; _fmtCache.ready = true; }
+        return _fmtCache.value;
+    });
+}
+
 // One-shot read. Used by Cloud Function paths or anywhere we
 // don't want a live subscription.
 export async function getLabelFormat() {

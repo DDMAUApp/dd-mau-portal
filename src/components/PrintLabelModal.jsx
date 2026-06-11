@@ -37,6 +37,7 @@ import {
     getLabelSizePresets,
     DEFAULT_LABEL_SIZE_PRESET,
     applyLabelSizePreset,
+    warmPrintConfigs,
 } from '../data/labelPrinting';
 import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
@@ -121,6 +122,12 @@ export default function PrintLabelModal({
     // missing" strip reflects the chosen target.
     useEffect(() => {
         if (!location) return;
+        // Pre-warm the print hot path's config cache the moment the
+        // modal opens — by the time the user has picked size/copies
+        // and taps Print, printPrepLabel resolves both configs in 0ms
+        // instead of doing 2 Firestore round-trips ("sticky" print,
+        // Andrew 2026-06-11).
+        warmPrintConfigs(location, slot);
         return subscribePrinterConfig(location, setPrinter, slot);
     }, [location, slot]);
 

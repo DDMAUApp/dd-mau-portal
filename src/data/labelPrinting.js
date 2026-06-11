@@ -61,7 +61,7 @@ import {
     query, orderBy, limit as fsLimit, deleteField,
 } from 'firebase/firestore';
 import { recordAudit } from './audit';
-import { getLabelFormat } from './labelFormat';
+import { getLabelFormat, getLabelFormatFast } from './labelFormat';
 // Pi 5 print bridge — Andrew 2026-05-22. When configured, all Brother
 // QL-820NWB prints try the bridge FIRST (HTTPS POST to a Tailscale
 // Funnel URL → Flask on the Pi → brother_ql raster → printer). If the
@@ -396,6 +396,53 @@ export function subscribePrinterConfig(location, cb, slot = DEFAULT_PRINTER_SLOT
         });
     }
     return () => { unsubPrimary(); unsubLegacy(); };
+}
+
+// ── Hot-path config cache ─────────────────────────────────────
+// Andrew 2026-06-11: "the print for the stickers is kinda sticky.
+// might take a bit to print". printPrepLabel/printFreeText/testPrint
+// awaited 1-2 sequential Firestore round-trips (printer config, then
+// label format) BEFORE the first byte reached the printer — 0.5-2s of
+// dead spinner on kitchen Wi-Fi. Both docs change rarely and already
+// have live subscriptions elsewhere in the app. First call starts a
+// per-(location,slot) onSnapshot and every later print resolves the
+// config in 0ms — and stays CURRENT, because the snapshot keeps it
+// fresh (this is a live mirror, not a stale TTL cache). Falls back to
+// the one-shot read while the first snapshot is in flight.
+const _printerCfgCache = new Map();   // `${location}_${slot}` -> { value, ready }
+function getPrinterConfigFast(location, slot = DEFAULT_PRINTER_SLOT) {
+    if (!location) return Promise.resolve(null);
+    const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
+    const key = `${location}_${safeSlot}`;
+    let entry = _printerCfgCache.get(key);
+    if (!entry) {
+        entry = { value: undefined, ready: false };
+        _printerCfgCache.set(key, entry);
+        try {
+            // Intentionally never unsubscribed — one tiny doc listener
+            // per printer for the app session keeps prints instant.
+            subscribePrinterConfig(location, (cfg) => {
+                entry.value = cfg;
+                entry.ready = true;
+            }, safeSlot);
+        } catch { /* fall through to one-shot below */ }
+    }
+    if (entry.ready) return Promise.resolve(entry.value);
+    return getPrinterConfig(location, safeSlot).then((cfg) => {
+        // Don't clobber a fresher snapshot that landed mid-flight.
+        if (!entry.ready) { entry.value = cfg; entry.ready = true; }
+        return entry.value;
+    });
+}
+
+// Fire-and-forget pre-warm — call when a print modal OPENS so the
+// configs are hot by the time the user taps Print (they spend a few
+// seconds picking size/copies anyway). Safe to call repeatedly.
+export function warmPrintConfigs(location, slot = DEFAULT_PRINTER_SLOT) {
+    try {
+        getPrinterConfigFast(location, slot).catch(() => {});
+        getLabelFormatFast().catch(() => {});
+    } catch { /* warming is best-effort */ }
 }
 
 export async function savePrinterConfig({
@@ -1503,7 +1550,7 @@ export async function printFreeText({
     presetId = DEFAULT_LABEL_SIZE_PRESET,
 }) {
     try {
-        const printer = await getPrinterConfig(location, slot);
+        const printer = await getPrinterConfigFast(location, slot);
         if (!printer) return { ok: false, error: 'no_printer_configured' };
         const type = printer.type || DEFAULT_PRINTER_TYPE;
         // Epson needs a reachable IP. Brother goes through the OS
@@ -1794,7 +1841,11 @@ export async function printPrepLabel({
     presetId = DEFAULT_LABEL_SIZE_PRESET,
 }) {
     try {
-        const printer = await getPrinterConfig(location, slot);
+        // Cached + parallel (was 2 sequential network reads per print).
+        const [printer, baseFormat] = await Promise.all([
+            getPrinterConfigFast(location, slot),
+            getLabelFormatFast(),
+        ]);
         if (!printer) return { ok: false, error: 'no_printer_configured' };
         const type = printer.type || DEFAULT_PRINTER_TYPE;
         // Epson needs a reachable IP. Brother goes through the OS
@@ -1805,7 +1856,6 @@ export async function printPrepLabel({
         if (printer.enabled === false) {
             return { ok: false, error: 'printer_disabled' };
         }
-        const baseFormat = await getLabelFormat();
         // Pass the printer's type so the right preset list (Epson
         // 80mm vs Brother 62mm) resolves the physical dims stamped
         // onto the payload.
@@ -1932,13 +1982,17 @@ function locationLabel(loc) {
 // configured printer works before staff start hitting Print.
 export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName }) {
     try {
-        const printer = await getPrinterConfig(location, slot);
+        // Fast variants are live mirrors, so even a test print right
+        // after the admin saves a new IP sees the fresh config.
+        const [printer, format] = await Promise.all([
+            getPrinterConfigFast(location, slot),
+            getLabelFormatFast(),
+        ]);
         if (!printer) return { ok: false, error: 'no_printer_configured' };
         const type = printer.type || DEFAULT_PRINTER_TYPE;
         if (type !== PRINTER_TYPES.BROTHER_QL && !printer.ip) {
             return { ok: false, error: 'no_printer_configured' };
         }
-        const format = await getLabelFormat();
         const payload = buildLabelPayload({
             itemName: 'Printer Test',
             prepDate: new Date(),

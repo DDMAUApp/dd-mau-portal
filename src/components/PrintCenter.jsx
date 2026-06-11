@@ -26,7 +26,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
-import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET } from '../data/labelPrinting';
+import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs } from '../data/labelPrinting';
 
 const RECENTS_KEY = 'ddmau:printCenter:recents';
 const MAX_RECENTS = 6;
@@ -67,6 +67,9 @@ export default function PrintCenter({
 
     const [printer, setPrinter] = useState(null);
     useEffect(() => {
+        // Pre-warm the print hot path (see PrintLabelModal) so the
+        // free-text Print tap fires at the printer immediately.
+        warmPrintConfigs(printLocation, printSlot);
         return subscribePrinterConfig(printLocation, setPrinter, printSlot);
     }, [printLocation, printSlot]);
 
