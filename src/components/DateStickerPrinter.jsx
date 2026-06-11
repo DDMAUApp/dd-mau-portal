@@ -545,14 +545,39 @@ export default function DateStickerPrinter({
                     // Idle / browse view — the seven deduped prep
                     // sections from STICKER_SECTIONS (Andrew
                     // 2026-06-11: one of each item, categorized).
-                    <BuildSheetBrowse
-                        isEs={isEs}
-                        tx={tx}
-                        onPrint={(c) => handlePrintComponent(c, null)}
-                        stickerLists={stickerLists}
-                        editMode={editMode}
-                        onSaveSection={handleSaveSection}
-                    />
+                    <>
+                        {/* 📅 Pinned quick print — Andrew 2026-06-11: "at the
+                            top of the list print todays date. somtimes we only
+                            need to print today date. so where the name of the
+                            item is we can just put todays date." Opens the
+                            print modal with the date as the item name; size,
+                            copies, shelf life stay adjustable as usual. */}
+                        <button
+                            onClick={() => {
+                                const d = new Date();
+                                const todayStr = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
+                                handlePrintComponent({ kind: 'base', nameEn: todayStr, nameEs: todayStr }, null);
+                            }}
+                            className="w-full mb-4 flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-purple-600 text-white shadow-sm hover:bg-purple-700 active:scale-[0.99] transition">
+                            <span className="text-left min-w-0">
+                                <span className="block text-sm font-black truncate">
+                                    📅 {tx("Today's date", 'Fecha de hoy')} — {new Date().toLocaleDateString(isEs ? 'es-MX' : 'en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}
+                                </span>
+                                <span className="block text-[11px] opacity-90">
+                                    {tx('Print a sticker with just the date', 'Imprime una etiqueta sólo con la fecha')}
+                                </span>
+                            </span>
+                            <span className="text-xl shrink-0">🏷</span>
+                        </button>
+                        <BuildSheetBrowse
+                            isEs={isEs}
+                            tx={tx}
+                            onPrint={(c) => handlePrintComponent(c, null)}
+                            stickerLists={stickerLists}
+                            editMode={editMode}
+                            onSaveSection={handleSaveSection}
+                        />
+                    </>
                 )}
             </div>
 

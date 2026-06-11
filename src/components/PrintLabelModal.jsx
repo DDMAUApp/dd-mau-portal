@@ -25,7 +25,7 @@
 //      CORS / etc." — we surface the underlying error so misconfig is
 //      diagnosable from the staff side without devtools).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
 import { ALLERGEN_ORDER, allergenLabel } from '../data/allergens';
@@ -193,6 +193,18 @@ export default function PrintLabelModal({
         && (isBrotherPrinter || printer.ip)
         && printer.enabled !== false);
 
+    // Real cancel — Andrew 2026-06-11: "couple of time i canceled the
+    // print and then it came out." Cancel/✕ used to just close the
+    // modal while the queued job kept going. Now they flip this ref,
+    // and printPrepLabel checks it at the last moment before handing
+    // the job to the printer. (Once it's on the wire there's no recall
+    // — but that window is now ~instant after the v1.0.48 speed-up.)
+    const cancelledRef = useRef(false);
+    const cancelAndClose = () => {
+        cancelledRef.current = true;
+        onClose?.();
+    };
+
     const handlePrint = async () => {
         if (printing) return;
         if (!printerReady) {
@@ -206,6 +218,7 @@ export default function PrintLabelModal({
             toast(tx('Enter an item name first.', 'Ingresa un nombre primero.'), { kind: 'error' });
             return;
         }
+        cancelledRef.current = false;
         setPrinting(true);
         const res = await printPrepLabel({
             location,
@@ -219,11 +232,15 @@ export default function PrintLabelModal({
             copies,
             source,
             presetId,
+            shouldAbort: () => cancelledRef.current,
         });
         setPrinting(false);
         if (res.ok) {
             toast(tx('✓ Label printed', '✓ Etiqueta impresa'), { kind: 'success' });
             onClose?.();
+        } else if (res.error === 'cancelled') {
+            // User hit Cancel mid-flight — job was stopped before it
+            // reached the printer; the modal is already closing.
         } else {
             const errMsg = errorToHuman(res.error, isEs);
             toast(errMsg, { kind: 'error' });
@@ -243,7 +260,7 @@ export default function PrintLabelModal({
                     <h2 className="text-lg font-black text-dd-text">
                         🏷 {tx('Print prep label', 'Imprimir etiqueta')}
                     </h2>
-                    <button onClick={onClose}
+                    <button onClick={cancelAndClose}
                         className="w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-lg hover:bg-dd-line">
                         ×
                     </button>
@@ -477,7 +494,7 @@ export default function PrintLabelModal({
 
                 {/* Footer */}
                 <div className="border-t border-dd-line p-3 flex gap-2 flex-shrink-0 safe-bottom">
-                    <button onClick={onClose}
+                    <button onClick={cancelAndClose}
                         className="flex-1 py-2.5 rounded-lg bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-bg">
                         {tx('Cancel', 'Cancelar')}
                     </button>

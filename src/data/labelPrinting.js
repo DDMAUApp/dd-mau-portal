@@ -1839,6 +1839,14 @@ export async function printPrepLabel({
     recipe, preppedBy, shelfLifeDays, language = 'en',
     notes, byName, copies = 1, source = 'recipe',
     presetId = DEFAULT_LABEL_SIZE_PRESET,
+    // Andrew 2026-06-11: "couple of time i canceled the print and then
+    // it came out." Cancel used to only close the modal — the queued
+    // job kept going and printed seconds later. Callers pass a
+    // `shouldAbort` callback; we check it at the last moment before
+    // handing the job to the transport. Once the bytes are on the
+    // wire nothing can recall them, but everything before that point
+    // now respects Cancel.
+    shouldAbort = null,
 }) {
     try {
         // Cached + parallel (was 2 sequential network reads per print).
@@ -1879,6 +1887,11 @@ export async function printPrepLabel({
             format,
             paperWidthMm: printer.paperWidthMm,
         });
+
+        // Last exit before the job leaves the device.
+        if (typeof shouldAbort === 'function' && shouldAbort()) {
+            return { ok: false, error: 'cancelled' };
+        }
 
         let res;
         // Tracks how the label got printed for the audit log — useful
