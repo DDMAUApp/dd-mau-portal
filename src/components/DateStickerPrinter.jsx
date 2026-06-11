@@ -27,24 +27,17 @@
 
 import { useEffect, useMemo, useRef, useState, useDeferredValue, lazy, Suspense } from 'react';
 import {
-    getAllMenuItems, getMenuItemBuild,
-    getSearchableIndex, getAiSearchItems,
+    getMenuItemBuild,
     findSubRecipe,
     COMPONENT_KIND_TONE,
 } from '../data/itemBuild';
-// Build sheet — Andrew 2026-05-20: "lets delete the current food
-// items in the sticker tab and replace them with the build sheet in
-// the menu tab. it makes more sense to use that only". The browse
-// view below renders exactly the build-sheet structure the cashiers
-// already learn from the laminated training pages (Menu tab → Build
-// Sheet view). Single source of truth: any change to buildSheet.js
-// updates both the cashier reference AND the sticker browse view.
-import {
-    BUILD_SHEET_BOWLS,
-    BUILD_SHEET_HANDHELDS,
-    BUILD_SHEET_FRIED_RICE,
-    BUILD_SHEET_PHO,
-} from '../data/buildSheet';
+// Andrew 2026-06-11: "there are too many items. alot of doubles…
+// we dont need the menu items unless its things like sweets and
+// snacks." The menu-item browse (Bowls / Handhelds / Fried Rice /
+// Pho drill-downs) is GONE from this page — the browse view is now
+// exactly the seven deduped prep sections in STICKER_SECTIONS, and
+// search covers those rows + admin custom items (no static menu
+// items). The Menu tab's cashier build-sheet reference is untouched.
 // Live-editable flat lists — Andrew 2026-05-20: "make the items all
 // editable". The five flat sections (3 protein lists + sauces +
 // snacks) now read from /config/sticker_lists with the hardcoded
@@ -135,12 +128,11 @@ export default function DateStickerPrinter({
         }
     };
 
-    // Menu items from the static menu.js PLUS any admin-created
-    // custom items. Custom items get a synthesized shape that the
-    // existing renderers / build resolver treat as menu items.
+    // Admin-created custom items only — static menu items no longer
+    // appear on this page (2026-06-11). Synthesized shape so the
+    // existing renderers / build resolver treat them as items.
     const allItems = useMemo(() => {
-        const base = getAllMenuItems();
-        const customAsItems = customItems.map(ci => ({
+        return customItems.map(ci => ({
             id: ci.slug,
             nameEn: ci.nameEn,
             nameEs: ci.nameEs,
@@ -149,14 +141,30 @@ export default function DateStickerPrinter({
             allergens: ci.allergens || '',
             isCustom: true,
         }));
-        return [...base, ...customAsItems];
     }, [customItems]);
 
-    // Flat searchable index: every menu item + every deduped
-    // component (with usedIn list). For custom items we also push
-    // their components into the index so the search reaches them.
+    // Flat searchable index: every row of the seven prep sections
+    // (live override or default) + custom items + their components.
+    // Section rows carry their section title as `category` so typing
+    // "protein" or "salsa" matches the whole group.
     const searchIndex = useMemo(() => {
-        const base = getSearchableIndex();
+        const base = [];
+        for (const section of STICKER_SECTIONS) {
+            const rows = stickerLists?.[section.key] || section.defaults;
+            for (const [i, row] of rows.entries()) {
+                base.push({
+                    id: `sec::${section.key}::${row.id || i}`,
+                    kind: 'component',
+                    componentKind: section.kind,
+                    nameEn: row.nameEn,
+                    nameEs: row.nameEs,
+                    descEn: row.descEn || '',
+                    descEs: row.descEs || '',
+                    category: section.titleEn,
+                    categoryEs: section.titleEs,
+                });
+            }
+        }
         for (const ci of customItems) {
             base.push({
                 id: `mi::${ci.slug}`,
@@ -185,29 +193,19 @@ export default function DateStickerPrinter({
             }
         }
         return base;
-    }, [customItems]);
+    }, [customItems, stickerLists]);
 
-    // AI items mirror the index — synthesized for custom items too.
+    // AI items mirror the index.
     const aiItems = useMemo(() => {
-        const base = getAiSearchItems();
-        for (const ci of customItems) {
-            base.push({
-                id: `mi::${ci.slug}`,
-                name: ci.nameEn,
-                category: ci.category || 'Custom',
-                subcat: [ci.allergens || ''].filter(Boolean).join(' | ').slice(0, 180),
-            });
-            for (const c of (ci.components || [])) {
-                base.push({
-                    id: `cpcustom::${ci.slug}::${c.id}`,
-                    name: c.nameEn,
-                    category: COMPONENT_KIND_TONE[c.kind]?.labelEn || c.kind,
-                    subcat: ci.nameEn,
-                });
-            }
-        }
-        return base;
-    }, [customItems]);
+        return searchIndex.map(row => ({
+            id: row.id,
+            name: row.nameEn,
+            category: row.kind === 'menuItem'
+                ? (row.category || 'Custom')
+                : (row.category || COMPONENT_KIND_TONE[row.componentKind]?.labelEn || row.componentKind),
+            subcat: [row.descEn, row.allergens].filter(Boolean).join(' | ').slice(0, 180),
+        }));
+    }, [searchIndex]);
 
     const queryTokens = useMemo(() => expandQueryTermsTight(searchDeferred), [searchDeferred]);
     const hasQuery = queryTokens.length > 0;
@@ -365,8 +363,8 @@ export default function DateStickerPrinter({
                         </h1>
                         <p className="text-xs text-dd-text-2">
                             {tx(
-                                'Pick a menu item, see its build, print a sticker for any component.',
-                                'Elige un platillo, ve su composición, imprime una etiqueta por componente.',
+                                'Every prep item, one list — tap 🏷 to print a dated sticker.',
+                                'Cada artículo de preparación en una lista — toca 🏷 para imprimir.',
                             )}
                         </p>
                     </div>
@@ -468,14 +466,18 @@ export default function DateStickerPrinter({
                 {/* Hit count */}
                 {hasQuery && (
                     <p className="text-[11px] text-purple-800 mb-2 font-bold pl-1">
-                        {flatResults.items.length} {tx(
-                            `menu item${flatResults.items.length === 1 ? '' : 's'}`,
-                            `platillo${flatResults.items.length === 1 ? '' : 's'}`,
-                        )}
-                        {' · '}
                         {flatResults.components.length} {tx(
-                            `component${flatResults.components.length === 1 ? '' : 's'}`,
-                            `componente${flatResults.components.length === 1 ? '' : 's'}`,
+                            `prep item${flatResults.components.length === 1 ? '' : 's'}`,
+                            `artículo${flatResults.components.length === 1 ? '' : 's'}`,
+                        )}
+                        {flatResults.items.length > 0 && (
+                            <>
+                                {' · '}
+                                {flatResults.items.length} {tx(
+                                    `custom item${flatResults.items.length === 1 ? '' : 's'}`,
+                                    `personalizado${flatResults.items.length === 1 ? '' : 's'}`,
+                                )}
+                            </>
                         )}
                     </p>
                 )}
@@ -489,34 +491,10 @@ export default function DateStickerPrinter({
                         </p>
                     ) : (
                         <div className="space-y-4">
-                            {flatResults.items.length > 0 && (
-                                <section>
-                                    <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
-                                        🍽 {tx('Menu items', 'Platillos')}
-                                    </h2>
-                                    <div className="space-y-1.5">
-                                        {flatResults.items.map(item => (
-                                            <MenuItemRow
-                                                key={item.id}
-                                                item={{ ...item, id: item.menuItemId, nameEn: item.nameEn, nameEs: item.nameEs }}
-                                                isOpen={openItemId === item.menuItemId}
-                                                onToggle={() => setOpenItemId(prev => prev === item.menuItemId ? null : item.menuItemId)}
-                                                isEs={isEs}
-                                                tx={tx}
-                                                build={openItemId === item.menuItemId ? openBuild : null}
-                                                onPrintComponent={handlePrintComponent}
-                                                adminUser={adminUser}
-                                                onEdit={() => setEditingItem({ id: item.menuItemId, nameEn: item.nameEn, nameEs: item.nameEs })}
-                                                hasOverride={overrides.has(item.menuItemId)}
-                                            />
-                                        ))}
-                                    </div>
-                                </section>
-                            )}
                             {flatResults.components.length > 0 && (
                                 <section>
                                     <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
-                                        🧩 {tx('Components & ingredients', 'Componentes e ingredientes')}
+                                        🏷 {tx('Prep items', 'Artículos de preparación')}
                                     </h2>
                                     <div className="space-y-1.5">
                                         {flatResults.components.map(c => (
@@ -537,22 +515,36 @@ export default function DateStickerPrinter({
                                     </div>
                                 </section>
                             )}
+                            {flatResults.items.length > 0 && (
+                                <section>
+                                    <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
+                                        ⭐ {tx('Custom items', 'Personalizados')}
+                                    </h2>
+                                    <div className="space-y-1.5">
+                                        {flatResults.items.map(item => (
+                                            <MenuItemRow
+                                                key={item.id}
+                                                item={{ ...item, id: item.menuItemId, nameEn: item.nameEn, nameEs: item.nameEs }}
+                                                isOpen={openItemId === item.menuItemId}
+                                                onToggle={() => setOpenItemId(prev => prev === item.menuItemId ? null : item.menuItemId)}
+                                                isEs={isEs}
+                                                tx={tx}
+                                                build={openItemId === item.menuItemId ? openBuild : null}
+                                                onPrintComponent={handlePrintComponent}
+                                                adminUser={adminUser}
+                                                onEdit={() => setEditingItem({ id: item.menuItemId, nameEn: item.nameEn, nameEs: item.nameEs })}
+                                                hasOverride={overrides.has(item.menuItemId)}
+                                            />
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
                         </div>
                     )
                 ) : (
-                    // Idle / browse view — Andrew 2026-05-20: "delete
-                    // the current food items in the sticker tab and
-                    // replace them with the build sheet in the menu
-                    // tab. it makes more sense to use that only".
-                    //
-                    // Each section mirrors the Menu tab's Build Sheet
-                    // view (MenuReference.jsx's BuildSheetView): same
-                    // groupings, same item order, same toppings/notes/
-                    // piece-counts copy. Difference: every prep-level
-                    // row (base, topping, sauce, broth, snack) has a
-                    // Print button that opens PrintLabelModal pre-
-                    // filled with the component name. Notes stay
-                    // read-only.
+                    // Idle / browse view — the seven deduped prep
+                    // sections from STICKER_SECTIONS (Andrew
+                    // 2026-06-11: one of each item, categorized).
                     <BuildSheetBrowse
                         isEs={isEs}
                         tx={tx}
@@ -906,10 +898,14 @@ function ComponentRow({ component, tone, isEs, tx, onPrint }) {
 // All copy comes from src/data/buildSheet.js — that's the single
 // source of truth. Update once, both surfaces update.
 function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection }) {
-    // Helper that pulls a section's live list out of the subscription,
-    // falling back to the section's own hardcoded defaults if the
-    // subscription hasn't loaded yet (renders something instead of
-    // blank during the first paint).
+    // Andrew 2026-06-11: "too many items. alot of doubles… categorize
+    // it by veggie, protein, noodles, rice and so on. we dont need the
+    // menu items unless its things like sweets and snacks." The browse
+    // is now driven entirely by STICKER_SECTIONS (one deduped list per
+    // category) — the menu-item drill-downs (Bowls / Handhelds / Fried
+    // Rice / Pho) are gone from this page. Helper pulls a section's
+    // live list out of the subscription, falling back to the section's
+    // hardcoded defaults during the first paint.
     const listFor = (key) => {
         const fromSub = stickerLists?.[key];
         if (Array.isArray(fromSub)) return fromSub;
@@ -917,397 +913,29 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
     };
     return (
         <div className="space-y-5">
-            {/* Bowl Proteins — at the very top so the most-prepped
-                batches are one tap away when the kitchen starts a
-                shift. Shared across Bowls / Bánh Mì / Sliders /
-                Tacos / Lo Mein — one batch labels one container. */}
-            <BuildSheetFlatSection
-                sectionKey="bowlProteins"
-                titleEn="🍤 Bowl Proteins"
-                titleEs="🍤 Proteínas de Bowls"
-                items={listFor('bowlProteins')}
-                kind="protein"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
-
-            {/* Vegetables — Andrew 2026-05-20: "what about the
-                vegetables?". Morning prep: red cabbage / cucumber /
-                pickled medley etc. all need stickers on their tubs.
-                Shared across every category, so it lives at the
-                top next to Bowl Proteins. */}
-            <BuildSheetFlatSection
-                sectionKey="vegetables"
-                titleEn="🥬 Vegetables"
-                titleEs="🥬 Vegetales"
-                items={listFor('vegetables')}
-                kind="topping"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
-
-            {/* Rice & Noodles — Andrew 2026-05-20: "yes everything
-                on the list". The starch bases (jasmine/brown rice,
-                vermicelli, pho rice noodles, lo mein noodles, spring
-                mix). Rice cooks in big batches, noodles pre-cooked
-                and held cold — each needs a date sticker. */}
-            <BuildSheetFlatSection
-                sectionKey="riceNoodles"
-                titleEn="🍚 Rice & Noodles"
-                titleEs="🍚 Arroz y Fideos"
-                items={listFor('riceNoodles')}
-                kind="base"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
-
-            {/* Bowls — 3 styles (Vermicelli / Salad / Rice) */}
-            <BuildSheetCategory
-                titleEn="🥗 Bowls"
-                titleEs="🥗 Bowls"
-                items={BUILD_SHEET_BOWLS}
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-            />
-
-            {/* Handhelds — Bao, Spring Rolls, Banh Mi, Tacos */}
-            <BuildSheetCategory
-                titleEn="🥪 Handhelds"
-                titleEs="🥪 Handhelds"
-                items={BUILD_SHEET_HANDHELDS}
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-            />
-
-            {/* Fried Rice Proteins — Ham is the one protein UNIQUE
-                to Fried Rice (not in bowls combo). */}
-            <BuildSheetFlatSection
-                sectionKey="friedRiceProteins"
-                titleEn="🍤 Fried Rice Proteins"
-                titleEs="🍤 Proteínas de Fried Rice"
-                items={listFor('friedRiceProteins')}
-                kind="protein"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
-
-            {/* Fried Rice — single item */}
-            <BuildSheetCategory
-                titleEn="🍚 Fried Rice"
-                titleEs="🍚 Arroz Frito"
-                items={[BUILD_SHEET_FRIED_RICE]}
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-            />
-
-            {/* Stocks — weekly-prep pho stocks. Each stockpot gets
-                a sticker. Placed right above Pho Proteins so the
-                two pho-prep sections sit together. */}
-            <BuildSheetFlatSection
-                sectionKey="stocks"
-                titleEn="🍲 Stocks"
-                titleEs="🍲 Caldos"
-                items={listFor('stocks')}
-                kind="broth"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
-
-            {/* Pho Proteins — broth-side proteins easy to label per
-                pot. Same proteins also shown under each broth in
-                the Pho section below as read-only reference. */}
-            <BuildSheetFlatSection
-                sectionKey="phoProteins"
-                titleEn="🍤 Pho Proteins"
-                titleEs="🍤 Proteínas de Pho"
-                items={listFor('phoProteins')}
-                kind="protein"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
-
-            {/* Pho — special structure: standard garnish + 3 broths,
-                each broth with a protein list. */}
-            <PhoBuildSheetSection isEs={isEs} tx={tx} onPrint={onPrint} />
-
-            {/* Sauces — flat list, each sauce is itself the prep item */}
-            <BuildSheetFlatSection
-                sectionKey="sauces"
-                titleEn="🥢 Sauces"
-                titleEs="🥢 Salsas"
-                items={listFor('sauces')}
-                kind="sauce"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
-
-            {/* Snacks — flat list, each snack is the prep item */}
-            <BuildSheetFlatSection
-                sectionKey="snacks"
-                titleEn="🥟 Snacks"
-                titleEs="🥟 Snacks"
-                items={listFor('snacks')}
-                kind="side"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
-
-            {/* Made Ahead — pre-rolled / pre-fried / pre-steamed
-                items the kitchen batches in advance (egg roll
-                wrappers, krab rangoons, bao buns, fresh spring
-                rolls). Distinct from Snacks (which are
-                ready-to-serve menu items) — these are prep
-                stages that need their own stickers. Placed last
-                since they're typically a separate end-of-shift
-                or weekly-prep activity. */}
-            <BuildSheetFlatSection
-                sectionKey="madeAhead"
-                titleEn="🥟 Made Ahead"
-                titleEs="🥟 Pre-Hechos"
-                items={listFor('madeAhead')}
-                kind="side"
-                isEs={isEs}
-                tx={tx}
-                onPrint={onPrint}
-                editMode={editMode}
-                onSaveSection={onSaveSection}
-            />
+            {STICKER_SECTIONS.map(section => (
+                <BuildSheetFlatSection
+                    key={section.key}
+                    sectionKey={section.key}
+                    titleEn={section.titleEn}
+                    titleEs={section.titleEs}
+                    items={listFor(section.key)}
+                    kind={section.kind}
+                    isEs={isEs}
+                    tx={tx}
+                    onPrint={onPrint}
+                    editMode={editMode}
+                    onSaveSection={onSaveSection}
+                />
+            ))}
         </div>
     );
 }
 
-// One section of the build sheet that contains "item cards" — each
-// card is a menu-item shape with `baseEn`, `standardToppings`,
-// `notes`, `piecesByProtein`. Renders each topping + base as a
-// printable component row.
-function BuildSheetCategory({ titleEn, titleEs, items, isEs, tx, onPrint }) {
-    return (
-        <section>
-            <h2 className="text-sm font-black uppercase tracking-widest text-dd-text mb-2 px-1">
-                {tx(titleEn, titleEs)}
-            </h2>
-            <div className="space-y-3">
-                {items.map((item, idx) => (
-                    <BuildSheetItemCard
-                        key={idx}
-                        item={item}
-                        isEs={isEs}
-                        tx={tx}
-                        onPrint={onPrint}
-                    />
-                ))}
-            </div>
-        </section>
-    );
-}
+// (BuildSheetCategory / BuildSheetItemCard / PhoBuildSheetSection deleted
+// 2026-06-11 — the menu-item drill-downs left this page; the Menu tab
+// keeps its own copies of the build-sheet data.)
 
-// One menu item from the build sheet (e.g. Vermicelli Bowl). Title
-// at top, base + standard toppings as printable component rows,
-// notes as read-only info, piece counts as small chips.
-function BuildSheetItemCard({ item, isEs, tx, onPrint }) {
-    const name = isEs ? (item.nameEs || item.nameEn) : item.nameEn;
-    // Base (if present) → one component row of kind 'base'.
-    const baseComponent = (item.baseEn || item.baseEs) ? {
-        id: `bs-base::${item.nameEn}`,
-        kind: 'base',
-        nameEn: item.baseEn,
-        nameEs: item.baseEs || item.baseEn,
-    } : null;
-    // Each standardTopping → component row of kind 'topping'.
-    const toppingComponents = (item.standardToppings || []).map((tp, i) => ({
-        id: `bs-top::${item.nameEn}::${i}`,
-        kind: 'topping',
-        nameEn: tp.en,
-        nameEs: tp.es || tp.en,
-    }));
-
-    return (
-        <div className="bg-white border border-dd-line rounded-xl p-3">
-            <h3 className="font-black text-dd-text text-base mb-2">{name}</h3>
-
-            {baseComponent && (
-                <div className="mb-2">
-                    <div className="flex items-center gap-1.5 mb-1">
-                        <span className="text-base">{COMPONENT_KIND_TONE.base.icon}</span>
-                        <span className="text-[10px] font-black uppercase tracking-widest text-dd-text-2">
-                            {tx(COMPONENT_KIND_TONE.base.labelEn, COMPONENT_KIND_TONE.base.labelEs)}
-                        </span>
-                    </div>
-                    <ComponentRow
-                        component={baseComponent}
-                        tone={COMPONENT_KIND_TONE.base}
-                        isEs={isEs}
-                        tx={tx}
-                        onPrint={onPrint}
-                    />
-                </div>
-            )}
-
-            {toppingComponents.length > 0 && (
-                <div className="mb-2">
-                    <div className="flex items-center gap-1.5 mb-1">
-                        <span className="text-base">{COMPONENT_KIND_TONE.topping.icon}</span>
-                        <span className="text-[10px] font-black uppercase tracking-widest text-dd-text-2">
-                            {tx(COMPONENT_KIND_TONE.topping.labelEn, COMPONENT_KIND_TONE.topping.labelEs)}
-                        </span>
-                        <span className="text-[10px] text-dd-text-2/60">· {toppingComponents.length}</span>
-                    </div>
-                    <div className="space-y-1">
-                        {toppingComponents.map(c => (
-                            <ComponentRow
-                                key={c.id}
-                                component={c}
-                                tone={COMPONENT_KIND_TONE.topping}
-                                isEs={isEs}
-                                tx={tx}
-                                onPrint={onPrint}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* Piece counts (chips) — informational only, no print. */}
-            {item.piecesByProtein && Object.keys(item.piecesByProtein).length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1">
-                    {Object.entries(item.piecesByProtein).map(([k, v]) => (
-                        <span key={k} className="text-[10px] font-bold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
-                            {k}: {v}
-                        </span>
-                    ))}
-                </div>
-            )}
-
-            {/* Notes — read-only kitchen reminders. */}
-            {item.notes && item.notes.length > 0 && (
-                <ul className="text-[11px] text-dd-text-2 space-y-1 border-t border-dd-line/50 pt-2 mt-2">
-                    {item.notes.map((n, i) => (
-                        <li key={i}>★ {tx(n.en, n.es || n.en)}</li>
-                    ))}
-                </ul>
-            )}
-        </div>
-    );
-}
-
-// Pho — bespoke layout because the data shape is different: the
-// whole dish has a `standardToppings` garnish list, then 3 broths,
-// each with its own list of protein options. Each broth gets a
-// printable row (kind: 'broth') so kitchen can label the stockpots.
-function PhoBuildSheetSection({ isEs, tx, onPrint }) {
-    const garnishComponents = (BUILD_SHEET_PHO.standardToppings || []).map((tp, i) => ({
-        id: `bs-pho-gar::${i}`,
-        kind: 'garnish',
-        nameEn: tp.en,
-        nameEs: tp.es || tp.en,
-    }));
-    const brothComponents = (BUILD_SHEET_PHO.broths || []).map((b, i) => ({
-        id: `bs-pho-broth::${i}`,
-        kind: 'broth',
-        nameEn: b.nameEn,
-        nameEs: b.nameEs || b.nameEn,
-        // Keep the protein list around for read-only display below.
-        _proteinsEn: b.proteinsEn,
-        _proteinsEs: b.proteinsEs,
-    }));
-
-    return (
-        <section>
-            <h2 className="text-sm font-black uppercase tracking-widest text-dd-text mb-2 px-1">
-                {tx('🍲 Pho', '🍲 Pho')}
-            </h2>
-            <div className="bg-white border border-dd-line rounded-xl p-3 space-y-3">
-                <h3 className="font-black text-dd-text text-base">
-                    {tx(BUILD_SHEET_PHO.nameEn, BUILD_SHEET_PHO.nameEs)}
-                </h3>
-
-                {garnishComponents.length > 0 && (
-                    <div>
-                        <div className="flex items-center gap-1.5 mb-1">
-                            <span className="text-base">{COMPONENT_KIND_TONE.garnish.icon}</span>
-                            <span className="text-[10px] font-black uppercase tracking-widest text-dd-text-2">
-                                {tx('Standard garnish', 'Guarnición estándar')}
-                            </span>
-                            <span className="text-[10px] text-dd-text-2/60">· {garnishComponents.length}</span>
-                        </div>
-                        <div className="space-y-1">
-                            {garnishComponents.map(c => (
-                                <ComponentRow
-                                    key={c.id}
-                                    component={c}
-                                    tone={COMPONENT_KIND_TONE.garnish}
-                                    isEs={isEs}
-                                    tx={tx}
-                                    onPrint={onPrint}
-                                />
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {brothComponents.length > 0 && (
-                    <div>
-                        <div className="flex items-center gap-1.5 mb-1">
-                            <span className="text-base">{COMPONENT_KIND_TONE.broth.icon}</span>
-                            <span className="text-[10px] font-black uppercase tracking-widest text-dd-text-2">
-                                {tx(COMPONENT_KIND_TONE.broth.labelEn, COMPONENT_KIND_TONE.broth.labelEs)}
-                            </span>
-                            <span className="text-[10px] text-dd-text-2/60">· {brothComponents.length}</span>
-                        </div>
-                        <div className="space-y-2">
-                            {brothComponents.map(c => (
-                                <div key={c.id} className="space-y-1">
-                                    <ComponentRow
-                                        component={c}
-                                        tone={COMPONENT_KIND_TONE.broth}
-                                        isEs={isEs}
-                                        tx={tx}
-                                        onPrint={onPrint}
-                                    />
-                                    {/* Protein options inside this broth — read-only.
-                                        Kitchen labels stockpots, not individual protein
-                                        portions, so no print buttons here. */}
-                                    <ul className="text-[11px] text-dd-text-2 space-y-0.5 pl-3">
-                                        {(isEs ? c._proteinsEs : c._proteinsEn).map((p, j) => (
-                                            <li key={j}>· {p}</li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
-        </section>
-    );
-}
 
 // Flat sections (Bowl/Fried Rice/Pho Proteins, Sauces, Snacks) —
 // each row IS the prep item, no nested toppings/notes. Description

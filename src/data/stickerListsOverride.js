@@ -42,40 +42,58 @@ import { db } from '../firebase';
 import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { recordAudit } from './audit';
 import {
-    BUILD_SHEET_BOWL_PROTEINS,
-    BUILD_SHEET_FRIED_RICE_PROTEINS,
-    BUILD_SHEET_PHO_PROTEINS,
+    BUILD_SHEET_PROTEINS,
     BUILD_SHEET_SAUCES,
-    BUILD_SHEET_SNACKS,
+    BUILD_SHEET_SWEETS_SNACKS,
     BUILD_SHEET_VEGETABLES,
     BUILD_SHEET_RICE_NOODLES,
     BUILD_SHEET_STOCKS,
     BUILD_SHEET_MADE_AHEAD,
 } from './buildSheet';
 
-// The five editable sections. Keys match the Firestore doc fields
-// AND the kind passed to the BuildSheetFlatSection renderer. Add a
-// new section by adding an entry here + a default list + a
-// matching section in DateStickerPrinter's BuildSheetBrowse.
+// The editable sections — Andrew 2026-06-11: "too many items. alot
+// of doubles. make sure there is only one of each item. categorize
+// it by veggie, protein, noodles, rice and so on." The three
+// overlapping per-category protein lists (bowlProteins /
+// friedRiceProteins / phoProteins) collapsed into ONE deduped
+// 'proteins' section; snacks deduped against Made Ahead. Keys match
+// the Firestore doc fields AND the kind passed to the
+// BuildSheetFlatSection renderer. (No /config/sticker_lists override
+// doc existed at switchover — verified — so retiring the old keys
+// needed no migration; subscribeStickerLists ignores unknown keys.)
 export const STICKER_SECTIONS = Object.freeze([
+    {
+        key: 'proteins',
+        kind: 'protein',
+        titleEn: '🥩 Proteins',
+        titleEs: '🥩 Proteínas',
+        defaults: BUILD_SHEET_PROTEINS,
+    },
     {
         key: 'vegetables',
         kind: 'topping',
-        titleEn: '🥬 Vegetables',
-        titleEs: '🥬 Vegetales',
+        titleEn: '🥬 Veggies & Toppings',
+        titleEs: '🥬 Vegetales y Toppings',
         defaults: BUILD_SHEET_VEGETABLES,
     },
     {
         key: 'riceNoodles',
         kind: 'base',
-        titleEn: '🍚 Rice & Noodles',
-        titleEs: '🍚 Arroz y Fideos',
+        titleEn: '🍜 Noodles & Rice',
+        titleEs: '🍜 Fideos y Arroz',
         defaults: BUILD_SHEET_RICE_NOODLES,
+    },
+    {
+        key: 'sauces',
+        kind: 'sauce',
+        titleEn: '🥢 Sauces & Dressings',
+        titleEs: '🥢 Salsas y Aderezos',
+        defaults: BUILD_SHEET_SAUCES,
     },
     {
         key: 'stocks',
         kind: 'broth',
-        titleEn: '🍲 Stocks',
+        titleEn: '🍲 Broths & Stocks',
         titleEs: '🍲 Caldos',
         defaults: BUILD_SHEET_STOCKS,
     },
@@ -87,39 +105,11 @@ export const STICKER_SECTIONS = Object.freeze([
         defaults: BUILD_SHEET_MADE_AHEAD,
     },
     {
-        key: 'bowlProteins',
-        kind: 'protein',
-        titleEn: '🍤 Bowl Proteins',
-        titleEs: '🍤 Proteínas de Bowls',
-        defaults: BUILD_SHEET_BOWL_PROTEINS,
-    },
-    {
-        key: 'friedRiceProteins',
-        kind: 'protein',
-        titleEn: '🍤 Fried Rice Proteins',
-        titleEs: '🍤 Proteínas de Fried Rice',
-        defaults: BUILD_SHEET_FRIED_RICE_PROTEINS,
-    },
-    {
-        key: 'phoProteins',
-        kind: 'protein',
-        titleEn: '🍤 Pho Proteins',
-        titleEs: '🍤 Proteínas de Pho',
-        defaults: BUILD_SHEET_PHO_PROTEINS,
-    },
-    {
-        key: 'sauces',
-        kind: 'sauce',
-        titleEn: '🥢 Sauces',
-        titleEs: '🥢 Salsas',
-        defaults: BUILD_SHEET_SAUCES,
-    },
-    {
         key: 'snacks',
         kind: 'side',
-        titleEn: '🥟 Snacks',
-        titleEs: '🥟 Snacks',
-        defaults: BUILD_SHEET_SNACKS,
+        titleEn: '🍪 Sweets & Snacks',
+        titleEs: '🍪 Dulces y Snacks',
+        defaults: BUILD_SHEET_SWEETS_SNACKS,
     },
 ]);
 

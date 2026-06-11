@@ -288,8 +288,8 @@ export const BUILD_SHEET_MADE_AHEAD = [
     { nameEn: "Veggie Egg Rolls (uncooked)",     nameEs: "Egg Rolls Veganos (crudos)",           descEn: "Vegetable-filled wrappers — fry to order",                                                descEs: "Wrappers vegetales — freír a la orden" },
     { nameEn: "Fried Vietnamese Egg Rolls",      nameEs: "Egg Rolls Vietnamitas Fritos",         descEn: "Pre-fried, hold warm — auto-included with pork/beef/chicken bowls",                       descEs: "Pre-fritos, mantener caliente — auto-incluidos con bowls de cerdo/res/pollo" },
     { nameEn: "Fried Veggie Egg Rolls",          nameEs: "Egg Rolls Veganos Fritos",             descEn: "Pre-fried, hold warm — auto-included with tofu/vegan/fish bowls",                         descEs: "Pre-fritos, mantener caliente — auto-incluidos con bowls de tofu/vegano/pescado" },
-    { nameEn: "Krab Rangoon (uncooked)",         nameEs: "Krab Rangoons (crudos)",               descEn: "Pre-stuffed wrappers — fry to order",                                                     descEs: "Pre-rellenos — freír a la orden" },
-    { nameEn: "Vegan Cheese Rolls (uncooked)",   nameEs: "Vegan Cheese Rolls (crudos)",          descEn: "Pre-stuffed almond-cream-cheese wrappers — fry to order",                                 descEs: "Pre-rellenos con queso crema de almendra — freír a la orden" },
+    // Krab Rangoons + Vegan Cheese Rolls moved to BUILD_SHEET_SWEETS_SNACKS
+    // (2026-06-11 dedupe — they were listed here AND in Snacks).
     { nameEn: "Bao Buns (steamed)",              nameEs: "Pan Bao (al vapor)",                   descEn: "Pre-steamed, hold warm — Bao Sliders. CONTAINS DAIRY (milk in the dough).",                descEs: "Pre-cocidos al vapor — Bao Sliders. LLEVA LÁCTEO (leche en la masa)." },
     { nameEn: "Spring Rolls (fresh, ready)",     nameEs: "Spring Rolls (frescos, listos)",       descEn: "Rice paper rolls — hold cold, peanut sauce on side",                                      descEs: "Rollos de papel de arroz — frío, salsa de cacahuate al lado" },
 ];
@@ -314,6 +314,60 @@ export const BUILD_SHEET_VEGETABLES = [
     { nameEn: "Fried Shallots",     nameEs: "Cebollas Fritas",              descEn: "Crispy topping — Bowls",                                        descEs: "Topping crujiente — Bowls" },
     { nameEn: "Crushed Peanuts",    nameEs: "Cacahuetes Molidos",           descEn: "Topping — Bowls (omit for peanut allergy)",                     descEs: "Topping — Bowls (omitir si alergia al cacahuate)" },
     { nameEn: "Egg (over easy)",    nameEs: "Huevo Estrellado",             descEn: "Default topping — Rice Bowl",                                   descEs: "Topping por defecto — Rice Bowl" },
+    { nameEn: "King Mushroom",      nameEs: "Hongo King",                   descEn: "Spicy Vegan Lemongrass Pho",                                    descEs: "Spicy Vegan Lemongrass Pho" },
+    { nameEn: "Oyster Mushroom",    nameEs: "Hongo Ostra",                  descEn: "Spicy Vegan Lemongrass Pho",                                    descEs: "Spicy Vegan Lemongrass Pho" },
+];
+
+// ── Master protein list — Andrew 2026-06-11: "there are too many
+// items. alot of doubles. make sure there is only one of each item."
+// The kitchen preps ONE tub of each protein regardless of how many
+// dishes it lands on, so the sticker page shows each protein ONCE
+// with its uses in the description. Replaces the three overlapping
+// per-category lists (bowl / fried-rice / pho proteins) on the
+// sticker page — those stay exported below untouched for any
+// per-category reference use.
+// Merges folded in: pho "Shrimp" = Lemongrass Shrimp; pho
+// "Lemongrass Beef" = Lemongrass Steak (same marinated batch, same
+// Spanish name); "Squid" = Calamari (same tub). King/Oyster
+// Mushroom moved to Veggies & Toppings.
+export const BUILD_SHEET_PROTEINS = [
+    { nameEn: "Lemongrass Pork",     nameEs: "Cerdo al limoncillo",     descEn: "Marinated, grilled — Bowls / Bánh Mì / Sliders / Tacos / Lo Mein",                 descEs: "Marinado, a la parrilla — Bowls / Bánh Mì / Sliders / Tacos / Lo Mein" },
+    { nameEn: "Lemongrass Chicken",  nameEs: "Pollo al limoncillo",     descEn: "Marinated, grilled — Bowls / Bánh Mì / Fried Rice / Lo Mein / Lemongrass Pho",     descEs: "Marinado, a la parrilla — Bowls / Bánh Mì / Fried Rice / Lo Mein / Lemongrass Pho" },
+    { nameEn: "Lemongrass Steak",    nameEs: "Carne al limoncillo",     descEn: "Marinated, grilled — Bowls / Fried Rice / Lo Mein / Lemongrass Pho",               descEs: "Marinada, a la parrilla — Bowls / Fried Rice / Lo Mein / Lemongrass Pho" },
+    { nameEn: "Lemongrass Shrimp",   nameEs: "Camarón al limoncillo",   descEn: "8 per bowl (2 in combo) — Bowls / Bánh Mì / Tacos / Fried Rice / Pho",             descEs: "8 por bowl (2 en combo) — Bowls / Bánh Mì / Tacos / Fried Rice / Pho" },
+    { nameEn: "Roast Pork",          nameEs: "Cerdo asado",             descEn: "Char siu / pork belly — Bowls / Bánh Mì / Combo Fried Rice",                       descEs: "Char siu / panceta — Bowls / Bánh Mì / Combo Fried Rice" },
+    { nameEn: "Ham",                 nameEs: "Jamón",                   descEn: "Diced — Combo Fried Rice only (not in bowls combo)",                               descEs: "En cubitos — sólo Combo Fried Rice" },
+    { nameEn: "Chicken (sliced)",    nameEs: "Pollo en rebanadas",      descEn: "Chicken Pho — Chicken broth",                                                      descEs: "Chicken Pho — caldo de pollo" },
+    { nameEn: "Rare Steak",          nameEs: "Bistec poco cocido",      descEn: "Flank meat, thin slice — Beef Pho",                                                descEs: "Carne de flanco en rebanadas finas — Pho de res" },
+    { nameEn: "Brisket",             nameEs: "Pecho de res",            descEn: "Slow-cooked — Beef Pho",                                                           descEs: "Pecho lento — Pho de res" },
+    { nameEn: "Meatball",            nameEs: "Albóndiga",               descEn: "Beef meatballs — Beef Pho",                                                        descEs: "Albóndigas de res — Pho de res" },
+    { nameEn: "Tendon",              nameEs: "Tendón",                  descEn: "Slow-cooked — Ultimate Pho",                                                       descEs: "Tendón lento — Ultimate Pho" },
+    { nameEn: "Tripe",               nameEs: "Callos",                  descEn: "Beef tripe — Ultimate Pho",                                                        descEs: "Callos de res — Ultimate Pho" },
+    { nameEn: "Cajun Salmon",        nameEs: "Salmón Cajún",            descEn: "Cajun-seasoned, pan-seared — Bowls",                                               descEs: "Sazón cajún, a la sartén — Bowls" },
+    { nameEn: "Fried Fish",          nameEs: "Pescado frito",           descEn: "Crispy battered fish — Bowls",                                                     descEs: "Pescado empanizado y frito — Bowls" },
+    { nameEn: "Coconut Shrimp",      nameEs: "Camarón con coco",        descEn: "Coconut-battered, fried — Bowls",                                                  descEs: "Empanizado con coco, frito — Bowls" },
+    { nameEn: "Fish Balls",          nameEs: "Bolas de pescado",        descEn: "Seafood Pho / Seafood Fried Rice",                                                 descEs: "Seafood Pho / Seafood Fried Rice" },
+    { nameEn: "Calamari (Squid)",    nameEs: "Calamar",                 descEn: "Seafood Pho / Seafood Fried Rice",                                                 descEs: "Seafood Pho / Seafood Fried Rice" },
+    { nameEn: "Imitation Crab",      nameEs: "Surimi (cangrejo)",       descEn: "Seafood Pho",                                                                      descEs: "Seafood Pho" },
+    { nameEn: "Scallops",            nameEs: "Vieiras",                 descEn: "Seafood Pho",                                                                      descEs: "Seafood Pho" },
+    { nameEn: "Tofu",                nameEs: "Tofu",                    descEn: "Marinated, pan-fried — Bowls / Bánh Mì / Lo Mein / Fried Rice / Vegan Pho",        descEs: "Marinado, a la sartén — Bowls / Bánh Mì / Lo Mein / Fried Rice / Vegan Pho" },
+    { nameEn: "Deep-fried Tofu",     nameEs: "Tofu frito",              descEn: "Spicy Vegan Lemongrass Pho",                                                       descEs: "Spicy Vegan Lemongrass Pho" },
+    { nameEn: "Vegan Beef",          nameEs: "Carne vegana",            descEn: "Plant-based beef substitute — Bowls / Fried Rice",                                 descEs: "Sustituto vegetal de carne — Bowls / Fried Rice" },
+    { nameEn: "Vegan Chikn",         nameEs: "Pollo vegano",            descEn: "Plant-based chicken substitute — Bowls / Fried Rice",                              descEs: "Sustituto vegetal de pollo — Bowls / Fried Rice" },
+    { nameEn: "Vegan Shrimp",        nameEs: "Camarón vegano",          descEn: "Plant-based shrimp substitute — Bowls / Fried Rice",                               descEs: "Sustituto vegetal de camarón — Bowls / Fried Rice" },
+];
+
+// Sweets & snacks for the sticker page — one entry per item. The
+// "(uncooked)" Krab Rangoon / Vegan Cheese Roll duplicates that
+// lived in Made Ahead fold in here; egg rolls keep their two Made
+// Ahead prep states (uncooked vs fried are genuinely different tubs
+// with different shelf lives). BUILD_SHEET_SNACKS below stays
+// untouched — the Menu tab's cashier reference still uses it.
+export const BUILD_SHEET_SWEETS_SNACKS = [
+    { nameEn: "Krab Rangoons",           nameEs: "Krab Rangoons",           descEn: "Pre-stuffed cream cheese wrappers — fry to order",               descEs: "Pre-rellenos de queso crema — freír a la orden" },
+    { nameEn: "Vegan Cheese Rolls",      nameEs: "Vegan Cheese Rolls",      descEn: "Pre-stuffed almond-cream-cheese wrappers — fry to order",        descEs: "Pre-rellenos con queso crema de almendra — freír a la orden" },
+    { nameEn: "Thai Chili Pepper Wings", nameEs: "Thai Chili Pepper Wings", descEn: "Spicy dry-rub wings",                                            descEs: "Alitas con sazón seco picante" },
+    { nameEn: "Fried Shrimp Rolls",      nameEs: "Fried Shrimp Rolls",      descEn: "3 pieces of fried shrimp",                                       descEs: "3 piezas de camarón frito" },
 ];
 
 export const BUILD_SHEET_BOWL_PROTEINS = [
