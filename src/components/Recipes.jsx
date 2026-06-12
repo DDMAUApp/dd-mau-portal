@@ -380,6 +380,28 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         setPrintingIngredientsId(null);
         if (res.ok) {
             toast(language === 'es' ? '✓ Ingredientes impresos' : '✓ Ingredients printed', { kind: 'success' });
+            // Andrew 2026-06-12: "make sure the recipe audit in admin
+            // records if someone printed recipe and how many." Prints land
+            // in the SAME /recipe_views collection the admin Recipe Audit
+            // panel reads, flagged printed:true + the batch multiplier, so
+            // views and prints show in one timeline. Fire-and-forget — an
+            // audit hiccup must never block or un-toast a successful print.
+            addDoc(collection(db, 'recipe_views'), {
+                staffName: staffName || 'unknown',
+                recipeId: recipe.id,
+                recipeTitle: recipe.titleEn || '',
+                isAdmin: isAdmin(staffName, staffList),
+                storeLocation: storeLocation || '',
+                geoStatus: geoStatusKind,
+                userAgent: typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '',
+                viewedAt: serverTimestamp(),
+                printed: true,
+                printMultiplier: mult,
+                printLineCount: lines.length,
+                blurCount: 0,
+                quickBlurCount: 0,
+                screenshotShortcutCount: 0,
+            }).catch(err => console.warn('recipe print audit failed:', err));
         } else if (res.error === 'no_printer_configured') {
             toast(language === 'es' ? 'No hay impresora configurada (Admin → Impresoras)' : 'No printer configured (Admin → Label printers)', { kind: 'error' });
         } else {

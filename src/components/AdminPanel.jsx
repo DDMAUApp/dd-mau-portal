@@ -3867,8 +3867,8 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 {recipeAuditExpanded && (<>
                                 <p className="text-[11px] text-gray-500 mb-3">
                                     {language === 'es'
-                                        ? 'Cada vez que alguien abre una receta queda registrado: quién, qué, cuándo y desde dónde.'
-                                        : 'Every time anyone opens a recipe it\'s logged: who, what, when, and from where.'}
+                                        ? 'Cada vez que alguien abre una receta queda registrado: quién, qué, cuándo y desde dónde. Las impresiones se marcan con 🖨 y el multiplicador (ej. 3×).'
+                                        : 'Every time anyone opens a recipe it\'s logged: who, what, when, and from where. Prints are flagged 🖨 with the batch size (e.g. 3×).'}
                                 </p>
                                 {recipeViews.length === 0 ? (
                                     <p className="text-xs text-gray-400 italic">{language === 'es' ? 'Sin vistas registradas todavía.' : 'No views recorded yet.'}</p>
@@ -3898,7 +3898,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <tr key={v.id} className={`border-b last:border-0 ${sus ? 'bg-red-50' : ''}`}>
                                                             <td className="px-2 py-1 text-gray-700 whitespace-nowrap">{fmtTime(v.viewedAt)}</td>
                                                             <td className="px-2 py-1 text-gray-800 font-medium">{v.staffName || '—'}</td>
-                                                            <td className="px-2 py-1 text-gray-700">{v.recipeTitle || `#${v.recipeId}`}</td>
+                                                            <td className="px-2 py-1 text-gray-700">
+                                                                {v.recipeTitle || `#${v.recipeId}`}
+                                                                {v.printed && (
+                                                                    <span title={language === 'es'
+                                                                            ? `Imprimió los ingredientes (lote ${v.printMultiplier || 1}×)`
+                                                                            : `Printed the ingredients (${v.printMultiplier || 1}× batch)`}
+                                                                        className="ml-1.5 inline-block bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded font-bold whitespace-nowrap">
+                                                                        🖨 {v.printMultiplier && v.printMultiplier !== 1 ? `${v.printMultiplier}×` : (language === 'es' ? 'impreso' : 'printed')}
+                                                                    </span>
+                                                                )}
+                                                            </td>
                                                             <td className="px-2 py-1"><span className={`px-1.5 py-0.5 rounded ${g.c} font-semibold`}>{g.t}</span></td>
                                                             <td className="px-2 py-1 text-center">
                                                                 {sc > 0 && (
