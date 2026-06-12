@@ -25,7 +25,7 @@
 //   - Editable build sheet (add/edit/delete components in-app)
 //   - Print history dashboard filtered to this surface
 
-import { useEffect, useMemo, useRef, useState, useDeferredValue, lazy, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, lazy, Suspense, memo } from 'react';
 import {
     getMenuItemBuild,
     findSubRecipe,
@@ -47,6 +47,7 @@ import {
     subscribeStickerLists,
     saveStickerList,
     makeStickerRowId,
+    getStampedDefaults,
     STICKER_SECTIONS,
 } from '../data/stickerListsOverride';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
@@ -59,6 +60,14 @@ const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 const BuildEditorModal = lazy(() => import('./BuildEditorModal'));
 const PrintCenter = lazy(() => import('./PrintCenter'));
 
+// MM/DD/YY for the Today's Date quick sticker — ONE format for both
+// languages and for both the button text and the printed title, so
+// what the cook reads is exactly what comes out of the printer.
+function fmtTodaySticker() {
+    const d = new Date();
+    return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
+}
+
 export default function DateStickerPrinter({
     language = 'en',
     staffName,
@@ -66,7 +75,9 @@ export default function DateStickerPrinter({
     staffList = [],
 }) {
     const isEs = language === 'es';
-    const tx = (en, es) => isEs ? es : en;
+    // Stable identity — tx is passed into memo'd children; a fresh
+    // arrow per render would defeat their bail-out.
+    const tx = useCallback((en, es) => (isEs ? es : en), [isEs]);
     const adminUser = isAdmin(staffName, staffList);
 
     const [search, setSearch] = useState('');
@@ -119,14 +130,15 @@ export default function DateStickerPrinter({
     // Save handler — given a section key + updated rows array,
     // pushes to Firestore. The live subscription will mirror the
     // change back, so the UI updates without needing optimistic
-    // state. Errors toast but don't crash the editor.
-    const handleSaveSection = async (sectionKey, rows) => {
+    // state. Errors toast but don't crash the editor. useCallback so
+    // the memo'd sections don't re-render on unrelated state changes.
+    const handleSaveSection = useCallback(async (sectionKey, rows) => {
         try {
             await saveStickerList(sectionKey, rows, staffName);
         } catch (e) {
             console.warn('saveStickerList failed:', e);
         }
-    };
+    }, [staffName]);
 
     // Admin-created custom items only — static menu items no longer
     // appear on this page (2026-06-11). Synthesized shape so the
@@ -333,13 +345,17 @@ export default function DateStickerPrinter({
     // mode. Allergens carry over from the menu item. Shelf-life
     // override (if set on the menu item) propagates so the modal's
     // slider default is the admin-set value, not the category fallback.
-    const handlePrintComponent = (component, menuItem) => {
+    // Stable identity (openBuild read through a ref) so the memo'd
+    // browse sections don't re-render on every keystroke/snapshot.
+    const openBuildRef = useRef(null);
+    openBuildRef.current = openBuild;
+    const handlePrintComponent = useCallback((component, menuItem) => {
         if (component.kind === 'note') return;
         const allergenStr = component.allergens || menuItem?.allergens || '';
         const allergens = parseAllergenString(allergenStr);
         // Pull shelf-life from open build (custom items + overrides
         // already merge it onto the build object).
-        const shelfFromBuild = openBuild?.shelfLifeDays;
+        const shelfFromBuild = openBuildRef.current?.shelfLifeDays;
         setPrintingComponent({
             titleEn: component.nameEn,
             titleEs: component.nameEs || component.nameEn,
@@ -349,7 +365,8 @@ export default function DateStickerPrinter({
             category: KIND_TO_CATEGORY[component.kind] || 'Other',
             ...(shelfFromBuild ? { shelfLifeDays: shelfFromBuild } : {}),
         });
-    };
+    }, []);
+    const handleBrowsePrint = useCallback((c) => handlePrintComponent(c, null), [handlePrintComponent]);
 
     return (
         <div className="p-4 pb-bottom-nav">
@@ -554,14 +571,17 @@ export default function DateStickerPrinter({
                             copies, shelf life stay adjustable as usual. */}
                         <button
                             onClick={() => {
-                                const d = new Date();
-                                const todayStr = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
-                                handlePrintComponent({ kind: 'base', nameEn: todayStr, nameEs: todayStr }, null);
+                                // Recompute fresh at tap time (a tablet can sit on
+                                // this page across midnight). Same MM/DD/YY string
+                                // in BOTH languages so the button text always
+                                // matches what prints — es-MX locale formatting
+                                // showed DD/MM on the button while printing MM/DD.
+                                handlePrintComponent({ kind: 'base', nameEn: fmtTodaySticker(), nameEs: fmtTodaySticker() }, null);
                             }}
                             className="w-full mb-4 flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-purple-600 text-white shadow-sm hover:bg-purple-700 active:scale-[0.99] transition">
                             <span className="text-left min-w-0">
                                 <span className="block text-sm font-black truncate">
-                                    📅 {tx("Today's date", 'Fecha de hoy')} — {new Date().toLocaleDateString(isEs ? 'es-MX' : 'en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}
+                                    📅 {tx("Today's date", 'Fecha de hoy')} — {fmtTodaySticker()}
                                 </span>
                                 <span className="block text-[11px] opacity-90">
                                     {tx('Print a sticker with just the date', 'Imprime una etiqueta sólo con la fecha')}
@@ -572,7 +592,7 @@ export default function DateStickerPrinter({
                         <BuildSheetBrowse
                             isEs={isEs}
                             tx={tx}
-                            onPrint={(c) => handlePrintComponent(c, null)}
+                            onPrint={handleBrowsePrint}
                             stickerLists={stickerLists}
                             editMode={editMode}
                             onSaveSection={handleSaveSection}
@@ -934,7 +954,9 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
     const listFor = (key) => {
         const fromSub = stickerLists?.[key];
         if (Array.isArray(fromSub)) return fromSub;
-        return STICKER_SECTIONS.find(s => s.key === key)?.defaults || [];
+        // Pre-subscription first paint — stamped defaults so rows
+        // already carry the same stable ids the subscription will use.
+        return getStampedDefaults(key);
     };
     return (
         <div className="space-y-5">
@@ -970,7 +992,11 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
 // editable"): rows turn into inline name (EN + ES) inputs with a
 // delete button. Section gets a "+ Add row" button at the bottom.
 // Saves debounce to /config/sticker_lists via onSaveSection.
-function BuildSheetFlatSection({
+// memo: the seven sections are siblings of the search input — without
+// bail-out, every keystroke re-rendered all ~68 rows twice (urgent +
+// deferred pass). All props are stable now (tx/onPrint/onSaveSection
+// useCallback'd; items arrays identity-stable via STAMPED_DEFAULTS).
+const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     sectionKey, titleEn, titleEs, items, kind, isEs, tx, onPrint,
     editMode = false, onSaveSection,
 }) {
@@ -1162,7 +1188,7 @@ function BuildSheetFlatSection({
             </div>
         </section>
     );
-}
+});
 
 // Strip the build-sheet rows down to the four editable fields + id
 // so the edit form has clean state. Generates an id if the source

@@ -115,24 +115,36 @@ export const STICKER_SECTIONS = Object.freeze([
 
 const STICKER_LISTS_DOC_REF = () => doc(db, 'config', 'sticker_lists');
 
+// Default rows stamped ONCE, with DETERMINISTIC ids, at module load.
+// The old behavior stamped them with makeStickerRowId (random tail)
+// inside the snapshot callback — every snapshot regenerated fresh ids
+// for every non-overridden section. Edit Mode's draft merge then saw
+// zero id overlap, kept the old rows AND appended the "new" ones, so
+// every untouched section DOUBLED on each save echo (and the dupes
+// could get persisted). Stable identity also means the same array
+// reference is reused across snapshots, so memo'd sections skip
+// re-rendering on unrelated echoes. Found in review 2026-06-12.
+const STAMPED_DEFAULTS = new Map(STICKER_SECTIONS.map(section => [
+    section.key,
+    section.defaults.map((row, i) => ({ ...row, id: row.id || `default-${section.key}-${i}` })),
+]));
+export function getStampedDefaults(sectionKey) {
+    return STAMPED_DEFAULTS.get(sectionKey) || [];
+}
+
 // Subscribe to the override doc. Callback receives a `{ [key]:
-// StickerRow[] }` object with merged lists (override if present,
-// default otherwise). Defaults are also given stable ids so the
-// UI can key off them before the admin saves anything.
+// StickerRow[] }` object with merged lists (override if present —
+// including an explicitly-saved EMPTY list, so an admin can clear a
+// section without the defaults resurrecting — default otherwise).
 export function subscribeStickerLists(callback) {
     return onSnapshot(STICKER_LISTS_DOC_REF(), (snap) => {
         const data = snap.exists() ? snap.data() : {};
         const merged = {};
         for (const section of STICKER_SECTIONS) {
             const override = data[section.key];
-            if (Array.isArray(override) && override.length > 0) {
-                merged[section.key] = override.map(stamp);
-            } else {
-                merged[section.key] = section.defaults.map((row, i) => stamp({
-                    ...row,
-                    id: row.id || makeStickerRowId(`${section.key}-${row.nameEn}-${i}`),
-                }));
-            }
+            merged[section.key] = Array.isArray(override)
+                ? override.map(stamp)
+                : STAMPED_DEFAULTS.get(section.key);
         }
         callback(merged);
     }, (err) => {
@@ -140,10 +152,7 @@ export function subscribeStickerLists(callback) {
         // Fall back to defaults so the page still renders.
         const merged = {};
         for (const section of STICKER_SECTIONS) {
-            merged[section.key] = section.defaults.map((row, i) => stamp({
-                ...row,
-                id: row.id || makeStickerRowId(`${section.key}-${row.nameEn}-${i}`),
-            }));
+            merged[section.key] = STAMPED_DEFAULTS.get(section.key);
         }
         callback(merged);
     });
