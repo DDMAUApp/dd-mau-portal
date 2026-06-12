@@ -6,6 +6,7 @@ import { isAdmin } from '../data/staff';
 import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone, sortAllergens } from '../data/allergens';
 import { matchesRecipeQuery } from '../data/recipeSearch';
 import { useAiSearch } from '../data/aiSearch';
+import { printRecipeIngredients } from '../data/labelPrinting';
 import { toast } from '../toast';
 // 2026-05-20 — date-code label printing on Epson TM-L100. Lazy so
 // the preview + ePOS-Print XML helpers only enter the bundle when a
@@ -352,6 +353,40 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
             return scaled.toFixed(1);
         });
         return prefix + replaced;
+    };
+    // 🖨 Print the SCALED ingredient list to the kitchen label printer —
+    // Andrew 2026-06-12: "when we print a recipes i just want just the
+    // ingredients and it needs to reflect the multiplier. if they do x3,
+    // i only want to see 3 can oyster, 12 cup soy sauce." The lines are
+    // scaled with the SAME scaleIngredient the screen uses, so the print
+    // matches the on-screen quantities exactly.
+    const [printingIngredientsId, setPrintingIngredientsId] = useState(null);
+    const handlePrintIngredients = async (recipe) => {
+        if (printingIngredientsId) return;
+        const mult = recipeMultipliers[recipe.id] || 1;
+        const src = language === 'es'
+            ? (recipe.ingredientsEs || recipe.ingredientsEn)
+            : recipe.ingredientsEn;
+        const lines = (src || []).map(item => scaleIngredient(item, mult));
+        const title = language === 'es' ? (recipe.titleEs || recipe.titleEn) : recipe.titleEn;
+        setPrintingIngredientsId(recipe.id);
+        const res = await printRecipeIngredients({
+            location: storeLocation === 'both' ? 'webster' : (storeLocation || 'webster'),
+            title,
+            lines,
+            multiplier: mult,
+            byName: staffName,
+        });
+        setPrintingIngredientsId(null);
+        if (res.ok) {
+            toast(language === 'es' ? '✓ Ingredientes impresos' : '✓ Ingredients printed', { kind: 'success' });
+        } else if (res.error === 'no_printer_configured') {
+            toast(language === 'es' ? 'No hay impresora configurada (Admin → Impresoras)' : 'No printer configured (Admin → Label printers)', { kind: 'error' });
+        } else {
+            toast(language === 'es'
+                ? 'No se pudo imprimir — ¿impresora apagada / Wi-Fi incorrecto? (Desde el navegador no se puede — usa la app)'
+                : "Couldn't print — printer off / wrong Wi-Fi? (Web browsers can't print — use the phone/iPad app)", { kind: 'error' });
+        }
     };
     const adminUser = isAdmin(staffName, staffList);
     const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
@@ -1173,7 +1208,21 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                 </div>
 
                                 <div className="mb-4">
-                                    <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">📝 {t("ingredients", language)}</h4>
+                                    <div className="flex items-center justify-between border-b pb-1 mb-2">
+                                        <h4 className="font-bold text-sm text-gray-800">📝 {t("ingredients", language)}</h4>
+                                        {/* Prints exactly the scaled quantities shown below */}
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handlePrintIngredients(recipe);
+                                            }}
+                                            disabled={printingIngredientsId === recipe.id}
+                                            className="text-xs bg-purple-600 text-white px-3 py-1 rounded-full font-bold hover:bg-purple-700 active:scale-95 transition disabled:opacity-50 flex items-center gap-1">
+                                            {printingIngredientsId === recipe.id
+                                                ? (language === 'es' ? 'Imprimiendo…' : 'Printing…')
+                                                : <>🖨 {language === 'es' ? 'Imprimir' : 'Print'}{(recipeMultipliers[recipe.id] || 1) !== 1 ? ` ${recipeMultipliers[recipe.id]}x` : ''}</>}
+                                        </button>
+                                    </div>
                                     <ul className="space-y-1">
                                         {(language === "es" ? (recipe.ingredientsEs || recipe.ingredientsEn) : recipe.ingredientsEn).map((item, i) => {
                                             const mult = recipeMultipliers[recipe.id] || 1;

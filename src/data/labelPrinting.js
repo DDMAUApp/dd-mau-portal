@@ -1528,6 +1528,115 @@ function renderFreeTextBody(freePayload) {
     return lines.join('');
 }
 
+// ── Recipe ingredients print ──────────────────────────────────
+// Andrew 2026-06-12: "lets add feature were we can print the recipes.
+// when we print a recipes i just want just the ingredients and it
+// needs to reflect the multiplier. if they do x3, i only want to see
+// 3 can oyster, 12 cup soy sauce."
+// The caller (Recipes.jsx) passes ingredient lines ALREADY SCALED by
+// the on-screen multiplier (same scaleIngredient the cook is looking
+// at) — what prints is exactly what they see. Layout:
+//
+//   ┌──────────────────────────┐
+//   │    STRING BEAN SAUCE     │  ← bold, 2× when it fits the roll
+//   │        3x batch          │  ← only when multiplier ≠ 1
+//   │ ------------------------ │
+//   │ 3 can oyster sauce       │
+//   │ 12 cup soy sauce         │
+//   │ ------------------------ │
+//   │   06/12/26 3:41p — Andy  │
+//   └──────────────────────────┘
+function renderRecipeIngredientsBody({ title, multLabel, lines, cols, byName }) {
+    const out = [];
+    const divDash = '-'.repeat(cols);
+    const titleStr = String(title || 'Recipe').toUpperCase();
+    // 2× title when every wrapped line fits the roll at that size.
+    const tScale = titleStr.length * 2 <= cols * 2 && cols >= 16 ? 2 : 1;
+    out.push(`<text align="center"/>`);
+    out.push(`<text em="true"/>`);
+    out.push(`<text width="${tScale}" height="${tScale}"/>`);
+    for (const ln of wrapWords(titleStr, Math.max(6, Math.floor(cols / tScale)))) {
+        out.push(`<text>${escapeXml(ln)}&#10;</text>`);
+    }
+    if (multLabel) {
+        out.push(`<text width="2" height="2"/>`);
+        out.push(`<text>${escapeXml(multLabel)}&#10;</text>`);
+    }
+    out.push(`<text em="false"/>`);
+    out.push(`<text width="1" height="1"/>`);
+    out.push(`<text align="left"/>`);
+    out.push(`<text>${divDash}&#10;</text>`);
+    for (const ing of lines) {
+        for (const ln of wrapWords(ing, cols)) {
+            out.push(`<text>${escapeXml(ln)}&#10;</text>`);
+        }
+    }
+    out.push(`<text>${divDash}&#10;</text>`);
+    // Small when/who stamp so a batch sheet on the counter is traceable.
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    let h = d.getHours(); const ampm = h >= 12 ? 'p' : 'a';
+    h = h % 12 || 12;
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    const stamp = `${mm}/${dd}/${yy} ${h}:${mi}${ampm}${byName ? ` — ${String(byName).slice(0, 20)}` : ''}`;
+    out.push(`<text align="center"/>`);
+    out.push(`<text>${escapeXml(stamp)}&#10;</text>`);
+    out.push(`<feed line="1"/>`);
+    out.push(`<cut type="feed"/>`);
+    return out.join('');
+}
+
+export async function printRecipeIngredients({
+    location, slot = DEFAULT_PRINTER_SLOT,
+    title, lines = [], multiplier = 1, byName, copies = 1,
+}) {
+    try {
+        const printer = await getPrinterConfigFast(location, slot);
+        if (!printer) return { ok: false, error: 'no_printer_configured' };
+        const type = printer.type || DEFAULT_PRINTER_TYPE;
+        if (type !== PRINTER_TYPES.BROTHER_QL && !printer.ip) {
+            return { ok: false, error: 'no_printer_configured' };
+        }
+        if (printer.enabled === false) return { ok: false, error: 'printer_disabled' };
+        const clean = (lines || []).map(l => String(l || '').trim()).filter(Boolean);
+        if (clean.length === 0) return { ok: false, error: 'empty_text' };
+        const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
+        const multLabel = multiplier && multiplier !== 1 ? `${multiplier}x batch` : '';
+
+        if (type === PRINTER_TYPES.BROTHER_QL) {
+            // Brother slots ride the existing free-text path (bridge →
+            // PDF/share-sheet fallback) with the same composed content.
+            const text = [String(title || 'Recipe').toUpperCase(), multLabel, '', ...clean]
+                .filter((s, i) => s !== '' || i === 2).join('\n');
+            return await printFreeText({
+                location, slot, text,
+                size: 'small', bold: false, align: 'left',
+                copies: c, stampDate: true,
+                stampSignature: !!byName, signature: byName,
+                byName,
+            });
+        }
+
+        const cols = paperColumns(printer.paperWidthMm);
+        const body = renderRecipeIngredientsBody({ title, multLabel, lines: clean, cols, byName });
+        const xml = wrapSoapEnvelope(Array.from({ length: c }, () => body).join(''));
+        const res = await sendToPrinter(printer, xml, { source: 'recipe_ingredients', itemName: title });
+        recordAudit({
+            action: 'print.recipe_ingredients',
+            actorName: byName || 'unknown',
+            targetType: 'recipe',
+            targetId: String(title || 'unknown').slice(0, 80),
+            details: { location, slot, multiplier, lineCount: clean.length, copies: c, printerOk: res.ok },
+        });
+        return res.ok ? { ok: true } : { ok: false, error: 'printer_rejected' };
+    } catch (e) {
+        console.warn('printRecipeIngredients failed:', e);
+        return { ok: false, error: e?.message || 'print_failed' };
+    }
+}
+
 export function renderFreeTextXml(freePayload) {
     const copies = Math.max(1, Math.min(20, Math.floor(Number(freePayload.copies) || 1)));
     // Stitch N copies inside the same envelope = one HTTP round-trip,
