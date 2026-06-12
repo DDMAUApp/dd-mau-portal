@@ -25,7 +25,7 @@
 //      CORS / etc." — we surface the underlying error so misconfig is
 //      diagnosable from the staff side without devtools).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
 import { ALLERGEN_ORDER, allergenLabel } from '../data/allergens';
@@ -105,17 +105,22 @@ export default function PrintLabelModal({
 
     // The recipe-shaped object we feed downstream. In editable mode
     // we synthesize it from local state so the preview + the final
-    // print payload both reflect the user's edits.
-    const effectiveRecipe = editable
+    // print payload both reflect the user's edits. useMemo — as an
+    // inline literal this got a NEW identity every render, busting the
+    // previewPayload memo below, so every unrelated state change
+    // (copies +/-, slot toggle) re-rendered the whole label preview.
+    // Andrew 2026-06-12: "when you press + quantity it glitches".
+    const effectiveRecipe = useMemo(() => (editable
         ? {
-            titleEn: editTitle || tx('Untitled', 'Sin título'),
-            titleEs: editTitleEs || editTitle || tx('Untitled', 'Sin título'),
+            titleEn: editTitle || (isEs ? 'Sin título' : 'Untitled'),
+            titleEs: editTitleEs || editTitle || (isEs ? 'Sin título' : 'Untitled'),
             allergens: editAllergens,
             ingredientsEn: [],
             ingredientsEs: [],
             category: recipe?.category || 'Other',
         }
-        : recipe;
+        : recipe
+    ), [editable, editTitle, editTitleEs, editAllergens, recipe, isEs]);
 
     // Live config so a fresh admin edit takes effect without reload.
     // Resubscribes when the slot toggles so the "Printer ready /
@@ -524,7 +529,10 @@ export default function PrintLabelModal({
 //   • title                          — medium-bold
 //   • meta / allergens / ingredients — small
 //   • footer (DD MAU)                — small bold
-function LabelPreview({ payload }) {
+// memo: with effectiveRecipe/previewPayload stable above, copies +/-
+// and other unrelated taps now skip re-rendering the preview entirely
+// — it only repaints when the label content actually changes.
+const LabelPreview = memo(function LabelPreview({ payload }) {
     return (
         <div className="text-center font-sans">
             {payload.prepDateLabel && (
@@ -600,7 +608,7 @@ function LabelPreview({ payload }) {
             </div>
         </div>
     );
-}
+});
 
 function pickIngredientsForLabel(recipe, language) {
     if (!recipe) return [];

@@ -122,6 +122,19 @@ export default function DateStickerPrinter({
     useEffect(() => {
         return subscribeStickerLists(setStickerLists);
     }, []);
+    // Pre-load the print modal's lazy chunk while the user is still
+    // browsing — the first 🏷 tap used to pay the chunk download
+    // (black-overlay flash = "glitchy" open, Andrew 2026-06-12).
+    // Idle-time fetch; by tap time the modal mounts instantly.
+    useEffect(() => {
+        const warm = () => { import('./PrintLabelModal').catch(() => {}); };
+        if (typeof requestIdleCallback === 'function') {
+            const id = requestIdleCallback(warm, { timeout: 3000 });
+            return () => cancelIdleCallback(id);
+        }
+        const t = setTimeout(warm, 800);
+        return () => clearTimeout(t);
+    }, []);
     // Edit Mode — admin-only. When ON, each row in the flat sections
     // becomes an editable form with delete + add-row buttons. Off
     // by default so the normal print-a-sticker flow stays clean.
