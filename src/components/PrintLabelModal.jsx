@@ -25,7 +25,7 @@
 //      CORS / etc." — we surface the underlying error so misconfig is
 //      diagnosable from the staff side without devtools).
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
 import { ALLERGEN_ORDER, allergenLabel } from '../data/allergens';
@@ -97,11 +97,13 @@ export default function PrintLabelModal({
     const [editAllergens, setEditAllergens] = useState(
         Array.isArray(recipe?.allergens) ? recipe.allergens : []
     );
-    const toggleAllergen = (code) => {
+    // useCallback — handed to the memo'd EditableIdentity section, so
+    // a fresh arrow per render would defeat its bail-out.
+    const toggleAllergen = useCallback((code) => {
         setEditAllergens(prev => prev.includes(code)
             ? prev.filter(c => c !== code)
             : [...prev, code]);
-    };
+    }, []);
 
     // The recipe-shaped object we feed downstream. In editable mode
     // we synthesize it from local state so the preview + the final
@@ -162,10 +164,10 @@ export default function PrintLabelModal({
         try { return localStorage.getItem('ddmau:labelPreset') || DEFAULT_LABEL_SIZE_PRESET; }
         catch { return DEFAULT_LABEL_SIZE_PRESET; }
     });
-    const setPresetPersistent = (id) => {
+    const setPresetPersistent = useCallback((id) => {
         setPresetId(id);
         try { localStorage.setItem('ddmau:labelPreset', id); } catch {}
-    };
+    }, []);
     // Effective format: admin's saved format + preset overrides on top.
     // printerType picks the right preset list (Epson vs Brother) so
     // the stamped _presetWidthMm/_presetHeightMm match the loaded
@@ -190,6 +192,12 @@ export default function PrintLabelModal({
         notes,
         format: effectiveFormat,
     }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes, effectiveFormat]);
+    // Defer the preview one beat behind input. Without this, every
+    // keystroke / chip tap re-painted the preview in the SAME frame as
+    // the input echo — on older iPads that dropped frames ("glitchy",
+    // Andrew 2026-06-12). The urgent render updates just the control
+    // the user touched; the preview catches up at idle priority.
+    const deferredPayload = useDeferredValue(previewPayload);
 
     // "Ready" = enabled and (Brother [browser print dialog, no IP needed]
     // OR Epson with an IP filled in). printerType + isBrotherPrinter
@@ -278,179 +286,50 @@ export default function PrintLabelModal({
                         item without needing a recipe entry. Title becomes
                         an input; allergens become tappable chips. */}
                     {editable && (
-                        <div className="space-y-2 pb-3 border-b border-dd-line">
-                            <label className="block">
-                                <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                                    {tx('Item name', 'Nombre del artículo')}
-                                </span>
-                                <input
-                                    type="text"
-                                    value={editTitle}
-                                    onChange={(e) => setEditTitle(e.target.value.slice(0, 60))}
-                                    placeholder={tx('e.g. "Romaine Lettuce", "Beef Stock"', 'ej. "Lechuga romana"')}
-                                    autoFocus
-                                    className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm font-bold focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
-                                />
-                            </label>
-                            {isEs && (
-                                <label className="block">
-                                    <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                                        {tx('Nombre en inglés (opcional)', 'English name (optional)')}
-                                    </span>
-                                    <input
-                                        type="text"
-                                        value={editTitleEs}
-                                        onChange={(e) => setEditTitleEs(e.target.value.slice(0, 60))}
-                                        className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
-                                    />
-                                </label>
-                            )}
-                            <div>
-                                <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                                    {tx('Allergens (tap to toggle)', 'Alérgenos (tocar para alternar)')}
-                                </span>
-                                <div className="flex flex-wrap gap-1">
-                                    {ALLERGEN_ORDER.map(code => {
-                                        const on = editAllergens.includes(code);
-                                        return (
-                                            <button key={code}
-                                                onClick={() => toggleAllergen(code)}
-                                                className={`px-2 py-1 rounded-full text-[11px] font-bold border transition ${on
-                                                    ? 'bg-amber-100 border-amber-400 text-amber-900'
-                                                    : 'bg-white border-dd-line text-dd-text-2 hover:bg-dd-bg'}`}>
-                                                {allergenLabel(code, language)}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
+                        <EditableIdentity
+                            editTitle={editTitle}
+                            editTitleEs={editTitleEs}
+                            editAllergens={editAllergens}
+                            setEditTitle={setEditTitle}
+                            setEditTitleEs={setEditTitleEs}
+                            toggleAllergen={toggleAllergen}
+                            language={language}
+                            isEs={isEs}
+                            autoFocusTitle={!recipe?.titleEn}
+                        />
                     )}
 
                     {/* Shelf life — quick chips + step buttons */}
-                    <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
-                            {tx('Shelf life (days)', 'Días de vida útil')}
-                        </label>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => setShelfLifeDays(d => Math.max(1, d - 1))}
-                                className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
-                                −
-                            </button>
-                            <div className="flex-1 text-center">
-                                <div className="text-2xl font-black text-dd-green">{shelfLifeDays}</div>
-                                <div className="text-[10px] text-dd-text-2">
-                                    {tx('days', 'días')}
-                                </div>
-                            </div>
-                            <button
-                                onClick={() => setShelfLifeDays(d => Math.min(14, d + 1))}
-                                className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
-                                +
-                            </button>
-                        </div>
-                        <div className="flex gap-1 mt-2 flex-wrap">
-                            {[1, 3, 5, 7].map(d => (
-                                <button key={d}
-                                    onClick={() => setShelfLifeDays(d)}
-                                    className={`px-3 py-1 rounded-full text-xs font-bold border transition ${shelfLifeDays === d
-                                        ? 'bg-dd-green text-white border-dd-green'
-                                        : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
-                                    {d}d
-                                </button>
-                            ))}
-                            <span className="text-[10px] text-dd-text-2 italic self-center ml-1">
-                                {tx(`default ${defaultDays}d`, `pred. ${defaultDays}d`)}
-                            </span>
-                        </div>
-                    </div>
+                    <ShelfLifeSection
+                        shelfLifeDays={shelfLifeDays}
+                        setShelfLifeDays={setShelfLifeDays}
+                        defaultDays={defaultDays}
+                        isEs={isEs}
+                    />
 
                     {/* Notes (optional) */}
-                    <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                            {tx('Notes (optional)', 'Notas (opcional)')}
-                        </label>
-                        <input
-                            type="text"
-                            value={notes}
-                            onChange={(e) => setNotes(e.target.value.slice(0, 120))}
-                            placeholder={tx('e.g. "batch #3", "extra chili"', 'ej. "lote #3"')}
-                            className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
-                        />
-                    </div>
+                    <NotesField notes={notes} setNotes={setNotes} isEs={isEs} />
 
                     {/* Copies — Andrew 2026-05-20. One Print tap can
                         spit out N identical labels (one per container
                         in a batch). Batched into a single envelope so
                         the printer cuts in sequence. */}
-                    <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                            {tx('Copies', 'Copias')}
-                        </label>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => setCopies(c => Math.max(1, c - 1))}
-                                className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
-                                −
-                            </button>
-                            <div className="w-14 text-center text-2xl font-black text-dd-green">
-                                {copies}
-                            </div>
-                            <button
-                                onClick={() => setCopies(c => Math.min(20, c + 1))}
-                                className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
-                                +
-                            </button>
-                            <div className="flex gap-1 ml-auto flex-wrap">
-                                {[1, 3, 5, 10].map(n => (
-                                    <button key={n} onClick={() => setCopies(n)}
-                                        className={`px-2.5 py-1 rounded text-[11px] font-bold border transition ${copies === n
-                                            ? 'bg-dd-green text-white border-dd-green'
-                                            : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
-                                        {n}×
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
+                    <CopiesSection copies={copies} setCopies={setCopies} isEs={isEs} />
 
                     {/* Label size tabs — Andrew 2026-05-20: "3 tabs
                         in the print screen for the labels. 3x3 3x2
                         3x1.5". Staff picks the size that matches the
-                        roll loaded on the printer. Smaller sizes
-                        auto-hide non-essential sections so the date
-                        + title still dominate. The tab options come
+                        roll loaded on the printer. The tab options come
                         from `sizePresets` which is per-printer-type:
                         Epson shows 3×3/3×2/3×1.5 (80mm paper),
                         Brother shows 2.4×2.4/2.4×1.5/2.4×1 (62mm
                         DK-4205 roll). */}
-                    <div>
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
-                            {tx('Label size', 'Tamaño de etiqueta')}
-                        </div>
-                        {/* Tabs — Small / Medium / Large. Dimensions
-                            stripped 2026-05-20 ("staff will know the
-                            size") — preset still carries widthMm /
-                            heightMm under the hood for the Brother
-                            @page sizing, just not shown in the UI. */}
-                        <div className="flex gap-1 mb-2">
-                            {sizePresets.map(p => {
-                                const active = p.id === presetId;
-                                return (
-                                    <button key={p.id}
-                                        onClick={() => setPresetPersistent(p.id)}
-                                        className={`flex-1 px-2 py-3 rounded-lg text-sm font-bold border-2 transition ${
-                                            active
-                                                ? 'bg-dd-text text-white border-dd-text'
-                                                : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
-                                        }`}>
-                                        {isEs ? p.nameEs : p.nameEn}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
+                    <SizePresetTabs
+                        sizePresets={sizePresets}
+                        presetId={presetId}
+                        onPick={setPresetPersistent}
+                        isEs={isEs}
+                    />
 
                     {/* Preview — what the printer will produce */}
                     <div>
@@ -458,7 +337,7 @@ export default function PrintLabelModal({
                             {tx('Preview (what prints)', 'Vista previa')}
                         </div>
                         <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 text-dd-text">
-                            <LabelPreview payload={previewPayload} />
+                            <LabelPreview payload={deferredPayload} />
                         </div>
                     </div>
 
@@ -519,6 +398,207 @@ export default function PrintLabelModal({
         </ModalPortal>
     );
 }
+
+// ── Memo'd body sections ────────────────────────────────────────────
+// Andrew 2026-06-12: "the sticker page is still glitchy." The v1.0.51
+// pass memoized the preview, but every keystroke / +tap still re-ran
+// the ENTIRE modal body (allergen chips, size tabs, copies row, …).
+// Each section is now its own memo component with stable props (the
+// useState setters + useCallback handlers above), so a tap re-renders
+// only the section it touched. Combined with the deferred preview,
+// the urgent frame is just one small subtree.
+
+// Editable item identity — only in quick-label mode. Lets a receiver /
+// cook print a date label for any item without a recipe entry. Title
+// becomes an input; allergens become tappable chips.
+//
+// autoFocusTitle: ONLY when the modal opened with an empty name (the
+// blank quick-label path). Sticker rows arrive pre-filled — popping
+// the iOS keyboard at the same instant the modal animates in was the
+// single biggest "glitchy open" on the iPads, and staff rarely edit
+// the pre-filled name anyway.
+const EditableIdentity = memo(function EditableIdentity({
+    editTitle, editTitleEs, editAllergens,
+    setEditTitle, setEditTitleEs, toggleAllergen,
+    language, isEs, autoFocusTitle,
+}) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div className="space-y-2 pb-3 border-b border-dd-line">
+            <label className="block">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                    {tx('Item name', 'Nombre del artículo')}
+                </span>
+                <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value.slice(0, 60))}
+                    placeholder={tx('e.g. "Romaine Lettuce", "Beef Stock"', 'ej. "Lechuga romana"')}
+                    autoFocus={autoFocusTitle}
+                    className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm font-bold focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                />
+            </label>
+            {isEs && (
+                <label className="block">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                        {tx('Nombre en inglés (opcional)', 'English name (optional)')}
+                    </span>
+                    <input
+                        type="text"
+                        value={editTitleEs}
+                        onChange={(e) => setEditTitleEs(e.target.value.slice(0, 60))}
+                        className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                    />
+                </label>
+            )}
+            <div>
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                    {tx('Allergens (tap to toggle)', 'Alérgenos (tocar para alternar)')}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                    {ALLERGEN_ORDER.map(code => {
+                        const on = editAllergens.includes(code);
+                        return (
+                            <button key={code}
+                                onClick={() => toggleAllergen(code)}
+                                className={`px-2 py-1 rounded-full text-[11px] font-bold border transition ${on
+                                    ? 'bg-amber-100 border-amber-400 text-amber-900'
+                                    : 'bg-white border-dd-line text-dd-text-2 hover:bg-dd-bg'}`}>
+                                {allergenLabel(code, language)}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+        </div>
+    );
+});
+
+const ShelfLifeSection = memo(function ShelfLifeSection({ shelfLifeDays, setShelfLifeDays, defaultDays, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                {tx('Shelf life (days)', 'Días de vida útil')}
+            </label>
+            <div className="flex items-center gap-2">
+                <button
+                    onClick={() => setShelfLifeDays(d => Math.max(1, d - 1))}
+                    className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
+                    −
+                </button>
+                <div className="flex-1 text-center">
+                    <div className="text-2xl font-black text-dd-green">{shelfLifeDays}</div>
+                    <div className="text-[10px] text-dd-text-2">
+                        {tx('days', 'días')}
+                    </div>
+                </div>
+                <button
+                    onClick={() => setShelfLifeDays(d => Math.min(14, d + 1))}
+                    className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
+                    +
+                </button>
+            </div>
+            <div className="flex gap-1 mt-2 flex-wrap">
+                {[1, 3, 5, 7].map(d => (
+                    <button key={d}
+                        onClick={() => setShelfLifeDays(d)}
+                        className={`px-3 py-1 rounded-full text-xs font-bold border transition ${shelfLifeDays === d
+                            ? 'bg-dd-green text-white border-dd-green'
+                            : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
+                        {d}d
+                    </button>
+                ))}
+                <span className="text-[10px] text-dd-text-2 italic self-center ml-1">
+                    {tx(`default ${defaultDays}d`, `pred. ${defaultDays}d`)}
+                </span>
+            </div>
+        </div>
+    );
+});
+
+const NotesField = memo(function NotesField({ notes, setNotes, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                {tx('Notes (optional)', 'Notas (opcional)')}
+            </label>
+            <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value.slice(0, 120))}
+                placeholder={tx('e.g. "batch #3", "extra chili"', 'ej. "lote #3"')}
+                className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+            />
+        </div>
+    );
+});
+
+const CopiesSection = memo(function CopiesSection({ copies, setCopies, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                {tx('Copies', 'Copias')}
+            </label>
+            <div className="flex items-center gap-2">
+                <button
+                    onClick={() => setCopies(c => Math.max(1, c - 1))}
+                    className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
+                    −
+                </button>
+                <div className="w-14 text-center text-2xl font-black text-dd-green">
+                    {copies}
+                </div>
+                <button
+                    onClick={() => setCopies(c => Math.min(20, c + 1))}
+                    className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
+                    +
+                </button>
+                <div className="flex gap-1 ml-auto flex-wrap">
+                    {[1, 3, 5, 10].map(n => (
+                        <button key={n} onClick={() => setCopies(n)}
+                            className={`px-2.5 py-1 rounded text-[11px] font-bold border transition ${copies === n
+                                ? 'bg-dd-green text-white border-dd-green'
+                                : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
+                            {n}×
+                        </button>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+});
+
+// Tabs — Small / Medium / Large. Dimensions stripped 2026-05-20
+// ("staff will know the size") — preset still carries widthMm /
+// heightMm under the hood for the Brother @page sizing.
+const SizePresetTabs = memo(function SizePresetTabs({ sizePresets, presetId, onPick, isEs }) {
+    return (
+        <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                {isEs ? 'Tamaño de etiqueta' : 'Label size'}
+            </div>
+            <div className="flex gap-1 mb-2">
+                {sizePresets.map(p => {
+                    const active = p.id === presetId;
+                    return (
+                        <button key={p.id}
+                            onClick={() => onPick(p.id)}
+                            className={`flex-1 px-2 py-3 rounded-lg text-sm font-bold border-2 transition ${
+                                active
+                                    ? 'bg-dd-text text-white border-dd-text'
+                                    : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
+                            }`}>
+                            {isEs ? p.nameEs : p.nameEn}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+});
 
 // Label preview — JSX with REAL relative font sizes so admin sees
 // how the date dominates the sticker at a glance. Mirrors the
