@@ -32,6 +32,24 @@ function isNative() {
     catch { return false; }
 }
 
+// Hide the native splash screen. Idempotent + safe to call from any
+// path (first-paint, bridge init, error boundary, failsafe timeout) —
+// a second call after the splash is already gone is a harmless no-op.
+// No-op on web (no native splash exists). Exported so main.jsx can
+// fire it the instant React paints, instead of waiting on the full
+// initCapacitor() async chain. Andrew 2026-06-13 ("loads so slow").
+let _splashHidden = false;
+export async function hideSplash() {
+    if (!isNative() || _splashHidden) return;
+    _splashHidden = true;
+    try {
+        const { SplashScreen } = await import('@capacitor/splash-screen');
+        await SplashScreen.hide();
+    } catch (e) {
+        console.warn('[cap] splash hide failed:', e?.message);
+    }
+}
+
 // One-shot init. Safe to call multiple times — guarded by a module-
 // level flag so duplicate App.jsx mounts (StrictMode dev double-render)
 // don't double-register listeners.
@@ -105,17 +123,21 @@ export async function initCapacitor() {
     }
 
     // ── Splash screen ────────────────────────────────────────────
-    // Hide the native splash once React has mounted and the first
-    // paint is done. The 1500ms launchShowDuration in capacitor.config
-    // is the FLOOR — splash hides ASAP after that whether or not we
-    // call hide() ourselves. We call it explicitly so the splash
-    // doesn't linger if hydration was faster than expected.
-    try {
-        const { SplashScreen } = await import('@capacitor/splash-screen');
-        await SplashScreen.hide();
-    } catch (e) {
-        console.warn('[cap] splash hide failed:', e?.message);
-    }
+    // 2026-06-13 — Andrew: "the ios app on the ipad loads so slow."
+    // Root cause: the splash used a FIXED 1500ms floor (launchAutoHide
+    // + launchShowDuration:1500), so even when React painted its first
+    // screen at ~300ms the user kept staring at the splash for another
+    // ~1.2s on every cold launch. Fixed delays read as "slow."
+    //
+    // New model: launchAutoHide is now FALSE (capacitor.config.ts) — the
+    // splash never hides on a timer. hideSplash() is called from
+    // main.jsx the moment React commits + paints its first frame (double
+    // rAF), so the app appears exactly as soon as it's ready and not a
+    // millisecond later. main.jsx also arms a 2.5s failsafe + the
+    // RootErrorBoundary hides it, so a render failure can never strand
+    // the user on the splash forever. We still call it here as a
+    // belt-and-suspenders backup once the native bridge is up.
+    hideSplash();
 
     // ── Status bar ───────────────────────────────────────────────
     // Default state: dark icons on light background (matches the

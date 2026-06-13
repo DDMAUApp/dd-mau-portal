@@ -28,6 +28,10 @@ class RootErrorBoundary extends Component {
     static getDerivedStateFromError(error) { return { error }; }
     componentDidCatch(error, info) {
         try { console.error('[RootErrorBoundary]', error, info?.componentStack); } catch {}
+        // If the very first render threw, the splash (launchAutoHide is
+        // off now) would otherwise sit forever. Hide it so the fallback
+        // UI is visible. Idempotent + no-op on web.
+        try { hideSplash(); } catch {}
     }
     render() {
         if (!this.state.error) return this.props.children;
@@ -79,7 +83,7 @@ class RootErrorBoundary extends Component {
 // status bar style, splash hide, keyboard listeners, Android back
 // button, and Capgo OTA on native builds. No-op on the web build
 // (Capacitor.isNativePlatform() returns false in browsers).
-import { initCapacitor } from './capacitor-bridge.js';
+import { initCapacitor, hideSplash } from './capacitor-bridge.js';
 // Sentry — Andrew 2026-05-26. Initialised BEFORE React renders so
 // the very first render is instrumented. No-op when VITE_SENTRY_DSN
 // is missing (dev or fresh-clone state) — see src/data/sentryClient.js.
@@ -163,3 +167,18 @@ root.render(
         <AppToast />
     </RootErrorBoundary>
 );
+
+// ── Hide the native splash the instant the first frame paints ────────
+// 2026-06-13 — Andrew: "the ios app on the ipad loads so slow." The
+// splash used a fixed 1500ms floor, so a fast iPad that painted its
+// first screen at ~300ms still sat on the splash for another ~1.2s.
+// launchAutoHide is now OFF (capacitor.config.ts); we hide here instead.
+// Double rAF = "after React has committed AND the browser has painted
+// that commit" — so the splash lifts exactly when there's real content
+// behind it (no white flash, no wasted wait). hideSplash() is idempotent
+// and a no-op on web. The 2.5s setTimeout is a failsafe: if rAF never
+// fires (tab hidden at launch) the splash still can't strand the user.
+try {
+    requestAnimationFrame(() => requestAnimationFrame(() => { hideSplash(); }));
+    setTimeout(() => { hideSplash(); }, 2500);
+} catch { try { hideSplash(); } catch {} }

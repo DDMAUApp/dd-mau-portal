@@ -97,10 +97,18 @@ const config: CapacitorConfig = {
 
     plugins: {
         SplashScreen: {
-            // 1.5s feels native — long enough to hide the JS hydration
-            // gap, short enough that staff don't perceive a delay.
+            // 2026-06-13 — Andrew: "the ios app on the ipad loads so
+            // slow." launchAutoHide was TRUE with a 1500ms floor, so the
+            // splash sat for a fixed 1.5s on EVERY cold launch even though
+            // React paints its first screen at ~300ms on the A16 iPad —
+            // that fixed wait is what read as "slow." Now autoHide is OFF
+            // and src/main.jsx calls SplashScreen.hide() the instant React
+            // paints its first frame (double-rAF), with a 2.5s failsafe +
+            // an error-boundary hide so a render failure can't strand the
+            // splash. launchShowDuration is moot with autoHide off but
+            // left as documentation of the old ceiling.
             launchShowDuration: 1500,
-            launchAutoHide: true,
+            launchAutoHide: false,
             backgroundColor: '#0E1116',
             androidScaleType: 'CENTER_CROP',
             showSpinner: false,
