@@ -108,6 +108,23 @@ const BOH_ROLE_HINTS = new Set([
     'Kitchen Manager', 'Asst Kitchen Manager',
 ]);
 
+// ── useStableCallback — "latest ref" / useEvent pattern ──────────────
+// Returns a callback whose IDENTITY never changes (so React.memo'd
+// children that receive it don't re-render when the parent re-renders),
+// but which ALWAYS invokes the most-recent version of `fn`. We refresh
+// the ref on every render, so the wrapper closes over the latest state
+// at call time — there is NO dependency array to forget, hence NO
+// stale-closure risk. Use ONLY for event handlers (fired after commit,
+// from user interaction), never for values read synchronously during
+// render. This lets us memoize WeeklyGrid below WITHOUT touching any of
+// the ~50 mutation handler bodies — their logic stays byte-for-byte
+// identical, we just hand stable wrappers to the children.
+function useStableCallback(fn) {
+    const ref = useRef(fn);
+    ref.current = fn;
+    return useRef((...args) => ref.current(...args)).current;
+}
+
 // Resolve a staff member's side from their explicit scheduleSide field,
 // falling back to role inference. Default = 'foh'.
 const resolveStaffSide = (staff) => {
@@ -5268,6 +5285,95 @@ ${dayBlocks}
         );
     };
 
+    // ── Stable callbacks for WeeklyGrid (2026-06-14 perf, item #8) ──────
+    // WeeklyGrid is React.memo'd below. For that memo to actually skip
+    // re-renders, every function prop it receives must keep a stable
+    // identity across parent re-renders. These useStableCallback wrappers
+    // give a constant identity but always invoke the latest closure (so
+    // they read fresh state at call time) — no dependency arrays, no
+    // stale-closure risk. The underlying handler bodies are untouched.
+    // The three "selector" wrappers (isStaffOffOn / dateHasOpenOverride /
+    // dateClosedByRecurring) are called during WeeklyGrid's render; their
+    // backing data is also passed as props (timeOff / blocksByDate /
+    // closedWeekdays) so the memo still invalidates when that data moves.
+    const onFillSlotCb = useStableCallback((n) => {
+        if (canEdit) {
+            setFillingNeed(n);
+            setAvailableForDate(n.date);
+        } else {
+            toast(tx(
+                `Open ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} slot on ${n.date}. Ask a manager to assign you.`,
+                `Espacio abierto ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} el ${n.date}. Pídele al gerente que te asigne.`
+            ));
+        }
+    });
+    const onAddSlotCb = useStableCallback((dStr) => { setPrefillNeedDate(dStr); setShowNeedModal(true); });
+    const onCellClickCb = useStableCallback((staff, dateStr) => {
+        if (!canEdit) return;
+        if (dateClosed(dateStr)) {
+            toast(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
+            return;
+        }
+        if (isStaffOffOn(staff.name, dateStr)) {
+            toast(tx(`${staff.name} is on approved time-off for this date.`, `${staff.name} tiene tiempo libre aprobado para esta fecha.`));
+            return;
+        }
+        const matchingNeeds = staffingNeeds.filter(n =>
+            n.date === dateStr &&
+            n.side === side &&
+            (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation || n.location === staff.location) &&
+            ((n.filledStaff || []).length < (n.count || 0)) &&
+            isRoleEligible(staff.role, n.roleGroup) &&
+            !((n.filledStaff || []).includes(staff.name))
+        );
+        if (matchingNeeds.length > 0) {
+            setFillSlotChooser({ staff, dateStr, needs: matchingNeeds });
+        } else {
+            setQuickAddCell({ staff, dateStr });
+        }
+    });
+    const onQuickAddSelectCb = useStableCallback((preset) => {
+        if (!quickAddCell) return;
+        const { staff, dateStr } = quickAddCell;
+        const inferredSide = resolveStaffSide(staff);
+        handleAddShift({
+            staffName: staff.name,
+            date: dateStr,
+            startTime: preset.start,
+            endTime: preset.end,
+            location: (staff.location && staff.location !== 'both')
+                ? staff.location
+                : (storeLocation !== 'both' ? storeLocation : 'webster'),
+            side: inferredSide,
+            isShiftLead: !!staff.shiftLead,
+            isDouble: !!preset.isDouble,
+            notes: '',
+        });
+        setQuickAddCell(null);
+    });
+    const onQuickAddCustomCb = useStableCallback(() => {
+        if (!quickAddCell) return;
+        const { staff, dateStr } = quickAddCell;
+        setQuickAddCell(null);
+        openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+    });
+    const onQuickAddCloseCb = useStableCallback(() => setQuickAddCell(null));
+    const onStaffClickCb = useStableCallback((name) => setPersonFilter(name));
+    const onPtoChipClickCb = useStableCallback((sn, dStr) => setPtoChipTarget({ staffName: sn, dateStr: dStr }));
+    const onDayHeaderClickCb = useStableCallback((dStr) => setAvailableForDate(dStr));
+    const onToggleShiftSelectionCb = useStableCallback(toggleShiftSelection);
+    const onDeleteShiftCb = useStableCallback(handleDeleteShift);
+    const onOfferShiftCb = useStableCallback(handleOfferShift);
+    const onTakeShiftCb = useStableCallback(handleTakeShift);
+    const onCancelOfferCb = useStableCallback(askCancelOffer);
+    const onRequestCoverCb = useStableCallback(handleRequestCover);
+    const onDropShiftCb = useStableCallback(askDropShift);
+    const onUpdateShiftTimesCb = useStableCallback(handleUpdateShiftTimes);
+    const onToggleDateOpenCb = useStableCallback(handleToggleDateOpen);
+    const isStaffOffOnCb = useStableCallback(isStaffOffOn);
+    const dateHasOpenOverrideCb = useStableCallback(dateHasOpenOverride);
+    const dateClosedByRecurringCb = useStableCallback(dateClosedByRecurring);
+
     // ── Render ──
     return (
         <div className="p-4 pb-bottom-nav print:p-2 print:pb-0">
@@ -6146,101 +6252,46 @@ ${dayBlocks}
                                 // WeeklyGrid from re-rendering on every parent tick.
                                 openSlots={memoOpenSlots}
                                 openOffers={memoOpenOffers}
-                                onFillSlot={(n) => {
-                                    if (canEdit) {
-                                        setFillingNeed(n);
-                                        setAvailableForDate(n.date);
-                                    } else {
-                                        toast(tx(
-                                            `Open ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} slot on ${n.date}. Ask a manager to assign you.`,
-                                            `Espacio abierto ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} el ${n.date}. Pídele al gerente que te asigne.`
-                                        ));
-                                    }
-                                }}
+                                onFillSlot={onFillSlotCb}
                                 /* Speed slot add — wires the "+ slot" inline
                                     button on each unassigned-row day cell to
                                     open the StaffingNeedModal pre-filled with
                                     that day's date. */
-                                onAddSlot={(dStr) => { setPrefillNeedDate(dStr); setShowNeedModal(true); }}
+                                onAddSlot={onAddSlotCb}
                                 selectedShiftIds={selectedShiftIds}
-                                onToggleShiftSelection={toggleShiftSelection}
-                                onCellClick={(staff, dateStr) => {
-                                    if (!canEdit) return;
-                                    if (dateClosed(dateStr)) {
-                                        toast(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
-                                        return;
-                                    }
-                                    if (isStaffOffOn(staff.name, dateStr)) {
-                                        toast(tx(`${staff.name} is on approved time-off for this date.`, `${staff.name} tiene tiempo libre aprobado para esta fecha.`));
-                                        return;
-                                    }
-                                    // If there are open slots on this day that match this staff's
-                                    // role + side + location, surface them as a chooser instead of
-                                    // jumping straight to the free-form Add Shift modal.
-                                    const matchingNeeds = staffingNeeds.filter(n =>
-                                        n.date === dateStr &&
-                                        n.side === side &&
-                                        (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation || n.location === staff.location) &&
-                                        ((n.filledStaff || []).length < (n.count || 0)) &&
-                                        isRoleEligible(staff.role, n.roleGroup) &&
-                                        !((n.filledStaff || []).includes(staff.name))
-                                    );
-                                    if (matchingNeeds.length > 0) {
-                                        setFillSlotChooser({ staff, dateStr, needs: matchingNeeds });
-                                    } else {
-                                        // Show inline chip strip — one tap = shift created.
-                                        // The "✏️ custom" chip in the strip opens the full modal.
-                                        setQuickAddCell({ staff, dateStr });
-                                    }
-                                }}
+                                onToggleShiftSelection={onToggleShiftSelectionCb}
+                                onCellClick={onCellClickCb}
                                 quickAddCell={quickAddCell}
-                                onQuickAddSelect={(preset) => {
-                                    if (!quickAddCell) return;
-                                    const { staff, dateStr } = quickAddCell;
-                                    const inferredSide = resolveStaffSide(staff);
-                                    handleAddShift({
-                                        staffName: staff.name,
-                                        date: dateStr,
-                                        startTime: preset.start,
-                                        endTime: preset.end,
-                                        location: (staff.location && staff.location !== 'both')
-                                            ? staff.location
-                                            : (storeLocation !== 'both' ? storeLocation : 'webster'),
-                                        side: inferredSide,
-                                        isShiftLead: !!staff.shiftLead,
-                                        isDouble: !!preset.isDouble,
-                                        notes: '',
-                                    });
-                                    setQuickAddCell(null);
-                                }}
-                                onQuickAddCustom={() => {
-                                    if (!quickAddCell) return;
-                                    const { staff, dateStr } = quickAddCell;
-                                    setQuickAddCell(null);
-                                    openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
-                                }}
-                                onQuickAddClose={() => setQuickAddCell(null)}
+                                onQuickAddSelect={onQuickAddSelectCb}
+                                onQuickAddCustom={onQuickAddCustomCb}
+                                onQuickAddClose={onQuickAddCloseCb}
                                 weekNeeds={memoWeekNeeds}
-                                onDeleteShift={handleDeleteShift}
-                                onStaffClick={(name) => setPersonFilter(name)}
-                                onOfferShift={handleOfferShift}
-                                onTakeShift={handleTakeShift}
-                                onCancelOffer={askCancelOffer}
+                                onDeleteShift={onDeleteShiftCb}
+                                onStaffClick={onStaffClickCb}
+                                onOfferShift={onOfferShiftCb}
+                                onTakeShift={onTakeShiftCb}
+                                onCancelOffer={onCancelOfferCb}
                                 /* Find Cover — urgent push to qualified staff.
                                    See handleRequestCover above for filter logic
                                    (same side, location-compat, not on PTO). */
-                                onRequestCover={handleRequestCover}
+                                onRequestCover={onRequestCoverCb}
                                 blocksByDate={blocksByDate}
                                 eventsByDate={eventsByDate}
-                                onDropShift={askDropShift}
-                                onUpdateShiftTimes={handleUpdateShiftTimes}
-                                isStaffOffOn={isStaffOffOn}
+                                onDropShift={onDropShiftCb}
+                                onUpdateShiftTimes={onUpdateShiftTimesCb}
+                                isStaffOffOn={isStaffOffOnCb}
                                 timeOff={viewerTimeOff}
-                                onPtoChipClick={canEdit ? (sn, dStr) => setPtoChipTarget({ staffName: sn, dateStr: dStr }) : null}
-                                onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
-                                onToggleDateOpen={staffIsAdmin ? handleToggleDateOpen : null}
-                                dateHasOpenOverride={dateHasOpenOverride}
-                                dateClosedByRecurring={dateClosedByRecurring}
+                                onPtoChipClick={canEdit ? onPtoChipClickCb : null}
+                                onDayHeaderClick={canEdit ? onDayHeaderClickCb : null}
+                                onToggleDateOpen={staffIsAdmin ? onToggleDateOpenCb : null}
+                                dateHasOpenOverride={dateHasOpenOverrideCb}
+                                dateClosedByRecurring={dateClosedByRecurringCb}
+                                // closedWeekdays is passed ONLY so React.memo
+                                // re-renders the grid when recurring-closure
+                                // config changes: dateClosedByRecurringCb reads
+                                // it but has a stable identity, so without this
+                                // prop the memo wouldn't notice the change.
+                                closedWeekdays={scheduleSettings?.closedWeekdays}
                             />
                             </GridFitWrapper>
                             {/* Weekly hours summary — managers-only per
@@ -7597,7 +7648,13 @@ function QuickAddSlot({ dateStr, isEn, onAddSlot }) {
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes, onPtoChipClick,
+// 2026-06-14 perf (item #8) — memo-wrapped. All function props now arrive
+// as stable identities (useStableCallback in the parent) and all data props
+// are memoized upstream, so this skips the re-render storm that fired on
+// every unrelated parent tick (notifications, clock, modals). Inner name
+// kept as WeeklyGrid for clean React DevTools display, same pattern as
+// ShiftCube below.
+const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes, onPtoChipClick,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
@@ -7641,7 +7698,10 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
         return dateStr >= start && dateStr <= end;
     });
     const [dragOverCell, setDragOverCell] = useState(null); // "staffName|date" while dragging
-    const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
+    // Memoized on weekStart so the closedByDate useMemo below (which lists
+    // `days` in its deps) actually skips recompute when WeeklyGrid re-renders
+    // for a reason other than the week changing.
+    const days = useMemo(() => DAYS_EN.map((_, i) => addDays(weekStart, i)), [weekStart]);
 
     // ── Auto-scroll the page while dragging a shift near a screen edge ──
     // 2026-06-06 — Andrew: "we can drag a shift from one staff to another
@@ -8413,7 +8473,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
             </table>
         </div>
     );
-}
+});
 
 // Andrew 2026-05-21 perf: memo-wrapped so the 100+ cubes in a busy
 // week's grid don't all re-render when an unrelated bit of parent
