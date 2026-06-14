@@ -237,11 +237,15 @@ function ChatThreadInner({
         // sync hiccup), surface an error state with Retry instead of
         // leaving the spinner spinning forever.
         const timeoutId = setTimeout(() => {
-            // Use a functional check so we don't capture stale state.
-            // If loading is still true after 8s, something's wrong.
+            // 2026-06-14 — bumped 8s → 15s (matches the chat list). On iOS
+            // WKWebView the Firestore stream goes stale after backgrounding,
+            // so the first message snapshot on reopen can take >8s while the
+            // SDK reconnects — the old floor tripped Retry prematurely. The
+            // visibilitychange auto-retry below heals a truly-dead stream
+            // without a tap.
             setLoadError((prev) => prev || 'timeout');
             setLoading(false);
-        }, 8000);
+        }, 15000);
 
         const q = query(
             collection(db, 'chats', chat.id, 'messages'),
@@ -298,6 +302,20 @@ function ChatThreadInner({
         setLoading(true);
         setSubscriptionGen(g => g + 1);
     }, []);
+
+    // 2026-06-14 — auto-recover on foreground (mirrors ChatCenter). If the app
+    // was backgrounded and the iOS WKWebView Firestore stream went stale, the
+    // open thread can land on a dead listener and show Retry. When the app/tab
+    // becomes visible again and we're in an error state, re-fire the message
+    // subscription automatically so it heals without a tap.
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState !== 'visible') return;
+            if (loadError) retryMessageLoad();
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => document.removeEventListener('visibilitychange', onVisible);
+    }, [loadError, retryMessageLoad]);
 
     // Load-older handler — bumps the limit by another 50. Re-runs the
     // subscription effect above against the new limit, which re-fetches

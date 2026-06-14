@@ -190,12 +190,17 @@ export default function ChatCenter({
         setChatsLoading(true);
         setChatsError(null);
         const timeoutId = setTimeout(() => {
-            // 6s on the chat list is more generous than the 8s on the
-            // message thread — chat list is the primary surface so a
-            // slow-network signal here matters more.
+            // 2026-06-14 — bumped 6s → 15s. Andrew: "sometimes when I go
+            // into the chat it loads then says retry." On iOS WKWebView the
+            // Firestore stream goes stale after the app is backgrounded, so
+            // the first snapshot on reopen can take >6s while the SDK
+            // re-establishes its connection — the old 6s floor tripped the
+            // Retry UI even though the data was about to arrive. 15s gives
+            // the cold/stale connection room; the visibilitychange auto-retry
+            // below covers the genuinely-dead-stream case without a tap.
             setChatsError((prev) => prev || 'timeout');
             setChatsLoading(false);
-        }, 6000);
+        }, 15000);
         const q = query(
             collection(db, 'chats'),
             where('members', 'array-contains', staffName),
@@ -241,6 +246,22 @@ export default function ChatCenter({
         setChatsLoading(true);
         setChatsSubGen(g => g + 1);
     }, []);
+
+    // 2026-06-14 — auto-recover on foreground. Andrew: chat sometimes shows
+    // "retry." The usual trigger is backgrounding the app (iOS WKWebView lets
+    // the Firestore stream go stale), then reopening chat onto a dead listener
+    // that never delivers a first snapshot → timeout → Retry. When the app/tab
+    // becomes visible again, if we're currently in an error state, re-fire the
+    // subscription automatically so it heals before the user has to tap. Cheap
+    // (one listener; only acts when errored) and works on web + both WebViews.
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState !== 'visible') return;
+            if (chatsError) retryChatsLoad();
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => document.removeEventListener('visibilitychange', onVisible);
+    }, [chatsError, retryChatsLoad]);
 
     // ── Auto-channel sync ─────────────────────────────────────────
     // On first mount + whenever staffList changes, make sure the
