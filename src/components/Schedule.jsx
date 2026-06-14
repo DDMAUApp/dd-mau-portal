@@ -5537,7 +5537,7 @@ ${dayBlocks}
                     <Search size={14} strokeWidth={2.25} aria-hidden="true"
                         className={gridFitToScreen ? 'text-white' : 'text-dd-green-700'} />
                     {gridFitToScreen
-                        ? tx('Exit overview — tap to edit shifts', 'Salir vista general — toca para editar')
+                        ? tx('Overview — pinch to zoom in · tap to exit', 'Vista general — pellizca para acercar · toca para salir')
                         : tx('Overview: fit week to screen', 'Vista general: ajustar semana a pantalla')}
                 </button>
             )}
@@ -6844,12 +6844,23 @@ ${dayBlocks}
 function GridFitWrapper({ enabled, children }) {
     const outerRef = useRef(null);
     const innerRef = useRef(null);
+    // fit = the baseline "whole week fits the width" scale (computed).
+    // scale = current zoom (>= fit; user can pinch IN past fit).
+    // tx/ty = pan offset in px once zoomed in past fit.
+    const [fit, setFit] = useState(1);
     const [scale, setScale] = useState(1);
+    const [tx, setTx] = useState(0);
+    const [ty, setTy] = useState(0);
     const [scaledHeight, setScaledHeight] = useState(null);
+    const dims = useRef({ natW: 1, natH: 0, outW: 0 });
+    const gesture = useRef(null);
 
     useEffect(() => {
         if (!enabled) {
+            setFit(1);
             setScale(1);
+            setTx(0);
+            setTy(0);
             setScaledHeight(null);
             return;
         }
@@ -6876,7 +6887,13 @@ function GridFitWrapper({ enabled, children }) {
             const naturalWidth = inner.scrollWidth || 1;
             const naturalHeight = inner.scrollHeight || 0;
             const s = Math.min(1, containerWidth / naturalWidth);
+            dims.current = { natW: naturalWidth, natH: naturalHeight, outW: containerWidth };
+            // Re-fit (enable / rotate / resize) resets any pinch zoom + pan
+            // back to the at-a-glance baseline.
+            setFit(s);
             setScale(s);
+            setTx(0);
+            setTy(0);
             setScaledHeight(naturalHeight * s);
         };
         // First measurement after children lay out.
@@ -6893,16 +6910,88 @@ function GridFitWrapper({ enabled, children }) {
         };
     }, [enabled]);
 
+    // ── Pinch-to-zoom + drag-to-pan (Andrew 2026-06-14: "i cant zoom into
+    //    calendar of shifts" in fit-to-screen overview) ──────────────────
+    // At the fit baseline the overview is look-only (cells too tiny to tap
+    // accurately). Pinch in to read/edit; once zoomed past fit, one finger
+    // pans and taps reach the shifts. All math is anchored to the gesture
+    // START values so it stays correct even if React state lags the rapid
+    // touchmove stream. Only active when enabled — the normal week view
+    // (early-return above) is completely untouched.
+    const MAX_ZOOM = 1.6;
+    // Keep the content from being dragged out of the visible frame.
+    const clampPan = (s, x, y) => {
+        const { natW, natH, outW } = dims.current;
+        const frameH = natH * fit;                 // overview frame height
+        const minX = Math.min(0, outW - natW * s);
+        const minY = Math.min(0, frameH - natH * s);
+        return [Math.max(minX, Math.min(0, x)), Math.max(minY, Math.min(0, y))];
+    };
+    const onTouchStart = (e) => {
+        if (e.touches.length === 2) {
+            const [a, b] = e.touches;
+            const rect = outerRef.current.getBoundingClientRect();
+            gesture.current = {
+                mode: 'pinch',
+                dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY) || 1,
+                midX: (a.clientX + b.clientX) / 2 - rect.left,
+                midY: (a.clientY + b.clientY) / 2 - rect.top,
+                s0: scale, tx0: tx, ty0: ty,
+            };
+        } else if (e.touches.length === 1 && scale > fit * 1.02) {
+            gesture.current = { mode: 'pan', x0: e.touches[0].clientX, y0: e.touches[0].clientY, tx0: tx, ty0: ty };
+        } else {
+            gesture.current = null; // let taps fall through (look at fit / edit when zoomed)
+        }
+    };
+    const onTouchMove = (e) => {
+        const g = gesture.current;
+        if (!g) return;
+        if (g.mode === 'pinch' && e.touches.length === 2) {
+            e.preventDefault();
+            const [a, b] = e.touches;
+            const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+            const ns = Math.max(fit, Math.min(MAX_ZOOM, g.s0 * (dist / g.dist)));
+            // Keep the content point under the pinch midpoint fixed as we scale.
+            const cx = (g.midX - g.tx0) / g.s0;
+            const cy = (g.midY - g.ty0) / g.s0;
+            const [nx, ny] = clampPan(ns, g.midX - cx * ns, g.midY - cy * ns);
+            setScale(ns); setTx(nx); setTy(ny);
+        } else if (g.mode === 'pan' && e.touches.length === 1) {
+            e.preventDefault();
+            const t0 = e.touches[0];
+            const [nx, ny] = clampPan(scale, g.tx0 + (t0.clientX - g.x0), g.ty0 + (t0.clientY - g.y0));
+            setTx(nx); setTy(ny);
+        }
+    };
+    const onTouchEnd = (e) => { if (e.touches.length === 0) gesture.current = null; };
+
     if (!enabled) return <>{children}</>;
+    const zoomed = scale > fit * 1.02;
     return (
-        <div ref={outerRef} style={{ overflow: 'hidden', width: '100%', height: scaledHeight ?? 'auto' }}>
+        <div
+            ref={outerRef}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+            onTouchCancel={onTouchEnd}
+            style={{
+                overflow: 'hidden',
+                width: '100%',
+                height: scaledHeight ?? 'auto',
+                // At fit: allow vertical page scroll + let our 2-finger pinch
+                // through. Zoomed: we own all gestures (pan + pinch).
+                touchAction: zoomed ? 'none' : 'pan-y',
+            }}
+        >
             <div
                 ref={innerRef}
                 style={{
-                    transform: `scale(${scale})`,
+                    transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
                     transformOrigin: 'top left',
                     width: 'max-content',
-                    pointerEvents: 'none',
+                    // Look-only at the fit baseline; tappable once pinched in.
+                    pointerEvents: zoomed ? 'auto' : 'none',
                 }}
             >
                 {children}
