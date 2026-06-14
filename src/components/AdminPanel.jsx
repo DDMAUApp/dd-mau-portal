@@ -13,6 +13,7 @@ import {
 } from '../data/sms';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
+import LaborHistoryPanel from './LaborHistoryPanel';
 import { downloadFile, openExternalUrl } from '../capacitor-bridge';
 import ImportStaffModal from './ImportStaffModal';
 import OffsiteClockSection from './OffsiteClockSection';
@@ -3949,6 +3950,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         );
                     })()}
+
+                    {/* ── LABOR HISTORY — past days' labor %, by hour (Andrew 2026-06-13) ── */}
+                    <LaborHistoryPanel language={language} storeLocation={storeLocation} />
 
                     {/* ── INVENTORY AUDIT — who added/subtracted what, when ──────────
                         Parallel to the recipe-view audit. Every count change in
