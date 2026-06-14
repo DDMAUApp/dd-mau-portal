@@ -253,7 +253,7 @@ function vendorColorFor(v) {
 // we no-op so we don't churn the audit log either. The +/- buttons
 // still call updateInventoryCount directly — those are intentional
 // single-tap commits.
-const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit, language }) {
+const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit, language, className }) {
     const [local, setLocal] = useState(String(value || 0));
     const [editing, setEditing] = useState(false);
     // Mirror the external value into the input when NOT editing, so a
@@ -297,7 +297,7 @@ const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit,
                 }
             }}
             aria-label={language === "es" ? "Cantidad" : "Quantity"}
-            className={`w-12 h-9 text-center font-bold text-lg rounded-lg border-2 ${numericLocal > 0 ? "text-green-700 border-green-200 bg-white" : "text-gray-300 border-gray-200 bg-white"} focus:border-mint-700 focus:outline-none tabular-nums`}
+            className={className || `w-12 h-9 text-center font-bold text-lg rounded-lg border-2 ${numericLocal > 0 ? "text-green-700 border-green-200 bg-white" : "text-gray-300 border-gray-200 bg-white"} focus:border-mint-700 focus:outline-none tabular-nums`}
         />
     );
 });
@@ -412,18 +412,17 @@ const LocationItemRow = memo(function LocationItemRow({
             <div className="flex items-center gap-2 flex-shrink-0">
                 <button onClick={() => onUpdate(id, Math.max(0, count - 1), -1)}
                     className={`w-11 h-11 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
-                <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
+                {/* 2026-06-13 perf — was a raw onChange input that wrote to
+                    Firestore on EVERY keystroke (typing "100" = 3 audit docs +
+                    3 inventory updates). The location view is the DEFAULT
+                    counting view, so this was the heaviest write path. Now uses
+                    the same commit-on-blur InventoryCountInput the category
+                    view already uses: one write per finished entry. The +/-
+                    buttons still write per tap (single write each, fine). */}
+                <InventoryCountInput
                     value={count}
-                    onChange={(e) => {
-                        const raw = e.target.value.replace(/[^0-9]/g, '');
-                        const n = parseInt(raw || '0', 10);
-                        if (!Number.isFinite(n)) return;
-                        onUpdate(id, Math.max(0, n));
-                    }}
-                    onFocus={(e) => e.target.select()}
+                    onCommit={(n) => onUpdate(id, n)}
+                    language={language}
                     className="w-14 h-11 text-center text-base font-bold rounded-lg border-2 border-gray-200 bg-white text-gray-800 focus:border-mint-500 focus:outline-none tabular-nums" />
                 <button onClick={() => onUpdate(id, count + 1, 1)}
                     className="w-11 h-11 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
@@ -767,6 +766,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // to "location" (items grouped by walk-in / dry storage / etc.) -
             // matches how staff actually count during a shift.
             const [invViewMode, setInvViewMode] = useState("location"); // "category" | "location" | "vendor" | "split" | "pricing"
+            // 2026-06-13 perf — the 7 vendor_prices listeners (sysco/usfoods/
+            // costco + trigger/status docs) only feed the Pricing sub-tab,
+            // which most opens never touch. Gate them behind the first time
+            // Pricing is opened so a normal Operations open doesn't pay 7 doc
+            // reads + 7 live listeners up front. Once opened they persist.
+            const [pricingEverOpened, setPricingEverOpened] = useState(false);
+            useEffect(() => {
+                if (invViewMode === "pricing") setPricingEverOpened(true);
+            }, [invViewMode]);
             const [collapsedCats, setCollapsedCats] = useState({});
             const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(false);
             // Filter to ONLY items currently flagged low-stock
@@ -2194,6 +2202,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // them into their own `[]`-deps effect means a location switch
             // only churns the 5 listeners that actually need to change.
             useEffect(() => {
+                // 2026-06-13 perf — don't attach the 7 vendor_prices listeners
+                // until the Pricing tab has been opened at least once. Saves 7
+                // doc reads + 7 live listeners on every Operations open for the
+                // common case (Pricing rarely viewed). Once opened they stay.
+                if (!pricingEverOpened) return;
                 // Helper: determine if a trigger doc is "stale" (a previous scrape
                 // crashed or got killed mid-run, leaving status="running"/"pending"
                 // forever and locking the refresh button). 10-min ceiling matches
@@ -2277,7 +2290,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     pendingTimeouts.forEach(id => clearTimeout(id));
                     pendingTimeouts.clear();
                 };
-            }, []);
+            }, [pricingEverOpened]);
 
             // Midnight auto-reset: check every 60s if the business-day date has changed.
             // All mutable state read here goes through refs so the interval is installed once

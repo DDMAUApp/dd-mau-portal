@@ -220,7 +220,18 @@ export default function DateStickerPrinter({
         return base;
     }, [customItems, stickerLists]);
 
-    // AI items mirror the index.
+    // AI items mirror the index. 2026-06-13 perf — `searchIndex` gets a new
+    // reference on every Firestore snapshot echo (subscribeStickerLists /
+    // subscribeAllCustomItems rebuild fresh arrays each tick), which churned
+    // `aiItems` identity and re-fired the useAiSearch effect mid-typing —
+    // restarting its debounce and re-billing the Claude search call. Key the
+    // memo on the searchable CONTENT (id+name) instead of the array reference,
+    // so unrelated echoes (a row's lastSeen, another section's edit) no longer
+    // invalidate it. The AI CF already caches on the same fingerprint, so
+    // behavior is identical — just far fewer effect runs.
+    const aiItemsKey = useMemo(
+        () => searchIndex.map(r => r.id + '|' + (r.nameEn || '')).join(''),
+        [searchIndex]);
     const aiItems = useMemo(() => {
         return searchIndex.map(row => ({
             id: row.id,
@@ -230,7 +241,8 @@ export default function DateStickerPrinter({
                 : (row.category || COMPONENT_KIND_TONE[row.componentKind]?.labelEn || row.componentKind),
             subcat: [row.descEn, row.allergens].filter(Boolean).join(' | ').slice(0, 180),
         }));
-    }, [searchIndex]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [aiItemsKey]);
 
     const queryTokens = useMemo(() => expandQueryTermsTight(searchDeferred), [searchDeferred]);
     const hasQuery = queryTokens.length > 0;
@@ -833,7 +845,7 @@ function ComponentList({ components, isEs, tx, onPrint }) {
 // editable mode pre-filled with the component name. Allergens come
 // in blank — cook can add them via the modal's allergen chips if
 // they apply.
-function ComponentSearchResult({ component, isEs, tx, onPrint }) {
+const ComponentSearchResult = memo(function ComponentSearchResult({ component, isEs, tx, onPrint }) {
     const tone = COMPONENT_KIND_TONE[component.componentKind] || COMPONENT_KIND_TONE.side;
     const name = isEs ? (component.nameEs || component.nameEn) : component.nameEn;
     const usedIn = isEs ? component.usedInEs : component.usedIn;
@@ -864,9 +876,9 @@ function ComponentSearchResult({ component, isEs, tx, onPrint }) {
             </button>
         </div>
     );
-}
+});
 
-function ComponentRow({ component, tone, isEs, tx, onPrint }) {
+const ComponentRow = memo(function ComponentRow({ component, tone, isEs, tx, onPrint }) {
     const isNote = component.kind === 'note';
     const name = isEs ? (component.nameEs || component.nameEn) : component.nameEn;
     // Recursive sub-recipe expansion (Phase 2b): try to find a
@@ -939,7 +951,7 @@ function ComponentRow({ component, tone, isEs, tx, onPrint }) {
             )}
         </div>
     );
-}
+});
 
 // ── BuildSheetBrowse ──────────────────────────────────────────────
 // Andrew 2026-05-20: "lets delete the current food items in the

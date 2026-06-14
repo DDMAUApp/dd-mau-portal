@@ -156,6 +156,20 @@ const prewarmChunks = () => {
     import('./components/ChatThread').catch(() => {});
 };
 
+// 2026-06-13 perf (login speed) — the home path is gated behind TWO lazy
+// chunks: AppShellV2 (the shell) and MobileHome/HomeV2 (the landing page).
+// Before, neither was prewarmed, so the moment the PIN was accepted the
+// WebView had to fetch BOTH chunks serially behind Suspense before any home
+// pixel could paint — the exact "login feels slow" gap. Staff stare at the
+// PIN pad for several seconds; we use that idle time to fetch the shell +
+// both home variants so they're cached the instant the PIN lands. Pure
+// prefetch — no behavior change, no eager execution.
+const prewarmShellChunks = () => {
+    import('./v2/AppShellV2').catch(() => {});
+    import('./v2/MobileHome').catch(() => {});
+    import('./v2/HomeV2').catch(() => {});
+};
+
 // Error boundary — catches render errors in child components.
 //
 // The recurring "Something went wrong → refresh fixes it" pattern Andrew
@@ -1002,6 +1016,22 @@ export default function App() {
         };
     }, [staffName]);
 
+    // 2026-06-13 perf (login speed) — while the user is on the PIN screen
+    // (logged out), prefetch the shell + home chunks during idle so the
+    // PIN-accepted → home-painted transition isn't waiting on two serial
+    // chunk downloads. Runs only when logged out; cancels if they sign in
+    // before idle fires (the post-login effect above + Suspense cover that).
+    useEffect(() => {
+        if (staffName) return;
+        const idle = window.requestIdleCallback
+            ? window.requestIdleCallback(() => prewarmShellChunks(), { timeout: 3000 })
+            : setTimeout(prewarmShellChunks, 800);
+        return () => {
+            if (window.cancelIdleCallback && typeof idle === 'number') window.cancelIdleCallback(idle);
+            else clearTimeout(idle);
+        };
+    }, [staffName]);
+
     // FCM push init — wire AFTER staff is logged in AND staffList is loaded.
     // The runbook says push is deployed; before this, enableFcmPush was
     // exported from messaging.js but never called, so tokens were never saved
@@ -1595,7 +1625,12 @@ export default function App() {
     // normal app + a flow for the same frame. pendingBlockingCount > 0
     // means hard-gate: replace the v2 shell entirely with the flow.
     if (pendingBlockingCount === null) {
-        return <div className="min-h-screen bg-dd-bg" />;
+        // 2026-06-13 perf (login speed) — was a blank dd-bg div, which read as
+        // a dead/frozen screen during the post-PIN required-task check (a lazy
+        // chunk import + 1-2 Firestore reads). Show the same TabLoading spinner
+        // used everywhere else so the PIN-accepted → home gap has motion
+        // instead of a blank flash. Same neutral-frame guarantee, friendlier.
+        return <TabLoading language={language} />;
     }
     if (pendingBlockingCount > 0 && !gateBypassed) {
         return (
