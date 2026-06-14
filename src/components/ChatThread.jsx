@@ -352,6 +352,17 @@ function ChatThreadInner({
         if (!chat?.id || !staffName) return;
         const ref = doc(db, 'chats', chat.id);
         const t = setTimeout(() => {
+            // 2026-06-14 — only mark fully-read when the viewer is actually at
+            // the bottom (i.e. has seen the newest messages). Before, any
+            // messages.length change — including new messages streaming in
+            // while the user was scrolled UP reading history — wrote a
+            // read-marker and silently cleared the unread badge for messages
+            // they never saw. atBottomRef is the same flag the auto-scroll
+            // uses; reading .current at fire-time is safe (it's initialized by
+            // the time this delayed callback runs). Opening a chat starts at
+            // bottom (atBottom defaults true), so the normal "open = read"
+            // case is unchanged.
+            if (!atBottomRef.current) return;
             updateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
                 .catch(e => console.warn('markRead failed:', e));
         }, 1500);
@@ -3625,9 +3636,19 @@ async function sendMessage({
         mentions,
         createdAt: serverTimestamp(),
     };
-    // 1) Append message
+    // 1) Append message — this is the ONLY step the send UI waits on.
     const ref = await addDoc(collection(db, 'chats', chat.id, 'messages'), msgDoc);
 
+    // 2026-06-14 perf (chat glitch) — steps 2 (preview update) + 3 (the
+    // per-recipient notification fan-out, 30+ writes on a big channel) used
+    // to be AWAITED before sendMessage returned, so the composer stayed
+    // disabled and the typed text sat in the box until the whole fan-out
+    // settled (felt like a hung/glitchy send on a phone). They're not needed
+    // for the message to exist or appear (the snapshot renders it the moment
+    // the addDoc above lands), so run them detached/fire-and-forget. Each
+    // already swallows its own errors; only the message write (awaited above)
+    // drives the failed-send recovery. We return ref.id immediately.
+    void (async () => {
     // 2) Denormalize chat preview + bump activity
     const preview = type === 'image' ? '📷 Photo'
         : type === 'video' ? '🎬 Video'
@@ -3739,6 +3760,8 @@ async function sendMessage({
             console.warn(`chat notify failed for ${to}:`, e);
         }
     }));
+    })().catch((e) => { console.warn('chat preview/notify fan-out failed:', e?.message); });
+
     return ref.id;
 }
 

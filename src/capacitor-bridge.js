@@ -139,6 +139,20 @@ export async function initCapacitor() {
     // belt-and-suspenders backup once the native bridge is up.
     hideSplash();
 
+    // ── Capgo: notifyAppReady FIRST ──────────────────────────────
+    // 2026-06-14 — call this as early as possible (right after the splash
+    // hides), NOT buried at the end of the init chain behind the status-bar,
+    // keyboard, and back-button awaits. Capgo treats a bundle that doesn't
+    // signal ready within its window as FAILED and rolls back to the previous
+    // bundle (a visible reload that reads as "slow," and on a bad cycle can
+    // loop). Firing it up front removes that risk and shaves the resume path.
+    // Fire-and-forget — the OTA *listeners* are still registered later; this
+    // only moves the readiness signal earlier. Idempotent if the later block
+    // ever also calls it.
+    import('@capgo/capacitor-updater')
+        .then(m => m.CapacitorUpdater.notifyAppReady())
+        .catch(e => console.warn('[cap] early notifyAppReady failed:', e?.message));
+
     // ── Status bar ───────────────────────────────────────────────
     // Default state: dark icons on light background (matches the
     // home/schedule/ops pages). The chat tab flips this to LIGHT
@@ -156,8 +170,12 @@ export async function initCapacitor() {
     // page (chat dark surface vs. light home).
     try {
         const { StatusBar, Style } = await import('@capacitor/status-bar');
-        await StatusBar.setStyle({ style: Style.Dark }); // 'Dark' = dark text
-        await StatusBar.setBackgroundColor({ color: '#FFFFFF' });
+        // 2026-06-14 — don't AWAIT these two cosmetic setters. They're not
+        // needed for first paint (the splash already hid + content is up),
+        // and awaiting them serially delayed the keyboard/back-button/OTA
+        // blocks that follow. Fire-and-forget removes that latency.
+        StatusBar.setStyle({ style: Style.Dark }).catch(() => {}); // 'Dark' = dark text
+        StatusBar.setBackgroundColor({ color: '#FFFFFF' }).catch(() => {});
     } catch (e) {
         console.warn('[cap] status bar init failed:', e?.message);
     }
@@ -267,15 +285,12 @@ export async function initCapacitor() {
         console.warn('[cap] external-link delegate failed:', e?.message);
     }
 
-    // ── Capgo OTA check ──────────────────────────────────────────
-    // Live updates from Capgo. The plugin auto-checks on every
-    // foreground per autoUpdate:true in capacitor.config.ts; calling
-    // notifyAppReady on first launch tells Capgo the bundle survived
-    // hydration and can be promoted to "ready for users". Without
-    // this call, Capgo treats every bundle as still-on-trial.
+    // ── Capgo OTA listeners ──────────────────────────────────────
+    // notifyAppReady() now fires EARLY (right after the splash hide, above) —
+    // see the 2026-06-14 note there for why. This block only registers the
+    // OTA update listeners + the auto-apply-on-reopen behavior.
     try {
         const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
-        await CapacitorUpdater.notifyAppReady();
 
         // ── OTA refresh trigger — no more "close + reopen twice" ──────
         // With autoUpdate, Capgo downloads a newer bundle in the background but

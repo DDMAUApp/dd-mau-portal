@@ -77,11 +77,39 @@ const hydrateSplhFromCache = (loc) => {
     }
 };
 
+// Generic localStorage cache for the HOME-TILE data (86 board + the
+// 14-day shift window). Andrew 2026-06-14: the home screen's 86-count
+// tile and "today's shift" hero rendered as empty skeletons on every
+// cold launch until Firestore replied — the two most-glanced numbers on
+// the page. Mirroring each snapshot to localStorage and seeding state
+// from it lets those tiles paint last-known values instantly, then the
+// live snapshot corrects them within ~1s. 6h TTL keeps a long-idle
+// device from showing very stale numbers before the refresh lands.
+const HOME_CACHE_PREFIX = 'ddmau:homecache:';
+const HOME_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const readHomeCache = (key, fallback) => {
+    try {
+        const raw = localStorage.getItem(HOME_CACHE_PREFIX + key);
+        if (!raw) return fallback;
+        const c = JSON.parse(raw);
+        if (!c?.savedAt) return fallback;
+        if (Date.now() - c.savedAt >= HOME_CACHE_TTL_MS) return fallback;
+        return c.data;
+    } catch { return fallback; }
+};
+const writeHomeCache = (key, data) => {
+    try { localStorage.setItem(HOME_CACHE_PREFIX + key, JSON.stringify({ data, savedAt: Date.now() })); } catch { /* storage full — non-fatal */ }
+};
+
 export function AppDataProvider({ staffName, storeLocation, staffList = [], staffListReady = false, children }) {
     const [notifications, setNotifications] = useState([]);
-    const [shifts14, setShifts14] = useState([]);
+    // shifts14 + eightySix seed from the home-tile cache so the "today's
+    // shift" hero and the 86-count tile paint instantly on cold launch
+    // instead of flashing empty skeletons; the live snapshot corrects them
+    // within ~1s. (Andrew 2026-06-14 — "home takes a few seconds.")
+    const [shifts14, setShifts14] = useState(() => readHomeCache('shifts14', []));
     const [timeOff, setTimeOff] = useState([]);
-    const [eightySix, setEightySix] = useState({ webster: null, maryland: null });
+    const [eightySix, setEightySix] = useState(() => readHomeCache('eightySix', { webster: null, maryland: null }));
     const [labor, setLabor] = useState({ webster: null, maryland: null });
     // laborHistory: last 28 days of laborHistory_{loc} per location,
     // used by Schedule's SPLH advisor + LaborDashboard's historical
@@ -182,6 +210,7 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setShifts14(list);
+            writeHomeCache('shifts14', list);
         }, (err) => console.warn('shifts snapshot failed:', err));
         return () => unsub();
     }, [dayKey]);
@@ -227,10 +256,18 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
     // doesn't need to swap subscriptions on location toggle.
     useEffect(() => {
         const unsubW = onSnapshot(doc(db, 'ops', '86_webster'), (snap) => {
-            setEightySix(prev => ({ ...prev, webster: snap.exists() ? snap.data() : null }));
+            setEightySix(prev => {
+                const next = { ...prev, webster: snap.exists() ? snap.data() : null };
+                writeHomeCache('eightySix', next);
+                return next;
+            });
         }, (err) => console.warn('86_webster snapshot failed:', err));
         const unsubM = onSnapshot(doc(db, 'ops', '86_maryland'), (snap) => {
-            setEightySix(prev => ({ ...prev, maryland: snap.exists() ? snap.data() : null }));
+            setEightySix(prev => {
+                const next = { ...prev, maryland: snap.exists() ? snap.data() : null };
+                writeHomeCache('eightySix', next);
+                return next;
+            });
         }, (err) => console.warn('86_maryland snapshot failed:', err));
         return () => { unsubW(); unsubM(); };
     }, []);
@@ -328,8 +365,18 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
     // now we subscribe to both unconditionally — matches the eightySix /
     // labor pattern above and means an admin flipping the location
     // toggle sees no flicker.
+    // 2026-06-14 perf: (1) dep array is now [canSeeLabor] (was []) so a live
+    // "Labor %" grant actually starts this listener — matching the labor
+    // effect above; previously it never re-ran. (2) The ~3k-doc laborHistory
+    // pull is DEFERRED to idle: it's consumed only by Schedule + LaborDashboard
+    // (never the home screen), so attaching it after first paint keeps home
+    // from competing with it on the WebView's connection. The 30-min cache
+    // already hydrated the initial state synchronously, so on Schedule/Labor
+    // the advisor still shows warm data instantly while the live listener
+    // attaches a beat later.
     useEffect(() => {
         if (!canSeeLabor) { setLaborHistory({ webster: [], maryland: [] }); return undefined; }
+        let unsubW = null, unsubM = null, cancelled = false;
         const subscribeLoc = (loc) => {
             const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
             const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
@@ -346,10 +393,21 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
                 (err) => console.warn(`laborHistory_${loc} snapshot failed:`, err),
             );
         };
-        const unsubW = subscribeLoc('webster');
-        const unsubM = subscribeLoc('maryland');
-        return () => { unsubW(); unsubM(); };
-    }, []);
+        const start = () => {
+            if (cancelled) return;
+            unsubW = subscribeLoc('webster');
+            unsubM = subscribeLoc('maryland');
+        };
+        const hasIC = typeof requestIdleCallback === 'function';
+        const idleId = hasIC ? requestIdleCallback(start, { timeout: 4000 }) : setTimeout(start, 1200);
+        return () => {
+            cancelled = true;
+            if (hasIC) { try { cancelIdleCallback(idleId); } catch { /* noop */ } }
+            else clearTimeout(idleId);
+            if (unsubW) unsubW();
+            if (unsubM) unsubM();
+        };
+    }, [canSeeLabor]);
 
     // Convenience: resolve per-location data once based on storeLocation.
     // For 'both' we return the webster value as the primary plus expose

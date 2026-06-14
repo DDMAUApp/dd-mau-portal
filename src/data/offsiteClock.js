@@ -317,6 +317,12 @@ export function subscribeOpenForStaff(staffName, cb) {
     const q = query(
         collection(db, 'offsite_shifts'),
         where('staffName', '==', staffName),
+        // 2026-06-14 — guardrail bound. Per-staff count is tiny in practice
+        // (a handful of pending/active shifts), but the query was unbounded;
+        // limit(100) caps a pathological accumulation without affecting the
+        // real case. Status filtering stays client-side (avoids a composite
+        // index), so this is purely a ceiling.
+        limit(100),
     );
     return onSnapshot(q, (snap) => {
         const list = [];
