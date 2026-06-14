@@ -6841,66 +6841,70 @@ ${dayBlocks}
 //   • When disabled, we render children with no wrapper transforms
 //     so the existing overflow-x-auto inside WeeklyGrid keeps
 //     working normally for desktop + horizontal-scroll mobile users.
+// Max pinch-zoom level for the fit-to-screen overview.
+const GRID_MAX_ZOOM = 1.6;
+
 function GridFitWrapper({ enabled, children }) {
     const outerRef = useRef(null);
     const innerRef = useRef(null);
-    // fit = the baseline "whole week fits the width" scale (computed).
-    // scale = current zoom (>= fit; user can pinch IN past fit).
-    // tx/ty = pan offset in px once zoomed in past fit.
-    const [fit, setFit] = useState(1);
-    const [scale, setScale] = useState(1);
-    const [tx, setTx] = useState(0);
-    const [ty, setTy] = useState(0);
     const [scaledHeight, setScaledHeight] = useState(null);
-    const dims = useRef({ natW: 1, natH: 0, outW: 0 });
-    const gesture = useRef(null);
+    // ALL zoom/pan math lives in this ref (not React state) so:
+    //   1. the non-passive touch listeners below read/write live values
+    //      without re-subscribing on every change, and
+    //   2. we drive the transform IMPERATIVELY for smooth 60fps gestures
+    //      without thrashing React.
+    // fit = baseline "whole week fits the width" scale; scale = current
+    // zoom (>= fit, user pinches IN); tx/ty = pan offset once zoomed.
+    const g = useRef({ fit: 1, scale: 1, tx: 0, ty: 0, natW: 1, natH: 0, outW: 0 });
 
+    // Push current zoom/pan to the DOM. transform / pointerEvents /
+    // touchAction are set ONLY here (never in JSX) so a React re-render of
+    // this wrapper can't clobber an in-progress zoom.
+    const apply = () => {
+        const inner = innerRef.current, outer = outerRef.current;
+        if (!inner || !outer) return;
+        const { fit, scale, tx, ty } = g.current;
+        const zoomed = scale > fit * 1.02;
+        inner.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+        // Look-only at the fit baseline (cells too tiny to tap accurately);
+        // tappable once pinched in so shifts can be edited.
+        inner.style.pointerEvents = zoomed ? 'auto' : 'none';
+        // At fit: 1-finger scrolls the page, our 2-finger pinch zooms in.
+        // Zoomed: we own pan + pinch (no native scroll/zoom interference).
+        outer.style.touchAction = zoomed ? 'none' : 'pan-y';
+    };
+
+    const clampPan = (s, x, y) => {
+        const { natW, natH, outW, fit } = g.current;
+        const frameH = natH * fit;                 // overview frame height
+        const minX = Math.min(0, outW - natW * s);
+        const minY = Math.min(0, frameH - natH * s);
+        return [Math.max(minX, Math.min(0, x)), Math.max(minY, Math.min(0, y))];
+    };
+
+    // Measure → fit (and reset any zoom/pan to the at-a-glance baseline).
     useEffect(() => {
-        if (!enabled) {
-            setFit(1);
-            setScale(1);
-            setTx(0);
-            setTy(0);
-            setScaledHeight(null);
-            return;
-        }
-        // Measure: outerRef.offsetWidth = available viewport space
-        // (stable, not affected by our scale transform).
-        // innerRef.scrollWidth = natural content width (also stable
-        // because we use width: max-content on the inner, so it
-        // doesn't grow with our CSS changes).
-        //
-        // Earlier version (2026-05-22 first attempt) observed the
-        // INNER ref via ResizeObserver + set the inner width as a
-        // percentage that included scale in the math. That created a
-        // feedback loop — each measurement caused the next observed
-        // size to be slightly different, and the calendar shrank
-        // progressively on every tick. Fixed by (a) using max-content
-        // so inner width is intrinsic and stable, (b) dropping the
-        // ResizeObserver entirely (window resize handles rotation;
-        // the inner content barely changes during a session).
+        if (!enabled) { setScaledHeight(null); return; }
+        // outerRef.offsetWidth = available viewport space (stable, not
+        // affected by our transform). innerRef.scrollWidth = natural content
+        // width — stable because the inner uses width: max-content, so it
+        // doesn't grow with our CSS (a 2026-05-22 ResizeObserver version fed
+        // back on itself and shrank the grid every tick; intrinsic width +
+        // no observer fixed it).
         const compute = () => {
-            const outer = outerRef.current;
-            const inner = innerRef.current;
+            const outer = outerRef.current, inner = innerRef.current;
             if (!outer || !inner) return;
-            const containerWidth = outer.offsetWidth || window.innerWidth;
-            const naturalWidth = inner.scrollWidth || 1;
-            const naturalHeight = inner.scrollHeight || 0;
-            const s = Math.min(1, containerWidth / naturalWidth);
-            dims.current = { natW: naturalWidth, natH: naturalHeight, outW: containerWidth };
-            // Re-fit (enable / rotate / resize) resets any pinch zoom + pan
-            // back to the at-a-glance baseline.
-            setFit(s);
-            setScale(s);
-            setTx(0);
-            setTy(0);
-            setScaledHeight(naturalHeight * s);
+            const outW = outer.offsetWidth || window.innerWidth;
+            const natW = inner.scrollWidth || 1;
+            const natH = inner.scrollHeight || 0;
+            const fit = Math.min(1, outW / natW);
+            g.current = { fit, scale: fit, tx: 0, ty: 0, natW, natH, outW };
+            setScaledHeight(natH * fit);
+            apply();
         };
-        // First measurement after children lay out.
         const raf = requestAnimationFrame(compute);
-        // Second measurement a beat later in case fonts/images shift
-        // the natural width after first paint. ONE remeasure, not a
-        // loop.
+        // One remeasure a beat later in case fonts/images shift width after
+        // first paint. NOT a loop.
         const t = setTimeout(compute, 100);
         window.addEventListener('resize', compute);
         return () => {
@@ -6908,92 +6912,82 @@ function GridFitWrapper({ enabled, children }) {
             clearTimeout(t);
             window.removeEventListener('resize', compute);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [enabled]);
 
     // ── Pinch-to-zoom + drag-to-pan (Andrew 2026-06-14: "i cant zoom into
-    //    calendar of shifts" in fit-to-screen overview) ──────────────────
-    // At the fit baseline the overview is look-only (cells too tiny to tap
-    // accurately). Pinch in to read/edit; once zoomed past fit, one finger
-    // pans and taps reach the shifts. All math is anchored to the gesture
-    // START values so it stays correct even if React state lags the rapid
-    // touchmove stream. Only active when enabled — the normal week view
-    // (early-return above) is completely untouched.
-    const MAX_ZOOM = 1.6;
-    // Keep the content from being dragged out of the visible frame.
-    const clampPan = (s, x, y) => {
-        const { natW, natH, outW } = dims.current;
-        const frameH = natH * fit;                 // overview frame height
-        const minX = Math.min(0, outW - natW * s);
-        const minY = Math.min(0, frameH - natH * s);
-        return [Math.max(minX, Math.min(0, x)), Math.max(minY, Math.min(0, y))];
-    };
-    const onTouchStart = (e) => {
-        if (e.touches.length === 2) {
-            const [a, b] = e.touches;
-            const rect = outerRef.current.getBoundingClientRect();
-            gesture.current = {
-                mode: 'pinch',
-                dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY) || 1,
-                midX: (a.clientX + b.clientX) / 2 - rect.left,
-                midY: (a.clientY + b.clientY) / 2 - rect.top,
-                s0: scale, tx0: tx, ty0: ty,
-            };
-        } else if (e.touches.length === 1 && scale > fit * 1.02) {
-            gesture.current = { mode: 'pan', x0: e.touches[0].clientX, y0: e.touches[0].clientY, tx0: tx, ty0: ty };
-        } else {
-            gesture.current = null; // let taps fall through (look at fit / edit when zoomed)
-        }
-    };
-    const onTouchMove = (e) => {
-        const g = gesture.current;
-        if (!g) return;
-        if (g.mode === 'pinch' && e.touches.length === 2) {
-            e.preventDefault();
-            const [a, b] = e.touches;
-            const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
-            const ns = Math.max(fit, Math.min(MAX_ZOOM, g.s0 * (dist / g.dist)));
-            // Keep the content point under the pinch midpoint fixed as we scale.
-            const cx = (g.midX - g.tx0) / g.s0;
-            const cy = (g.midY - g.ty0) / g.s0;
-            const [nx, ny] = clampPan(ns, g.midX - cx * ns, g.midY - cy * ns);
-            setScale(ns); setTx(nx); setTy(ny);
-        } else if (g.mode === 'pan' && e.touches.length === 1) {
-            e.preventDefault();
-            const t0 = e.touches[0];
-            const [nx, ny] = clampPan(scale, g.tx0 + (t0.clientX - g.x0), g.ty0 + (t0.clientY - g.y0));
-            setTx(nx); setTy(ny);
-        }
-    };
-    const onTouchEnd = (e) => { if (e.touches.length === 0) gesture.current = null; };
+    //    calendar of shifts" in the fit-to-screen overview) ───────────────
+    // Listeners are attached NATIVELY with { passive: false } — NOT via
+    // React's onTouchMove, which React registers as passive, so its
+    // preventDefault() is ignored and the iOS WKWebView's own pinch-zoom /
+    // scroll would fight us (the whole app would zoom on a real iPhone).
+    // All gesture math is anchored to the gesture START values, so it stays
+    // correct regardless of event timing.
+    useEffect(() => {
+        if (!enabled) return;
+        const outer = outerRef.current;
+        if (!outer) return;
+        let gesture = null;
+        const onStart = (e) => {
+            const cur = g.current;
+            if (e.touches.length === 2) {
+                const [a, b] = e.touches;
+                const rect = outer.getBoundingClientRect();
+                gesture = {
+                    mode: 'pinch',
+                    dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY) || 1,
+                    midX: (a.clientX + b.clientX) / 2 - rect.left,
+                    midY: (a.clientY + b.clientY) / 2 - rect.top,
+                    s0: cur.scale, tx0: cur.tx, ty0: cur.ty,
+                };
+            } else if (e.touches.length === 1 && cur.scale > cur.fit * 1.02) {
+                gesture = { mode: 'pan', x0: e.touches[0].clientX, y0: e.touches[0].clientY, tx0: cur.tx, ty0: cur.ty };
+            } else {
+                gesture = null; // let taps fall through (look at fit / edit when zoomed)
+            }
+        };
+        const onMove = (e) => {
+            if (!gesture) return;
+            const cur = g.current;
+            if (gesture.mode === 'pinch' && e.touches.length === 2) {
+                e.preventDefault();
+                const [a, b] = e.touches;
+                const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+                const ns = Math.max(cur.fit, Math.min(GRID_MAX_ZOOM, gesture.s0 * (dist / gesture.dist)));
+                // Keep the content point under the pinch midpoint fixed.
+                const cx = (gesture.midX - gesture.tx0) / gesture.s0;
+                const cy = (gesture.midY - gesture.ty0) / gesture.s0;
+                const [nx, ny] = clampPan(ns, gesture.midX - cx * ns, gesture.midY - cy * ns);
+                cur.scale = ns; cur.tx = nx; cur.ty = ny;
+                apply();
+            } else if (gesture.mode === 'pan' && e.touches.length === 1) {
+                e.preventDefault();
+                const t0 = e.touches[0];
+                const [nx, ny] = clampPan(cur.scale, gesture.tx0 + (t0.clientX - gesture.x0), gesture.ty0 + (t0.clientY - gesture.y0));
+                cur.tx = nx; cur.ty = ny;
+                apply();
+            }
+        };
+        const onEnd = (e) => { if (e.touches.length === 0) gesture = null; };
+        outer.addEventListener('touchstart', onStart, { passive: false });
+        outer.addEventListener('touchmove', onMove, { passive: false });
+        outer.addEventListener('touchend', onEnd, { passive: false });
+        outer.addEventListener('touchcancel', onEnd, { passive: false });
+        return () => {
+            outer.removeEventListener('touchstart', onStart);
+            outer.removeEventListener('touchmove', onMove);
+            outer.removeEventListener('touchend', onEnd);
+            outer.removeEventListener('touchcancel', onEnd);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [enabled]);
 
     if (!enabled) return <>{children}</>;
-    const zoomed = scale > fit * 1.02;
+    // NOTE: transform / pointerEvents / touchAction are intentionally NOT in
+    // these style objects — apply() owns them imperatively (see above).
     return (
-        <div
-            ref={outerRef}
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-            onTouchCancel={onTouchEnd}
-            style={{
-                overflow: 'hidden',
-                width: '100%',
-                height: scaledHeight ?? 'auto',
-                // At fit: allow vertical page scroll + let our 2-finger pinch
-                // through. Zoomed: we own all gestures (pan + pinch).
-                touchAction: zoomed ? 'none' : 'pan-y',
-            }}
-        >
-            <div
-                ref={innerRef}
-                style={{
-                    transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-                    transformOrigin: 'top left',
-                    width: 'max-content',
-                    // Look-only at the fit baseline; tappable once pinched in.
-                    pointerEvents: zoomed ? 'auto' : 'none',
-                }}
-            >
+        <div ref={outerRef} style={{ overflow: 'hidden', width: '100%', height: scaledHeight ?? 'auto' }}>
+            <div ref={innerRef} style={{ transformOrigin: 'top left', width: 'max-content', pointerEvents: 'none' }}>
                 {children}
             </div>
         </div>
