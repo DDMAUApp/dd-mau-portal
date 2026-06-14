@@ -215,6 +215,34 @@ export default function LaborDashboard({ language, storeLocation }) {
                                     </div>
                                 </div>
                             )}
+
+                            {/* BOH / FOH split — Andrew 2026-06-13. The Toast
+                                scraper buckets each employee's labor by their
+                                job into Back- vs Front-of-House; the two %s use
+                                the same sales denominator so they add up to the
+                                headline labor %. Only shows once the scraper
+                                has written the split fields (hasSplit) — older
+                                docs just show the single total above. */}
+                            {laborStatus.hasSplit && (
+                                <div className="mt-4 grid grid-cols-2 gap-2">
+                                    <div className="rounded-xl bg-white/70 ring-1 ring-gray-200 py-2">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                                            {language === "es" ? "Cocina (BOH)" : "Kitchen (BOH)"}
+                                        </div>
+                                        <div className="text-2xl font-black tabular-nums text-gray-800">
+                                            {laborStatus.bohLaborPercent.toFixed(1)}%
+                                        </div>
+                                    </div>
+                                    <div className="rounded-xl bg-white/70 ring-1 ring-gray-200 py-2">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                                            {language === "es" ? "Frente (FOH)" : "Front (FOH)"}
+                                        </div>
+                                        <div className="text-2xl font-black tabular-nums text-gray-800">
+                                            {laborStatus.fohLaborPercent.toFixed(1)}%
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Last updated */}

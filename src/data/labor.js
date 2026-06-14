@@ -54,6 +54,9 @@ export function getLaborStatus(laborData) {
             laborPercent: null,
             laborCost: null,
             netSales: null,
+            bohLaborPercent: null,
+            fohLaborPercent: null,
+            hasSplit: false,
             updatedAt: null,
             minutesAgo: null,
             isStale: false,
@@ -85,10 +88,27 @@ export function getLaborStatus(laborData) {
         typeof netSales === 'number' &&
         netSales > 5;
 
+    // BOH/FOH split (Andrew 2026-06-13). The Toast scraper buckets each
+    // employee's labor cost by their job → BOH or FOH and writes
+    // bohLaborPercent / fohLaborPercent (same denominator as laborPercent, so
+    // they sum to it). Old docs / the dashboard-AI fallback path don't carry
+    // these — hasSplit gates the UI so we only show the breakdown when the
+    // real numbers exist. Suppressed when broken (don't show a split off a
+    // number we don't trust).
+    const bohPct = laborData.bohLaborPercent;
+    const fohPct = laborData.fohLaborPercent;
+    const hasSplit =
+        !isBroken &&
+        typeof bohPct === 'number' &&
+        typeof fohPct === 'number';
+
     return {
         laborPercent: isBroken ? null : laborData.laborPercent,
         laborCost,
         netSales,
+        bohLaborPercent: hasSplit ? bohPct : null,
+        fohLaborPercent: hasSplit ? fohPct : null,
+        hasSplit,
         updatedAt: updatedValid ? updatedAt : null,
         minutesAgo,
         isStale,
