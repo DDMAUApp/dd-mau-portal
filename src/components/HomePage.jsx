@@ -304,8 +304,18 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                         Andrew 2026-05-28 — "make the buttons more
                         glass like like the apple glass." */}
                     <div className="grid grid-cols-3 gap-4 mt-2">
+                        {/* 2026-06-14 — Andrew: "when we type our pin it lags
+                            the first button so we miss type." Two fixes:
+                            (1) enter the digit on onPointerDown (fires the
+                            instant the finger lands, before the click that
+                            fires on RELEASE) so a busy main thread during cold
+                            start can't swallow/delay the first tap; (2) use the
+                            functional state updater (p => ...) so two fast taps
+                            can't both read a stale `pin` and drop a digit.
+                            onClick is removed on the digits to avoid a
+                            double-entry from the synthesized click. */}
                         {[1,2,3,4,5,6,7,8,9].map(n => (
-                            <button key={n} onClick={() => { setError(""); if (!isLocked && pin.length < 4) setPin(pin + n); }}
+                            <button key={n} onPointerDown={() => { if (isLocked) return; setError(""); setPin(p => p.length < 4 ? p + n : p); }}
                                 disabled={isLocked}
                                 className={`glass-keypad-button w-16 h-16 rounded-full text-2xl font-semibold text-dd-text ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                                 {n}
@@ -315,7 +325,7 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                             className={`glass-keypad-button-secondary w-16 h-16 rounded-full text-xs font-bold uppercase tracking-wider text-dd-text-2 ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                             {isEs ? "Borrar" : "Clear"}
                         </button>
-                        <button onClick={() => { setError(""); if (!isLocked && pin.length < 4) setPin(pin + "0"); }}
+                        <button onPointerDown={() => { if (isLocked) return; setError(""); setPin(p => p.length < 4 ? p + "0" : p); }}
                             disabled={isLocked}
                             className={`glass-keypad-button w-16 h-16 rounded-full text-2xl font-semibold text-dd-text ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                             0
