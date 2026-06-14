@@ -100,10 +100,17 @@ async function sendApnsPush(token, payload, opts = {}) {
     // payload field is read by the app's onForegroundMessage handler
     // (or pushNotificationActionPerformed for taps).
     note.payload = payload.data || {};
-    // 'content-available' lets a silent push wake a backgrounded app
-    // briefly to pre-fetch new data. Already set in the existing
-    // dispatchNotification path - keep parity here.
-    note.contentAvailable = 1;
+    // 2026-06-14 — DO NOT set content-available on these. Andrew: "the
+    // iOS app isn't getting notifications." APNs returned success
+    // ("APNs push delivered") but no banner ever appeared. Root cause:
+    // content-available:1 flags the push as a SILENT/background update,
+    // so iOS hands it to the app's background handler and SUPPRESSES the
+    // visible alert — especially when the app is backgrounded/closed and
+    // under power-management throttling. Apple's rule is explicit: a
+    // user-facing alert push must NOT carry content-available. These
+    // pushes always have a title/body alert (set above), so they're
+    // alert pushes, not silent ones. Leaving contentAvailable unset makes
+    // iOS display the banner normally. priority 10 = immediate alert.
     note.priority = 10; // immediate
     note.expiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24; // 24h
 
