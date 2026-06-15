@@ -7543,6 +7543,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             {/* Admin trusted-price editor (inventory pricing redesign). */}
                             {priceEditItem && (
                                 <ItemPriceModal
+                                    key={priceEditItem.id}
                                     item={priceEditItem}
                                     location={storeLocation}
                                     staffName={staffName}

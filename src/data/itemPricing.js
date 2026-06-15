@@ -22,7 +22,7 @@
 //   }
 
 import {
-    collection, doc, onSnapshot, getDoc, setDoc, serverTimestamp,
+    collection, doc, onSnapshot, serverTimestamp, runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { normalizeVendor } from './inventory';
@@ -194,7 +194,9 @@ export function resolveTrustedPrice(priceDoc, { nowMs = Date.now() } = {}) {
 // Falls back to lowest RAW price when no packs parse. Returns
 // { vendor, price, perUnit, unit, source, comparable } or null.
 export function cheapestVendor(priceDoc) {
-    const cands = priceCandidates(priceDoc).filter(c => c.price != null);
+    // Must have a VENDOR to order from — a vendor-less manual price is a
+    // valid "trusted price" but not an order-routing answer, so exclude it.
+    const cands = priceCandidates(priceDoc).filter(c => c.price != null && c.vendor);
     if (!cands.length) return null;
 
     // Group the per-unit-comparable candidates by base unit.
@@ -206,22 +208,27 @@ export function cheapestVendor(priceDoc) {
     }
     if (byUnit.size) {
         // Choose the unit group with the most vendors (most meaningful
-        // comparison); tiebreak by the group containing the most-trusted source.
-        let bestGroup = null;
-        for (const [, group] of byUnit) {
-            if (!bestGroup
+        // comparison). Fully deterministic tiebreaks: more vendors → most-
+        // trusted source in the group → unit name asc (so the result never
+        // depends on Map insertion order).
+        let bestGroup = null, bestUnit = null, bestRank = Infinity;
+        for (const [unit, group] of byUnit) {
+            const rank = Math.min(...group.map(g => PRICE_SOURCE_RANK[g.source] ?? 99));
+            const better = !bestGroup
                 || group.length > bestGroup.length
-                || (group.length === bestGroup.length
-                    && Math.min(...group.map(g => PRICE_SOURCE_RANK[g.source] ?? 99))
-                       < Math.min(...bestGroup.map(g => PRICE_SOURCE_RANK[g.source] ?? 99)))) {
-                bestGroup = group;
-            }
+                || (group.length === bestGroup.length && rank < bestRank)
+                || (group.length === bestGroup.length && rank === bestRank && unit < bestUnit);
+            if (better) { bestGroup = group; bestUnit = unit; bestRank = rank; }
         }
-        const winner = bestGroup.slice().sort((a, b) => a.perUnit - b.perUnit)[0];
+        const winner = bestGroup.slice().sort(
+            (a, b) => a.perUnit - b.perUnit || String(a.vendor).localeCompare(String(b.vendor))
+        )[0];
         return { ...winner, comparable: true };
     }
-    // No parseable packs anywhere → fall back to lowest raw price.
-    const winner = cands.slice().sort((a, b) => a.price - b.price)[0];
+    // No parseable packs anywhere → fall back to lowest raw price (stable).
+    const winner = cands.slice().sort(
+        (a, b) => a.price - b.price || String(a.vendor).localeCompare(String(b.vendor))
+    )[0];
     return { ...winner, comparable: false };
 }
 
@@ -269,61 +276,70 @@ export function subscribeItemPrices(location, cb) {
 // Appends a capped history entry. Merges so byVendor is preserved.
 export async function setManualPrice(location, itemId, fields, byName) {
     const ref = doc(db, itemPricesCollPath(location), String(itemId));
-    const snap = await getDoc(ref);
-    const prev = snap.exists() ? snap.data() : {};
-    const prevManual = prev.manual || null;
     const pu = perUnitPrice(fields.price, fields.pack);
-    const manual = {
-        price: fields.price ?? null,
-        unit: pu?.unit || fields.unit || null,
-        pack: fields.pack || null,
-        perUnit: pu?.perUnit ?? null,
-        vendor: fields.vendor ? normalizeVendor(fields.vendor) : null,
-        effectiveDate: fields.effectiveDate || new Date().toISOString().slice(0, 10),
-        note: fields.note || null,
-        by: byName || null,
-        at: serverTimestamp(),
-    };
-    const historyEntry = {
-        oldPrice: prevManual?.price ?? null,
-        newPrice: manual.price,
-        source: PRICE_SOURCE.MANUAL,
-        vendor: manual.vendor,
-        by: byName || null,
-        at: new Date().toISOString(),
-        reason: fields.reason || 'manual edit',
-    };
-    const history = [...(prev.history || []), historyEntry].slice(-50); // cap growth
-    await setDoc(ref, {
-        itemId: String(itemId), location, manual, history,
-    }, { merge: true });
+    // Transaction so a concurrent write to the same item (e.g. a receipt
+    // import landing at the same moment) can't drop history entries via a
+    // stale read-modify-write of the `history` array.
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const prev = snap.exists() ? snap.data() : {};
+        const prevManual = prev.manual || null;
+        const manual = {
+            price: fields.price ?? null,
+            unit: pu?.unit || fields.unit || null,
+            pack: fields.pack || null,
+            perUnit: pu?.perUnit ?? null,
+            vendor: fields.vendor ? normalizeVendor(fields.vendor) : null,
+            effectiveDate: fields.effectiveDate || new Date().toISOString().slice(0, 10),
+            note: fields.note || null,
+            by: byName || null,
+            at: serverTimestamp(),
+        };
+        const historyEntry = {
+            oldPrice: prevManual?.price ?? null,
+            newPrice: manual.price,
+            source: PRICE_SOURCE.MANUAL,
+            vendor: manual.vendor,
+            by: byName || null,
+            at: new Date().toISOString(),
+            reason: fields.reason || 'manual edit',
+        };
+        const history = [...(prev.history || []), historyEntry].slice(-50); // cap growth
+        tx.set(ref, { itemId: String(itemId), location, manual, history }, { merge: true });
+    });
 }
 
 // Record an actual purchase (from a confirmed receipt match) → updates the
 // vendor's entry as source='invoice' with lastPurchased, + history.
 export async function recordPurchase(location, itemId, { vendor, price, pack, unit, by, purchasedDate, reason }) {
     const ref = doc(db, itemPricesCollPath(location), String(itemId));
-    const snap = await getDoc(ref);
-    const prev = snap.exists() ? snap.data() : {};
-    const vKey = normalizeVendor(vendor) || vendor || 'other';
     const pu = perUnitPrice(price, pack);
-    const prevEntry = (prev.byVendor || {})[vKey] || null;
-    const entry = {
-        price: price ?? null, pack: pack || null,
-        unit: pu?.unit || unit || null, perUnit: pu?.perUnit ?? null,
-        source: PRICE_SOURCE.INVOICE,
-        lastPurchased: purchasedDate || new Date().toISOString().slice(0, 10),
-        by: by || null, at: serverTimestamp(),
-    };
-    const historyEntry = {
-        oldPrice: prevEntry?.price ?? null, newPrice: entry.price,
-        source: PRICE_SOURCE.INVOICE, vendor: vKey, by: by || null,
-        at: new Date().toISOString(), reason: reason || 'receipt import',
-    };
-    const history = [...(prev.history || []), historyEntry].slice(-50);
-    await setDoc(ref, {
-        itemId: String(itemId), location,
-        byVendor: { [vKey]: entry },
-        history,
-    }, { merge: true });
+    // Preserve the real receipt vendor name as the byVendor key (Phase 2
+    // receipts supply varied vendor strings we don't want collapsed); only a
+    // truly blank vendor falls back to 'Other'.
+    const vKey = (vendor && String(vendor).trim()) || 'Other';
+    // Transaction — same history-loss guard as setManualPrice.
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const prev = snap.exists() ? snap.data() : {};
+        const prevEntry = (prev.byVendor || {})[vKey] || null;
+        const entry = {
+            price: price ?? null, pack: pack || null,
+            unit: pu?.unit || unit || null, perUnit: pu?.perUnit ?? null,
+            source: PRICE_SOURCE.INVOICE,
+            lastPurchased: purchasedDate || new Date().toISOString().slice(0, 10),
+            by: by || null, at: serverTimestamp(),
+        };
+        const historyEntry = {
+            oldPrice: prevEntry?.price ?? null, newPrice: entry.price,
+            source: PRICE_SOURCE.INVOICE, vendor: vKey, by: by || null,
+            at: new Date().toISOString(), reason: reason || 'receipt import',
+        };
+        const history = [...(prev.history || []), historyEntry].slice(-50);
+        tx.set(ref, {
+            itemId: String(itemId), location,
+            byVendor: { [vKey]: entry },
+            history,
+        }, { merge: true });
+    });
 }

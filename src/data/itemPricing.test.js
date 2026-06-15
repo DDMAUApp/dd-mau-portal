@@ -154,6 +154,24 @@ describe('cheapestVendor — per-unit apples-to-apples', () => {
         expect(c.vendor).toBe('b');
         expect(c.comparable).toBe(false);
     });
+
+    it('excludes a vendor-less manual price from the order-routing answer', () => {
+        const doc = {
+            manual: { price: 1, pack: 'lb', vendor: null },   // cheapest/lb but no vendor to order from
+            byVendor: { sysco: { price: 5, pack: 'lb', source: PRICE_SOURCE.INVOICE } },
+        };
+        const c = cheapestVendor(doc);
+        expect(c.vendor).toBe('sysco'); // not the vendor-less manual
+    });
+
+    it('a manual price WITH a vendor does compete for cheapest', () => {
+        const doc = {
+            manual: { price: 1, pack: 'lb', vendor: 'Restaurant Depot' },
+            byVendor: { sysco: { price: 5, pack: 'lb', source: PRICE_SOURCE.INVOICE } },
+        };
+        const c = cheapestVendor(doc);
+        expect(c.vendor).toBe('Restaurant Depot');
+    });
 });
 
 describe('lastOrdered', () => {
