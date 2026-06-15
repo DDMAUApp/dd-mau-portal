@@ -3311,6 +3311,133 @@ exports.aiFixText = onCall(
     }
 );
 
+// ── 2026-06-14 — parseReceipt: read a delivery-receipt photo with Claude
+// vision (inventory pricing redesign Phase 2, the MAIN feature of the new
+// Pricing tab). Snap a delivery receipt → AI FIRST checks the photo is
+// legible enough to trust the prices, then extracts the vendor + every line
+// item (name, qty, price, pack). The client then matches each line to the
+// master inventory list and writes trusted item_prices.
+//
+// Returns { readable, problems[], vendor, date, lineItems[] }. If the photo
+// is too blurry / cut off / glare-covered to trust the PRICES, readable is
+// false + problems says what to retake — we never guess a price.
+//
+// Same pattern as aiSearch/aiFixText: onCall + ANTHROPIC_API_KEY secret +
+// raw fetch to the Anthropic Messages API + per-IP rate limit. Vision-
+// capable Haiku-class model. Cost ~$0.002-0.005 per receipt.
+exports.parseReceipt = onCall(
+    {
+        region: "us-central1",
+        cors: true,
+        maxInstances: 5,
+        memory: "512MiB",
+        timeoutSeconds: 120,
+        secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
+    },
+    async (request) => {
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await enforceRateLimit({ ip, namespace: "parseReceipt", limit: 40, windowMs: 10 * 60_000 });
+
+        const data = request.data || {};
+        const imageBase64 = String(data.imageBase64 || "");
+        let mediaType = String(data.mediaType || "image/jpeg");
+        if (!imageBase64) throw new HttpsError("invalid-argument", "imageBase64 required");
+        // ~7M base64 chars ≈ 5MB image. Client should downscale before send.
+        if (imageBase64.length > 7_200_000) {
+            throw new HttpsError("invalid-argument", "image too large — resize before upload");
+        }
+        const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+        if (!ALLOWED.includes(mediaType)) mediaType = "image/jpeg";
+
+        const system = [
+            "You read photos of restaurant delivery receipts / invoices and return STRICT JSON only.",
+            "",
+            "STEP 1 — legibility. Decide if the photo is clear enough to TRUST the item names AND prices.",
+            "If it is blurry, cut off, glare-covered, too dark, or any prices/items are unreadable, set readable=false and DO NOT guess.",
+            "List concrete problems (e.g. 'bottom of receipt cut off', 'price column has glare', 'too blurry to read item lines').",
+            "",
+            "STEP 2 — if readable, extract the vendor, the receipt date if shown, and EVERY product line item.",
+            "For each line item give: name (as printed), qty (number, default 1), price (the dollar price for that line as a number, no $ sign), pack (pack/size text if shown e.g. '4/2.5LB', else null).",
+            "Do NOT include subtotals, tax, totals, fees, tips, or delivery lines as items.",
+            "If a price is unreadable for one specific line, set that line's price to null (don't guess it) but still list the item.",
+            "",
+            "Respond with ONLY this JSON (no prose, no markdown fences):",
+            '{"readable": true, "problems": [], "vendor": "Sysco", "date": "2026-06-14", "lineItems": [{"name":"21/25 Shrimp Tail Off","qty":2,"price":52.00,"pack":"4/2.5LB"}]}',
+            'If not readable: {"readable": false, "problems": ["..."], "vendor": null, "date": null, "lineItems": []}',
+        ].join("\n");
+
+        let body;
+        try {
+            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                    "x-api-key": ANTHROPIC_API_KEY.value(),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                    // Vision-capable Haiku-class. If this 404s, swap to the
+                    // current haiku/sonnet model name (one-line change).
+                    model: "claude-haiku-4-5",
+                    max_tokens: 4096,
+                    system,
+                    messages: [{
+                        role: "user",
+                        content: [
+                            { type: "image", source: { type: "base64", media_type: mediaType, data: imageBase64 } },
+                            { type: "text", text: "Read this delivery receipt and return the JSON described." },
+                        ],
+                    }],
+                }),
+            });
+            if (!resp.ok) {
+                const errText = await resp.text();
+                logger.error("parseReceipt anthropic error", resp.status, errText.slice(0, 500));
+                throw new HttpsError("internal", `anthropic failed: ${resp.status}`);
+            }
+            body = await resp.json();
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            logger.error("parseReceipt fetch failed:", e?.message || e);
+            throw new HttpsError("unavailable", "receipt parsing unavailable");
+        }
+
+        const textBlock = (body?.content || []).find(c => c?.type === "text");
+        const raw = String(textBlock?.text || "");
+        let parsed = null;
+        try {
+            const trimmed = raw.trim().replace(/^```(?:json)?\n?/i, "").replace(/```$/i, "").trim();
+            parsed = JSON.parse(trimmed);
+        } catch {
+            const m = raw.match(/\{[\s\S]*\}/);
+            if (m) { try { parsed = JSON.parse(m[0]); } catch { /* noop */ } }
+        }
+        if (!parsed || typeof parsed !== "object") {
+            logger.warn("parseReceipt: unparseable model output:", raw.slice(0, 300));
+            return { readable: false, problems: ["Could not read the receipt — try a clearer, straight-on photo."], vendor: null, date: null, lineItems: [], count: 0 };
+        }
+
+        // Normalize / sanitize the model output (never trust it raw).
+        const readable = parsed.readable === true;
+        const problems = Array.isArray(parsed.problems) ? parsed.problems.map(p => String(p).slice(0, 160)).slice(0, 12) : [];
+        const vendor = parsed.vendor ? String(parsed.vendor).slice(0, 80) : null;
+        const date = parsed.date ? String(parsed.date).slice(0, 20) : null;
+        const lineItems = (Array.isArray(parsed.lineItems) ? parsed.lineItems : []).slice(0, 300).map((li) => {
+            const name = String(li?.name || "").slice(0, 160).trim();
+            let qty = Number(li?.qty);
+            if (!isFinite(qty) || qty <= 0) qty = 1;
+            let price = li?.price == null ? null : Number(li.price);
+            if (price != null && (!isFinite(price) || price < 0)) price = null;
+            const pack = li?.pack ? String(li.pack).slice(0, 40) : null;
+            return { name, qty, price, pack };
+        }).filter((li) => li.name);
+
+        return { readable, problems, vendor, date, lineItems, count: lineItems.length };
+    }
+);
+
 // ── 2026-05-20 — checkTvHeartbeats: alert when a menu TV goes dark ─
 // Andrew Wave 7 of "match the SaaS leaders". Every kiosk browser
 // (MenuDisplay) writes a heartbeat to /tv_heartbeats/{tvId} every
