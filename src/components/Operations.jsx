@@ -8793,6 +8793,24 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             </button>
                                         </div>
 
+                                        {/* ── Deprecated scraped-pricing notice (Phase 0, 2026-06-14) ──
+                                            The Sysco/US Foods price scraper was retired
+                                            (SYSCO_USFOODS_SCRAPING_ENABLED=false in the labor
+                                            scraper). These prices are frozen and may be months
+                                            stale, so we label them as estimates only. Costco is
+                                            excluded — it's still a live CSV import. A trusted
+                                            manual + receipt-AI pricing system is being built. */}
+                                        {(pricingVendor === "sysco" || pricingVendor === "usfoods") && (
+                                            <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+                                                <div className="font-bold">⚠️ {language === "es" ? "Precios desactualizados — no confiar" : "Outdated prices — don't rely on these"}</div>
+                                                <div className="text-[11px] leading-snug">
+                                                    {language === "es"
+                                                        ? "El robot de precios de Sysco/US Foods fue retirado, así que estos precios están congelados y pueden tener meses. Úsalos solo como estimación aproximada. Pronto: precios manuales confiables + lectura de recibos por foto."
+                                                        : "The Sysco/US Foods price scraper has been retired, so these prices are frozen and may be months out of date — treat them as rough estimates only. Coming soon: trusted manual prices + snap-a-receipt pricing."}
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {/* Surfaces a known-bad data condition: two master items sharing
                                             an ID would make the audit list show the wrong "matched to..."
                                             name. Admin sees this and can merge the dupes via Master List. */}
