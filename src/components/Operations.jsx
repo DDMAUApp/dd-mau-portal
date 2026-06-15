@@ -8,7 +8,7 @@ import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
 // Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
 // returns the priority-ranked price (manual > receipt > … > legacy scraped).
-import { subscribeItemPrices, resolveTrustedPrice, PRICE_SOURCE_LABEL } from '../data/itemPricing';
+import { subscribeItemPrices, resolveTrustedPrice, PRICE_SOURCE_LABEL, cheapestVendor as pickCheapestVendor, lastOrdered as pickLastOrdered } from '../data/itemPricing';
 import ItemPriceModal from './ItemPriceModal';
 import { subscribeActiveList } from '../data/inventoryLists';
 import { useAiSearch } from '../data/aiSearch';
@@ -323,9 +323,14 @@ const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit,
 //                  row when this row's override changes.
 //   isOverridden — boolean; same story.
 // React.memo's default shallow compare is sufficient.
-const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden }) {
+const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden, itemPrices, isEn }) {
     const cheapestVendor = r.vendorPrices.find(p => p.price != null)?.vendor;
     const isVendorOnly = r.kind === "vendor-only";
+    // Trusted "where's it cheapest + last ordered" from the new item_prices
+    // engine (manual / receipt), independent of the scraped vendor columns.
+    const tp = (itemPrices && r.id) ? itemPrices[r.id] : null;
+    const tCheap = tp ? pickCheapestVendor(tp) : null;
+    const tLast = tp ? pickLastOrdered(tp) : null;
     return (
         <tr
             className={`border-t border-gray-300 transition ${
@@ -355,6 +360,20 @@ const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden
                     )}
                 </div>
                 <div className="text-[10px] text-gray-400">{r.category}{r.pack ? ` · ${r.pack}` : ""}</div>
+                {(tCheap || tLast) && (
+                    <div className="mt-0.5 flex flex-col gap-0.5 text-[10px] leading-tight">
+                        {tCheap && tCheap.vendor && (
+                            <span className="text-emerald-700 font-semibold">
+                                🏆 {isEn ? 'Best' : 'Mejor'}: ${tCheap.perUnit != null ? `${tCheap.perUnit.toFixed(2)}/${tCheap.unit}` : Number(tCheap.price).toFixed(2)} · {tCheap.vendor}
+                            </span>
+                        )}
+                        {tLast && (
+                            <span className="text-gray-500">
+                                ↩ {isEn ? 'Last' : 'Última'}: ${Number(tLast.price).toFixed(2)} · {tLast.vendor}{tLast.at ? ` (${String(tLast.at).slice(0, 10)})` : ''}
+                            </span>
+                        )}
+                    </div>
+                )}
             </td>
             <td className="text-center px-2 py-2 font-bold text-mint-700">{r.qty}</td>
             {vendorList.map(v => {
@@ -7334,6 +7353,8 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                     vendorList={vendorList}
                                                                     myEffVendor={effectiveVendor(r)}
                                                                     isOverridden={!!cartVendorOverride[r.id]}
+                                                                    itemPrices={itemPrices}
+                                                                    isEn={language !== 'es'}
                                                                 />
                                                             ))}
                                                         </tbody>
