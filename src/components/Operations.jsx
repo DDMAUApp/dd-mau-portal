@@ -6,6 +6,10 @@ import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
+// Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
+// returns the priority-ranked price (manual > receipt > … > legacy scraped).
+import { subscribeItemPrices, resolveTrustedPrice, PRICE_SOURCE_LABEL } from '../data/itemPricing';
+import ItemPriceModal from './ItemPriceModal';
 import { subscribeActiveList } from '../data/inventoryLists';
 import { useAiSearch } from '../data/aiSearch';
 import { printViaNative, openExternalUrl } from '../capacitor-bridge';
@@ -772,6 +776,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Pricing is opened so a normal Operations open doesn't pay 7 doc
             // reads + 7 live listeners up front. Once opened they persist.
             const [pricingEverOpened, setPricingEverOpened] = useState(false);
+            // ── Trusted item prices (inventory pricing redesign) ──
+            // Live map { itemId: priceDoc } from item_prices_{location}. The
+            // collection starts EMPTY (0 reads) and grows only as admins set
+            // prices / receipts are matched, so this is cheap. Drives the
+            // trusted-price chip in renderLivePriceBadge + the admin editor.
+            const [itemPrices, setItemPrices] = useState({});
+            const [priceEditItem, setPriceEditItem] = useState(null); // admin price-editor target item
+            useEffect(() => subscribeItemPrices(storeLocation, setItemPrices), [storeLocation]);
             useEffect(() => {
                 if (invViewMode === "pricing") setPricingEverOpened(true);
             }, [invViewMode]);
@@ -4204,11 +4216,43 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // is highlighted; ties or matched-but-pricier vendors render dimmer.
             const renderLivePriceBadge = (itemId, item) => {
                 const list = invToVendorPrices[itemId];
-                if (!list || list.length === 0) return null;
-                const cheapest = list[0];  // already sorted ascending
+                const hasScraped = list && list.length > 0;
+                // Trusted price from the new item_prices engine (manual / receipt / …).
+                const priceDoc = itemPrices[itemId];
+                const trusted = priceDoc ? resolveTrustedPrice(priceDoc) : null;
+                const esLang = language === 'es';
+                // Unchanged behavior for non-admins with no prices at all.
+                if (!trusted && !hasScraped && !currentIsAdmin) return null;
+                const srcLabel = trusted ? ((PRICE_SOURCE_LABEL[trusted.source] || {})[esLang ? 'es' : 'en'] || trusted.source) : '';
+                const trustedCls = trusted && (trusted.source === 'manual' || trusted.source === 'invoice')
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : trusted && trusted.source === 'legacy_scraped'
+                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                    : 'bg-gray-100 text-gray-700 border border-gray-200';
                 return (
                     <span className="inline-flex items-center gap-1 flex-wrap">
-                        {list.map((p, i) => {
+                        {/* Trusted price chip (new pricing system) */}
+                        {trusted && (
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${trustedCls}`}
+                                title={`${srcLabel}${trusted.vendor ? ' · ' + trusted.vendor : ''}`}>
+                                💲${Number(trusted.price).toFixed(2)}
+                                {trusted.perUnit != null && <span className="opacity-80 ml-0.5">/{trusted.unit}</span>}
+                                <span className="opacity-70 ml-1 font-normal">{srcLabel}</span>
+                                {trusted.stale && <span className="ml-1 text-amber-700">⚠</span>}
+                            </span>
+                        )}
+                        {/* Admin-only: set / edit the trusted price */}
+                        {currentIsAdmin && (
+                            <button type="button" onClick={() => setPriceEditItem(item)}
+                                className="text-xs px-1.5 py-0.5 rounded border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50"
+                                title={esLang ? 'Fijar precio confiable' : 'Set trusted price'}>
+                                {trusted ? '✎' : (esLang ? '💲 Fijar' : '💲 Set price')}
+                            </button>
+                        )}
+                        {/* Legacy scraped vendor badges — DEPRECATED (frozen scraper data).
+                            Kept for continuity; Phase 3 removes them once receipts/manual
+                            prices cover the items. */}
+                        {hasScraped && list.map((p, i) => {
                             const isCheapest = i === 0 && list.length > 1;
                             const isOnly = list.length === 1;
                             const hasSalePrice = p.originalPrice && p.originalPrice !== p.price;
@@ -7494,6 +7538,18 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         onClose={() => setShowPrintCenter(false)}
                                     />
                                 </Suspense>
+                            )}
+
+                            {/* Admin trusted-price editor (inventory pricing redesign). */}
+                            {priceEditItem && (
+                                <ItemPriceModal
+                                    item={priceEditItem}
+                                    location={storeLocation}
+                                    staffName={staffName}
+                                    language={language}
+                                    priceDoc={itemPrices[priceEditItem.id]}
+                                    onClose={() => setPriceEditItem(null)}
+                                />
                             )}
 
                             {/* ── CATEGORY VIEW ── */}
