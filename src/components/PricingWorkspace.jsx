@@ -1,24 +1,22 @@
 // PricingWorkspace — the rebuilt inventory "Pricing" tab.
 //
 // Inventory pricing redesign, Phase 2 (Andrew 2026-06-14: "clear that page
-// and build from new"). Replaces the old scraped Sysco/US Foods/Costco
-// price tables + Match Audit. Two ways to feed trusted prices into the
-// item_prices engine (which the cart + item chips now read):
+// and build from new"). Two ways to feed trusted prices into the item_prices
+// engine (which the cart + item chips now read):
 //
 //   📸 Scan receipt (MAIN) — photo of a delivery receipt → AI clarity check
 //      → AI extracts vendor + line items → match each to the master list →
-//      writes trusted prices + "last ordered".  (wired in slice 2b/2c)
+//      writes trusted prices + "last ordered".  (ReceiptScanModal)
 //   📥 Import price file — choose vendor → drop a CSV/PDF from the vendor
-//      site → parse/AI → same match screen → writes trusted prices.
-//      (reuses the proven VendorCsvImportModal today; AI-assist comes later)
-//
-// This slice (2a) is the cleared page + shell. The receipt-AI capture and
-// the shared match screen land in the next slices.
+//      site → parse → match → writes trusted prices. (VendorCsvImportModal)
+import { useState } from 'react';
 import { Camera, FileUp, Sparkles } from 'lucide-react';
+import ReceiptScanModal from './ReceiptScanModal';
 
-export default function PricingWorkspace({ language, isAdmin, onOpenImport, onScanReceipt }) {
+export default function PricingWorkspace({ language, isAdmin, storeLocation, staffName, masterCategories, onOpenImport }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
+    const [scanning, setScanning] = useState(false);
 
     if (!isAdmin) {
         return (
@@ -49,12 +47,9 @@ export default function PricingWorkspace({ language, isAdmin, onOpenImport, onSc
                 {/* Scan receipt — MAIN */}
                 <button
                     type="button"
-                    onClick={onScanReceipt}
-                    className="relative text-left rounded-2xl border-2 border-dd-green/40 bg-dd-green/5 p-4 hover:bg-dd-green/10 transition active:scale-[0.99]"
+                    onClick={() => setScanning(true)}
+                    className="text-left rounded-2xl border-2 border-dd-green/40 bg-dd-green/5 p-4 hover:bg-dd-green/10 transition active:scale-[0.99]"
                 >
-                    <span className="absolute top-2 right-2 text-[9px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 border border-amber-200 rounded-full px-1.5 py-0.5">
-                        {tx('Coming next', 'Pronto')}
-                    </span>
                     <div className="w-10 h-10 rounded-xl bg-dd-green text-white flex items-center justify-center mb-2">
                         <Camera size={20} strokeWidth={2.25} aria-hidden="true" />
                     </div>
@@ -80,15 +75,22 @@ export default function PricingWorkspace({ language, isAdmin, onOpenImport, onSc
                 </button>
             </div>
 
-            {/* Where the matching screen + recent batches will render (next slices) */}
-            <div className="rounded-2xl border border-dashed border-dd-line bg-dd-bg/40 p-6 text-center">
-                <div className="text-sm font-semibold text-dd-text-2">
-                    {tx('Receipt scanning + AI matching arrives next.', 'El escaneo de recibos + emparejamiento con IA llega pronto.')}
-                </div>
-                <div className="text-xs text-dd-text-2 mt-1">
-                    {tx('Prices you set or import already show on items and in the cart (🏆 Best · ↩ Last ordered).', 'Los precios que fijas o importas ya aparecen en los artículos y en el carrito (🏆 Mejor · ↩ Última compra).')}
+            {/* Hint */}
+            <div className="rounded-2xl border border-dashed border-dd-line bg-dd-bg/40 p-4 text-center">
+                <div className="text-xs text-dd-text-2">
+                    {tx('Prices you scan, import, or set show on items and in the cart (🏆 Best · ↩ Last ordered).', 'Los precios que escaneas, importas o fijas aparecen en los artículos y en el carrito (🏆 Mejor · ↩ Última compra).')}
                 </div>
             </div>
+
+            {scanning && (
+                <ReceiptScanModal
+                    location={storeLocation}
+                    staffName={staffName}
+                    language={language}
+                    masterCategories={masterCategories}
+                    onClose={() => setScanning(false)}
+                />
+            )}
         </div>
     );
 }

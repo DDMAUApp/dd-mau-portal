@@ -8812,8 +8812,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 <PricingWorkspace
                                     language={language}
                                     isAdmin={currentIsAdmin}
+                                    storeLocation={storeLocation}
+                                    staffName={staffName}
+                                    masterCategories={customInventory}
                                     onOpenImport={() => setShowCsvImport(true)}
-                                    onScanReceipt={() => toast(language === 'es' ? 'Escaneo de recibos \u2014 pr\u00f3ximamente' : 'Receipt scanning \u2014 coming next')}
                                 />
                             )}
 

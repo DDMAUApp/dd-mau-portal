@@ -3359,7 +3359,7 @@ exports.parseReceipt = onCall(
             "List concrete problems (e.g. 'bottom of receipt cut off', 'price column has glare', 'too blurry to read item lines').",
             "",
             "STEP 2 — if readable, extract the vendor, the receipt date if shown, and EVERY product line item.",
-            "For each line item give: name (as printed), qty (number, default 1), price (the dollar price for that line as a number, no $ sign), pack (pack/size text if shown e.g. '4/2.5LB', else null).",
+            "For each line item give: name (as printed), qty (number, default 1), price (the UNIT price = the cost of ONE unit/pack as printed, a number, no $ sign; if only an extended/total line price is shown, divide it by the qty to get the unit price), pack (pack/size text if shown e.g. '4/2.5LB', else null).",
             "Do NOT include subtotals, tax, totals, fees, tips, or delivery lines as items.",
             "If a price is unreadable for one specific line, set that line's price to null (don't guess it) but still list the item.",
             "",
