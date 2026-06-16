@@ -26,6 +26,9 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, setDoc, updateDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { recordAudit } from '../data/audit';
+import { recordPurchase } from '../data/itemPricing';
+import { learnAliases } from '../data/itemAliases';
+import { saveReceiptScan } from '../data/receiptScans';
 import ModalPortal from './ModalPortal';
 
 // Common column-header aliases for the three fields the parser
@@ -735,6 +738,64 @@ export default function VendorCsvImportModal({
                     orderDate,
                 },
             });
+
+            // ── NEW pricing engine (Phase 2g) ───────────────────────────
+            // Also feed item_prices so imported prices light up the cart
+            // (🏆 Best · ↩ Last · 📦 qty), learn the name→item aliases the
+            // receipt scanner shares, and log this import in "Recent scans"
+            // (re-openable/editable in the scan modal). Best-effort: a
+            // failure here never rolls back the inventoryHistory import above.
+            try {
+                const priceCol = parsed.mapping.price;
+                const unitCol = parsed.mapping.unit;
+                const hasFileQty = parsed.mapping.qty != null;
+                const vendorLabel = VENDORS.find(v => v.key === vendor)?.label || vendor;
+                const purchases = [];
+                const aliasEntries = [];
+                const scanLines = [];
+                for (const r of resolved) {
+                    if (r.skipped) continue;
+                    const rawPrice = priceCol != null ? String(parsed.body[r.rowIdx]?.[priceCol] || '') : '';
+                    const pn = parseFloat(rawPrice.replace(/[^0-9.\-]/g, ''));
+                    const price = (!isNaN(pn) && pn > 0) ? pn : null;
+                    const pack = unitCol != null ? (String(parsed.body[r.rowIdx]?.[unitCol] || '').trim() || null) : null;
+                    const masterId = r.finalItemId || null;
+                    const masterName = masterId ? (flatInventory.find(it => it.id === masterId)?.name || null) : null;
+                    // Only count a REAL order quantity from the file — never the
+                    // auto-defaulted "1" for order guides with no qty column, or
+                    // it would pollute the cart's "average ordered".
+                    const fileQty = (hasFileQty && r.qty > 0) ? r.qty : null;
+                    scanLines.push({
+                        name: r.name || '', qty: fileQty, price, pack,
+                        masterId, masterName,
+                        confidence: masterId ? 'high' : null, included: !!masterId,
+                    });
+                    if (masterId && price != null) {
+                        purchases.push({ itemId: masterId, price, pack, qty: fileQty });
+                    }
+                    if (masterId && r.name) {
+                        aliasEntries.push({ rawName: r.name, masterId, masterName, vendor: vendorLabel });
+                    }
+                }
+                // Write item_prices in small parallel batches — distinct docs,
+                // no transaction contention — so a big order guide doesn't take
+                // a sequential write per row.
+                for (let i = 0; i < purchases.length; i += 10) {
+                    await Promise.all(purchases.slice(i, i + 10).map(p => recordPurchase(storeLocation, p.itemId, {
+                        vendor: vendorLabel, price: p.price, pack: p.pack, qty: p.qty,
+                        by: staffName, purchasedDate: orderDate, reason: 'price import',
+                    })));
+                }
+                await learnAliases(storeLocation, aliasEntries, staffName);
+                if (scanLines.length) {
+                    await saveReceiptScan(storeLocation, {
+                        vendor: vendorLabel, date: orderDate, scannedBy: staffName,
+                        source: 'import', savedCount: purchases.length, lines: scanLines,
+                    }, Date.now());
+                }
+            } catch (priceErr) {
+                console.warn('[VendorCsvImportModal] item_prices import write failed:', priceErr);
+            }
 
             setStage('done');
             onImported?.({ count: Object.keys(counts).length, docKey });
