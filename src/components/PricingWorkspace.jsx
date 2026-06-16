@@ -17,6 +17,7 @@ import { useState, useEffect } from 'react';
 import { Camera, FileUp, Sparkles, History, Trash2, ChevronRight } from 'lucide-react';
 import ReceiptScanModal from './ReceiptScanModal';
 import { subscribeReceiptScans, deleteReceiptScan } from '../data/receiptScans';
+import { subscribeItemAliases } from '../data/itemAliases';
 
 // 'YYYY-MM-DD' → 'Jun 14' (locale-light, no Date parse surprises).
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -33,11 +34,17 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
     const [scanning, setScanning] = useState(false);
     const [reopen, setReopen] = useState(null);   // a saved scan doc to edit
     const [scans, setScans] = useState([]);
+    const [aliasMap, setAliasMap] = useState({});
     const [confirmDel, setConfirmDel] = useState(null);
 
     useEffect(() => {
         if (!isAdmin || !storeLocation) return;
         return subscribeReceiptScans(storeLocation, setScans);
+    }, [isAdmin, storeLocation]);
+
+    useEffect(() => {
+        if (!isAdmin || !storeLocation) return;
+        return subscribeItemAliases(storeLocation, setAliasMap);
     }, [isAdmin, storeLocation]);
 
     if (!isAdmin) {
@@ -185,6 +192,7 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
                     staffName={staffName}
                     language={language}
                     masterCategories={masterCategories}
+                    aliasMap={aliasMap}
                     initialExtraction={reopen ? {
                         vendor: reopen.vendor,
                         date: reopen.date,

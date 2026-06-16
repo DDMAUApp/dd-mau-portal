@@ -18,9 +18,10 @@ import { buildMasterIndex, matchItemByName } from '../data/itemMatch';
 import { fileToScaledBase64, parseReceiptImage } from '../data/parseReceipt';
 import { recordPurchase, perUnitPrice } from '../data/itemPricing';
 import { saveReceiptScan, updateReceiptScan } from '../data/receiptScans';
+import { lookupAlias, learnAliases } from '../data/itemAliases';
 import { toast } from '../toast';
 
-export default function ReceiptScanModal({ location, staffName, language, masterCategories, initialExtraction, onClose }) {
+export default function ReceiptScanModal({ location, staffName, language, masterCategories, aliasMap, initialExtraction, onClose }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
@@ -31,21 +32,43 @@ export default function ReceiptScanModal({ location, staffName, language, master
         return m;
     }, [masterCategories]);
 
-    // rows: { name, qty, price, pack, masterId, confidence, included, pickerOpen, query }
-    // When a line already carries a saved match (re-opening a past scan from
-    // history), trust it verbatim instead of re-guessing — the manager may
-    // have hand-corrected it. A fresh AI extraction has no `masterId` key, so
-    // we run the matcher for those.
+    // Latest learned-alias map in a ref so buildRows (called async after the
+    // AI parse) always sees the current memory without re-creating the fn.
+    const aliasRef = useRef(aliasMap || {});
+    aliasRef.current = aliasMap || {};
+
+    // rows: { name, qty, price, pack, masterId, confidence, learned, included, pickerOpen, query }
+    // Match priority for a fresh AI extraction:
+    //   1) a SAVED match on the line (re-opening a past scan) — trust verbatim,
+    //      the manager may have hand-corrected it;
+    //   2) a LEARNED alias — a name we matched on a previous scan; remembered;
+    //   3) the fuzzy matcher's best guess.
     const buildRows = (lineItems) => (lineItems || []).map((li) => {
         const hasSavedMatch = Object.prototype.hasOwnProperty.call(li || {}, 'masterId');
-        const guess = hasSavedMatch ? null : matchItemByName(li.name, masterIndex);
+        let masterId = null, confidence = null, learned = false;
+        if (hasSavedMatch) {
+            masterId = li.masterId || null;
+            confidence = li.confidence || null;
+        } else {
+            const alias = lookupAlias(aliasRef.current, li.name);
+            if (alias && alias.masterId && masterById.has(alias.masterId)) {
+                masterId = alias.masterId;
+                confidence = 'high';
+                learned = true;          // remembered from a past scan
+            } else {
+                const guess = matchItemByName(li.name, masterIndex);
+                masterId = guess?.id || null;
+                confidence = guess?.confidence || null;
+            }
+        }
         return {
             name: li.name || '',
             qty: li.qty ?? 1,
             price: li.price != null ? String(li.price) : '',
             pack: li.pack || '',
-            masterId: hasSavedMatch ? (li.masterId || null) : (guess?.id || null),
-            confidence: hasSavedMatch ? (li.confidence || null) : (guess?.confidence || null),
+            masterId,
+            confidence,
+            learned,
             included: li.included != null ? li.included : true,
             pickerOpen: false,
             query: '',
@@ -162,6 +185,22 @@ export default function ReceiptScanModal({ location, staffName, language, master
                 // fail the whole save just because the record didn't persist.
                 console.error('[ReceiptScanModal] scan-record save failed', histErr);
             }
+            // Remember every confirmed match (even ones with a blank price) so
+            // the next scan auto-applies them — this is the "it didn't remember
+            // CHI MEI GWA BUN is bao" fix. Best-effort; never blocks the save.
+            try {
+                const learnedEntries = rows
+                    .filter((r) => r.included && r.masterId && r.name)
+                    .map((r) => ({
+                        rawName: r.name,
+                        masterId: r.masterId,
+                        masterName: masterById.get(r.masterId)?.name || null,
+                        vendor: vendor || null,
+                    }));
+                await learnAliases(location, learnedEntries, staffName);
+            } catch (aliasErr) {
+                console.error('[ReceiptScanModal] learnAliases failed', aliasErr);
+            }
             toast(tx(`Saved ${landed.length} price${landed.length === 1 ? '' : 's'}.`, `${landed.length} precio${landed.length === 1 ? '' : 's'} guardado${landed.length === 1 ? '' : 's'}.`));
             setSavedSummary({ count: landed.length, landed, unmatched: rows.filter((r) => r.included && !r.masterId).length });
             setStage('saved');
@@ -263,6 +302,11 @@ export default function ReceiptScanModal({ location, staffName, language, master
                                             ) : (
                                                 <span className="text-xs font-bold px-1.5 py-0.5 rounded border bg-red-50 text-red-700 border-red-200">{tx('unmatched', 'sin emparejar')}</span>
                                             )}
+                                            {matched && r.learned && (
+                                                <span className="text-[10px] font-semibold text-emerald-600" title={tx('Remembered from a past scan', 'Recordado de un escaneo anterior')}>
+                                                    ✓ {tx('remembered', 'recordado')}
+                                                </span>
+                                            )}
                                             <button onClick={() => setRow(i, { pickerOpen: !r.pickerOpen, query: '' })}
                                                 className="text-[11px] text-dd-green-700 underline">
                                                 {matched ? tx('change', 'cambiar') : tx('pick', 'elegir')}
@@ -285,12 +329,12 @@ export default function ReceiptScanModal({ location, staffName, language, master
                                                 </div>
                                                 <div className="max-h-40 overflow-y-auto">
                                                     {pickerResults(r.query).map((m) => (
-                                                        <button key={m.id} onClick={() => setRow(i, { masterId: m.id, confidence: 'high', pickerOpen: false })}
+                                                        <button key={m.id} onClick={() => setRow(i, { masterId: m.id, confidence: 'high', learned: false, pickerOpen: false })}
                                                             className="block w-full text-left text-xs px-2 py-1 hover:bg-white rounded">
                                                             {m.name}
                                                         </button>
                                                     ))}
-                                                    <button onClick={() => setRow(i, { masterId: null, confidence: null, pickerOpen: false })}
+                                                    <button onClick={() => setRow(i, { masterId: null, confidence: null, learned: false, pickerOpen: false })}
                                                         className="block w-full text-left text-xs px-2 py-1 text-red-600 hover:bg-white rounded">
                                                         {tx('— leave unmatched —', '— dejar sin emparejar —')}
                                                     </button>
