@@ -130,10 +130,11 @@ export default function ReceiptScanModal({ location, staffName, language, master
     // later changes.
     const snapshotLines = () => rows.map((r) => {
         const price = parseFloat(r.price);
+        const qn = Number(r.qty);
         const master = r.masterId ? masterById.get(r.masterId) : null;
         return {
             name: r.name || '',
-            qty: r.qty ?? 1,
+            qty: isFinite(qn) ? qn : null,
             price: isFinite(price) ? price : null,
             pack: r.pack || null,
             masterId: r.masterId || null,
@@ -156,6 +157,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
                     vendor: vendor || 'Other',
                     price,
                     pack: r.pack || null,
+                    qty: isFinite(Number(r.qty)) ? Number(r.qty) : null,
                     by: staffName,
                     purchasedDate: date,
                     reason: scanSource === 'import' ? 'price import' : 'receipt scan',
@@ -284,7 +286,13 @@ export default function ReceiptScanModal({ location, staffName, language, master
                                         <div className="flex items-start justify-between gap-2">
                                             <div className="min-w-0">
                                                 <div className="text-sm font-semibold text-dd-text truncate">{r.name}</div>
-                                                <div className="text-[11px] text-dd-text-2">{tx('qty', 'cant')} {r.qty}{r.pack ? ` · ${r.pack}` : ''}</div>
+                                                <div className="text-[11px] text-dd-text-2 flex items-center gap-1 mt-0.5">
+                                                    <span>{tx('qty', 'cant')}</span>
+                                                    <input value={r.qty} onChange={(e) => setRow(i, { qty: e.target.value })}
+                                                        inputMode="decimal" className="w-12 text-center rounded border border-gray-300 px-1 py-0.5"
+                                                        aria-label={tx('quantity ordered', 'cantidad pedida')} />
+                                                    {r.pack ? <span>· {r.pack}</span> : null}
+                                                </div>
                                             </div>
                                             <label className="flex items-center gap-1 text-[11px] text-gray-500 shrink-0">
                                                 <input type="checkbox" checked={r.included} onChange={(e) => setRow(i, { included: e.target.checked })} />

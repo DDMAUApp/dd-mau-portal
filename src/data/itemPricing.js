@@ -310,10 +310,13 @@ export async function setManualPrice(location, itemId, fields, byName) {
 }
 
 // Record an actual purchase (from a confirmed receipt match) → updates the
-// vendor's entry as source='invoice' with lastPurchased, + history.
-export async function recordPurchase(location, itemId, { vendor, price, pack, unit, by, purchasedDate, reason }) {
+// vendor's entry as source='invoice' with lastPurchased + lastQty, + history.
+// `qty` = how much was ordered (receipt line quantity) — drives the cart's
+// "last ordered / average ordered" reorder hint via orderQtyStats.
+export async function recordPurchase(location, itemId, { vendor, price, pack, unit, qty, by, purchasedDate, reason }) {
     const ref = doc(db, itemPricesCollPath(location), String(itemId));
     const pu = perUnitPrice(price, pack);
+    const qn = (qty != null && isFinite(Number(qty)) && Number(qty) >= 0) ? Number(qty) : null;
     // Preserve the real receipt vendor name as the byVendor key (Phase 2
     // receipts supply varied vendor strings we don't want collapsed); only a
     // truly blank vendor falls back to 'Other'.
@@ -328,11 +331,12 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
             unit: pu?.unit || unit || null, perUnit: pu?.perUnit ?? null,
             source: PRICE_SOURCE.INVOICE,
             lastPurchased: purchasedDate || new Date().toISOString().slice(0, 10),
+            lastQty: qn,
             by: by || null, at: serverTimestamp(),
         };
         const historyEntry = {
             oldPrice: prevEntry?.price ?? null, newPrice: entry.price,
-            source: PRICE_SOURCE.INVOICE, vendor: vKey, by: by || null,
+            source: PRICE_SOURCE.INVOICE, vendor: vKey, qty: qn, by: by || null,
             at: new Date().toISOString(), reason: reason || 'receipt import',
         };
         const history = [...(prev.history || []), historyEntry].slice(-50);
@@ -342,4 +346,32 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
             history,
         }, { merge: true });
     });
+}
+
+// ── orderQtyStats ────────────────────────────────────────────────────────
+// "How much do we usually order?" for the cart's reorder hint. Pulls every
+// recorded purchase quantity from history (capped at the last 50 purchases)
+// → { lastQty, lastQtyAt, avgQty, count } or null. Falls back to a byVendor
+// lastQty for docs written before qty was tracked.
+export function orderQtyStats(priceDoc) {
+    const hist = Array.isArray(priceDoc?.history) ? priceDoc.history : [];
+    const samples = hist
+        .filter((h) => h && h.source === PRICE_SOURCE.INVOICE && h.qty != null && isFinite(Number(h.qty)) && Number(h.qty) > 0)
+        .map((h) => ({ qty: Number(h.qty), at: h.at || null }));
+    if (samples.length) {
+        let last = samples[0];
+        for (const s of samples) if (toMillis(s.at) >= toMillis(last.at)) last = s;
+        const avg = samples.reduce((a, s) => a + s.qty, 0) / samples.length;
+        return { lastQty: last.qty, lastQtyAt: last.at, avgQty: avg, count: samples.length };
+    }
+    // Fallback: most-recent byVendor lastQty (pre-history-qty docs).
+    const bv = priceDoc?.byVendor || {};
+    let best = null;
+    for (const e of Object.values(bv)) {
+        if (!e || e.lastQty == null || !isFinite(Number(e.lastQty)) || Number(e.lastQty) <= 0) continue;
+        const at = e.lastPurchased || e.at || null;
+        if (!best || toMillis(at) > toMillis(best.at)) best = { qty: Number(e.lastQty), at };
+    }
+    if (!best) return null;
+    return { lastQty: best.qty, lastQtyAt: best.at, avgQty: best.qty, count: 1 };
 }

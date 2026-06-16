@@ -5,6 +5,7 @@ import {
     resolveTrustedPrice,
     cheapestVendor,
     lastOrdered,
+    orderQtyStats,
     isStale,
     missingPackUnit,
     PRICE_SOURCE,
@@ -190,6 +191,49 @@ describe('lastOrdered', () => {
     it('returns null when no invoice purchases', () => {
         expect(lastOrdered({ byVendor: { sysco: { price: 7, source: PRICE_SOURCE.LEGACY_SCRAPED } } })).toBeNull();
         expect(lastOrdered(null)).toBeNull();
+    });
+});
+
+describe('orderQtyStats', () => {
+    it('computes last (most recent) + average from history qtys', () => {
+        const doc = {
+            history: [
+                { source: PRICE_SOURCE.INVOICE, qty: 2, at: '2026-05-01T00:00:00Z' },
+                { source: PRICE_SOURCE.INVOICE, qty: 4, at: '2026-06-01T00:00:00Z' },
+                { source: PRICE_SOURCE.INVOICE, qty: 3, at: '2026-06-10T00:00:00Z' },
+            ],
+        };
+        const r = orderQtyStats(doc);
+        expect(r.lastQty).toBe(3);       // newest by timestamp
+        expect(r.avgQty).toBeCloseTo(3); // (2+4+3)/3
+        expect(r.count).toBe(3);
+    });
+    it('ignores non-invoice + missing/invalid qtys', () => {
+        const doc = {
+            history: [
+                { source: PRICE_SOURCE.MANUAL, qty: 99, at: '2026-06-09T00:00:00Z' },
+                { source: PRICE_SOURCE.INVOICE, qty: null, at: '2026-06-10T00:00:00Z' },
+                { source: PRICE_SOURCE.INVOICE, qty: 5, at: '2026-06-11T00:00:00Z' },
+            ],
+        };
+        const r = orderQtyStats(doc);
+        expect(r.count).toBe(1);
+        expect(r.lastQty).toBe(5);
+        expect(r.avgQty).toBe(5);
+    });
+    it('falls back to a byVendor lastQty when history has no qty', () => {
+        const doc = {
+            byVendor: {
+                sysco: { price: 8, source: PRICE_SOURCE.INVOICE, lastQty: 6, lastPurchased: '2026-06-12' },
+            },
+        };
+        const r = orderQtyStats(doc);
+        expect(r.lastQty).toBe(6);
+        expect(r.count).toBe(1);
+    });
+    it('returns null when nothing to report', () => {
+        expect(orderQtyStats({ history: [], byVendor: {} })).toBeNull();
+        expect(orderQtyStats(null)).toBeNull();
     });
 });
 

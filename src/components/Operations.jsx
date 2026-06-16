@@ -8,7 +8,7 @@ import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
 // Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
 // returns the priority-ranked price (manual > receipt > … > legacy scraped).
-import { subscribeItemPrices, resolveTrustedPrice, PRICE_SOURCE_LABEL, cheapestVendor as pickCheapestVendor, lastOrdered as pickLastOrdered } from '../data/itemPricing';
+import { subscribeItemPrices, resolveTrustedPrice, PRICE_SOURCE_LABEL, cheapestVendor as pickCheapestVendor, lastOrdered as pickLastOrdered, orderQtyStats as pickOrderQty } from '../data/itemPricing';
 import ItemPriceModal from './ItemPriceModal';
 import PricingWorkspace from './PricingWorkspace';
 import { subscribeActiveList } from '../data/inventoryLists';
@@ -332,6 +332,8 @@ const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden
     const tp = (itemPrices && r.id) ? itemPrices[r.id] : null;
     const tCheap = tp ? pickCheapestVendor(tp) : null;
     const tLast = tp ? pickLastOrdered(tp) : null;
+    const tQty = tp ? pickOrderQty(tp) : null;
+    const fmtQty = (n) => (n == null ? '' : (Number.isInteger(n) ? String(n) : n.toFixed(1)));
     return (
         <tr
             className={`border-t border-gray-300 transition ${
@@ -361,7 +363,7 @@ const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden
                     )}
                 </div>
                 <div className="text-[10px] text-gray-400">{r.category}{r.pack ? ` · ${r.pack}` : ""}</div>
-                {(tCheap || tLast) && (
+                {(tCheap || tLast || tQty) && (
                     <div className="mt-0.5 flex flex-col gap-0.5 text-[10px] leading-tight">
                         {tCheap && tCheap.vendor && (
                             <span className="text-emerald-700 font-semibold">
@@ -371,6 +373,11 @@ const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden
                         {tLast && (
                             <span className="text-gray-500">
                                 ↩ {isEn ? 'Last' : 'Última'}: ${Number(tLast.price).toFixed(2)} · {tLast.vendor}{tLast.at ? ` (${String(tLast.at).slice(0, 10)})` : ''}
+                            </span>
+                        )}
+                        {tQty && (
+                            <span className="text-amber-700">
+                                📦 {isEn ? 'Order qty' : 'Cantidad'}: {isEn ? 'last' : 'última'} {fmtQty(tQty.lastQty)}{tQty.count > 1 ? ` · ${isEn ? 'avg' : 'prom'} ${fmtQty(tQty.avgQty)}` : ''}
                             </span>
                         )}
                     </div>
