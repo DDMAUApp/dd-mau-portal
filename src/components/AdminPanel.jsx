@@ -5,6 +5,11 @@ import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, delete
 import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES } from '../data/staff';
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
+// Static (not dynamic) import on purpose: AdminPanel is already lazy-loaded,
+// so renameStaff rides in the admin chunk. A dynamic import() spun it into a
+// separate chunk that failed to load on a stale-cached PWA — the rename then
+// silently no-op'd while the staff record had already saved (orphaned data).
+import { renameStaffEverywhere } from '../data/renameStaff';
 import {
     normalizeToE164,
     formatE164ForDisplay,
@@ -2064,7 +2069,6 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 if (rename && rename.oldName && rename.oldName !== finalName) {
                     setRenameBusy(true);
                     try {
-                        const { renameStaffEverywhere } = await import('../data/renameStaff');
                         const report = await renameStaffEverywhere({
                             oldName: rename.oldName,
                             newName: finalName,
@@ -2083,17 +2087,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 { kind: 'success', duration: 6000 });
                         } else {
                             const failed = report.errors.map(e => e.collection).join(', ');
+                            const detail = report.errors[0]?.message ? ` — ${report.errors[0].message}` : '';
                             toast(language === 'es'
-                                ? `Renombrado, pero algunos registros fallaron (${failed}). Reintente.`
-                                : `Renamed, but some records didn't update (${failed}). Try again.`,
-                                { kind: 'error', duration: 9000 });
+                                ? `Renombrado, pero algunos registros fallaron (${failed})${detail}. Reintente.`
+                                : `Renamed, but some records didn't update (${failed})${detail}. Try again.`,
+                                { kind: 'error', duration: 12000 });
                         }
                     } catch (err) {
                         console.error('renameStaffEverywhere threw:', err);
+                        const msg = err?.message || String(err);
                         toast(language === 'es'
-                            ? 'El nombre se guardó pero la actualización de registros falló.'
-                            : 'Name saved but updating linked records failed.',
-                            { kind: 'error', duration: 9000 });
+                            ? `El nombre se guardó pero la actualización de registros falló: ${msg}`
+                            : `Name saved but updating linked records failed: ${msg}`,
+                            { kind: 'error', duration: 12000 });
                     } finally {
                         setRenameBusy(false);
                     }
