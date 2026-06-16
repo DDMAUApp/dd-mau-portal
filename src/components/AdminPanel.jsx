@@ -1076,10 +1076,19 @@ export default function AdminPanel(props) {
     return <AdminPanelInner {...props} />;
 }
 
-function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLocation, onNavigate, hasOnboardingAccess }) {
+function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLocation, onNavigate, hasOnboardingAccess, onSelfRenamed }) {
             const [editingId, setEditingId] = useState(null);
             const [editPin, setEditPin] = useState("");
             const [editRole, setEditRole] = useState("");
+            // 2026-06-16 — staff NAME is now editable. Because the app has no
+            // per-user auth (identity IS the name string), changing it has to
+            // fan out across every name-joined collection — see
+            // src/data/renameStaff.js. The Save button defers a name change to
+            // a confirm step (pendingRename) so the admin sees the blast
+            // radius before we rewrite the schedule / PTO / chat membership.
+            const [editName, setEditName] = useState("");
+            const [pendingRename, setPendingRename] = useState(null); // { id, oldName, newName }
+            const [renameBusy, setRenameBusy] = useState(false);
             const [editOpsAccess, setEditOpsAccess] = useState(false);
             const [editRecipesAccess, setEditRecipesAccess] = useState(false);
             const [editViewLabor, setEditViewLabor] = useState(false);
@@ -1898,7 +1907,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         ? `Guardado bloqueado: PIN inválido en ${bad.name}. No se hicieron cambios.`
                         : `Save blocked: invalid PIN on ${bad.name}. No changes made.`,
                         { kind: 'error', duration: 8000 });
-                    return;
+                    return false;
                 }
                 // AUDIT: read current Firestore + compute diff before write.
                 let oldByName = new Map();
@@ -1944,11 +1953,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             ? 'Otro administrador editó al personal — recargue la página'
                             : 'Another admin edited the staff list — please reload',
                             { kind: 'error' });
-                        return;
+                        return false;
                     }
                     console.error("Error saving staff:", err);
                     toast(language === 'es' ? 'Error al guardar personal' : 'Staff save failed', { kind: 'error' });
-                    return;
+                    return false;
                 }
                 // Post-write: log every PIN change to /pin_audits.
                 // Fire-and-forget so a logging failure never blocks the save.
@@ -1967,6 +1976,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         }).catch(e => console.warn('pin audit write failed:', e));
                     }
                 }
+                return true;
             };
 
             // Tap-to-flip bulk tag handler — used by the Bulk Tag modal.
@@ -1983,8 +1993,40 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 if (latest) await saveStaffToFirestore(latest);
             };
 
-            const handleSavePin = async (id) => {
-                if (editPin.length !== 4 || !/^\d{4}$/.test(editPin)) return;
+            // Reset every edit-form field back to idle. Centralized so the
+            // Save / Cancel / rename-confirm paths can't drift apart (the old
+            // hand-rolled resets had already diverged — some fields were reset
+            // on Cancel but not on Save).
+            const resetEditForm = () => {
+                setEditingId(null);
+                setEditPin("");
+                setEditRole("");
+                setEditName("");
+                setEditLocation("");
+                setEditScheduleHome("both");
+                setEditOpsAccess(false);
+                setEditRecipesAccess(false);
+                setEditViewLabor(false);
+                setEditShiftLead(false);
+                setEditIsMinor(false);
+                setEditHideFromSchedule(false);
+                setEditScheduleSide("foh");
+                setEditTargetHours(0);
+                setEditBirthday("");
+                setEditCanEditScheduleFOH(false);
+                setEditCanEditScheduleBOH(false);
+                setEditPreferredLanguage("en");
+                setEditHomeView("auto");
+                setEditHiddenPages([]);
+            };
+
+            // Persist the open edit form for staff `id`, writing `finalName`
+            // as the (possibly unchanged) name. When the name actually
+            // changed, `rename` carries the OLD name so we fan the change out
+            // across every name-joined collection — but only AFTER the staff
+            // record itself saves, so we never rewrite the schedule to a name
+            // the record never took.
+            const commitStaffEdit = async (id, finalName, rename = null) => {
                 // Functional setState avoids stale-closure clobber when a
                 // concurrent admin edit is in flight (same fix as bulk-tag).
                 let latest = null;
@@ -2005,25 +2047,92 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
                             ? editBirthday
                             : (editBirthday === '' ? '' : (s.birthday || ''));
-                        return { ...s, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
+                        return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
                     });
                     return latest;
                 });
-                if (latest) await saveStaffToFirestore(latest);
-                setEditingId(null);
-                setEditPin("");
-                setEditRole("");
-                setEditLocation("");
-                setEditScheduleHome("both");
-                setEditOpsAccess(false);
-                setEditRecipesAccess(false);
-                setEditShiftLead(false);
-                setEditIsMinor(false);
-                setEditHideFromSchedule(false);
-                setEditScheduleSide("foh");
-                setEditTargetHours(0);
-                setEditBirthday("");
+                const saved = latest ? await saveStaffToFirestore(latest) : false;
+                // saveStaffToFirestore returns false (and already toasted) on
+                // a bad PIN / concurrent-edit / write error. Bail before
+                // fanning out a rename in that case.
+                if (saved === false) return;
+
+                resetEditForm();
                 showSaved();
+
+                if (rename && rename.oldName && rename.oldName !== finalName) {
+                    setRenameBusy(true);
+                    try {
+                        const { renameStaffEverywhere } = await import('../data/renameStaff');
+                        const report = await renameStaffEverywhere({
+                            oldName: rename.oldName,
+                            newName: finalName,
+                            staffId: id,
+                        });
+                        // If the signed-in admin renamed THEMSELVES, push the
+                        // new name up so App's session validation doesn't kick
+                        // them to the lock screen on the next render.
+                        if (rename.oldName === staffName && typeof onSelfRenamed === 'function') {
+                            onSelfRenamed(finalName);
+                        }
+                        if (report.ok) {
+                            toast(language === 'es'
+                                ? `Renombrado a ${finalName} — ${report.total} registro(s) actualizado(s).`
+                                : `Renamed to ${finalName} — updated ${report.total} linked record(s).`,
+                                { kind: 'success', duration: 6000 });
+                        } else {
+                            const failed = report.errors.map(e => e.collection).join(', ');
+                            toast(language === 'es'
+                                ? `Renombrado, pero algunos registros fallaron (${failed}). Reintente.`
+                                : `Renamed, but some records didn't update (${failed}). Try again.`,
+                                { kind: 'error', duration: 9000 });
+                        }
+                    } catch (err) {
+                        console.error('renameStaffEverywhere threw:', err);
+                        toast(language === 'es'
+                            ? 'El nombre se guardó pero la actualización de registros falló.'
+                            : 'Name saved but updating linked records failed.',
+                            { kind: 'error', duration: 9000 });
+                    } finally {
+                        setRenameBusy(false);
+                    }
+                }
+            };
+
+            const handleSavePin = async (id) => {
+                if (editPin.length !== 4 || !/^\d{4}$/.test(editPin)) return;
+                const person = (staffList || []).find(s => s.id === id);
+                const currentName = person ? person.name : '';
+                const trimmed = editName.trim();
+                // Name is required and must stay unique — two staffers sharing
+                // a name would collapse into one identity (PIN login, chat,
+                // schedule all key on the string).
+                if (!trimmed) {
+                    toast(language === 'es' ? 'El nombre no puede estar vacío.' : 'Name cannot be empty.', { kind: 'error' });
+                    return;
+                }
+                const nameChanged = trimmed !== currentName;
+                if (nameChanged) {
+                    const dup = (staffList || []).some(s => s.id !== id && (s.name || '').trim().toLowerCase() === trimmed.toLowerCase());
+                    if (dup) {
+                        toast(language === 'es' ? 'Ya existe un miembro con ese nombre.' : 'A staff member with that name already exists.', { kind: 'error' });
+                        return;
+                    }
+                    // Defer to the confirm modal so the admin sees the blast
+                    // radius before linked records get rewritten. The edit
+                    // form stays open + populated underneath.
+                    setPendingRename({ id, oldName: currentName, newName: trimmed });
+                    return;
+                }
+                await commitStaffEdit(id, currentName);
+            };
+
+            // Confirm-modal "Yes, rename" handler.
+            const confirmRename = async () => {
+                const pending = pendingRename;
+                if (!pending) return;
+                setPendingRename(null);
+                await commitStaffEdit(pending.id, pending.newName, { oldName: pending.oldName });
             };
 
             const handleAddStaff = async () => {
@@ -2523,7 +2632,15 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         <div key={person.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
                                             {editingId === person.id ? (
                                                 <div className="p-3 bg-blue-50 space-y-2">
-                                                    <p className="font-bold text-gray-800">{person.name}</p>
+                                                    <div>
+                                                        <label className="text-xs text-gray-600 font-semibold">{t("staffName", language)}</label>
+                                                        {/* text-base (not text-sm) so iOS Safari doesn't
+                                                            zoom the viewport on focus — matches the Cap-A
+                                                            input-zoom fix applied app-wide. */}
+                                                        <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
+                                                            placeholder={person.name}
+                                                            className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-base" />
+                                                    </div>
                                                     <div>
                                                         <label className="text-xs text-gray-600 font-semibold">{t("staffRole", language)}</label>
                                                         <select value={editRole} onChange={(e) => setEditRole(e.target.value)}
@@ -2866,7 +2983,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditScheduleHome("both"); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditHideFromSchedule(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditBirthday(""); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); setEditHiddenPages([]); }}
+                                                        <button onClick={resetEditForm}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -2908,7 +3025,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -3209,6 +3326,68 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         );
                     })()}
+
+                    {/* ── Rename confirm — name is a join key across the app, so
+                          renaming fans out to linked collections. Show the blast
+                          radius before committing. ── */}
+                    {pendingRename && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+                            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                                <div className="border-b border-gray-200 p-4">
+                                    <h3 className="text-lg font-bold text-gray-800">
+                                        {language === "es" ? "¿Renombrar al personal?" : "Rename staff member?"}
+                                    </h3>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                    <div className="flex items-center justify-center gap-2 text-center">
+                                        <span className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 font-bold text-sm line-through decoration-gray-400">{pendingRename.oldName}</span>
+                                        <span className="text-gray-400 font-black">→</span>
+                                        <span className="px-3 py-1.5 rounded-lg bg-green-100 text-green-800 font-bold text-sm">{pendingRename.newName}</span>
+                                    </div>
+                                    <p className="text-sm text-gray-600">
+                                        {language === "es"
+                                            ? "Esto también actualizará sus registros vinculados:"
+                                            : "This will also update their linked records:"}
+                                    </p>
+                                    <ul className="text-sm text-gray-700 list-disc pl-5 space-y-0.5">
+                                        <li>{language === "es" ? "Turnos del horario (incl. recurrentes)" : "Schedule shifts (incl. recurring)"}</li>
+                                        <li>{language === "es" ? "Tiempo libre / PTO" : "Time-off / PTO"}</li>
+                                        <li>{language === "es" ? "Notificaciones" : "Notifications"}</li>
+                                        <li>{language === "es" ? "Turnos fuera del sitio" : "Off-site shifts"}</li>
+                                        <li>{language === "es" ? "Tardanzas y tareas asignadas" : "Tardiness & task assignments"}</li>
+                                        <li>{language === "es" ? "Membresía de chats" : "Chat membership"}</li>
+                                    </ul>
+                                    <p className="text-xs text-gray-500">
+                                        {language === "es"
+                                            ? "Los mensajes de chat antiguos y el historial de auditoría conservan el nombre anterior. Es posible que deban volver a ingresar su PIN la próxima vez que abran la app."
+                                            : "Old chat messages and audit history keep the old name. They may need to re-enter their PIN the next time they open the app."}
+                                    </p>
+                                </div>
+                                <div className="border-t border-gray-200 p-3 flex gap-2">
+                                    <button onClick={() => setPendingRename(null)}
+                                        className="flex-1 py-2.5 rounded-lg font-bold bg-gray-200 text-gray-700 hover:bg-gray-300 transition">
+                                        {t("cancel", language)}
+                                    </button>
+                                    <button onClick={confirmRename}
+                                        className="flex-1 py-2.5 rounded-lg font-bold bg-green-700 text-white hover:bg-green-800 transition">
+                                        {language === "es" ? "Renombrar" : "Rename"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Busy overlay while the rename fans out across collections. */}
+                    {renameBusy && (
+                        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+                            <div className="bg-white rounded-2xl px-6 py-5 flex items-center gap-3 shadow-xl">
+                                <div className="w-5 h-5 border-2 border-gray-300 border-t-green-600 rounded-full animate-spin" />
+                                <span className="text-sm font-bold text-gray-700">
+                                    {language === "es" ? "Actualizando registros vinculados…" : "Updating linked records…"}
+                                </span>
+                            </div>
+                        </div>
+                    )}
 
                     {/* ── Import Staff Modal — paste names / upload CSV → diff → configure → commit ── */}
                     {showImportStaff && (
