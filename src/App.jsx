@@ -1044,15 +1044,26 @@ export default function App() {
     // exported from messaging.js but never called, so tokens were never saved
     // and Cloud Function reminders never reached devices.
     // Foreground message handler shows an in-app toast/console log.
+    // Register native/web push ONCE per signed-in user. staffList re-emits as
+    // it settles on launch (length 0→N→M) used to re-fire enableFcmPush —
+    // requestPermissions + register + a Firestore token write — 2-3x per launch
+    // (visible in the device console). The ref caps it to one; the foreground
+    // listener below is still (re)attached on every run so it stays alive.
+    const pushRegisteredForRef = useRef(null);
     useEffect(() => {
         if (!staffName || !Array.isArray(staffList) || staffList.length === 0) return;
         let unsubForeground = null;
         let cancelled = false;
         (async () => {
             try {
-                const result = await enableFcmPush(staffName, staffList, setStaffList);
-                if (cancelled) return;
-                if (result.ok) {
+                let registered = pushRegisteredForRef.current === staffName;
+                if (!registered) {
+                    const result = await enableFcmPush(staffName, staffList, setStaffList);
+                    if (cancelled) return;
+                    if (result.ok) { pushRegisteredForRef.current = staffName; registered = true; }
+                    else console.log("[FCM] not enabled:", result.reason);
+                }
+                if (registered && !cancelled) {
                     unsubForeground = await onForegroundMessage((payload) => {
                         // Read from EITHER `data` or `notification` field
                         // — same defense-in-depth as the SW. Lets the
@@ -1087,8 +1098,6 @@ export default function App() {
                             } catch {}
                         }
                     });
-                } else {
-                    console.log("[FCM] not enabled:", result.reason);
                 }
             } catch (e) {
                 console.warn("[FCM] init failed:", e);
