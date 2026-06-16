@@ -16,6 +16,7 @@ import InventoryHistory from './InventoryHistory';
 import LaborHistoryPanel from './LaborHistoryPanel';
 import { downloadFile, openExternalUrl } from '../capacitor-bridge';
 import ImportStaffModal from './ImportStaffModal';
+import ModalPortal from './ModalPortal';
 import OffsiteClockSection from './OffsiteClockSection';
 import StaffTodosAdmin from './StaffTodosAdmin';
 // 2026-05-27 — Andrew: "i also want to add another audit to the admin
@@ -3331,6 +3332,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                           renaming fans out to linked collections. Show the blast
                           radius before committing. ── */}
                     {pendingRename && (
+                        <ModalPortal onBackPress={() => setPendingRename(null)}>
                         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
                             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                                 <div className="border-b border-gray-200 p-4">
@@ -3375,10 +3377,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 </div>
                             </div>
                         </div>
+                        </ModalPortal>
                     )}
 
                     {/* Busy overlay while the rename fans out across collections. */}
                     {renameBusy && (
+                        <ModalPortal>
                         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
                             <div className="bg-white rounded-2xl px-6 py-5 flex items-center gap-3 shadow-xl">
                                 <div className="w-5 h-5 border-2 border-gray-300 border-t-green-600 rounded-full animate-spin" />
@@ -3387,6 +3391,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 </span>
                             </div>
                         </div>
+                        </ModalPortal>
                     )}
 
                     {/* ── Import Staff Modal — paste names / upload CSV → diff → configure → commit ── */}
