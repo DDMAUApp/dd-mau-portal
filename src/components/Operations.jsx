@@ -748,10 +748,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const activeListRef = useRef(null);
             useEffect(() => { activeListRef.current = activeList; }, [activeList]);
             const [livePrices, setLivePrices] = useState({}); // { sysco: { prices: { itemId: { price, pack, ... } }, lastScraped } }
-            const [syscoTriggerStatus, setSyscoTriggerStatus] = useState(null); // null | "requesting" | "running" | "done" | "error"
-            const [syscoScrapeStatus, setSyscoScrapeStatus] = useState(null); // { status, detail, pricesFound, updatedAt }
-            const [usfoodsTriggerStatus, setUsfoodsTriggerStatus] = useState(null);
-            const [usfoodsScrapeStatus, setUsfoodsScrapeStatus] = useState(null);
+            // (Scraper trigger/status state removed 2026-06-15 — the Sysco/USFoods
+            // scrapers were deleted, so these were write-only dead state.)
             const [pricingVendor, setPricingVendor] = useState("sysco"); // "sysco" or "usfoods"
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
@@ -2246,88 +2244,35 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // doc reads + 7 live listeners on every Operations open for the
                 // common case (Pricing rarely viewed). Once opened they stay.
                 if (!pricingEverOpened) return;
-                // Helper: determine if a trigger doc is "stale" (a previous scrape
-                // crashed or got killed mid-run, leaving status="running"/"pending"
-                // forever and locking the refresh button). 10-min ceiling matches
-                // the longest reasonable scrape time + buffer.
-                const TRIGGER_STALE_MS = 10 * 60 * 1000;
-                const isTriggerStale = (data) => {
-                    const ts = data.startedAt || data.requestedAt;
-                    if (!ts) return false;
-                    const tsMs = typeof ts === "string" ? Date.parse(ts) : 0;
-                    if (!tsMs) return false;
-                    return Date.now() - tsMs > TRIGGER_STALE_MS;
-                };
-                const isCompletionStale = (data) => {
-                    const ts = data.completedAt;
-                    if (!ts) return false;
-                    const tsMs = typeof ts === "string" ? Date.parse(ts) : 0;
-                    if (!tsMs) return false;
-                    return Date.now() - tsMs > 30 * 1000;
-                };
-                // FIX (2026-05-14): track setTimeout ids so we can clear
-                // them on effect teardown. Without this, a scrape that
-                // completes JUST as the user navigates away from
-                // Operations leaves a pending setTimeout that calls
-                // setter(null) after unmount → "setState on unmounted
-                // component" warning + wasted work.
-                const pendingTimeouts = new Set();
-                const scheduleClear = (setter, ms) => {
-                    const id = setTimeout(() => {
-                        pendingTimeouts.delete(id);
-                        setter(null);
-                    }, ms);
-                    pendingTimeouts.add(id);
-                };
-                const applyTriggerSnapshot = (data, setter) => {
-                    if ((data.status === "running" || data.status === "pending") && isTriggerStale(data)) { setter(null); return; }
-                    if ((data.status === "done" || data.status === "error") && isCompletionStale(data)) { setter(null); return; }
-                    if (data.status === "running") setter("running");
-                    else if (data.status === "done") { setter("done"); scheduleClear(setter, 4000); }
-                    else if (data.status === "error") { setter("error"); scheduleClear(setter, 5000); }
-                    else if (data.status === "pending") setter("requesting");
-                    else if (!data.trigger) setter(null);
-                };
-
                 // Vendor-price subscriptions — log subscription errors
                 // instead of swallowing silently. A perm-denied / offline
                 // blip would leave the price block empty without any
                 // signal otherwise; the SDK auto-retries, but a log line
                 // makes diagnosis a non-event when staff ask why "live
                 // prices" is empty.
+                // NOTE (2026-06-15): the Sysco/USFoods *_trigger and *_status
+                // listeners + their stale-timeout machinery were removed — the
+                // scrapers were deleted, so those docs never update and their
+                // state was write-only. Only the three price docs remain, and
+                // they feed the cart's legacy badge until item_prices fully
+                // replaces them (Phase 3).
                 const onVpErr = (tag) => (err) => console.warn(`vendor_prices/${tag} snapshot error:`, err);
                 const unsubSyscoPrices = onSnapshot(doc(db, "vendor_prices", "sysco"), (docSnap) => {
                     if (docSnap.exists()) setLivePrices(prev => ({ ...prev, sysco: docSnap.data() }));
                 }, onVpErr('sysco'));
-                const unsubSyscoTrigger = onSnapshot(doc(db, "vendor_prices", "sysco_trigger"), (docSnap) => {
-                    if (docSnap.exists()) applyTriggerSnapshot(docSnap.data(), setSyscoTriggerStatus);
-                }, onVpErr('sysco_trigger'));
-                const unsubSyscoStatus = onSnapshot(doc(db, "vendor_prices", "sysco_status"), (docSnap) => {
-                    if (docSnap.exists()) setSyscoScrapeStatus(docSnap.data());
-                }, onVpErr('sysco_status'));
                 const unsubUsfoodsPrices = onSnapshot(doc(db, "vendor_prices", "usfoods"), (docSnap) => {
                     if (docSnap.exists()) setLivePrices(prev => ({ ...prev, usfoods: docSnap.data() }));
                 }, onVpErr('usfoods'));
-                const unsubUsfoodsTrigger = onSnapshot(doc(db, "vendor_prices", "usfoods_trigger"), (docSnap) => {
-                    if (docSnap.exists()) applyTriggerSnapshot(docSnap.data(), setUsfoodsTriggerStatus);
-                }, onVpErr('usfoods_trigger'));
-                const unsubUsfoodsStatus = onSnapshot(doc(db, "vendor_prices", "usfoods_status"), (docSnap) => {
-                    if (docSnap.exists()) setUsfoodsScrapeStatus(docSnap.data());
-                }, onVpErr('usfoods_status'));
                 // Costco — populated only by manual CSV/PDF imports
-                // (no scraper). Lives in the same vendor_prices doc
-                // shape so the Pricing tab can render it identically
-                // to Sysco / US Foods.
+                // (no scraper). Same vendor_prices doc shape.
                 const unsubCostcoPrices = onSnapshot(doc(db, "vendor_prices", "costco"), (docSnap) => {
                     if (docSnap.exists()) setLivePrices(prev => ({ ...prev, costco: docSnap.data() }));
                 }, onVpErr('costco'));
 
                 return () => {
-                    unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus();
-                    unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus();
+                    unsubSyscoPrices();
+                    unsubUsfoodsPrices();
                     unsubCostcoPrices();
-                    pendingTimeouts.forEach(id => clearTimeout(id));
-                    pendingTimeouts.clear();
                 };
             }, [pricingEverOpened]);
 
@@ -2403,7 +2348,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             if (done) return;
                             const [h, m] = item.completeBy.split(":").map(Number);
                             const deadlineMinutes = h * 60 + m;
-                            const taskName = item.task.includes("\n") ? item.task.split("\n")[0] : item.task;
+                            const taskName = (item.task || "").includes("\n") ? item.task.split("\n")[0] : item.task;
                             const timeStr = item.completeBy.replace(/^0/, "");
                             // 30-minute warning
                             const warn30Key = item.id + "_30_" + todayKey;
@@ -3494,11 +3439,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     try {
                         // Resolve a human-readable item name for the audit row
                         // so future renames don't make the log inscrutable.
-                        let itemName = itemId;
-                        for (const cat of customInventory) {
-                            const f = cat.items.find(it => it.id === itemId);
-                            if (f) { itemName = f.nameEn || f.name || itemId; break; }
-                        }
+                        // O(1) via the memoized invLookup instead of scanning
+                        // all ~243 items on every count tap.
+                        const f = invLookup[itemId];
+                        const itemName = (f && (f.nameEn || f.name)) || itemId;
                         addDoc(collection(db, 'inventory_audits_' + storeLocation), {
                             itemId,
                             itemName,
@@ -4126,18 +4070,30 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 );
             };
 
-            // Split list helpers
-            const saveSplitConfig = async (overrides, writeIns) => {
+            // Split list helpers.
+            // Writes ONLY the changed top-level field (`overrides` or `writeIns`)
+            // via a dotted-free updateDoc, so a per-count write-in edit no longer
+            // rewrites the whole doc AND a concurrent editor on the OTHER field
+            // (e.g. someone moving an item while you bump a count) isn't clobbered.
+            // First-ever write (doc missing) falls back to a merge setDoc; the
+            // other field defaults to {} in the consumers until its first edit.
+            const saveSplitConfig = async (patch) => {
+                const ref = doc(db, "ops", "splitConfig_" + storeLocation);
+                const data = { ...patch, date: new Date().toISOString() };
                 try {
-                    await setDoc(doc(db, "ops", "splitConfig_" + storeLocation), { overrides, writeIns, date: new Date().toISOString() });
-                } catch (err) { console.error("Error saving split config:", err); }
+                    await updateDoc(ref, data);
+                } catch (err) {
+                    if (err?.code === "not-found") {
+                        try { await setDoc(ref, data, { merge: true }); } catch (e) { console.error("Error creating split config:", e); }
+                    } else { console.error("Error saving split config:", err); }
+                }
             };
 
             const moveSplitItem = async (itemId, toPerson) => {
                 const updated = { ...splitOverrides, [itemId]: toPerson };
                 setSplitOverrides(updated);
                 setSplitMovingItem(null);
-                await saveSplitConfig(updated, splitWriteIns);
+                await saveSplitConfig({ overrides: updated });
             };
 
             const addSplitWriteIn = async (personName) => {
@@ -4148,21 +4104,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const updated = { ...splitWriteIns, [personName]: [...existing, { id: newId, name: input, count: 0 }] };
                 setSplitWriteIns(updated);
                 setSplitWriteInValues(prev => ({ ...prev, [personName]: "" }));
-                await saveSplitConfig(splitOverrides, updated);
+                await saveSplitConfig({ writeIns: updated });
             };
 
             const removeSplitWriteIn = async (personName, itemId) => {
                 const existing = splitWriteIns[personName] || [];
                 const updated = { ...splitWriteIns, [personName]: existing.filter(i => i.id !== itemId) };
                 setSplitWriteIns(updated);
-                await saveSplitConfig(splitOverrides, updated);
+                await saveSplitConfig({ writeIns: updated });
             };
 
             const updateSplitWriteInCount = async (personName, itemId, newCount) => {
                 const existing = splitWriteIns[personName] || [];
                 const updated = { ...splitWriteIns, [personName]: existing.map(i => i.id === itemId ? { ...i, count: newCount } : i) };
                 setSplitWriteIns(updated);
-                await saveSplitConfig(splitOverrides, updated);
+                await saveSplitConfig({ writeIns: updated });
             };
 
             const toggleCatCollapse = (key) => {
@@ -5387,7 +5343,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             <div className={"flex-1 " + (!editMode && !hasSubtasks ? "ml-3" : "")}>
                                                 <div className="flex items-center gap-1.5 flex-wrap">
                                                     <p className={"font-bold text-gray-800 " + (taskComplete ? "line-through text-green-700" : "")}>
-                                                        {item.task.includes("\n") ? item.task.split("\n").map((line, li) => (
+                                                        {(item.task || "").includes("\n") ? item.task.split("\n").map((line, li) => (
                                                             <span key={li}>{li === 0 ? line : <><br/><span className="font-normal text-xs text-gray-500">{line}</span></>}</span>
                                                         )) : item.task}
                                                     </p>
@@ -6268,6 +6224,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             const isBroken = laborStatus.isBroken;
                             const color = isBroken
                                 ? { bg: "bg-red-50",     border: "border-red-300",     text: "text-red-700",     emoji: "\u{26A0}\u{FE0F}" }
+                                : pct == null ? { bg: "bg-gray-50", border: "border-gray-300", text: "text-gray-500", emoji: "\u{1F4CA}" }
                                 : pct <= 22 ? { bg: "bg-emerald-50", border: "border-emerald-300", text: "text-emerald-700", emoji: "\u{2705}" }
                                 : pct <= 27 ? { bg: "bg-amber-50",   border: "border-amber-300",   text: "text-amber-700",   emoji: "\u{26A0}\u{FE0F}" }
                                 :             { bg: "bg-red-50",     border: "border-red-300",     text: "text-red-700",     emoji: "\u{1F534}" };
