@@ -8696,7 +8696,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                                 </button>
                                                                                             ))}
                                                                                             {wasMoved && (
-                                                                                                <button onClick={() => { const updated = { ...splitOverrides }; delete updated[item.id]; setSplitOverrides(updated); saveSplitConfig(updated, splitWriteIns); setSplitMovingItem(null); }}
+                                                                                                <button onClick={() => { const updated = { ...splitOverrides }; delete updated[item.id]; setSplitOverrides(updated); saveSplitConfig({ overrides: updated }); setSplitMovingItem(null); }}
                                                                                                     className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-lg font-bold hover:bg-gray-200 active:scale-95 transition">
                                                                                                     {"\u{21A9}"} {language === "es" ? "Original" : "Reset"}
                                                                                                 </button>
