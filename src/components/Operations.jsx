@@ -8822,6 +8822,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     storeLocation={storeLocation}
                                     staffName={staffName}
                                     masterCategories={customInventory}
+                                    itemPrices={itemPrices}
                                     onOpenImport={() => setShowCsvImport(true)}
                                 />
                             )}

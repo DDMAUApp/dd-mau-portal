@@ -14,10 +14,13 @@
 // a "Recent scans" list — every past scan is re-openable into its review
 // screen to fix matches and re-save. (receiptScans + ReceiptScanModal)
 import { useState, useEffect } from 'react';
-import { Camera, FileUp, Sparkles, History, Trash2, ChevronRight } from 'lucide-react';
+import { Camera, FileUp, Sparkles, History, Trash2, ChevronRight, Download } from 'lucide-react';
 import ReceiptScanModal from './ReceiptScanModal';
 import { subscribeReceiptScans, deleteReceiptScan } from '../data/receiptScans';
 import { subscribeItemAliases } from '../data/itemAliases';
+import { buildPricingCsv, pricingCsvFilename } from '../data/pricingExport';
+import { downloadFile } from '../capacitor-bridge';
+import { toast } from '../toast';
 
 // 'YYYY-MM-DD' → 'Jun 14' (locale-light, no Date parse surprises).
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -28,7 +31,7 @@ function shortDate(ymd) {
     return `${MONTHS[parseInt(m[2], 10) - 1] || ''} ${parseInt(m[3], 10)}`;
 }
 
-export default function PricingWorkspace({ language, isAdmin, storeLocation, staffName, masterCategories, onOpenImport }) {
+export default function PricingWorkspace({ language, isAdmin, storeLocation, staffName, masterCategories, itemPrices, onOpenImport }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [scanning, setScanning] = useState(false);
@@ -36,6 +39,27 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
     const [scans, setScans] = useState([]);
     const [aliasMap, setAliasMap] = useState({});
     const [confirmDel, setConfirmDel] = useState(null);
+    const [exporting, setExporting] = useState(false);
+
+    // Export every item we buy + its current pricing to a CSV the manager can
+    // open in Excel/Sheets. Uses the cross-platform downloadFile (web anchor /
+    // native Filesystem+Share).
+    const handleExport = async () => {
+        if (exporting) return;
+        setExporting(true);
+        try {
+            const today = new Date().toISOString().slice(0, 10);
+            const { csv, itemCount, pricedCount } = buildPricingCsv({ categories: masterCategories, itemPrices, language });
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            await downloadFile({ data: blob, fileName: pricingCsvFilename(storeLocation, today), mimeType: 'text/csv' });
+            toast(tx(`Exported ${itemCount} items (${pricedCount} priced).`, `${itemCount} artículos exportados (${pricedCount} con precio).`));
+        } catch (e) {
+            console.error('[PricingWorkspace] export failed', e);
+            toast(tx('Export failed — try again.', 'Error al exportar — intenta de nuevo.'));
+        } finally {
+            setExporting(false);
+        }
+    };
 
     useEffect(() => {
         if (!isAdmin || !storeLocation) return;
@@ -104,6 +128,28 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
                     <div className="text-xs text-dd-text-2 mt-0.5">
                         {tx('Choose a vendor and drop a CSV/PDF from their website.', 'Elige un proveedor y sube un CSV/PDF de su sitio web.')}
                     </div>
+                </button>
+            </div>
+
+            {/* Export items & pricing */}
+            <div className="rounded-2xl border border-dd-line bg-white p-4">
+                <div className="flex items-center gap-2 text-dd-text font-bold text-sm">
+                    <Download size={16} className="text-blue-600" strokeWidth={2.25} aria-hidden="true" />
+                    {tx('📤 Export items & pricing', '📤 Exportar artículos y precios')}
+                </div>
+                <p className="text-xs text-dd-text-2 mt-1 leading-relaxed">
+                    {tx(
+                        'Download a spreadsheet (CSV) of every item you buy with its current best price, who it was last ordered from, and your average order quantity.',
+                        'Descarga una hoja de cálculo (CSV) de cada artículo que compras con su mejor precio actual, de quién se pidió por última vez y tu cantidad promedio de pedido.'
+                    )}
+                </p>
+                <button
+                    type="button"
+                    onClick={handleExport}
+                    disabled={exporting || !(masterCategories || []).length}
+                    className="mt-3 w-full sm:w-auto px-4 py-2 rounded-xl bg-dd-green text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-1.5 active:scale-[0.99] transition"
+                >
+                    <Download size={15} /> {exporting ? tx('Exporting…', 'Exportando…') : tx('Export CSV', 'Exportar CSV')}
                 </button>
             </div>
 
