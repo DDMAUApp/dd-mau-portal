@@ -6860,18 +6860,35 @@ function GridFitWrapper({ enabled, children }) {
     // Push current zoom/pan to the DOM. transform / pointerEvents /
     // touchAction are set ONLY here (never in JSX) so a React re-render of
     // this wrapper can't clobber an in-progress zoom.
+    const rafRef = useRef(null);
+    const lastZoomedRef = useRef(null);
     const apply = () => {
         const inner = innerRef.current, outer = outerRef.current;
         if (!inner || !outer) return;
         const { fit, scale, tx, ty } = g.current;
+        // translate3d (not translate) keeps the grid on a GPU-composited layer
+        // so a pinch is a cheap composite. Android's WebView REPAINTS the whole
+        // 60+ cell grid every frame without this (the lag on the Android app);
+        // iOS WKWebView composited it regardless, so it was smooth there.
+        inner.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
         const zoomed = scale > fit * 1.02;
-        inner.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-        // Look-only at the fit baseline (cells too tiny to tap accurately);
-        // tappable once pinched in so shifts can be edited.
-        inner.style.pointerEvents = zoomed ? 'auto' : 'none';
-        // At fit: 1-finger scrolls the page, our 2-finger pinch zooms in.
-        // Zoomed: we own pan + pinch (no native scroll/zoom interference).
-        outer.style.touchAction = zoomed ? 'none' : 'pan-y';
+        // Only touch pointerEvents/touchAction when the zoomed state actually
+        // flips — re-writing touch-action every frame can hitch Android's
+        // input pipeline mid-gesture.
+        if (zoomed !== lastZoomedRef.current) {
+            lastZoomedRef.current = zoomed;
+            // Look-only at the fit baseline (cells too tiny to tap accurately);
+            // tappable once pinched in so shifts can be edited.
+            inner.style.pointerEvents = zoomed ? 'auto' : 'none';
+            // At fit: 1-finger scrolls the page, our 2-finger pinch zooms in.
+            // Zoomed: we own pan + pinch (no native scroll/zoom interference).
+            outer.style.touchAction = zoomed ? 'none' : 'pan-y';
+        }
+    };
+    // Coalesce rapid touchmove events into one transform write per frame.
+    const scheduleApply = () => {
+        if (rafRef.current != null) return;
+        rafRef.current = requestAnimationFrame(() => { rafRef.current = null; apply(); });
     };
 
     const clampPan = (s, x, y) => {
@@ -6959,13 +6976,13 @@ function GridFitWrapper({ enabled, children }) {
                 const cy = (gesture.midY - gesture.ty0) / gesture.s0;
                 const [nx, ny] = clampPan(ns, gesture.midX - cx * ns, gesture.midY - cy * ns);
                 cur.scale = ns; cur.tx = nx; cur.ty = ny;
-                apply();
+                scheduleApply();
             } else if (gesture.mode === 'pan' && e.touches.length === 1) {
                 e.preventDefault();
                 const t0 = e.touches[0];
                 const [nx, ny] = clampPan(cur.scale, gesture.tx0 + (t0.clientX - gesture.x0), gesture.ty0 + (t0.clientY - gesture.y0));
                 cur.tx = nx; cur.ty = ny;
-                apply();
+                scheduleApply();
             }
         };
         const onEnd = (e) => { if (e.touches.length === 0) gesture = null; };
@@ -6978,6 +6995,7 @@ function GridFitWrapper({ enabled, children }) {
             outer.removeEventListener('touchmove', onMove);
             outer.removeEventListener('touchend', onEnd);
             outer.removeEventListener('touchcancel', onEnd);
+            if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [enabled]);
@@ -6987,7 +7005,7 @@ function GridFitWrapper({ enabled, children }) {
     // these style objects — apply() owns them imperatively (see above).
     return (
         <div ref={outerRef} style={{ overflow: 'hidden', width: '100%', height: scaledHeight ?? 'auto' }}>
-            <div ref={innerRef} style={{ transformOrigin: 'top left', width: 'max-content', pointerEvents: 'none' }}>
+            <div ref={innerRef} style={{ transformOrigin: 'top left', width: 'max-content', pointerEvents: 'none', willChange: 'transform', backfaceVisibility: 'hidden' }}>
                 {children}
             </div>
         </div>
