@@ -340,31 +340,52 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
             at: new Date().toISOString(), reason: reason || 'receipt import',
         };
         const history = [...(prev.history || []), historyEntry].slice(-50);
+        // Dedicated purchase-quantity log — separate from the mixed price
+        // `history` (which manual edits also append to and which is capped at
+        // 50), so the cart's "average ordered" reflects actual purchases, not
+        // a window polluted by price edits. Only real order quantities (>0).
+        const qtyHistory = [...(prev.qtyHistory || [])];
+        if (qn != null && qn > 0) qtyHistory.push({ qty: qn, at: new Date().toISOString() });
         tx.set(ref, {
             itemId: String(itemId), location,
             byVendor: { [vKey]: entry },
             history,
+            qtyHistory: qtyHistory.slice(-60),
         }, { merge: true });
     });
 }
 
+// last (most recent by ts; ties resolve to the later-appended sample) + mean
+// over a list of { qty, at } samples. null if empty.
+function _qtyStatsFrom(samples) {
+    if (!samples.length) return null;
+    let last = samples[0];
+    for (const s of samples) if (toMillis(s.at) >= toMillis(last.at)) last = s;
+    const avg = samples.reduce((a, s) => a + s.qty, 0) / samples.length;
+    return { lastQty: last.qty, lastQtyAt: last.at, avgQty: avg, count: samples.length };
+}
+
 // ── orderQtyStats ────────────────────────────────────────────────────────
-// "How much do we usually order?" for the cart's reorder hint. Pulls every
-// recorded purchase quantity from history (capped at the last 50 purchases)
-// → { lastQty, lastQtyAt, avgQty, count } or null. Falls back to a byVendor
-// lastQty for docs written before qty was tracked.
+// "How much do we usually order?" for the cart's reorder hint →
+// { lastQty, lastQtyAt, avgQty, count } or null. Sources, in order:
+//   1) qtyHistory — the dedicated purchase-quantity log (preferred; not
+//      polluted by manual price edits, capped at the last 60 purchases);
+//   2) INVOICE qty carried on the mixed price `history` (docs written before
+//      qtyHistory existed);
+//   3) a byVendor lastQty (oldest fallback).
 export function orderQtyStats(priceDoc) {
-    const hist = Array.isArray(priceDoc?.history) ? priceDoc.history : [];
-    const samples = hist
-        .filter((h) => h && h.source === PRICE_SOURCE.INVOICE && h.qty != null && isFinite(Number(h.qty)) && Number(h.qty) > 0)
-        .map((h) => ({ qty: Number(h.qty), at: h.at || null }));
-    if (samples.length) {
-        let last = samples[0];
-        for (const s of samples) if (toMillis(s.at) >= toMillis(last.at)) last = s;
-        const avg = samples.reduce((a, s) => a + s.qty, 0) / samples.length;
-        return { lastQty: last.qty, lastQtyAt: last.at, avgQty: avg, count: samples.length };
-    }
-    // Fallback: most-recent byVendor lastQty (pre-history-qty docs).
+    const pickQty = (h) => (h && isFinite(Number(h.qty)) && Number(h.qty) > 0);
+    const map = (h) => ({ qty: Number(h.qty), at: h.at || null });
+
+    const qh = (Array.isArray(priceDoc?.qtyHistory) ? priceDoc.qtyHistory : []).filter(pickQty).map(map);
+    const fromQh = _qtyStatsFrom(qh);
+    if (fromQh) return fromQh;
+
+    const hist = (Array.isArray(priceDoc?.history) ? priceDoc.history : [])
+        .filter((h) => h && h.source === PRICE_SOURCE.INVOICE && pickQty(h)).map(map);
+    const fromHist = _qtyStatsFrom(hist);
+    if (fromHist) return fromHist;
+
     const bv = priceDoc?.byVendor || {};
     let best = null;
     for (const e of Object.values(bv)) {

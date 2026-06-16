@@ -122,7 +122,9 @@ export default function ReceiptScanModal({ location, staffName, language, master
         return masterIndex.filter((m) => m.nameLower.includes(q)).slice(0, 8);
     };
 
-    const confirmedCount = rows.filter((r) => r.included && r.masterId && r.price !== '' && isFinite(parseFloat(r.price))).length;
+    // Mirror the save() guard exactly (incl. price >= 0) so the footer count
+    // never promises a row that save() will silently skip.
+    const confirmedCount = rows.filter((r) => r.included && r.masterId && r.price !== '' && isFinite(parseFloat(r.price)) && parseFloat(r.price) >= 0).length;
 
     // Snapshot EVERY row (matched or not, included or not) so a re-opened
     // scan shows the whole receipt — including lines still to be matched.

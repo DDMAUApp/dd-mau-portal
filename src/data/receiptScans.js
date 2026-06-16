@@ -60,7 +60,9 @@ export async function saveReceiptScan(location, scan, createdAtMs) {
         source: scan.source || 'receipt',
         savedCount: scan.savedCount ?? 0,
         lines: scan.lines || [],
-        createdAt: createdAtMs ?? 0,
+        // Stable client-ms sort key. Default to now so a caller that forgets
+        // to pass it still sorts the new scan to the top, not the bottom.
+        createdAt: createdAtMs ?? Date.now(),
         scannedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
     });

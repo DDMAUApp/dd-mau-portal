@@ -195,7 +195,24 @@ describe('lastOrdered', () => {
 });
 
 describe('orderQtyStats', () => {
-    it('computes last (most recent) + average from history qtys', () => {
+    it('prefers the dedicated qtyHistory log (not the mixed price history)', () => {
+        const doc = {
+            qtyHistory: [
+                { qty: 6, at: '2026-06-01T00:00:00Z' },
+                { qty: 2, at: '2026-06-12T00:00:00Z' },
+            ],
+            // a manual-edit-heavy price history that must NOT bias the qty stats
+            history: [
+                { source: PRICE_SOURCE.MANUAL, at: '2026-06-13T00:00:00Z' },
+                { source: PRICE_SOURCE.INVOICE, qty: 99, at: '2026-01-01T00:00:00Z' },
+            ],
+        };
+        const r = orderQtyStats(doc);
+        expect(r.lastQty).toBe(2);       // newest in qtyHistory
+        expect(r.avgQty).toBe(4);        // (6+2)/2 — ignores the 99 in history
+        expect(r.count).toBe(2);
+    });
+    it('falls back to INVOICE qty on legacy price history (pre-qtyHistory docs)', () => {
         const doc = {
             history: [
                 { source: PRICE_SOURCE.INVOICE, qty: 2, at: '2026-05-01T00:00:00Z' },
