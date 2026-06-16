@@ -27,7 +27,7 @@ import { db } from '../firebase';
 import { doc, setDoc, updateDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { recordAudit } from '../data/audit';
 import { recordPurchase } from '../data/itemPricing';
-import { learnAliases } from '../data/itemAliases';
+import { learnAliases, subscribeItemAliases, normalizeAliasKey } from '../data/itemAliases';
 import { saveReceiptScan } from '../data/receiptScans';
 import ModalPortal from './ModalPortal';
 
@@ -215,6 +215,14 @@ export default function VendorCsvImportModal({
     const [error, setError] = useState(null);
     const fileRef = useRef(null);
 
+    // Learned name→item aliases (shared with the receipt scanner) — a third
+    // match tier so a name matched on a past receipt/import auto-resolves here.
+    const [aliasMap, setAliasMap] = useState({});
+    useEffect(() => {
+        if (!storeLocation) return;
+        return subscribeItemAliases(storeLocation, setAliasMap);
+    }, [storeLocation]);
+
     // ── CSV parser ──────────────────────────────────────────────
     function parseCsv(text) {
         // Strip BOM, normalize CRLF.
@@ -349,7 +357,14 @@ export default function VendorCsvImportModal({
             const it = flatInventory.find(x => x.id === masterId);
             return { matchType: 'sku', itemId: masterId, name: it?.name || '(unknown)', confidence: 1.0 };
         }
-        // Tier 2 — name fuzzy match.
+        // Tier 2 — learned alias (a name confirmed on a past receipt/import).
+        const aliasKey = normalizeAliasKey(name);
+        const alias = aliasKey ? aliasMap[aliasKey] : null;
+        if (alias && alias.masterId) {
+            const it = flatInventory.find(x => x.id === alias.masterId);
+            if (it) return { matchType: 'alias', itemId: alias.masterId, name: it.name, confidence: 1.0 };
+        }
+        // Tier 3 — name fuzzy match.
         const fuzzy = fuzzyMatchByName(name);
         if (fuzzy) {
             return {
@@ -525,7 +540,7 @@ export default function VendorCsvImportModal({
                 ...m,
             };
         });
-    }, [parsed, vendor, vendorMatches, flatInventory]);
+    }, [parsed, vendor, vendorMatches, flatInventory, aliasMap]);
 
     // ── Final resolved mapping (matched ∪ overrides) ───────────
     // Per-row qty resolution: if admin typed a manualQty override
@@ -562,7 +577,7 @@ export default function VendorCsvImportModal({
         let auto = 0, ambig = 0, none = 0, included = 0, noQty = 0;
         for (const r of resolved) {
             if (r.skipped) { /* counted as skipped */ }
-            else if (r.matchType === 'sku' || r.matchType === 'fuzzy_high' || overrideMap[r.rowIdx]) auto++;
+            else if (r.matchType === 'sku' || r.matchType === 'fuzzy_high' || r.matchType === 'alias' || overrideMap[r.rowIdx]) auto++;
             else if (r.matchType === 'fuzzy_low') ambig++;
             else if (r.matchType === 'none') none++;
             if (!r.skipped && r.finalItemId && r.finalQty > 0) included++;
@@ -1034,7 +1049,7 @@ function RowPreview({ row, flatInventory, isEs, qtyOverride, onQtyChange, onOver
 
     const tone = row.skipped
         ? 'bg-gray-50 text-gray-400 line-through'
-        : row.matchType === 'sku' || row.matchType === 'fuzzy_high'
+        : row.matchType === 'sku' || row.matchType === 'fuzzy_high' || row.matchType === 'alias'
         ? 'bg-mint-50'
         : row.matchType === 'fuzzy_low'
         ? 'bg-amber-50'
@@ -1044,6 +1059,8 @@ function RowPreview({ row, flatInventory, isEs, qtyOverride, onQtyChange, onOver
         ? { en: 'SKIP', es: 'OMITIR', cls: 'bg-gray-200 text-gray-600' }
         : row.matchType === 'sku'
         ? { en: 'SKU MATCH', es: 'SKU', cls: 'bg-mint-600 text-white' }
+        : row.matchType === 'alias'
+        ? { en: 'REMEMBERED', es: 'RECORDADO', cls: 'bg-emerald-600 text-white' }
         : row.matchType === 'fuzzy_high'
         ? { en: 'NAME MATCH', es: 'NOMBRE', cls: 'bg-mint-500 text-white' }
         : row.matchType === 'fuzzy_low'
@@ -1090,7 +1107,7 @@ function RowPreview({ row, flatInventory, isEs, qtyOverride, onQtyChange, onOver
                         )}
                     </div>
                     <div className="text-[12px] text-gray-800 mt-0.5 truncate">{row.name}</div>
-                    {(row.matchType === 'sku' || row.matchType === 'fuzzy_high' || row.matchType === 'fuzzy_low') && row.finalItemId && (
+                    {(row.matchType === 'sku' || row.matchType === 'alias' || row.matchType === 'fuzzy_high' || row.matchType === 'fuzzy_low') && row.finalItemId && (
                         <div className="text-[11px] text-gray-600 mt-0.5">
                             → <b>{flatInventory.find(x => x.id === row.finalItemId)?.name || row.name}</b>
                             {row.confidence < 1 && (

@@ -29,9 +29,35 @@ import {
     query, orderBy, limit, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { normalizeAliasKey } from './itemAliases';
 
 export function receiptScansCollPath(location) {
     return `receipt_scans_${location}`;
+}
+
+// Cross-scan "still unmatched" queue — every scan line with no master match
+// AND no learned alias yet, deduped by normalized name. The most recent
+// occurrence wins for the price/vendor/date to apply when the manager fixes
+// it. Pure (no Firestore) so it's unit-tested. Returns newest-first.
+export function buildUnmatchedQueue(scans, aliasMap) {
+    const byKey = new Map();
+    for (const s of (scans || [])) {
+        for (const ln of (s?.lines || [])) {
+            if (!ln || ln.masterId || !ln.name) continue;
+            const key = normalizeAliasKey(ln.name);
+            if (!key || (aliasMap && aliasMap[key])) continue;
+            const at = s.createdAt || 0;
+            const price = (ln.price != null && isFinite(Number(ln.price))) ? Number(ln.price) : null;
+            const prev = byKey.get(key);
+            if (!prev) {
+                byKey.set(key, { key, name: ln.name, vendor: s.vendor || '', date: s.date || '', price, pack: ln.pack || null, createdAt: at, count: 1 });
+            } else {
+                prev.count += 1;
+                if (at >= prev.createdAt) Object.assign(prev, { name: ln.name, vendor: s.vendor || '', date: s.date || '', price, pack: ln.pack || null, createdAt: at });
+            }
+        }
+    }
+    return [...byKey.values()].sort((a, b) => b.createdAt - a.createdAt);
 }
 
 // Live subscription to recent scans for a location → array (newest first).

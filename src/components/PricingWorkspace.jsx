@@ -13,11 +13,12 @@
 // Phase 2d (Andrew 2026-06-15: "show where it matched and i can edit it"):
 // a "Recent scans" list — every past scan is re-openable into its review
 // screen to fix matches and re-save. (receiptScans + ReceiptScanModal)
-import { useState, useEffect } from 'react';
-import { Camera, FileUp, Sparkles, History, Trash2, ChevronRight, Download } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Camera, FileUp, Sparkles, History, Trash2, ChevronRight, Download, Wand2, Search } from 'lucide-react';
 import ReceiptScanModal from './ReceiptScanModal';
-import { subscribeReceiptScans, deleteReceiptScan } from '../data/receiptScans';
-import { subscribeItemAliases } from '../data/itemAliases';
+import { subscribeReceiptScans, deleteReceiptScan, buildUnmatchedQueue } from '../data/receiptScans';
+import { subscribeItemAliases, learnAliases } from '../data/itemAliases';
+import { recordPurchase } from '../data/itemPricing';
 import { buildPricingCsv, pricingCsvFilename } from '../data/pricingExport';
 import { downloadFile } from '../capacitor-bridge';
 import { toast } from '../toast';
@@ -70,6 +71,39 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
         if (!isAdmin || !storeLocation) return;
         return subscribeItemAliases(storeLocation, setAliasMap);
     }, [isAdmin, storeLocation]);
+
+    // Flat master-item list for the unmatched picker.
+    const masters = useMemo(() => {
+        const out = [];
+        for (const cat of (masterCategories || [])) {
+            for (const it of (cat?.items || [])) {
+                if (it?.id) out.push({ id: it.id, name: it.name || '', nameLower: (it.name || '').toLowerCase() });
+            }
+        }
+        return out;
+    }, [masterCategories]);
+
+    // Cross-scan "still unmatched" queue (pure helper, unit-tested).
+    const unmatchedQueue = useMemo(() => buildUnmatchedQueue(scans, aliasMap), [scans, aliasMap]);
+
+    // Fix an unmatched name: remember it (so future scans auto-match) and, if
+    // the line carried a price, save that purchase so it's not lost. The alias
+    // write makes this entry drop out of the queue live.
+    const resolveUnmatched = async (entry, masterId, masterName) => {
+        try {
+            await learnAliases(storeLocation, [{ rawName: entry.name, masterId, masterName, vendor: entry.vendor || null }], staffName);
+            if (entry.price != null && isFinite(entry.price)) {
+                await recordPurchase(storeLocation, masterId, {
+                    vendor: entry.vendor || 'Other', price: entry.price, pack: entry.pack || null,
+                    qty: null, by: staffName, purchasedDate: entry.date || undefined, reason: 'unmatched resolve',
+                });
+            }
+            toast(tx(`Matched "${entry.name}" → ${masterName}.`, `Emparejado "${entry.name}" → ${masterName}.`));
+        } catch (e) {
+            console.error('[PricingWorkspace] resolveUnmatched failed', e);
+            toast(tx('Could not save — try again.', 'No se pudo guardar — intenta de nuevo.'));
+        }
+    };
 
     if (!isAdmin) {
         return (
@@ -130,6 +164,27 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
                     </div>
                 </button>
             </div>
+
+            {/* Unmatched items — cross-scan cleanup queue */}
+            {unmatchedQueue.length > 0 && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/40 overflow-hidden">
+                    <div className="px-4 py-2.5 border-b border-amber-200 flex items-center gap-2">
+                        <Wand2 size={15} className="text-amber-600" aria-hidden="true" />
+                        <div className="text-xs font-bold uppercase tracking-wider text-amber-800">
+                            {tx('Unmatched items', 'Sin emparejar')}
+                        </div>
+                        <span className="ml-auto text-[11px] font-bold text-amber-700">{unmatchedQueue.length}</span>
+                    </div>
+                    <div className="px-4 pt-2 text-[11px] text-amber-800/80">
+                        {tx('Names from past scans we couldn’t match. Pick the right item once — we’ll remember it next time and save its price.', 'Nombres de escaneos que no pudimos emparejar. Elige el artículo correcto una vez — lo recordaremos y guardaremos su precio.')}
+                    </div>
+                    <div className="divide-y divide-amber-200/60 mt-1">
+                        {unmatchedQueue.map((entry) => (
+                            <UnmatchedRow key={entry.key} entry={entry} masters={masters} language={language} onResolve={resolveUnmatched} />
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Export items & pricing */}
             <div className="rounded-2xl border border-dd-line bg-white p-4">
@@ -248,6 +303,67 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
                     } : undefined}
                     onClose={closeModal}
                 />
+            )}
+        </div>
+    );
+}
+
+// One unmatched name + an inline master-item picker. On pick → onResolve
+// (learns the alias + saves the price), which removes it from the queue live.
+function UnmatchedRow({ entry, masters, language, onResolve }) {
+    const tx = (en, es) => (language === 'es' ? es : en);
+    const [open, setOpen] = useState(false);
+    const [query, setQuery] = useState('');
+    const [busy, setBusy] = useState(false);
+    const results = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        return (q ? masters.filter((m) => m.nameLower.includes(q)) : masters).slice(0, 8);
+    }, [query, masters]);
+    const pick = async (m) => {
+        if (busy) return;
+        setBusy(true);
+        try { await onResolve(entry, m.id, m.name); } finally { setBusy(false); }
+    };
+    return (
+        <div className="px-4 py-2.5">
+            <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold text-dd-text truncate">{entry.name}</div>
+                    <div className="text-[11px] text-dd-text-2 truncate">
+                        {entry.vendor || tx('Receipt', 'Recibo')}
+                        {entry.date ? ` · ${shortDate(entry.date)}` : ''}
+                        {entry.price != null ? ` · $${entry.price.toFixed(2)}` : ''}
+                        {entry.count > 1 ? ` · ${tx(`seen ${entry.count}×`, `visto ${entry.count}×`)}` : ''}
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => setOpen((o) => !o)}
+                    className="shrink-0 px-2.5 py-1 rounded-lg bg-dd-green text-white text-xs font-bold active:scale-[0.98]"
+                >{open ? tx('Close', 'Cerrar') : tx('Match', 'Emparejar')}</button>
+            </div>
+            {open && (
+                <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
+                    <div className="flex items-center gap-1 mb-1">
+                        <Search size={12} className="text-gray-400" />
+                        <input
+                            autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
+                            placeholder={tx('search master items…', 'buscar artículos…')}
+                            className="flex-1 text-sm bg-transparent outline-none"
+                        />
+                    </div>
+                    <div className="max-h-44 overflow-y-auto">
+                        {results.map((m) => (
+                            <button
+                                key={m.id} disabled={busy} onClick={() => pick(m)}
+                                className="block w-full text-left text-xs px-2 py-1 hover:bg-dd-bg rounded disabled:opacity-50"
+                            >{m.name}</button>
+                        ))}
+                        {results.length === 0 && (
+                            <div className="text-[11px] text-gray-400 px-2 py-1">{tx('No matches.', 'Sin resultados.')}</div>
+                        )}
+                    </div>
+                </div>
             )}
         </div>
     );
