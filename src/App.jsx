@@ -377,6 +377,13 @@ function useVersionCheck() {
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const savedVersion = useRef(null);
     useEffect(() => {
+        // 2026-06-15 native-perf fix: skip this poll entirely on the native
+        // app. version.json is a BUNDLED asset there, so it can never change
+        // without a Capgo OTA bundle swap — and Capgo's own updateAvailable
+        // listener (capacitor-bridge.js) already owns the "new version" UX on
+        // native. Polling it every 2 min was pure battery/idle-wake waste on a
+        // phone in someone's apron all shift.
+        if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true) return;
         // 2026-05-24 audit fix:
         //   1. Was polling unconditionally including while the tab is
         //      hidden — wasted bandwidth + battery on phones in pockets.
