@@ -13,10 +13,11 @@
 // ({ vendor, date, lineItems }) to jump straight to the review screen.
 import { useState, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Camera, X, Check, RefreshCw, Search } from 'lucide-react';
+import { Camera, X, Check, RefreshCw, Search, ArrowLeft } from 'lucide-react';
 import { buildMasterIndex, matchItemByName } from '../data/itemMatch';
 import { fileToScaledBase64, parseReceiptImage } from '../data/parseReceipt';
 import { recordPurchase, perUnitPrice } from '../data/itemPricing';
+import { saveReceiptScan, updateReceiptScan } from '../data/receiptScans';
 import { toast } from '../toast';
 
 export default function ReceiptScanModal({ location, staffName, language, masterCategories, initialExtraction, onClose }) {
@@ -31,16 +32,21 @@ export default function ReceiptScanModal({ location, staffName, language, master
     }, [masterCategories]);
 
     // rows: { name, qty, price, pack, masterId, confidence, included, pickerOpen, query }
+    // When a line already carries a saved match (re-opening a past scan from
+    // history), trust it verbatim instead of re-guessing — the manager may
+    // have hand-corrected it. A fresh AI extraction has no `masterId` key, so
+    // we run the matcher for those.
     const buildRows = (lineItems) => (lineItems || []).map((li) => {
-        const guess = matchItemByName(li.name, masterIndex);
+        const hasSavedMatch = Object.prototype.hasOwnProperty.call(li || {}, 'masterId');
+        const guess = hasSavedMatch ? null : matchItemByName(li.name, masterIndex);
         return {
             name: li.name || '',
             qty: li.qty ?? 1,
             price: li.price != null ? String(li.price) : '',
             pack: li.pack || '',
-            masterId: guess?.id || null,
-            confidence: guess?.confidence || null,
-            included: true,
+            masterId: hasSavedMatch ? (li.masterId || null) : (guess?.id || null),
+            confidence: hasSavedMatch ? (li.confidence || null) : (guess?.confidence || null),
+            included: li.included != null ? li.included : true,
             pickerOpen: false,
             query: '',
         };
@@ -52,6 +58,12 @@ export default function ReceiptScanModal({ location, staffName, language, master
     const [rows, setRows] = useState(() => buildRows(initialExtraction?.lineItems));
     const [problems, setProblems] = useState([]);
     const [saving, setSaving] = useState(false);
+    // Re-opening a past scan from history carries its id so re-saving updates
+    // the SAME record instead of creating a duplicate.
+    const [scanId, setScanId] = useState(initialExtraction?.scanId || null);
+    const scanSource = initialExtraction?.source || 'receipt';
+    // After a successful save we show a summary of exactly what landed.
+    const [savedSummary, setSavedSummary] = useState(null);
     const fileRef = useRef(null);
 
     const handleFile = async (file) => {
@@ -89,10 +101,29 @@ export default function ReceiptScanModal({ location, staffName, language, master
 
     const confirmedCount = rows.filter((r) => r.included && r.masterId && r.price !== '' && isFinite(parseFloat(r.price))).length;
 
+    // Snapshot EVERY row (matched or not, included or not) so a re-opened
+    // scan shows the whole receipt — including lines still to be matched.
+    // masterName is snapshotted so history reads even if the master list
+    // later changes.
+    const snapshotLines = () => rows.map((r) => {
+        const price = parseFloat(r.price);
+        const master = r.masterId ? masterById.get(r.masterId) : null;
+        return {
+            name: r.name || '',
+            qty: r.qty ?? 1,
+            price: isFinite(price) ? price : null,
+            pack: r.pack || null,
+            masterId: r.masterId || null,
+            masterName: master?.name || null,
+            confidence: r.confidence || null,
+            included: !!r.included,
+        };
+    });
+
     const save = async () => {
         if (saving) return;
         setSaving(true);
-        let saved = 0;
+        const landed = [];
         try {
             for (const r of rows) {
                 if (!r.included || !r.masterId) continue;
@@ -104,12 +135,37 @@ export default function ReceiptScanModal({ location, staffName, language, master
                     pack: r.pack || null,
                     by: staffName,
                     purchasedDate: date,
-                    reason: 'receipt scan',
+                    reason: scanSource === 'import' ? 'price import' : 'receipt scan',
                 });
-                saved++;
+                const pu = perUnitPrice(price, r.pack);
+                landed.push({
+                    name: masterById.get(r.masterId)?.name || r.name,
+                    price, perUnit: pu?.perUnit ?? null, unit: pu?.unit || null,
+                });
             }
-            toast(tx(`Saved ${saved} price${saved === 1 ? '' : 's'}.`, `${saved} precio${saved === 1 ? '' : 's'} guardado${saved === 1 ? '' : 's'}.`));
-            onClose();
+            // Persist the scan record (create new, or update the re-opened one).
+            const lines = snapshotLines();
+            const payload = { vendor: vendor || '', date, savedCount: landed.length, lines };
+            try {
+                if (scanId) {
+                    await updateReceiptScan(location, scanId, payload);
+                } else {
+                    const id = await saveReceiptScan(
+                        location,
+                        { ...payload, scannedBy: staffName, source: scanSource },
+                        Date.now(),
+                    );
+                    setScanId(id);
+                }
+            } catch (histErr) {
+                // History is a convenience; the prices already saved. Don't
+                // fail the whole save just because the record didn't persist.
+                console.error('[ReceiptScanModal] scan-record save failed', histErr);
+            }
+            toast(tx(`Saved ${landed.length} price${landed.length === 1 ? '' : 's'}.`, `${landed.length} precio${landed.length === 1 ? '' : 's'} guardado${landed.length === 1 ? '' : 's'}.`));
+            setSavedSummary({ count: landed.length, landed, unmatched: rows.filter((r) => r.included && !r.masterId).length });
+            setStage('saved');
+            setSaving(false);
         } catch (e) {
             console.error('[ReceiptScanModal] save failed', e);
             toast(tx('Save failed — try again.', 'Error al guardar — intenta de nuevo.'));
@@ -252,6 +308,59 @@ export default function ReceiptScanModal({ location, staffName, language, master
                             <button onClick={save} disabled={saving || confirmedCount === 0}
                                 className="ml-auto px-4 py-2 rounded-xl bg-dd-green text-white font-bold text-sm disabled:opacity-50 flex items-center gap-1">
                                 <Check size={16} /> {saving ? tx('Saving…', 'Guardando…') : tx('Save prices', 'Guardar precios')}
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {/* SAVED — summary of exactly what landed */}
+                {stage === 'saved' && savedSummary && (
+                    <>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                            <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-center">
+                                <div className="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center mx-auto mb-2">
+                                    <Check size={22} strokeWidth={2.5} />
+                                </div>
+                                <div className="text-sm font-bold text-emerald-900">
+                                    {tx(`Saved ${savedSummary.count} price${savedSummary.count === 1 ? '' : 's'}`, `${savedSummary.count} precio${savedSummary.count === 1 ? '' : 's'} guardado${savedSummary.count === 1 ? '' : 's'}`)}
+                                </div>
+                                <div className="text-[11px] text-emerald-800 mt-0.5">
+                                    {tx(`from ${vendor || 'this receipt'}${date ? ` · ${date}` : ''}`, `de ${vendor || 'este recibo'}${date ? ` · ${date}` : ''}`)}
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-gray-100 divide-y divide-gray-100">
+                                {savedSummary.landed.map((l, i) => (
+                                    <div key={i} className="flex items-center gap-2 px-3 py-2">
+                                        <Check size={13} className="text-emerald-600 shrink-0" />
+                                        <div className="text-sm font-semibold text-dd-text truncate flex-1">{l.name}</div>
+                                        <div className="text-xs text-dd-text-2 text-right shrink-0">
+                                            ${l.price.toFixed(2)}
+                                            {l.perUnit != null && <span className="text-emerald-700"> · ${l.perUnit.toFixed(2)}/{l.unit}</span>}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {savedSummary.unmatched > 0 && (
+                                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+                                    {tx(`${savedSummary.unmatched} item${savedSummary.unmatched === 1 ? '' : 's'} weren't matched, so they weren't saved. Tap "Edit matches" to match them.`, `${savedSummary.unmatched} artículo${savedSummary.unmatched === 1 ? '' : 's'} sin emparejar — no se guardaron. Toca "Editar" para emparejarlos.`)}
+                                </div>
+                            )}
+
+                            <div className="text-[11px] text-dd-text-2 text-center px-2">
+                                {tx('These now show on the items and in the cart (🏆 Best · ↩ Last ordered). You can re-open this scan anytime from "Recent scans".', 'Ahora aparecen en los artículos y en el carrito (🏆 Mejor · ↩ Última compra). Puedes reabrir este escaneo desde "Escaneos recientes".')}
+                            </div>
+                        </div>
+
+                        <div className="px-4 py-3 border-t border-gray-100 flex items-center gap-2 shrink-0">
+                            <button onClick={() => setStage('review')}
+                                className="px-3 py-2 rounded-xl border border-gray-300 text-dd-text font-semibold text-sm flex items-center gap-1">
+                                <ArrowLeft size={15} /> {tx('Edit matches', 'Editar')}
+                            </button>
+                            <button onClick={onClose}
+                                className="ml-auto px-5 py-2 rounded-xl bg-dd-green text-white font-bold text-sm">
+                                {tx('Done', 'Listo')}
                             </button>
                         </div>
                     </>
