@@ -3368,12 +3368,16 @@ exports.parseReceipt = onCall(
             'If not readable: {"readable": false, "problems": ["..."], "vendor": null, "date": null, "lineItems": []}',
         ].join("\n");
 
+        // Defensive: trim the key — a pasted trailing space/newline in the
+        // secret is a common cause of Anthropic 401 "invalid x-api-key".
+        const apiKey = String(ANTHROPIC_API_KEY.value() || "").trim();
+
         let body;
         try {
             const resp = await fetch("https://api.anthropic.com/v1/messages", {
                 method: "POST",
                 headers: {
-                    "x-api-key": ANTHROPIC_API_KEY.value(),
+                    "x-api-key": apiKey,
                     "anthropic-version": "2023-06-01",
                     "content-type": "application/json",
                 },
