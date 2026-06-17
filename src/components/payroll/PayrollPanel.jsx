@@ -226,6 +226,11 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     // rate. An override is anything the owner types that differs from it.
     const naturalRate = (p) => (p.toast_rate != null ? p.toast_rate : (p.last_rate != null ? p.last_rate : 0));
     const hasOverride = (p) => p.rate_override !== '' && p.rate_override != null;
+    const payRate = (p) => (hasOverride(p) ? Number(p.rate_override) : naturalRate(p));
+    // True when this period's Pay Rate doesn't match what Toast reported (i.e. an
+    // override that differs from Toast) — used to flag the row red so a mismatch
+    // is impossible to miss before payroll runs.
+    const rateMismatch = (p) => p.toast_rate != null && Math.abs(payRate(p) - p.toast_rate) > 0.0001;
 
     // Every active rate override, for the "changes" summary at the bottom of the
     // People step (so the owner can see exactly which rates are pinned over Toast).
@@ -441,7 +446,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                 <div className="rounded-xl border border-dd-line bg-white p-4 space-y-4">
                     <div>
                         <h4 className="font-bold text-dd-text mb-1">People & Direct Deposit</h4>
-                        <p className="text-xs text-dd-text-2">This list is live — what you set carries to every future payroll. Set anyone marked <span className="text-red-600 font-bold">NEW</span> (FOH/BOH + Direct Deposit). Hours come from Toast; the <b>pay rate</b> defaults to Toast but you can change it here — a changed rate overrides Toast and is listed at the bottom.</p>
+                        <p className="text-xs text-dd-text-2">This list is live — what you set carries to every future payroll. Set anyone marked <span className="text-red-600 font-bold">NEW</span> (FOH/BOH + Direct Deposit). Hours come from Toast; the <b>pay rate</b> defaults to Toast but you can change it here — a changed rate overrides Toast and is listed at the bottom. Rows where the Pay Rate differs from the Toast Rate are highlighted <span className="text-red-600 font-bold">red</span>.</p>
                     </div>
                     {LOCS.map((loc) => (
                         <div key={loc}>
@@ -454,7 +459,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                                     </tr></thead>
                                     <tbody>
                                         {rosterView[loc].people.map((p) => (
-                                            <tr key={p.key} className={p.needs_setup ? 'bg-red-50' : ''}>
+                                            <tr key={p.key} className={rateMismatch(p) ? 'bg-red-100' : (p.needs_setup ? 'bg-red-50' : '')}>
                                                 <td className="py-1 pr-2">{p.first} {p.last}
                                                     {p.needs_setup && <span className="ml-1 text-red-600 font-bold">NEW</span>}
                                                     {!p.on_toast && !p.needs_setup && <span className="ml-1 text-dd-text-2">(no hours)</span>}</td>
