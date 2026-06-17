@@ -41,19 +41,16 @@ WORKDIR /app
 # .npmrc flag and rejected the peer-dep conflict. Adding .npmrc to the
 # COPY makes the Docker build behave the same as the GitHub Actions
 # build and the local install.
-COPY package.json package-lock.json* .npmrc ./
-# 2026-06-17 — RAILWAY CRON BUILD FIX. This installs the whole frontend
-# dependency tree (~990 packages) just to run one firebase-admin script, which
-# drags in NATIVE modules (sharp, @napi-rs/canvas, esbuild binaries…). On this
-# node:22-slim image their install/postinstall build steps can fail (no python/
-# make/g++, and prebuilt-binary fetches are flaky), taking the whole build down.
-# The cron only imports firebase-admin (+ @google-cloud/firestore) — all pure
-# JS, no build step — so --ignore-scripts skips every package's native build.
-# The unused native modules end up unbuilt-but-irrelevant; firebase-admin works
-# fine. (Do NOT add --omit=dev: firebase-admin is a devDependency here. Do NOT
-# add --omit=optional: @google-cloud/firestore is an OPTIONAL dep of
-# firebase-admin and the cron needs it.)
-RUN npm install --no-audit --no-fund --ignore-scripts
+# 2026-06-17 — RAILWAY CRON BUILD FIX (build was HANGING). The cron imports ONLY
+# firebase-admin (+ Node built-ins), so install JUST that — NOT the whole
+# ~990-package frontend tree, which dragged in native modules (sharp,
+# @napi-rs/canvas, esbuild) that fail/hang on this slim image (no python/make/
+# g++) and bloated the build. Pinned to the major version the app uses
+# (firebase-admin ^12). ~80 pure-JS packages → fast, no native builds, no
+# peer-dep conflicts (so the old package.json/.npmrc COPY is no longer needed).
+# `npm install firebase-admin` pulls @google-cloud/firestore (its optional dep)
+# by default, which getFirestore() needs.
+RUN npm install --no-audit --no-fund firebase-admin@^12.0.0
 
 # Copy only what the script needs. Keeps the image small and avoids
 # shipping the full Vite frontend, Firebase Functions, etc.

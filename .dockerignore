@@ -1,0 +1,25 @@
+# Railway/Docker build context for the Toast-86 cron (see Dockerfile).
+# The cron build needs ONLY scripts/sync-toast-86-attribution.mjs and installs
+# firebase-admin directly, so keep the build context tiny — shipping the whole
+# repo (src, the Capacitor android/ios native projects, functions, etc.) made
+# "sending build context" slow and the build appear stuck.
+node_modules
+dist
+.git
+.github
+src
+public
+android
+ios
+functions
+docs
+icons
+assets
+pi-tv-setup
+pi5-print-bridge
+e2e
+.vscode
+*.log
+.DS_Store
+# Never ship the Firestore admin credential into a build context.
+firebase-service-account.json
