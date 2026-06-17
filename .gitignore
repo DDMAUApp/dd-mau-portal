@@ -26,3 +26,9 @@ android/app/upload-keystore.jks
 # Android IDE / build artifacts
 android/.idea/
 android/app/release/
+
+# Payroll engine local-only parity harness — runs the JS engine against the
+# REAL pay-period Toast files + roster and diffs vs the Python engine. Touches
+# real employee names + pay, so it must never be committed. The committed
+# regression tests use synthetic fixtures instead.
+src/data/payroll/__local__/

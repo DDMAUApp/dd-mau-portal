@@ -244,7 +244,22 @@ export default defineConfig({
             id.includes('/pdf-lib/') ||
             id.includes('/pdfjs-dist/') ||
             id.includes('/jszip/') ||
-            id.includes('/qrcode/')
+            id.includes('/qrcode/') ||
+            // exceljs (+ its private zip/csv deps) is ONLY dynamic-imported by the
+            // payroll engine. Returning undefined keeps it OUT of the eager
+            // vendor-misc chunk so it co-locates with the lazy payroll chunk and
+            // costs first-paint nothing. (2026-06-17, payroll feature.)
+            id.includes('/exceljs/') ||
+            id.includes('/archiver') ||
+            id.includes('/zip-stream/') ||
+            id.includes('/compress-commons/') ||
+            id.includes('/crc32-stream/') ||
+            id.includes('/crc-32/') ||
+            id.includes('/lazystream/') ||
+            id.includes('/fast-csv/') ||
+            id.includes('/@fast-csv/') ||
+            id.includes('/saxes/') ||
+            id.includes('/unzipper/')
           ) {
             return;
           }

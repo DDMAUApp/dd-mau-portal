@@ -1,0 +1,147 @@
+// Firestore persistence for the in-app payroll feature. Three docs/collections,
+// all new (covered by the catch-all rule — no rules deploy needed):
+//   • config/payroll_meta    — { passwordHash, passwordSalt, nameAliases, ... }
+//   • config/payroll_roster  — the shared cloud roster (replaces roster.json)
+//   • payroll_runs/{autoId}   — one run summary per payroll, for history + the
+//                               automatic period-over-period comparison
+//
+// The password gate is a salted SHA-256 (Web Crypto) — better than the existing
+// plaintext config/secrets.insuranceAdminPin precedent. The hash being readable
+// is acceptable: only owners (ids 40/41) reach the admin tab, both legitimately
+// know the password, and the gate is an extra confirmation, not crypto-grade
+// defense (Phase-2 Firebase Auth is the real lock).
+
+import {
+    doc, getDoc, setDoc, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp,
+} from 'firebase/firestore';
+import { db } from '../../firebase.js';
+import { normalizeRoster, blankRoster } from './roster.js';
+
+// Seeded from the standalone app's config.json. Toast-spelling → roster-spelling.
+export const DEFAULT_NAME_ALIASES = {
+    'Cruz-Hernandez, Edgar': 'Cruz, Edgar',
+    'Turcios, Julio': 'Turcio, Julio',
+    'Cruz, Marcos': 'Cruz, Marco',
+    'McGruder, Cash': 'Magruder, Cash',
+    'Njeri, Aaliyah': 'Njeri, Aailyah',
+    'Curiel, Anacecilia': 'Curiel, Ana',
+    'Campos, Chris': 'Campos, Christopher',
+    'Mendieta, Ana': 'Medieta, Ana',
+    'Miguel, Edith': 'Medieta , Edith',
+};
+
+// ── hashing ────────────────────────────────────────────────────────────────
+function toHex(buf) {
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+export async function hashPassword(password, salt) {
+    const enc = new TextEncoder().encode(`${salt}:${password}`);
+    const digest = await crypto.subtle.digest('SHA-256', enc);
+    return toHex(digest);
+}
+export function randomSalt() {
+    const a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return toHex(a.buffer);
+}
+
+// ── password meta ────────────────────────────────────────────────────────────
+export async function loadPayrollMeta() {
+    try {
+        const snap = await getDoc(doc(db, 'config', 'payroll_meta'));
+        if (snap.exists()) return snap.data();
+    } catch (e) {
+        console.warn('[payroll] loadPayrollMeta failed:', e?.message);
+    }
+    return null;
+}
+
+export async function setPayrollPassword(password, byName) {
+    const salt = randomSalt();
+    const passwordHash = await hashPassword(password, salt);
+    await setDoc(
+        doc(db, 'config', 'payroll_meta'),
+        { passwordHash, passwordSalt: salt, updatedAt: serverTimestamp(), updatedBy: byName || '' },
+        { merge: true },
+    );
+}
+
+export async function verifyPayrollPassword(password, meta) {
+    if (!meta || !meta.passwordHash || !meta.passwordSalt) return false;
+    const h = await hashPassword(password, meta.passwordSalt);
+    return h === meta.passwordHash;
+}
+
+export function nameAliasesFromMeta(meta) {
+    const a = meta && meta.nameAliases;
+    return (a && typeof a === 'object' && Object.keys(a).length) ? a : DEFAULT_NAME_ALIASES;
+}
+
+// ── roster ────────────────────────────────────────────────────────────────
+export async function loadRoster() {
+    try {
+        const snap = await getDoc(doc(db, 'config', 'payroll_roster'));
+        if (snap.exists()) return normalizeRoster(snap.data());
+    } catch (e) {
+        console.warn('[payroll] loadRoster failed:', e?.message);
+    }
+    return blankRoster();
+}
+
+function stripRuntime(data) {
+    const out = JSON.parse(JSON.stringify(data));
+    for (const loc of ['WG', 'MH']) {
+        const people = (out[loc] && out[loc].people) || {};
+        for (const k of Object.keys(people)) delete people[k].key; // in-memory echo only
+    }
+    return out;
+}
+
+export async function saveRoster(data) {
+    await setDoc(doc(db, 'config', 'payroll_roster'), stripRuntime(data));
+}
+
+// ── run history + comparison ────────────────────────────────────────────────
+export function buildRunSummary(period, results, ranBy) {
+    const locations = {};
+    for (const loc of Object.keys(results)) {
+        const res = results[loc];
+        const people = {};
+        for (const sec of ['FOH', 'BOH']) {
+            for (const r of res.sections[sec].rows) {
+                people[r.key] = {
+                    name: `${r.first} ${r.last}`, section: sec, rate: r.rate,
+                    reg_hours: r.reg_hours, ot_hours: r.ot_hours, total_hours: r.total_hours,
+                    tip_cents: r.tip_cents, comp_cents: r.comp_cents, direct_deposit: r.direct_deposit,
+                };
+            }
+        }
+        locations[loc] = {
+            people,
+            tips: res.tips,
+            totals: res.totals,
+            review: res.review.map((r) => ({ toast_name: r.toast_name, total_hours: r.total_hours })),
+        };
+    }
+    return { period, ranBy: ranBy || '', locations };
+}
+
+export async function saveRun(period, results, ranBy) {
+    const summary = buildRunSummary(period, results, ranBy);
+    return addDoc(collection(db, 'payroll_runs'), { ...summary, ranAt: serverTimestamp() });
+}
+
+/** Most recent saved run whose period differs from `excludePeriod` (for the comparison workbook). */
+export async function loadLatestRunSummary(excludePeriod) {
+    try {
+        const q = query(collection(db, 'payroll_runs'), orderBy('ranAt', 'desc'), limit(8));
+        const snap = await getDocs(q);
+        for (const docSnap of snap.docs) {
+            const data = docSnap.data();
+            if (data.period && data.period !== excludePeriod) return data;
+        }
+    } catch (e) {
+        console.warn('[payroll] loadLatestRunSummary failed:', e?.message);
+    }
+    return null;
+}

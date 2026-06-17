@@ -33,6 +33,9 @@ import { enableFcmPush } from '../messaging';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const RequiredTaskAdmin = reactLazy(() => import('./RequiredTaskAdmin'));
 const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
+// Payroll wizard — owner-only, password-gated. Lazy so its engine + exceljs
+// only download when the section is expanded.
+const PayrollPanel = reactLazy(() => import('./payroll/PayrollPanel'));
 // 2026-05-24 — MenuEditor (the public menu / TV menu data editor)
 // removed from AdminPanel per Andrew: "in the admin page i want to get
 // rid of public menu board. we dont need it." The component file
@@ -1300,6 +1303,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // Chat history (admin-only audit view of every chat + message).
             // Lazy-loaded — Firestore reads only fire when expanded.
             const [chatHistoryExpanded, setChatHistoryExpanded] = useState(false);
+            // Payroll (owner-only, gated behind its own password). Lazy-loaded —
+            // the engine + exceljs only load when this section is expanded.
+            const [payrollExpanded, setPayrollExpanded] = useState(false);
             useEffect(() => {
                 if (!confirmingRefresh) return;
                 const t = setTimeout(() => setConfirmingRefresh(false), 10000);
@@ -4597,6 +4603,36 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </ReactSuspense>
                         )}
                     </div>
+
+                    {/* ── PAYROLL (owner-only, password-gated) ───────────────────────
+                        Runs the full payroll engine in-browser (no server) — see
+                        src/data/payroll/. Gated behind a second password inside the
+                        already owner-only admin tab. Lazy-loaded: the engine +
+                        exceljs only download when this section is expanded + unlocked,
+                        so it costs admins who never run payroll nothing. */}
+                    {isAdmin(staffName, staffList) && (
+                        <div className="mt-4 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                            <button onClick={() => setPayrollExpanded(s => !s)}
+                                className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xl">💵</span>
+                                    <h3 className="text-base font-bold text-gray-800">
+                                        {language === 'es' ? 'Nómina' : 'Payroll'}
+                                    </h3>
+                                </div>
+                                <span className="text-gray-400 text-sm">{payrollExpanded ? '▼' : '▶'}</span>
+                            </button>
+                            {payrollExpanded && (
+                                <ReactSuspense fallback={
+                                    <p className="text-xs text-gray-400 italic px-2 py-3">
+                                        {language === 'es' ? 'Cargando…' : 'Loading…'}
+                                    </p>
+                                }>
+                                    <PayrollPanel language={language} staffName={staffName} staffList={staffList} />
+                                </ReactSuspense>
+                            )}
+                        </div>
+                    )}
 
                     {/* ── PUSH NOTIFICATIONS DIAGNOSTIC ──────────────────────────────
                         Quick verification panel. Shows the local SW + permission +
