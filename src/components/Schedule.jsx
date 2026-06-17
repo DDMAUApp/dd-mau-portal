@@ -266,6 +266,21 @@ const formatTime12h = (time24) => {
     return m === 0 ? `${h12}${period}` : `${h12}:${pad2(m)}${period}`;
 };
 
+// Partial time-off helpers (Andrew 2026-06-17: staff can request a specific
+// window off — e.g. 3–8pm — not just a whole day). A whole-day entry has no
+// startTime/endTime; a partial entry has partial:true + startTime/endTime.
+const ptoIsPartial = (t) => !!(t && t.partial && t.startTime && t.endTime);
+const ptoWindowLabel = (t) => (ptoIsPartial(t) ? `${formatTime12h(t.startTime)}–${formatTime12h(t.endTime)}` : '');
+const _hhmmToMin = (hhmm) => {
+    const [h, m] = String(hhmm || '').split(':').map(Number);
+    return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+};
+// Do two HH:mm ranges overlap? Half-open, so touching edges (10–3 vs 3–8) don't.
+const timeRangesOverlap = (aS, aE, bS, bE) => {
+    if (!aS || !aE || !bS || !bE) return false;
+    return _hhmmToMin(aS) < _hhmmToMin(bE) && _hhmmToMin(bS) < _hhmmToMin(aE);
+};
+
 // Calculate hours between two HH:mm times, handling overnight shifts.
 const hoursBetween = (start, end, isDouble = false) => {
     if (!start || !end) return 0;
@@ -1307,10 +1322,31 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return viewerTimeOff.some(t => {
             if (t.status === 'denied') return false;
             if (t.staffName !== staffName) return false;
+            if (ptoIsPartial(t)) return false; // a partial window doesn't take the whole day off — they stay schedulable
             const start = t.startDate || t.date;
             const end = t.endDate || t.date;
             return dateStr >= start && dateStr <= end;
         });
+    };
+
+    // Partial off windows for a staffer on a date — drives the overlap warning
+    // when a shift is placed during their requested-off hours, and the window
+    // label in the queue / PTO view. Same visibility rules as isStaffOffOn.
+    const partialOffWindowsOn = (staffName, dateStr) => {
+        return viewerTimeOff.filter(t => {
+            if (t.status === 'denied') return false;
+            if (t.staffName !== staffName) return false;
+            if (!ptoIsPartial(t)) return false;
+            const start = t.startDate || t.date;
+            const end = t.endDate || t.date;
+            return dateStr >= start && dateStr <= end;
+        });
+    };
+    // True if a shift (startTime–endTime on dateStr) lands inside any partial
+    // off window the staffer requested — used for the soft overlap warning.
+    const shiftOverlapsPartialOff = (sName, dateStr, startTime, endTime) => {
+        return partialOffWindowsOn(sName, dateStr)
+            .some(t => timeRangesOverlap(startTime, endTime, t.startTime, t.endTime));
     };
 
     // ── eventsByDate: calendar_events + auto-derived staff birthdays ──
@@ -1824,6 +1860,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             setShowAddModal(false);
             setAddPrefill(null);
+            // Partial off-window overlap warning — they're schedulable, but
+            // flag a shift that lands in the hours they asked off (Andrew 2026-06-17).
+            if (shiftOverlapsPartialOff(shiftData.staffName, shiftData.date, shiftData.startTime, shiftData.endTime)) {
+                const win = partialOffWindowsOn(shiftData.staffName, shiftData.date).map(ptoWindowLabel).filter(Boolean).join(', ');
+                toast(tx(`⚠ ${shiftData.staffName} asked off ${win} that day — this shift overlaps it.`,
+                         `⚠ ${shiftData.staffName} pidió libre ${win} ese día — este turno se cruza.`));
+            }
             // Availability acknowledgment — fires AFTER the save so it
             // catches every path (modal, quick-add, drag, etc.). Replaces
             // the passive in-modal banner Andrew was missing.
@@ -2076,6 +2119,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (isStaffOffOn(newStaffName, newDate)) {
             toast(tx(`${newStaffName} is on approved time-off that date.`, `${newStaffName} tiene tiempo libre aprobado esa fecha.`));
             return;
+        }
+        // Soft warning (NOT a block) when the shift overlaps a PARTIAL off
+        // window — they're still schedulable, but flag it so a manager doesn't
+        // accidentally book the exact hours they asked off. (Andrew 2026-06-17:
+        // "schedulable + overlap warning".)
+        if (shiftOverlapsPartialOff(newStaffName, newDate, shift.startTime, shift.endTime)) {
+            const win = partialOffWindowsOn(newStaffName, newDate).map(ptoWindowLabel).filter(Boolean).join(', ');
+            toast(tx(`⚠ ${newStaffName} asked off ${win} that day — this shift overlaps it.`,
+                     `⚠ ${newStaffName} pidió libre ${win} ese día — este turno se cruza.`));
+            // fall through — placement still allowed
         }
         const wasPublished = shift.published !== false;
         const oldStaff = shift.staffName;
@@ -3951,9 +4004,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // be a new doc) gets its own slot; same-request retries
             // collapse via tag.
             try {
-                const dates = entry.startDate === entry.endDate
+                const win = ptoWindowLabel(entry);
+                const dates = (entry.startDate === entry.endDate
                     ? entry.startDate
-                    : `${entry.startDate} → ${entry.endDate}`;
+                    : `${entry.startDate} → ${entry.endDate}`) + (win ? ` · ⛔ ${win}` : '');
                 await notifyManagement({
                     type: 'pto_request',
                     title: { en: `🌴 PTO request: ${staffName}`,
@@ -4717,6 +4771,15 @@ ${dayBlocks}
             }
             await batch.commit();
             setPublishPreview(null);
+            // Non-blocking heads-up: published shifts that land in a PARTIAL
+            // off window (those aren't skipped — they stay scheduled — but the
+            // manager should double-check the hours). Andrew 2026-06-17.
+            const partialOverlaps = safeDrafts.filter(s => shiftOverlapsPartialOff(s.staffName, s.date, s.startTime, s.endTime));
+            if (partialOverlaps.length > 0) {
+                const names = [...new Set(partialOverlaps.map(s => s.staffName))].join(', ');
+                toast(tx(`⚠ ${partialOverlaps.length} shift(s) overlap a partial time-off window (${names}) — double-check those hours.`,
+                         `⚠ ${partialOverlaps.length} turno(s) se cruzan con tiempo libre parcial (${names}) — revisa esas horas.`));
+            }
             const skippedNote = ptoConflicts.length > 0
                 ? tx(` (skipped ${ptoConflicts.length} PTO conflicts)`, ` (omitidos ${ptoConflicts.length} conflictos de PTO)`)
                 : '';
@@ -9388,7 +9451,13 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
     if (openOffers.length === 0 && pending.length === 0 && myOpenOffers.length === 0 && pendingPto.length === 0 && myPto.length === 0 && pendingSwaps.length === 0 && mySwaps.length === 0) return null;
 
     const renderShiftLine = (sh) => `${sh.date} · ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`;
-    const renderPtoLine = (t) => t.startDate + (t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : '') + (t.reason ? ` · ${t.reason}` : '');
+    const renderPtoLine = (t) => {
+        const w = ptoWindowLabel(t);
+        return t.startDate
+            + (t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : '')
+            + (w ? ` · ⛔ ${w} ${isEn ? 'off' : 'libre'}` : '')
+            + (t.reason ? ` · ${t.reason}` : '');
+    };
 
     // 2026-05-27 — Andrew: "lets put a time stamp on when the time off
     // request was put in." Core date math lives in the module-level
@@ -10680,13 +10749,27 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
         startDate: today,
         endDate: today,
         reason: '',
+        partial: false,        // false = whole day(s); true = a time window on one day
+        startTime: '15:00',
+        endTime: '20:00',
     });
     const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
-    // 2026-05-27 — Andrew: "make the reason for the time off required."
-    // The reason field is now required to submit. Trim so a blank
-    // space alone doesn't count. The placeholder + label both flag
-    // it as required.
-    const canSubmit = form.startDate && form.endDate && form.startDate <= form.endDate && form.reason.trim().length > 0;
+    // 2026-05-27 — Andrew: reason required. 2026-06-17 — Andrew: also support a
+    // partial-day window (e.g. 3–8 off) instead of only whole days.
+    const datesOk = form.startDate && form.endDate && form.startDate <= form.endDate;
+    const timesOk = !form.partial || (form.startTime && form.endTime && form.startTime < form.endTime);
+    const canSubmit = datesOk && timesOk && form.reason.trim().length > 0;
+    const submit = () => {
+        if (!canSubmit) return;
+        const base = { reason: form.reason.trim() };
+        if (form.partial) {
+            // A time window applies to a single day.
+            onSubmit({ ...base, startDate: form.startDate, endDate: form.startDate,
+                partial: true, startTime: form.startTime, endTime: form.endTime });
+        } else {
+            onSubmit({ ...base, startDate: form.startDate, endDate: form.endDate });
+        }
+    };
     return (
         // 2026-05-27 — Andrew: "the request time off pops up at the very
         // bottom of page. bring it up the the top." Anchored to the TOP
@@ -10706,20 +10789,57 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
                     <div className="text-xs text-gray-600 bg-amber-50 rounded-lg p-2 border border-amber-200">
                         {tx('Submitting as:', 'Enviando como:')} <b>{staffName}</b>. {tx('Your manager will approve or deny.', 'Tu gerente aprobará o negará.')}
                     </div>
+                    {/* Whole day vs a specific time window (Andrew 2026-06-17). */}
                     <div className="grid grid-cols-2 gap-2">
-                        <div>
-                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('From', 'Desde')}</label>
-                            <input type="date" value={form.startDate} onChange={e => update('startDate', e.target.value)}
-                                min={today}
-                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
-                        </div>
-                        <div>
-                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('To', 'Hasta')}</label>
-                            <input type="date" value={form.endDate} onChange={e => update('endDate', e.target.value)}
-                                min={form.startDate}
-                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
-                        </div>
+                        <button type="button" onClick={() => update('partial', false)}
+                            className={`py-2 rounded-lg text-sm font-bold border transition ${!form.partial ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                            {tx('Whole day', 'Día completo')}
+                        </button>
+                        <button type="button" onClick={() => update('partial', true)}
+                            className={`py-2 rounded-lg text-sm font-bold border transition ${form.partial ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                            {tx('Part of a day', 'Parte del día')}
+                        </button>
                     </div>
+                    {!form.partial ? (
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('From', 'Desde')}</label>
+                                <input type="date" value={form.startDate} onChange={e => update('startDate', e.target.value)}
+                                    min={today}
+                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                            </div>
+                            <div>
+                                <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('To', 'Hasta')}</label>
+                                <input type="date" value={form.endDate} onChange={e => update('endDate', e.target.value)}
+                                    min={form.startDate}
+                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            <div>
+                                <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Day', 'Día')}</label>
+                                <input type="date" value={form.startDate} onChange={e => update('startDate', e.target.value)}
+                                    min={today}
+                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Off from', 'Libre desde')}</label>
+                                    <input type="time" value={form.startTime} onChange={e => update('startTime', e.target.value)}
+                                        className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Off until', 'Libre hasta')}</label>
+                                    <input type="time" value={form.endTime} onChange={e => update('endTime', e.target.value)}
+                                        className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                                </div>
+                            </div>
+                            {form.partial && !timesOk && (
+                                <p className="text-[11px] text-red-600">{tx('End time must be after start time.', 'La hora final debe ser después de la inicial.')}</p>
+                            )}
+                        </div>
+                    )}
                     <div>
                         {/* 2026-05-27 — reason is now required. * indicator
                             on the label + the "required" hint in the
@@ -10738,7 +10858,7 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
                 <div className="border-t border-gray-200 p-4 flex gap-2 shrink-0">
                     <button onClick={onClose}
                         className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Cancel', 'Cancelar')}</button>
-                    <button onClick={() => canSubmit && onSubmit(form)} disabled={!canSubmit}
+                    <button onClick={submit} disabled={!canSubmit}
                         className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-amber-600 hover:bg-amber-700' : 'bg-gray-300'}`}>
                         {tx('Submit Request', 'Enviar Solicitud')}
                     </button>
@@ -11423,6 +11543,7 @@ function PtoView({ weekStart, timeOff, locationStaffNames, sideStaffNames, isEn,
                                                 </div>
                                                 <div className="text-[10px] text-gray-700">
                                                     {t.startDate}{t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : ''}
+                                                    {ptoIsPartial(t) && <span className="font-bold text-amber-700 ml-1">· ⛔ {ptoWindowLabel(t)} {isEn ? 'off' : 'libre'}</span>}
                                                     {t.reason && <span className="italic ml-2">"{t.reason}"</span>}
                                                 </div>
                                                 {submitted && (
