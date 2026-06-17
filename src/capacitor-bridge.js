@@ -399,7 +399,7 @@ export async function downloadFile({ data, fileName, mimeType = 'application/oct
     // Native path — write to Documents, then share so the user can
     // save it to Files / Drive / iCloud / Photos etc.
     try {
-        const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem');
+        const { Filesystem, Directory } = await import('@capacitor/filesystem');
         // Convert Blob/ArrayBuffer to base64 for the plugin.
         const base64 = await blobToBase64(data, mimeType);
         const res = await Filesystem.writeFile({

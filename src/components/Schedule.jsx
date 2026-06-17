@@ -1387,7 +1387,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //   2. If date has a 'closed' one-off block → CLOSED.
     //   3. If recurring rule applies for this weekday + location → CLOSED.
     //   4. Otherwise → OPEN.
-    const dateClosed = (dateStr) => {
+    const dateClosed = (dateStr, locOverride) => {
         const blocks = blocksByDate.get(dateStr) || [];
         if (blocks.some(b => b.type === 'open_override')) return false;
         if (blocks.some(b => b.type === 'closed')) return true;
@@ -1395,6 +1395,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const d = parseLocalDate(dateStr);
         if (!d) return false;
         const dow = d.getDay();
+        // 2026-06-16 (#6): when a generator passes the shift's OWN location,
+        // test only THAT store's closed weekdays. Without this, generating from
+        // the "both" view treats a day as open unless BOTH stores are closed —
+        // so a single-location closed day (e.g. a Webster-only holiday) gets
+        // scheduled. No-arg callers (grid render, drag, AddShift) keep the
+        // existing view-based behavior below.
+        if (locOverride === 'webster' || locOverride === 'maryland') {
+            const arr = Array.isArray(cw[locOverride]) ? cw[locOverride] : [];
+            return arr.includes(dow);
+        }
         if (storeLocation === 'both') {
             // Closed in BOTH views only when every location is closed that
             // weekday. Otherwise the open location's grid still matters.
@@ -2107,6 +2117,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     staffName: newStaffName,
                     date: newDate,
                     ...(newOwnerSide && newOwnerSide !== live.side ? { side: newOwnerSide } : {}),
+                    // 2026-06-16 (#7): if this move changes the OWNER, cancel any
+                    // open/pending offer so a stale claim can't later be approved
+                    // and silently flip the shift to the old pending claimer. A
+                    // same-owner date move keeps the offer intact.
+                    ...(newStaffName !== shift.staffName ? {
+                        offerStatus: null, offeredBy: null, offeredAt: null,
+                        pendingClaimBy: null, claimedAt: null,
+                        coverNeeded: false, coverNeededAt: null, proposedSplit: null,
+                    } : {}),
                     updatedAt: serverTimestamp(),
                 });
             });
@@ -3583,7 +3602,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 if (!days.includes(dow)) continue;
                 if (rule.validFrom && dStr < rule.validFrom) continue;
                 if (rule.validUntil && dStr > rule.validUntil) continue;
-                if (dateClosed(dStr)) { skipped.push(`${rule.staffName} ${dStr}: closed`); continue; }
+                if (dateClosed(dStr, rule.location)) { skipped.push(`${rule.staffName} ${dStr}: closed`); continue; }
                 if (isStaffOffOn(rule.staffName, dStr)) { skipped.push(`${rule.staffName} ${dStr}: PTO`); continue; }
                 // Don't double-book: any existing shift overlapping this time block
                 const conflict = shifts.some(sh =>
@@ -3875,6 +3894,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // Check every date in range against no_timeoff blackouts
         const start = entry.startDate;
         const end = entry.endDate || entry.startDate;
+        // 2026-06-16 (#9): belt-and-suspenders. Both PTO UIs already disable
+        // submit when end<start, but guard the handler too — an inverted range
+        // would silently protect ZERO days (isStaffOffOn needs start<=end), so
+        // the staffer thinks they're off while the schedule still books them.
+        {
+            const _s = parseLocalDate(start), _e = parseLocalDate(end);
+            if (_s && _e && _e < _s) {
+                toast(tx('End date must be on or after the start date.', 'La fecha final debe ser igual o posterior a la inicial.'));
+                return;
+            }
+        }
         const blockedDates = [];
         const startD = parseLocalDate(start);
         const endD = parseLocalDate(end);
@@ -4800,7 +4830,7 @@ ${dayBlocks}
                 const newDate = new Date(oldDate);
                 newDate.setDate(newDate.getDate() + 7);
                 const newDateStr = toDateStr(newDate);
-                if (dateClosed(newDateStr)) continue;
+                if (dateClosed(newDateStr, sh.location)) continue;
                 if (isStaffOffOn(sh.staffName, newDateStr)) continue;
                 toCreate.push({
                     staffName: sh.staffName,
@@ -4886,7 +4916,10 @@ ${dayBlocks}
             for (let i = 0; i < 7; i++) {
                 const date = addDays(weekStart, i);
                 const dStr = toDateStr(date);
-                if (dateClosed(dStr)) continue;
+                // #6: this person's shifts land at their own store, so check
+                // that store's closed days (matches the location written below).
+                const sLoc = (s.location && s.location !== 'both') ? s.location : (storeLocation !== 'both' ? storeLocation : 'webster');
+                if (dateClosed(dStr, sLoc)) continue;
                 if (isStaffOffOn(s.name, dStr)) continue;
                 // Don't double-book this person on a day they already have a shift.
                 if (myExisting.some(sh => sh.date === dStr)) continue;
@@ -9768,7 +9801,12 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     const overHours = targetHours > 0 && projectedTotal > targetHours;
     const overOT = projectedTotal > 40;
 
-    const canSubmit = form.staffName && form.date && form.startTime && form.endTime && hours > 0 && !isOnClosedDate;
+    // 2026-06-16 (#19): require end AFTER start. hoursBetween() wraps an
+    // end<=start to a positive "overnight" value, so `hours > 0` alone let an
+    // accidental overnight shift through here while inline drag-edit rejected
+    // it — and overnight breaks the split-pickup math. DD Mau has no overnight
+    // shifts, so block it uniformly (matches handleUpdateShiftTimes).
+    const canSubmit = form.staffName && form.date && form.startTime && form.endTime && form.endTime > form.startTime && hours > 0 && !isOnClosedDate;
 
     return (
         <ModalPortal>

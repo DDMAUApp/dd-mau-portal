@@ -840,6 +840,11 @@ export default function App() {
     // we see a value (page load), we just remember it. Only LATER
     // changes trigger the refresh.
     useEffect(() => {
+        // 2026-06-16 (#16): native devices update via Capgo OTA. On native,
+        // forceRefresh() just reloads the local bundle back to the PIN screen
+        // (it can't fetch a newer build) — useless and disruptive. Web / PWA /
+        // TVs still honor the broadcast.
+        if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true) return;
         const ref = doc(db, 'config', 'forceRefresh');
         let baseline = null;
         const unsub = onSnapshot(ref, (snap) => {
@@ -922,6 +927,15 @@ export default function App() {
         document.addEventListener('keydown',    resetActive, { passive: true });
         document.addEventListener('touchstart', resetActive, { passive: true });
         document.addEventListener('mousedown',  resetActive, { passive: true });
+        // 2026-06-16 (#22): passive reading. Scrolling/swiping a long screen
+        // fires touchmove/scroll — NOT touchstart/mousedown — so a reader who
+        // doesn't tap for 5 min could age out and get force-logged-out on the
+        // next resume (losing an in-progress form, worst on desktop wheel-
+        // scroll). Count scroll + touchmove as activity. Capture phase catches
+        // nested scroll containers (scroll doesn't bubble). The 5s throttle
+        // keeps these cheap.
+        document.addEventListener('touchmove',  resetActive, { passive: true });
+        window.addEventListener('scroll',       resetActive, { passive: true, capture: true });
 
         // 2026-06-02 — Capacitor appStateChange listener.
         // The browser-tab visibilitychange handler above doesn't fire
@@ -987,6 +1001,8 @@ export default function App() {
             document.removeEventListener('keydown',    resetActive);
             document.removeEventListener('touchstart', resetActive);
             document.removeEventListener('mousedown',  resetActive);
+            document.removeEventListener('touchmove',  resetActive);
+            window.removeEventListener('scroll',       resetActive, { capture: true });
             if (bgTimerId) clearTimeout(bgTimerId);
             if (capAppCleanup) capAppCleanup();
         };

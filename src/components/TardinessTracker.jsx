@@ -18,7 +18,7 @@
 //   • Location-scoped by storeBranch field; multi-location admins can see
 //     both via the location switcher elsewhere.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, query, where, limit } from 'firebase/firestore';
 import { isAdmin, LOCATION_LABELS } from '../data/staff';
@@ -127,8 +127,15 @@ export default function TardinessTracker({ language, staffName, staffList, store
         } catch (e) { console.warn('Tardy notify failed (non-fatal):', e); }
     };
 
+    // 2026-06-16 (#8): in-flight guard so a double-tap on "Log tardy" (easy on
+    // a slow cellular round-trip — the button stays enabled during the write)
+    // can't create two identical tardies, which would over-count the rolling
+    // tier and push a staffer to a wrongful discipline level.
+    const savingTardyRef = useRef(false);
     const logTardy = async (entry) => {
         if (!canEdit) return;
+        if (savingTardyRef.current) return;
+        savingTardyRef.current = true;
         const staff = (staffList || []).find(s => s.name === entry.staffName);
         const payload = {
             staffName: entry.staffName,
@@ -158,6 +165,8 @@ export default function TardinessTracker({ language, staffName, staffList, store
         } catch (e) {
             console.error('Log tardy failed:', e);
             toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+        } finally {
+            savingTardyRef.current = false;
         }
     };
 

@@ -2144,6 +2144,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
             const handleAddStaff = async () => {
                 if (!newName.trim() || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) return;
+                // 2026-06-16 (#5): block duplicate names on ADD (the edit path
+                // already guards this). NAME is the app-wide join key, so two
+                // records sharing a name silently resolve to whichever is first
+                // in the list — wrong access flags, wrong shifts, and a later
+                // rename rewrites data for both. Mirror the edit-path check.
+                const dupName = (staffList || []).some(s => (s.name || '').trim().toLowerCase() === newName.trim().toLowerCase());
+                if (dupName) {
+                    toast(language === 'es' ? 'Ya existe un miembro con ese nombre.' : 'A staff member with that name already exists.', { kind: 'error' });
+                    return;
+                }
                 // Functional setState — read latest list from React state
                 // instead of closing over a stale snapshot. Otherwise two
                 // admins adding back-to-back can silently lose one entry

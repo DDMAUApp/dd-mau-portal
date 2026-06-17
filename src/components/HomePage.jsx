@@ -129,7 +129,11 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
             return;
         }
         // Find ALL staff with this PIN — guard against silent collisions.
-        const matches = staffList.filter(s => s.pin === pin);
+        // 2026-06-16 (#26): normalize the stored PIN (String + trim) so a PIN
+        // that drifted to a number or gained whitespace via a migration / manual
+        // Firestore edit still matches — otherwise that staffer is silently
+        // locked out with no explanation.
+        const matches = staffList.filter(s => String(s.pin ?? '').trim() === pin);
 
         if (matches.length === 0) {
             // Wrong PIN. Increment attempt counter and maybe lock.

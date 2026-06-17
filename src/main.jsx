@@ -28,6 +28,27 @@ class RootErrorBoundary extends Component {
     static getDerivedStateFromError(error) { return { error }; }
     componentDidCatch(error, info) {
         try { console.error('[RootErrorBoundary]', error, info?.componentStack); } catch {}
+        // 2026-06-16 (#30): a stale-cached PWA can 404 the lazily-loaded shell
+        // chunk (AppShellV2 / HomeV2). That rejection lands HERE — the inner
+        // chunk-self-heal boundary lives INSIDE AppShellV2 and never mounts —
+        // and React routes lazy() rejections to the boundary, not to
+        // window.onunhandledrejection, so the global self-heal misses it too.
+        // One-shot auto-reload (sessionStorage-guarded) so a routine deploy
+        // doesn't surface the snag card. Pattern + key are INLINE literals so
+        // main.jsx never depends on an app chunk (see header note). Distinct
+        // key from the inner boundary → each gets its own single shot, bounded
+        // at 2 reloads worst case before the manual card shows.
+        try {
+            const m = String((error && (error.message || error)) || '');
+            const isChunk = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module/i.test(m);
+            const KEY = 'ddmau:rootChunkReloaded';
+            if (isChunk && !sessionStorage.getItem(KEY)) {
+                sessionStorage.setItem(KEY, String(Date.now()));
+                try { hideSplash(); } catch {}
+                window.location.reload();
+                return;
+            }
+        } catch {}
         // If the very first render threw, the splash (launchAutoHide is
         // off now) would otherwise sit forever. Hide it so the fallback
         // UI is visible. Idempotent + no-op on web.

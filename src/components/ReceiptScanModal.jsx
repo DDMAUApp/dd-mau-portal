@@ -194,7 +194,13 @@ export default function ReceiptScanModal({ location, staffName, language, master
             // CHI MEI GWA BUN is bao" fix. Best-effort; never blocks the save.
             try {
                 const learnedEntries = rows
-                    .filter((r) => r.included && r.masterId && r.name)
+                    // 2026-06-16 (#4): only learn matches the manager actually
+                    // confirmed. A low-confidence FUZZY guess is included by
+                    // default but unverified — learning it poisons future scans.
+                    // Picking/changing a row sets confidence 'high', and a
+                    // remembered alias reads back as 'high', so only untouched
+                    // low-confidence guesses are excluded here.
+                    .filter((r) => r.included && r.masterId && r.name && r.confidence !== 'low')
                     .map((r) => ({
                         rawName: r.name,
                         masterId: r.masterId,

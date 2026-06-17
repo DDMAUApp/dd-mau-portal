@@ -1622,8 +1622,14 @@ function ChatThreadInner({
                     const snap = await txn.get(ref);
                     if (!snap.exists()) return;
                     const cur = snap.data().items || [];
-                    const norm = itemName.trim().toLowerCase();
-                    const next = cur.filter(it => String(it?.name || '').trim().toLowerCase() !== norm);
+                    // 2026-06-16 (#20): match the SAME normalization the 86-add
+                    // path dedups with (strip all non-alphanumerics), so an item
+                    // stored as "Chicken Wings" still clears when resolved from a
+                    // "chicken-wings"/extra-space variant. Otherwise the row
+                    // lingers on the 86 board after it's marked back in stock.
+                    const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const norm = slug(itemName);
+                    const next = cur.filter(it => slug(it?.name) !== norm);
                     if (next.length === cur.length) return; // nothing to remove
                     txn.set(ref, { items: next, updatedAt: serverTimestamp() }, { merge: true });
                 });

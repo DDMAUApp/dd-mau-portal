@@ -3650,10 +3650,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const updateVendorCount = async (vendor, vendorId, newCount) => {
                 const count = parseInt(newCount) || 0;
                 const key = `${vendor}:${vendorId}`;
-                const next = { ...vendorCounts };
-                if (count === 0) delete next[key];
-                else next[key] = count;
-                setVendorCounts(next);
+                // 2026-06-16 (#21): functional setState (parity with
+                // updateInventoryCount) so a concurrent edit on another vendor
+                // key — or the onSnapshot reconcile — can't clobber this one in
+                // local state from a stale closure. `next` is captured for the
+                // not-found setDoc fallback below (the updater runs
+                // synchronously inside this event handler).
+                let next;
+                setVendorCounts(prev => {
+                    next = { ...prev };
+                    if (count === 0) delete next[key];
+                    else next[key] = count;
+                    return next;
+                });
                 const ref = doc(db, "ops", "inventory_" + storeLocation);
                 try {
                     await updateDoc(ref, {
