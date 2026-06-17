@@ -52,11 +52,16 @@
 // migrate them one at a time. No-op on web (bridge is a no-op when
 // Capacitor.isNativePlatform() is false).
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { pushBackHandler } from '../capacitor-bridge';
 
 export default function ModalPortal({ children, onBackPress }) {
+    // Ref to a zero-impact wrapper around the modal so the back handler can
+    // find THIS modal's scrim (display:contents generates no box, so layout
+    // and position:fixed-to-viewport are unaffected — see the 2026-05-30
+    // header note about transformed ancestors).
+    const wrapRef = useRef(null);
     useEffect(() => {
         if (typeof document === 'undefined') return;
         const prev = document.body.style.overflow;
@@ -66,15 +71,32 @@ export default function ModalPortal({ children, onBackPress }) {
     // Claim the Android hardware-back gesture for as long as this modal is
     // mounted, so Back NEVER falls through to the bridge's "go to home" / "exit
     // app" while a modal is still on screen (that read as a crash — the app
-    // would jump to Home or exit with the modal still rendered). If the caller
-    // passed an onBackPress, run it to close the modal; otherwise just swallow
-    // the press (the user closes via the modal's own ✕ / scrim). Popped on
+    // would jump to Home or exit with the modal still rendered). Popped on
     // unmount. No-op on web (the back stack is only consulted on native).
     useEffect(() => {
-        const onBack = (typeof onBackPress === 'function') ? onBackPress : () => {};
+        // 2026-06-16 (#2): if the caller passed an explicit onBackPress, use it.
+        // Otherwise — instead of inertly swallowing the press (the old behavior
+        // left Back dead in ~85 of 88 modals) — synthesize a backdrop click on
+        // THIS modal's own scrim. Nearly every overlay is click-outside-to-
+        // close, so Back now dismisses them. Strictly ≥ the old swallow: it
+        // closes click-dismissable modals and no-ops on the rest (it never
+        // falls through to go-home with the modal still up). Guarded to only
+        // fire on a real full-screen scrim element.
+        const onBack = (typeof onBackPress === 'function') ? onBackPress : () => {
+            try {
+                const root = wrapRef.current && wrapRef.current.firstElementChild;
+                const cls = (root && (root.className || '')).toString();
+                if (root && /(^|\s)fixed(\s|$)/.test(cls) && /inset-0/.test(cls)) {
+                    root.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                }
+            } catch { /* best-effort */ }
+        };
         const pop = pushBackHandler(() => { onBack(); });
         return pop;
     }, [onBackPress]);
     if (typeof document === 'undefined') return null;   // SSR guard
-    return createPortal(children, document.body);
+    return createPortal(
+        <div ref={wrapRef} style={{ display: 'contents' }}>{children}</div>,
+        document.body,
+    );
 }
