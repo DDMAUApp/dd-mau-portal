@@ -99,6 +99,11 @@ function tipRow(ws, r, row) {
         if (fmt && val !== null && val !== undefined) c.numFmt = fmt;
         c.border = BORDER;
     });
+    // Pay rate was changed from what Toast reported (an override) → fill the row
+    // red so the People-step flag carries all the way through to the doc.
+    if (row.toast_rate != null && Math.abs(row.rate - row.toast_rate) > 0.005) {
+        for (let ci = 1; ci <= 18; ci++) cell(ws, r, ci).fill = FILL_RED;
+    }
     if (row.no_tip) {
         cell(ws, r, 7).value = 0;
         cell(ws, r, 8).note = 'Not in tip pool (roster flag)';

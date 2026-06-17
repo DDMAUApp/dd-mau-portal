@@ -629,7 +629,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                                             <thead><tr className="text-left text-dd-text-2"><th className="pr-2">Person</th><th className="text-right px-1">Rate</th><th className="text-right px-1">Hrs</th><th className="text-right px-1">Tips</th><th className="text-right px-1">Reg</th><th className="text-right px-1">OT</th><th className="text-right px-1">Extra</th><th className="text-right px-1">TOTAL</th><th>DD</th></tr></thead>
                                             <tbody>
                                                 {res.sections[sec].rows.map((r) => (
-                                                    <tr key={r.key} className={r.multi_line ? 'bg-amber-50' : ''}>
+                                                    <tr key={r.key} className={(r.toast_rate != null && Math.abs(r.rate - r.toast_rate) > 0.005) ? 'bg-red-100' : (r.multi_line ? 'bg-amber-50' : '')}>
                                                         <td className="pr-2">{r.display_first} {r.display_last}{r.no_tip ? <span className="text-dd-text-2"> (no tips)</span> : ''}</td>
                                                         <td className="text-right px-1">${h2(r.rate)}</td>
                                                         <td className="text-right px-1">{h2(r.total_hours)}</td>

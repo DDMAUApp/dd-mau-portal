@@ -58,6 +58,7 @@ function newRow(m, t) {
         section: m.section, rate: m.rate,
         no_tip: m.no_tip, direct_deposit: m.direct_deposit,
         toast_name: t ? t.toast_name : null,
+        toast_rate: t ? t.toast_rate : null, // what Toast reported (for the "pay rate changed" flag)
         reg_hours: t ? t.reg_hours : 0.0,
         ot_hours: t ? t.ot_hours : 0.0,
         total_hours: t ? round2(t.reg_hours + t.ot_hours) : 0.0,
