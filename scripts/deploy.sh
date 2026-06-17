@@ -38,7 +38,11 @@ npm run build
 # 3) Commit the version bump + push → GitHub Pages builds & deploys the web app
 #    (and the Pi menu TVs, which load the web app).
 echo "▸ Pushing web (GitHub Pages)…"
-git add package.json
+# Commit the lockfile too — `npm version patch` bumps the version field in BOTH
+# package.json and package-lock.json, but only staging package.json left the
+# lock's version field drifting (cosmetic, but it kept showing as a dirty file
+# every release). Harmless either way; keeps the tree clean.
+git add package.json package-lock.json
 git commit -m "Release v$VERSION" >/dev/null
 git push origin main
 echo "  ✓ Web pushed — live in ~1-2 min."

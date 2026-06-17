@@ -42,7 +42,18 @@ WORKDIR /app
 # COPY makes the Docker build behave the same as the GitHub Actions
 # build and the local install.
 COPY package.json package-lock.json* .npmrc ./
-RUN npm install --no-audit --no-fund
+# 2026-06-17 — RAILWAY CRON BUILD FIX. This installs the whole frontend
+# dependency tree (~990 packages) just to run one firebase-admin script, which
+# drags in NATIVE modules (sharp, @napi-rs/canvas, esbuild binaries…). On this
+# node:22-slim image their install/postinstall build steps can fail (no python/
+# make/g++, and prebuilt-binary fetches are flaky), taking the whole build down.
+# The cron only imports firebase-admin (+ @google-cloud/firestore) — all pure
+# JS, no build step — so --ignore-scripts skips every package's native build.
+# The unused native modules end up unbuilt-but-irrelevant; firebase-admin works
+# fine. (Do NOT add --omit=dev: firebase-admin is a devDependency here. Do NOT
+# add --omit=optional: @google-cloud/firestore is an OPTIONAL dep of
+# firebase-admin and the cron needs it.)
+RUN npm install --no-audit --no-fund --ignore-scripts
 
 # Copy only what the script needs. Keeps the image small and avoids
 # shipping the full Vite frontend, Firebase Functions, etc.
