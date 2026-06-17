@@ -449,7 +449,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                             <div className="overflow-x-auto">
                                 <table className="w-full text-[11px]">
                                     <thead><tr className="text-left text-dd-text-2">
-                                        <th className="py-1 pr-2">Name (Toast)</th><th className="px-1 text-right">Hrs</th><th className="px-1 text-right">Rate</th>
+                                        <th className="py-1 pr-2">Name (Toast)</th><th className="px-1 text-right">Hrs</th><th className="px-1 text-right">Pay Rate</th><th className="px-1 text-right">Toast Rate</th>
                                         <th className="px-1">Section</th><th className="px-1">DD</th><th className="px-1">In pool</th>
                                     </tr></thead>
                                     <tbody>
@@ -469,6 +469,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                                                             className={`w-16 text-right rounded px-1 py-0.5 border ${hasOverride(p) ? 'border-dd-green bg-dd-green-50 font-bold text-dd-green-700' : 'border-dd-line'}`} />
                                                     </span>
                                                 </td>
+                                                <td className="px-1 text-right text-dd-text-2">{p.toast_rate != null ? '$' + h2(p.toast_rate) : '—'}</td>
                                                 <td className="px-1">
                                                     <select value={p.section || ''} onChange={(e) => editPerson(loc, p.key, 'section', e.target.value)}
                                                         className="border border-dd-line rounded px-1 py-0.5 text-[11px]">
@@ -479,7 +480,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                                                 <td className="px-1 text-center"><input type="checkbox" checked={!p.no_tip} onChange={(e) => editPerson(loc, p.key, 'no_tip', !e.target.checked)} /></td>
                                             </tr>
                                         ))}
-                                        {!rosterView[loc].people.length && <tr><td colSpan={6} className="text-dd-text-2 py-1">no one yet</td></tr>}
+                                        {!rosterView[loc].people.length && <tr><td colSpan={7} className="text-dd-text-2 py-1">no one yet</td></tr>}
                                     </tbody>
                                 </table>
                             </div>
