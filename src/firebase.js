@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { initializeFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
 
@@ -68,8 +68,33 @@ const app = initializeApp(firebaseConfig);
 // using WebChannel, so the web app and iPhone build are UNAFFECTED. This
 // must replace getFirestore() and run before any other Firestore call —
 // firebase.js is the single Firestore init site (grep-verified).
+// 2026-06-16 (#3) — OFFLINE PERSISTENCE. Before this, Firestore used the
+// default in-MEMORY cache: a write made while offline (back-of-house dead
+// zone) resolves locally but its mutation queue is lost if the app is killed
+// before reconnect — so a "sent" chat message or saved inventory count
+// silently vanished (the chat retry never fired because offline writes don't
+// reject). persistentLocalCache keeps that queue in IndexedDB so it survives a
+// restart and syncs on reconnect. persistentMultipleTabManager is required —
+// the PWA can have a home-screen instance + a browser tab open at once, and
+// the single-tab manager would throw and disable persistence in that case.
+//
+// SAFETY (this is the login-critical init): we feature-detect IndexedDB and
+// the SDK falls back to the memory cache on its own if IndexedDB can't open
+// (private mode, locked-down WebView). A persistence failure degrades reads to
+// the network — it never blocks login. experimentalAutoDetectLongPolling (the
+// 2026-06-05 Android-login fix above) is preserved alongside it.
+let _localCache;
+try {
+    if (typeof indexedDB !== 'undefined' && indexedDB) {
+        _localCache = persistentLocalCache({ tabManager: persistentMultipleTabManager() });
+    }
+} catch (e) {
+    console.warn('[firestore] persistent cache unavailable — using memory cache:', e?.message);
+    _localCache = undefined;
+}
 export const db = initializeFirestore(app, {
     experimentalAutoDetectLongPolling: true,
+    ...(_localCache ? { localCache: _localCache } : {}),
 });
 export const storage = getStorage(app);
 // Cloud Functions client (region must match the deploy region in
