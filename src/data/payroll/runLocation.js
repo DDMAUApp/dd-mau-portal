@@ -252,11 +252,20 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
     // ---- salary ------------------------------------------------------------
     const salaryRows = [];
     for (const s of masterData.salary) {
+        const amountCents = c(s.rate);
         salaryRows.push({
             first: s.first, last: s.last,
             legal_first: s.legal_first, legal_last: s.legal_last,
-            amount_cents: c(s.rate), direct_deposit: true,
+            amount_cents: amountCents, direct_deposit: true,
         });
+        // Salary people are NOT part of the hours/tips reconciliation, so a
+        // non-numeric salary $ (e.g. someone typed "1,200") would otherwise
+        // ship a $NaN line with no check catching it. Hard-block it.
+        if (!Number.isFinite(amountCents)) {
+            checks.push(check(`salary:${s.key || (s.first + s.last)}`, 'fail',
+                `${s.first} ${s.last}: salary amount isn't a valid number`,
+                "Their salary $/period didn't read as a number — fix it on the People step (digits only, no commas)."));
+        }
     }
 
     // ---- invariant: every Toast hour is represented ------------------------

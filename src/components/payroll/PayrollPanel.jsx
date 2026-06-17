@@ -21,7 +21,7 @@ import {
     buildRosterView, syncWithToast, upsertPerson, staffDefaultsByKey,
 } from '../../data/payroll/roster.js';
 import { validate as validateExtra } from '../../data/payroll/extras.js';
-import { buildPayrollWorkbook, buildComparisonWorkbook, workbookBlob } from '../../data/payroll/excelOut.js';
+import { buildPayrollWorkbook, buildComparisonWorkbook } from '../../data/payroll/excelOut.js';
 import {
     loadPayrollMeta, setPayrollPassword, verifyPayrollPassword, nameAliasesFromMeta,
     loadRoster, saveRoster, saveRun, loadLatestRunSummary,
@@ -57,7 +57,12 @@ function PayrollGate({ onUnlock, staffName }) {
         return () => { alive = false; };
     }, []);
 
-    const needsSetup = meta === null || (meta && !meta.passwordHash);
+    const reload = () => { setMeta(undefined); loadPayrollMeta().then(setMeta); };
+    // A read FAILURE must not be mistaken for "no password set" — that would
+    // fail OPEN (offer to set a fresh password while offline). loadPayrollMeta
+    // returns {__error:true} on failure, null only when the doc truly is absent.
+    const loadErr = !!(meta && meta.__error);
+    const needsSetup = !loadErr && (meta === null || (meta && !meta.passwordHash));
 
     const submit = async () => {
         if (busy) return;
@@ -97,6 +102,11 @@ function PayrollGate({ onUnlock, staffName }) {
                     </div>
                     {meta === undefined ? (
                         <p className="text-sm text-dd-text-2 py-4">Checking…</p>
+                    ) : loadErr ? (
+                        <>
+                            <p className="text-sm text-red-700 mb-3">Couldn't reach payroll. Check your connection and try again.</p>
+                            <button onClick={reload} className="w-full py-2.5 rounded-lg bg-dd-green text-white font-bold">Try again</button>
+                        </>
                     ) : needsSetup ? (
                         <>
                             <p className="text-sm text-dd-text-2 mb-3">
@@ -119,7 +129,7 @@ function PayrollGate({ onUnlock, staffName }) {
                                 className="w-full mb-3 px-3 py-2 text-base border border-dd-line rounded-lg" />
                         </>
                     )}
-                    {meta !== undefined && (
+                    {meta !== undefined && !loadErr && (
                         <button onClick={submit} disabled={busy}
                             className="w-full py-2.5 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50">
                             {busy ? '…' : (needsSetup ? 'Set password & open' : 'Unlock')}
@@ -178,8 +188,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     // Live compute (pure, cheap) — recomputed each render once files are in.
     let live = null;
     if (imported) {
-        const aliases = nameAliasesFromMeta(meta);
-        void aliases; // aliases already applied at parse time; kept for clarity
+        // (name aliases were already applied at parse time, in doImport)
         const inputs = loadInputs(parsed.exports, parsed.salesByLoc, parsed.salesConflicts, roster);
         const periodExtras = [];
         const extrasErrors = [];
@@ -202,7 +211,11 @@ export default function PayrollPanel({ language, staffName, staffList }) {
             }
         }
         const cashNum = { WG: Number(cash.WG) || 0, MH: Number(cash.MH) || 0 };
-        const fohNum = { WG: Number(foh.WG) || 50, MH: Number(foh.MH) || 50 };
+        // Only default FOH% to 50 when the field is truly blank/invalid — NOT when
+        // it's a deliberate 0 (a BOH-only day). `Number('0') || 50` would wrongly
+        // turn 0% into 50/50 and misallocate the whole pool.
+        const fohPctVal = (v) => (v === '' || v == null || Number.isNaN(Number(v))) ? 50 : Number(v);
+        const fohNum = { WG: fohPctVal(foh.WG), MH: fohPctVal(foh.MH) };
         const results = compute(inputs, period, cashNum, fohNum, periodExtras);
         live = { inputs, results, extrasErrors };
     }
@@ -252,16 +265,26 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     };
 
     // ── pay-adds grid ──
+    // Reconcile (not build-once): make sure EVERY person who worked this period
+    // has a grid row, while preserving any values already typed. This way someone
+    // set up in the People step AFTER visiting Pay-adds still gets a row, and a
+    // person no longer on the export is dropped. Guards on rosterView so it's a
+    // no-op before import.
     const ensureGrid = () => {
-        if (gridRef.current) return;
-        const g = { WG: {}, MH: {} };
+        if (!rosterView) return;
+        if (!gridRef.current) gridRef.current = { WG: {}, MH: {} };
+        const g = gridRef.current;
         for (const loc of LOCS) {
+            if (!g[loc]) g[loc] = {};
+            const present = new Set();
             for (const p of (rosterView[loc].people || [])) {
                 if (!p.on_toast) continue;
-                g[loc][p.key] = { name: `${p.first} ${p.last}`, reg_hours: '', ot_hours: '', vacation: '', bonus: '', advance: '', other: '', note: '' };
+                present.add(p.key);
+                if (!g[loc][p.key]) g[loc][p.key] = { name: `${p.first} ${p.last}`, reg_hours: '', ot_hours: '', vacation: '', bonus: '', advance: '', other: '', note: '' };
+                else g[loc][p.key].name = `${p.first} ${p.last}`;
             }
+            for (const k of Object.keys(g[loc])) if (!present.has(k)) delete g[loc][k];
         }
-        gridRef.current = g;
     };
     const editGrid = (loc, key, field, val) => { gridRef.current[loc][key][field] = val; bump(); };
 
@@ -275,21 +298,28 @@ export default function PayrollPanel({ language, staffName, staffList }) {
         setBusy(true);
         try {
             const prev = await loadLatestRunSummary(period);
+            const { default: JSZip } = await import('jszip');
+            const zip = new JSZip();
             const written = [];
             for (const loc of Object.keys(live.results)) {
                 const wb = await buildPayrollWorkbook(live.results[loc]);
-                const blob = await workbookBlob(wb);
                 const fileName = `${loc}_PAYROLL_${period}.xlsx`;
-                await downloadFile({ data: blob, fileName, mimeType: blob.type });
+                zip.file(fileName, await wb.xlsx.writeBuffer());
                 written.push(fileName);
             }
             const cmp = await buildComparisonWorkbook(period, live.results, prev);
-            const cmpBlob = await workbookBlob(cmp);
             const cmpName = `COMPARISON_${period}.xlsx`;
-            await downloadFile({ data: cmpBlob, fileName: cmpName, mimeType: cmpBlob.type });
+            zip.file(cmpName, await cmp.xlsx.writeBuffer());
             written.push(cmpName);
+            // ONE download (a zip). Browsers silently drop the 2nd/3rd back-to-back
+            // programmatic download (Safari especially) — which would hand the
+            // accountant a partial payroll. A single file is bulletproof on web +
+            // native (one share sheet instead of three).
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            const zipName = `DD_Mau_Payroll_${period}.zip`;
+            await downloadFile({ data: zipBlob, fileName: zipName, mimeType: 'application/zip' });
             await saveRun(period, live.results, staffName);
-            setGenerated({ written, previous_period: prev ? prev.period : null });
+            setGenerated({ written, zipName, previous_period: prev ? prev.period : null });
             toast('Payroll docs created.');
         } catch (e) {
             toast('Generate failed: ' + (e?.message || e));
@@ -605,7 +635,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                     </button>
                     {generated && (
                         <div className="mt-3 text-[11px] text-dd-green-700 bg-dd-green-50 rounded px-2 py-2">
-                            <b>Done.</b> Files: {generated.written.join(', ')}.<br />
+                            <b>Done.</b> Downloaded <b>{generated.zipName}</b> — contains {generated.written.join(', ')}. Unzip, then send the two PAYROLL files to the accountant.<br />
                             {generated.previous_period ? `Compared against ${generated.previous_period}.` : '(First run — next time you\'ll get a real comparison.)'}
                         </div>
                     )}

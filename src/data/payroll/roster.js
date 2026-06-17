@@ -21,7 +21,10 @@ export function blankRoster() {
 
 /** Normalize a roster object loaded from Firestore. Mirrors roster.read_roster defaults. */
 export function normalizeRoster(data) {
-    const out = (data && typeof data === 'object') ? data : {};
+    // Deep-clone so we never mutate the caller's object in place (the Firestore
+    // snap.data() is fresh today, but a future caller could reuse one — and we
+    // write p.key/defaults onto every person here).
+    const out = (data && typeof data === 'object') ? JSON.parse(JSON.stringify(data)) : {};
     if (out.version === undefined) out.version = 1;
     for (const loc of LOCATIONS) {
         if (!out[loc]) out[loc] = {};

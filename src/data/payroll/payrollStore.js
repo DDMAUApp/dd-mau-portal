@@ -12,7 +12,7 @@
 // defense (Phase-2 Firebase Auth is the real lock).
 
 import {
-    doc, getDoc, setDoc, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp,
+    doc, getDoc, setDoc, collection, addDoc, getDocs, query, where, orderBy, limit, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../../firebase.js';
 import { normalizeRoster, blankRoster } from './roster.js';
@@ -34,26 +34,41 @@ export const DEFAULT_NAME_ALIASES = {
 function toHex(buf) {
     return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+// Web Crypto needs a secure context. All three production runtimes qualify (https
+// PWA, iOS WKWebView, Android WebView); this guard just turns an opaque
+// "Cannot read properties of undefined" rejection into a clear message if the
+// app is ever opened over bare http.
+function requireWebCrypto() {
+    if (!globalThis.crypto || !globalThis.crypto.subtle) {
+        throw new Error('The payroll password needs a secure (https) connection.');
+    }
+}
 export async function hashPassword(password, salt) {
+    requireWebCrypto();
     const enc = new TextEncoder().encode(`${salt}:${password}`);
     const digest = await crypto.subtle.digest('SHA-256', enc);
     return toHex(digest);
 }
 export function randomSalt() {
+    requireWebCrypto();
     const a = new Uint8Array(16);
     crypto.getRandomValues(a);
     return toHex(a.buffer);
 }
 
 // ── password meta ────────────────────────────────────────────────────────────
+// Returns the meta object, `null` if the doc genuinely doesn't exist (→ set a
+// password), or `{ __error: true }` on a READ FAILURE. The gate must NOT treat a
+// read failure as "no password set" — that would fail OPEN (offer to set a new
+// password while offline). The caller distinguishes the two.
 export async function loadPayrollMeta() {
     try {
         const snap = await getDoc(doc(db, 'config', 'payroll_meta'));
-        if (snap.exists()) return snap.data();
+        return snap.exists() ? snap.data() : null;
     } catch (e) {
         console.warn('[payroll] loadPayrollMeta failed:', e?.message);
+        return { __error: true };
     }
-    return null;
 }
 
 export async function setPayrollPassword(password, byName) {
@@ -128,7 +143,18 @@ export function buildRunSummary(period, results, ranBy) {
 
 export async function saveRun(period, results, ranBy) {
     const summary = buildRunSummary(period, results, ranBy);
-    return addDoc(collection(db, 'payroll_runs'), { ...summary, ranAt: serverTimestamp() });
+    const payload = { ...summary, ranAt: serverTimestamp() };
+    // Idempotent per period: regenerating the same period OVERWRITES its run doc
+    // instead of piling up duplicates (which would corrupt the next period's
+    // auto-comparison and fill the recent-runs window). where('period','==') is a
+    // single-field equality — no composite index needed.
+    try {
+        const existing = await getDocs(query(collection(db, 'payroll_runs'), where('period', '==', period), limit(1)));
+        if (!existing.empty) return setDoc(existing.docs[0].ref, payload);
+    } catch (e) {
+        console.warn('[payroll] saveRun dedupe check failed, appending:', e?.message);
+    }
+    return addDoc(collection(db, 'payroll_runs'), payload);
 }
 
 /** Most recent saved run whose period differs from `excludePeriod` (for the comparison workbook). */

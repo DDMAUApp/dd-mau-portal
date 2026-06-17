@@ -73,7 +73,10 @@ function toFloat(v) {
     if (!s) return 0.0;
     const f = Number(s);
     if (!Number.isNaN(f) && isFinite(f)) return f;
-    const m = s.match(/-?\d+(?:\.\d+)?/);
+    // Anchored at the START to mirror Python's re.match (toast.py): recover a
+    // leading number ("40h" -> 40) but reject a number buried mid-string
+    // ("approx 40" -> 0), exactly as the Python engine does.
+    const m = s.match(/^-?\d+(?:\.\d+)?/);
     return m ? Number(m[0]) : 0.0;
 }
 
