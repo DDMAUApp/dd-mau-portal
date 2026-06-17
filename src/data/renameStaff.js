@@ -173,6 +173,33 @@ async function renameChats(oldName, newName) {
     return commitInChunks(ops);
 }
 
+// Strip a REMOVED staffer's name from chat membership/admin arrays. Without
+// this, removeStaff leaves the name in members[], so a future hire reusing
+// the same name silently inherits that person's chat + DM access (and any
+// pending unread state). Message history + lastReadByName are intentionally
+// left alone (historical record of who said what). Best-effort, chunked.
+// Returns the number of chats updated.
+export async function removeStaffFromChats(name) {
+    const n = String(name || '').trim();
+    if (!n) return 0;
+    const snap = await getDocs(
+        query(collection(db, 'chats'), where('members', 'array-contains', n)),
+    );
+    const ops = [];
+    snap.forEach((d) => {
+        const data = d.data() || {};
+        const patch = {};
+        if (Array.isArray(data.members) && data.members.includes(n)) {
+            patch.members = data.members.filter((m) => m !== n);
+        }
+        if (Array.isArray(data.admins) && data.admins.includes(n)) {
+            patch.admins = data.admins.filter((m) => m !== n);
+        }
+        if (Object.keys(patch).length) ops.push((b) => b.update(d.ref, patch));
+    });
+    return commitInChunks(ops);
+}
+
 // The function-critical, name-joined collections. Order doesn't matter
 // (each is independent); kept roughly by user-visible impact.
 //

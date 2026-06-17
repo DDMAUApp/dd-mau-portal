@@ -324,7 +324,22 @@ export async function initCapacitor() {
         const { App: CapOtaApp } = await import('@capacitor/app');
         const otaStateHandle = await CapOtaApp.addListener('appStateChange', ({ isActive }) => {
             if (!isActive) { otaBgAt = Date.now(); return; }
-            if (_otaPending && otaBgAt > 0 && Date.now() - otaBgAt > 8000) applyOta();
+            // 2026-06-16 (#17): only auto-apply on a GENUINE reopen, and never
+            // out from under active input. Raised the away-threshold 8s→30s (a
+            // quick mid-task app-switch is usually shorter), and skip the reload
+            // while a field is focused/being edited. A skipped bundle stays
+            // pending → applies on the next reopen, via the Refresh toast, or on
+            // the next cold launch (Capgo applies it regardless).
+            const editing = (() => {
+                try {
+                    const el = document.activeElement;
+                    if (!el) return false;
+                    if (/^(input|textarea|select)$/i.test(el.tagName)) return true;
+                    if (el.isContentEditable) return true;
+                } catch {}
+                return false;
+            })();
+            if (_otaPending && otaBgAt > 0 && Date.now() - otaBgAt > 30000 && !editing) applyOta();
             otaBgAt = 0;
         });
         _subscriptions.push(otaStateHandle);

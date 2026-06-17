@@ -9,7 +9,7 @@ import { getPositionTemplate, hasPositionTemplate } from '../data/positionTempla
 // so renameStaff rides in the admin chunk. A dynamic import() spun it into a
 // separate chunk that failed to load on a stale-cached PWA — the rename then
 // silently no-op'd while the staff record had already saved (orphaned data).
-import { renameStaffEverywhere } from '../data/renameStaff';
+import { renameStaffEverywhere, removeStaffFromChats } from '../data/renameStaff';
 import {
     normalizeToE164,
     formatE164ForDisplay,
@@ -2235,6 +2235,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     } catch (e) {
                         console.warn('cascade shift cleanup failed:', e);
                     }
+                    // 2026-06-16 (#24): strip the removed name from chat
+                    // membership/admins so a future same-name hire can't inherit
+                    // their chat + DM access. Message history is left intact.
+                    try { await removeStaffFromChats(removedName); }
+                    catch (e) { console.warn('chat membership cleanup failed:', e); }
                 }
                 setConfirmRemoveId(null);
                 showSaved();

@@ -161,18 +161,27 @@ export function canReceive86Alerts(staff) {
 // staff have to be explicitly opted in via the Admin Panel toggle.
 // Returns true/false; never undefined (so the consumer can safely just
 // check truthiness).
+// 2026-06-16 (#27): explicit manager-role allow-set. Replaces unanchored
+// substring tests (/manager/i, /manager|owner/) that would silently grant
+// manager / labor access to any FUTURE role string merely CONTAINING those
+// words. Source of truth = AdminPanel roleOptions + DEFAULT_STAFF; keep in
+// sync if a managerial title is added. (The per-record viewLabor toggle below
+// still overrides this either way.)
+export const MANAGER_ROLE_TITLES = ['Manager', 'Asst Manager', 'Kitchen Manager', 'Asst Kitchen Manager'];
+export function isManagerRoleTitle(role) {
+  const r = (role || "").trim().toLowerCase();
+  return MANAGER_ROLE_TITLES.some(t => t.toLowerCase() === r);
+}
+
 export function canViewLabor(staff) {
   if (!staff) return false;
   // Explicit admin override per record (Admin Panel toggle): if set,
   // it wins over the role-based default.
   if (staff.viewLabor === true) return true;
   if (staff.viewLabor === false) return false;
-  // Default: anyone whose role contains "manager" or "owner" sees labor.
-  // This matches the de-facto practice before the explicit toggle existed
-  // (the Labor tab was already gated on isAdmin, but Operations/HomeV2
-  // were leaking labor % to anyone who could see those pages).
-  const role = (staff.role || "").toLowerCase();
-  if (/manager|owner/.test(role)) return true;
+  // Default: managers + owner see labor. (Was a substring regex; now an
+  // exact allow-set so a future role title can't accidentally inherit it.)
+  if (isManagerRoleTitle(staff.role) || (staff.role || "").trim().toLowerCase() === 'owner') return true;
   return false;
 }
 

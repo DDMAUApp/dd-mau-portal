@@ -3,7 +3,7 @@ import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
-import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding } from './data/staff';
+import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle } from './data/staff';
 import { toast } from './toast';
 import { enableFcmPush, disableFcmPush, onForegroundMessage } from './messaging';
 import { playKitchenBell } from './data/bell';
@@ -1262,7 +1262,7 @@ export default function App() {
     // Kitchen Manager via role title. Shift Lead is intentionally NOT
     // included — tardy authority sits with managers.
     const isManager = useMemo(
-        () => staffIsAdmin || (currentStaffRecord && /manager/i.test(currentStaffRecord.role || '')),
+        () => staffIsAdmin || (currentStaffRecord && isManagerRoleTitle(currentStaffRecord.role)),
         [staffIsAdmin, currentStaffRecord],
     );
     // Onboarding access — tighter than isAdmin. Holds PII (SSN, W4, DL).
@@ -1557,10 +1557,15 @@ export default function App() {
     // here. No PIN, no staff context — just a read-only public menu
     // with live 86 status. Andrew 2026-05-20.
     if (tvMode) {
+        // 2026-06-16 (#28): chunk-aware boundary so a stale-cache 404 of the
+        // MenuDisplay chunk auto-reloads instead of leaving an unattended wall
+        // TV stuck (this early return is above the inner per-tab boundary).
         return (
-            <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
-                <MenuDisplay tvId={tvMode.tvId} />
-            </Suspense>
+            <ErrorBoundary>
+                <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
+                    <MenuDisplay tvId={tvMode.tvId} />
+                </Suspense>
+            </ErrorBoundary>
         );
     }
 
@@ -1569,9 +1574,11 @@ export default function App() {
     // doesn't enter the bundle graph for normal staff sessions.
     if (pairMode) {
         return (
-            <Suspense fallback={<div className="fixed inset-0 bg-dd-charcoal text-white flex items-center justify-center font-bold">Loading…</div>}>
-                <PairDevicePage />
-            </Suspense>
+            <ErrorBoundary>
+                <Suspense fallback={<div className="fixed inset-0 bg-dd-charcoal text-white flex items-center justify-center font-bold">Loading…</div>}>
+                    <PairDevicePage />
+                </Suspense>
+            </ErrorBoundary>
         );
     }
 
@@ -1580,9 +1587,11 @@ export default function App() {
     // &location=webster|maryland. Andrew 2026-05-21.
     if (taskDisplayMode) {
         return (
-            <Suspense fallback={<div className="fixed inset-0 bg-[#111315]" />}>
-                <TaskDisplay side={taskDisplayMode.side} location={taskDisplayMode.location} />
-            </Suspense>
+            <ErrorBoundary>
+                <Suspense fallback={<div className="fixed inset-0 bg-[#111315]" />}>
+                    <TaskDisplay side={taskDisplayMode.side} location={taskDisplayMode.location} />
+                </Suspense>
+            </ErrorBoundary>
         );
     }
 
