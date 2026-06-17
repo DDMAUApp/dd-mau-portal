@@ -7129,16 +7129,26 @@ function MonthMiniCal({ weekStart, setWeekStart, eventsByDate, blocksByDate, isE
     // Resync displayed month if weekStart moves outside it (e.g. user
     // jumped 6 weeks in the main grid). Keeps the mini-cal relevant to
     // what the manager is editing without trapping them on this month.
+    //
+    // BUG FIX (Andrew 2026-06-17 "next-month arrow doesn't work"): this effect
+    // used to depend on [weekStart, displayMonth]. Paging with ‹/› changes
+    // displayMonth, which re-ran the effect — and since weekStart was still in
+    // the OLD month, it immediately snapped displayMonth back. Now it keys on
+    // weekStart ONLY (read displayMonth via a ref so there's no stale-closure
+    // bug), so manual month paging sticks.
+    const displayMonthRef = useRef(displayMonth);
+    displayMonthRef.current = displayMonth;
     useEffect(() => {
         const ws = new Date(weekStart);
         const we = addDays(ws, 6);
+        const dm = displayMonthRef.current;
         const inDispMonth = (d) =>
-            d.getFullYear() === displayMonth.getFullYear() &&
-            d.getMonth() === displayMonth.getMonth();
+            d.getFullYear() === dm.getFullYear() &&
+            d.getMonth() === dm.getMonth();
         if (!inDispMonth(ws) && !inDispMonth(we)) {
             setDisplayMonth(new Date(ws.getFullYear(), ws.getMonth(), 1));
         }
-    }, [weekStart, displayMonth]);
+    }, [weekStart]);
 
     const monthLabel = displayMonth.toLocaleDateString(isEn ? 'en-US' : 'es-MX',
         { month: 'long', year: 'numeric' });
