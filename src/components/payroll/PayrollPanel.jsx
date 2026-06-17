@@ -222,6 +222,28 @@ export default function PayrollPanel({ language, staffName, staffList }) {
 
     const rosterView = imported ? buildRosterView(roster, parsed.exports.employees) : null;
 
+    // Effective "natural" rate = this period's Toast rate, else the last known
+    // rate. An override is anything the owner types that differs from it.
+    const naturalRate = (p) => (p.toast_rate != null ? p.toast_rate : (p.last_rate != null ? p.last_rate : 0));
+    const hasOverride = (p) => p.rate_override !== '' && p.rate_override != null;
+
+    // Every active rate override, for the "changes" summary at the bottom of the
+    // People step (so the owner can see exactly which rates are pinned over Toast).
+    const rateOverrides = [];
+    if (rosterView) {
+        for (const loc of LOCS) {
+            for (const p of rosterView[loc].people) {
+                if (hasOverride(p)) {
+                    rateOverrides.push({
+                        loc, name: `${p.first} ${p.last}`,
+                        from: (p.toast_rate != null ? p.toast_rate : (p.last_rate != null ? p.last_rate : null)),
+                        to: p.rate_override,
+                    });
+                }
+            }
+        }
+    }
+
     // ── import ──
     const onPick = (fileList) => {
         const arr = [...fileList];
@@ -252,6 +274,18 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     // ── people edits ──
     const editPerson = (loc, key, field, val) => {
         upsertPerson(roster, loc, key, { [field]: val });
+        bump();
+    };
+    // Editing the pay rate sets a per-person rate_override (which wins over Toast
+    // in the engine). Typing the natural Toast/last rate, or clearing the field,
+    // removes the override so pay falls back to Toast.
+    const editRate = (loc, p, val) => {
+        const s = String(val).trim();
+        if (s === '') { upsertPerson(roster, loc, p.key, { rate_override: '' }); bump(); return; }
+        const n = Number(s);
+        if (!Number.isFinite(n)) { bump(); return; }
+        if (Math.abs(n - naturalRate(p)) < 0.0001) upsertPerson(roster, loc, p.key, { rate_override: '' });
+        else upsertPerson(roster, loc, p.key, { rate_override: n });
         bump();
     };
     const addSalary = (loc) => { roster[loc].salary.push({ first: '', last: '', amount: '', direct_deposit: true, no_tip: true, legal_name: '' }); bump(); };
@@ -407,7 +441,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                 <div className="rounded-xl border border-dd-line bg-white p-4 space-y-4">
                     <div>
                         <h4 className="font-bold text-dd-text mb-1">People & Direct Deposit</h4>
-                        <p className="text-xs text-dd-text-2">This list is live — what you set carries to every future payroll. Set anyone marked <span className="text-red-600 font-bold">NEW</span> (FOH/BOH + Direct Deposit). Rate &amp; hours come from Toast.</p>
+                        <p className="text-xs text-dd-text-2">This list is live — what you set carries to every future payroll. Set anyone marked <span className="text-red-600 font-bold">NEW</span> (FOH/BOH + Direct Deposit). Hours come from Toast; the <b>pay rate</b> defaults to Toast but you can change it here — a changed rate overrides Toast and is listed at the bottom.</p>
                     </div>
                     {LOCS.map((loc) => (
                         <div key={loc}>
@@ -425,7 +459,16 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                                                     {p.needs_setup && <span className="ml-1 text-red-600 font-bold">NEW</span>}
                                                     {!p.on_toast && !p.needs_setup && <span className="ml-1 text-dd-text-2">(no hours)</span>}</td>
                                                 <td className="px-1 text-right">{p.on_toast ? h2((p.reg_hours || 0) + (p.ot_hours || 0)) : '—'}</td>
-                                                <td className="px-1 text-right">{p.toast_rate != null ? '$' + h2(p.toast_rate) : (p.last_rate != null ? <span className="text-dd-text-2">${h2(p.last_rate)}</span> : '')}</td>
+                                                <td className="px-1 text-right">
+                                                    <span className="inline-flex items-center gap-0.5 justify-end">
+                                                        <span className="text-dd-text-2">$</span>
+                                                        <input type="number" step="0.01" min="0"
+                                                            value={hasOverride(p) ? p.rate_override : naturalRate(p)}
+                                                            onChange={(e) => editRate(loc, p, e.target.value)}
+                                                            title={hasOverride(p) ? `Overrides Toast ($${h2(naturalRate(p))})` : 'From Toast — edit to override'}
+                                                            className={`w-16 text-right rounded px-1 py-0.5 border ${hasOverride(p) ? 'border-dd-green bg-dd-green-50 font-bold text-dd-green-700' : 'border-dd-line'}`} />
+                                                    </span>
+                                                </td>
                                                 <td className="px-1">
                                                     <select value={p.section || ''} onChange={(e) => editPerson(loc, p.key, 'section', e.target.value)}
                                                         className="border border-dd-line rounded px-1 py-0.5 text-[11px]">
@@ -459,6 +502,16 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                             </div>
                         </div>
                     ))}
+                    {rateOverrides.length > 0 && (
+                        <div className="rounded-lg border border-dd-green/40 bg-dd-green-50 p-2 text-[11px]">
+                            <div className="font-bold text-dd-green-700 mb-1">Pay rate changes — these override Toast ({rateOverrides.length})</div>
+                            {rateOverrides.map((r, i) => (
+                                <div key={i} className="text-dd-text">
+                                    {r.loc} · {r.name}: {r.from != null ? <span>${h2(r.from)} → </span> : ''}<b>${h2(r.to)}</b>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     <button onClick={savePeople} disabled={busy} className="px-4 py-2 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50">Save people & Direct Deposit</button>
                 </div>
             )}
