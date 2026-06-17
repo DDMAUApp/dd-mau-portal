@@ -449,7 +449,7 @@ export async function savePrinterConfig({
     location, slot = DEFAULT_PRINTER_SLOT,
     name, ip, port, deviceId, model, enabled, byName,
     type = DEFAULT_PRINTER_TYPE,
-    labelWidthMm, labelHeightMm, paperWidthMm,
+    labelWidthMm, labelHeightMm, paperWidthMm, leftOffsetMm,
 }) {
     if (!location) throw new Error('location required');
     const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
@@ -490,10 +490,15 @@ export async function savePrinterConfig({
     if (safeType === PRINTER_TYPES.EPSON_LINERLESS) {
         const pw = Number(paperWidthMm);
         payload.paperWidthMm = [40, 58, 80].includes(pw) ? pw : 80;
+        // Left-margin nudge (mm) for a printer that prints too far left.
+        // 0–20 mm; 0 = no shift. Applied via the ePOS GS L command.
+        const off = Number(leftOffsetMm);
+        payload.leftOffsetMm = Number.isFinite(off) ? Math.max(0, Math.min(20, off)) : 0;
     } else {
         // Switching a row to Brother must not strand a stale Epson
         // width on the doc (merge:true never deletes keys).
         payload.paperWidthMm = deleteField();
+        payload.leftOffsetMm = deleteField();
     }
     await setDoc(doc(db, 'config', printerDocPath(location, safeSlot)), payload, { merge: true });
     recordAudit({
@@ -534,6 +539,9 @@ export function buildLabelPayload({
     // date/title magnification so content fits a narrow roll instead of
     // running off the right edge. Defaults to the 80 mm standard roll.
     paperWidthMm = 80,
+    // Epson left-margin nudge (mm) — shifts the whole label right for a
+    // printer that prints too far to the left. 0 = no shift (default).
+    leftOffsetMm = 0,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -665,6 +673,9 @@ export function buildLabelPayload({
         _presetId:       format?._presetId       || null,
         _presetWidthMm:  format?._presetWidthMm  || null,
         _presetHeightMm: format?._presetHeightMm || null,
+        // Left-margin nudge in printer dots (203 dpi → 8 dots/mm). Read by
+        // renderPrepLabelBody to emit the ePOS GS L command. Clamped 0..160.
+        _leftOffsetDots: Math.max(0, Math.min(160, Math.round((Number(leftOffsetMm) || 0) * 8))),
     };
 }
 
@@ -718,6 +729,19 @@ function escapeXml(s) {
         .replace(/'/g, '&apos;');
 }
 
+// Per-printer "prints too far left" nudge. Emits an ePOS set-left-margin
+// command (GS L nL nH — 1D 4C + a 2-byte little-endian dot count) as an
+// <command> element. Shifts the WHOLE label right by `dots`, independent of
+// each line's font scale (leading spaces would shift the big date 5× the
+// small text). Returns '' for a 0 offset so the default emits nothing and the
+// existing output is byte-for-byte unchanged. Clamped to 160 dots (~20 mm).
+function eposLeftMarginCmd(dots) {
+    const d = Math.max(0, Math.min(160, Math.round(Number(dots) || 0)));
+    if (!d) return '';
+    const hx = (n) => (n & 0xff).toString(16).padStart(2, '0');
+    return `<command>1d4c${hx(d)}${hx(d >> 8)}</command>`;
+}
+
 // Build the inner ePOS body for ONE prep label. Layout (Andrew
 // 2026-05-20 "lets also make the lable to be Date it was prep the
 // top and largest this helps with FIFO"):
@@ -740,6 +764,9 @@ function escapeXml(s) {
 // "what got made when" at a glance. Item name stays prominent below.
 function renderPrepLabelBody(payload) {
     const lines = [];
+    // Optional left-margin nudge (must come first, before any text).
+    const lm = eposLeftMarginCmd(payload._leftOffsetDots);
+    if (lm) lines.push(lm);
     // Dividers span the printable width of THIS roll. Hardcoded 30 was
     // an 80 mm assumption; on a 40 mm roll it wrapped to a second ragged
     // row. `cols` comes from paperColumns() via buildLabelPayload.
@@ -1458,6 +1485,9 @@ function sizeDim(size) {
 // top-level cut sequencing). renderFreeTextXml wraps this N times.
 function renderFreeTextBody(freePayload) {
     const lines = [];
+    // Optional left-margin nudge (same per-printer offset as prep labels).
+    const lm = eposLeftMarginCmd(freePayload._leftOffsetDots);
+    if (lm) lines.push(lm);
     const dim = sizeDim(freePayload.size);
     const align = ['left', 'center', 'right'].includes(freePayload.align)
         ? freePayload.align : 'center';
@@ -1680,6 +1710,7 @@ export async function printFreeText({
             text: trimmed, size, bold, align,
             copies: c, stampDate, stampSignature, signature, footer,
             paperWidthMm: printer.paperWidthMm,
+            _leftOffsetDots: Math.max(0, Math.min(160, Math.round((Number(printer.leftOffsetMm) || 0) * 8))),
         };
         // Resolve preset dimensions for Brother @page sizing. Free-
         // text printing doesn't go through buildLabelPayload so we
@@ -1995,6 +2026,7 @@ export async function printPrepLabel({
             notes,
             format,
             paperWidthMm: printer.paperWidthMm,
+            leftOffsetMm: printer.leftOffsetMm,
         });
 
         // Last exit before the job leaves the device.
@@ -2127,6 +2159,7 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
             notes: 'Test print from DD Mau app',
             format,
             paperWidthMm: printer.paperWidthMm,
+            leftOffsetMm: printer.leftOffsetMm,
         });
 
         let res;

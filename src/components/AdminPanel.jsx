@@ -332,6 +332,9 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
     // 58 vs 80 mm from the roll guides; 40 mm additionally needs the
     // TM-L100 Utility. Stored so labels + admin agree on the roll.
     const [paperWidthMm, setPaperWidthMm] = useState(80);
+    // Left-margin nudge (mm) — shifts the whole label right for a printer
+    // that prints too far to the left. Epson only; 0 = no shift.
+    const [leftOffsetMm, setLeftOffsetMm] = useState(0);
     const [showEpsonGuide, setShowEpsonGuide] = useState(false);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
@@ -385,6 +388,7 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                 setPortDraft(String(got?.port || 80));
                 setDeviceIdDraft(got?.deviceId || 'local_printer');
                 setPaperWidthMm(Number(got?.paperWidthMm) || 80);
+                setLeftOffsetMm(Number(got?.leftOffsetMm) || 0);
             } catch (e) {
                 console.warn('printer config load failed:', e);
             } finally {
@@ -408,6 +412,7 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                 port,
                 deviceId: deviceIdDraft.trim() || 'local_printer',
                 paperWidthMm,
+                leftOffsetMm,
                 labelWidthMm: labelWMm,
                 labelHeightMm: labelHMm,
                 enabled,
@@ -421,6 +426,7 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
             setPortDraft(String(fresh?.port || 80));
             setDeviceIdDraft(fresh?.deviceId || 'local_printer');
             setPaperWidthMm(Number(fresh?.paperWidthMm) || 80);
+            setLeftOffsetMm(Number(fresh?.leftOffsetMm) || 0);
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
         } catch (e) {
             console.warn('save printer config failed:', e);
@@ -643,6 +649,17 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                                     <option value={58}>58 mm</option>
                                     <option value={40}>40 mm</option>
                                 </select>
+                            </label>
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                                    {tx('Left offset (mm)', 'Margen izq. (mm)')}
+                                </span>
+                                <input type="number" min="0" max="20" step="0.5" value={leftOffsetMm}
+                                    onChange={(e) => setLeftOffsetMm(Math.max(0, Math.min(20, Number(e.target.value) || 0)))}
+                                    className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
+                                <span className="block text-[9px] text-purple-700/70 mt-0.5">
+                                    {tx('Increase if it prints too far left', 'Súbelo si imprime muy a la izquierda')}
+                                </span>
                             </label>
                         </div>
                         <p className="text-[10px] text-purple-700/80 leading-snug -mt-1">
