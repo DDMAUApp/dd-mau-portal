@@ -770,6 +770,35 @@ export async function onForegroundMessage(handler) {
 }
 
 /**
+ * Native push TAP routing (#1, 2026-06-16). When a user taps a closed/
+ * background push on iOS/Android, the plugin fires
+ * 'pushNotificationActionPerformed'. We read the data.deepLink the Cloud
+ * Function set and hand the target tab to the caller (App.jsx dispatches the
+ * 'ddmau:navigate' window event). No-op on web — web taps are handled by the
+ * FCM service worker's notificationclick (postMessage / ?deepLink=). Returns
+ * an unsubscribe function.
+ */
+export async function onPushTapNavigate(handler) {
+    if (!isCapacitorNative()) return () => {};
+    let plugin;
+    try { plugin = await loadNativePushPlugin(); } catch { return () => {}; }
+    if (!plugin) return () => {};
+    try {
+        const sub = await plugin.addListener('pushNotificationActionPerformed', (event) => {
+            try {
+                const data = event?.notification?.data || {};
+                const tab = data.deepLink || data.tab || null;
+                if (tab && typeof handler === 'function') handler(String(tab));
+            } catch (e) { console.warn('[push][native] tap route failed:', e?.message); }
+        });
+        return () => { try { sub?.remove?.(); } catch {} };
+    } catch (e) {
+        console.warn('[push][native] addListener pushNotificationActionPerformed THREW:', e?.message);
+        return () => {};
+    }
+}
+
+/**
  * 2026-05-24 audit fix — disableFcmPush.
  *
  * Reverses what enableFcmPush did for this device. Used by:

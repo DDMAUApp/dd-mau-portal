@@ -5,7 +5,7 @@ import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle } from './data/staff';
 import { toast } from './toast';
-import { enableFcmPush, disableFcmPush, onForegroundMessage } from './messaging';
+import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate } from './messaging';
 import { playKitchenBell } from './data/bell';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
@@ -1430,6 +1430,42 @@ export default function App() {
         };
         window.addEventListener('ddmau:navigate', handler);
         return () => window.removeEventListener('ddmau:navigate', handler);
+    }, []);
+
+    // 2026-06-16 (#1): route notification TAPS to the right tab. Three paths,
+    // all funneled into the 'ddmau:navigate' window event above (→ setActiveTab):
+    //   • native (iOS/Android): pushNotificationActionPerformed → data.deepLink
+    //   • web/PWA already open:  the FCM service worker postMessages
+    //                            { type:'ddmau:navigate', tab }
+    //   • web/PWA cold open:     the SW opens /?deepLink=<tab>; parse at boot
+    // We deliberately DON'T set fromRequiredTask, so a push can't bypass the
+    // required-task gate. Setting activeTab pre-login is harmless — the lock
+    // screen renders regardless and the tab shows once they unlock.
+    useEffect(() => {
+        const go = (tab) => {
+            if (tab) window.dispatchEvent(new CustomEvent('ddmau:navigate', { detail: { tab: String(tab) } }));
+        };
+        let unsubNative = () => {};
+        onPushTapNavigate(go).then((fn) => { unsubNative = fn || (() => {}); }).catch(() => {});
+        const onSwMessage = (e) => {
+            if (e?.data?.type === 'ddmau:navigate' && e.data.tab) go(e.data.tab);
+        };
+        try { navigator.serviceWorker?.addEventListener?.('message', onSwMessage); } catch {}
+        try {
+            const dl = new URLSearchParams(window.location.search).get('deepLink');
+            if (dl) {
+                // Defer one tick so the 'ddmau:navigate' listener (effect above)
+                // is attached before we dispatch the cold-open target.
+                setTimeout(() => go(dl), 0);
+                const url = new URL(window.location.href);
+                url.searchParams.delete('deepLink');
+                window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+            }
+        } catch {}
+        return () => {
+            try { unsubNative(); } catch {}
+            try { navigator.serviceWorker?.removeEventListener?.('message', onSwMessage); } catch {}
+        };
     }, []);
 
     // ── PWA install auto-detection ─────────────────────────────────────
