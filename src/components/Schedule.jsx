@@ -172,6 +172,20 @@ const SHIFT_PRESETS_BOH = [
 ];
 const getShiftPresets = (side) => (side === 'boh' ? SHIFT_PRESETS_BOH : SHIFT_PRESETS_FOH);
 
+// Sanitize a manager-saved preset list (config/schedule_settings.shiftPresets).
+// Drops malformed rows; falls back to the built-in defaults if empty/missing,
+// so a bad/empty config can never leave the quick-add with zero chips.
+const sanitizeShiftPresets = (arr, fallback) => {
+    if (!Array.isArray(arr)) return fallback;
+    const clean = arr.map(p => ({
+        label: String(p?.label || '').slice(0, 24).trim(),
+        start: /^\d{1,2}:\d{2}$/.test(p?.start) ? p.start : '',
+        end: /^\d{1,2}:\d{2}$/.test(p?.end) ? p.end : '',
+        isDouble: !!p?.isDouble,
+    })).filter(p => p.label && p.start && p.end);
+    return clean.length ? clean : fallback;
+};
+
 // Role-tier color tokens. Three tiers:
 //   ORANGE  = manager-tier (Owner, Manager, Asst Manager, Kitchen Manager,
 //             Asst Kitchen Manager). They run the floor.
@@ -450,6 +464,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // calendar window. on the left of the week button but like 1/3 the
     // week button size." Boolean for opening the modal (lazy mount).
     const [showMonthModal, setShowMonthModal] = useState(false);
+    const [showPresetEditor, setShowPresetEditor] = useState(false);
     // Mobile "fit-to-screen" zoom — Andrew 2026-05-22 "i want to be
     // able to zoom out and see the full picture of the weeks calendar
     // with everyone schedule. sling has this function". When true, the
@@ -3830,6 +3845,34 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // ── Editable quick-add shift presets (Andrew 2026-06-17) ──
+    // The one-tap hour chips (10–3, 3–8, …) are now manager-editable and stored
+    // in config/schedule_settings.shiftPresets. Falls back to the built-in
+    // defaults whenever a side has no saved list, so the popup is never empty.
+    const effectiveShiftPresets = useMemo(() => ({
+        foh: sanitizeShiftPresets(scheduleSettings?.shiftPresets?.foh, SHIFT_PRESETS_FOH),
+        boh: sanitizeShiftPresets(scheduleSettings?.shiftPresets?.boh, SHIFT_PRESETS_BOH),
+    }), [scheduleSettings]);
+    const handleSaveShiftPresets = async (presets) => {
+        if (!canEdit) return;
+        try {
+            await setDoc(doc(db, 'config', 'schedule_settings'), {
+                shiftPresets: {
+                    foh: sanitizeShiftPresets(presets?.foh, SHIFT_PRESETS_FOH),
+                    boh: sanitizeShiftPresets(presets?.boh, SHIFT_PRESETS_BOH),
+                },
+                updatedAt: serverTimestamp(),
+                updatedBy: staffName,
+            }, { merge: true });
+            setShowPresetEditor(false);
+            toast(tx('✓ Shift hours saved', '✓ Horas guardadas'), { kind: 'success' });
+        } catch (e) {
+            console.error('Save shift presets failed:', e);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+        }
+    };
+    const onEditPresetsCb = useStableCallback(() => setShowPresetEditor(true));
+
     // ── Time-off (Phase 2: admin-entered) ──
     const handleAddTimeOff = async (entry) => {
         if (!canEdit) return;
@@ -6361,6 +6404,8 @@ ${dayBlocks}
                                 onQuickAddSelect={onQuickAddSelectCb}
                                 onQuickAddCustom={onQuickAddCustomCb}
                                 onQuickAddClose={onQuickAddCloseCb}
+                                shiftPresets={effectiveShiftPresets}
+                                onEditPresets={onEditPresetsCb}
                                 weekNeeds={memoWeekNeeds}
                                 onDeleteShift={onDeleteShiftCb}
                                 onStaffClick={onStaffClickCb}
@@ -6523,6 +6568,16 @@ ${dayBlocks}
                     canEditFOH={canEditFOH}
                     canEditBOH={canEditBOH}
                     timeOff={viewerTimeOff}
+                    shiftPresets={effectiveShiftPresets}
+                    onEditPresets={canEdit ? () => setShowPresetEditor(true) : null}
+                />
+            )}
+            {showPresetEditor && canEdit && (
+                <ShiftPresetsEditor
+                    presets={effectiveShiftPresets}
+                    onSave={handleSaveShiftPresets}
+                    onClose={() => setShowPresetEditor(false)}
+                    isEn={isEn}
                 />
             )}
             {showBlockModal && staffIsAdmin && (
@@ -7861,7 +7916,7 @@ function QuickAddSlot({ dateStr, isEn, onAddSlot }) {
 // every unrelated parent tick (notifications, clock, modals). Inner name
 // kept as WeeklyGrid for clean React DevTools display, same pattern as
 // ShiftCube below.
-const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes, onPtoChipClick,
+const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, shiftPresets, onEditPresets, onUpdateShiftTimes, onPtoChipClick,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
@@ -8620,7 +8675,8 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
                                                     && quickAddCell.staff?.name === s.name
                                                     && quickAddCell.dateStr === dStr;
                                                 if (isActive) {
-                                                    const presets = getShiftPresets(resolveStaffSide(s));
+                                                    const side = resolveStaffSide(s);
+                                                    const presets = (shiftPresets && shiftPresets[side]) || getShiftPresets(side);
                                                     return (
                                                         <div onClick={(e) => e.stopPropagation()}
                                                             className="space-y-1 bg-dd-green-50 rounded-lg p-1.5 ring-2 ring-dd-green/40 shadow-card">
@@ -8638,6 +8694,14 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
                                                                     title={isEn ? 'Open full editor' : 'Abrir editor completo'}>
                                                                     ✏️
                                                                 </button>
+                                                                {canEdit && onEditPresets && (
+                                                                    <button type="button"
+                                                                        onClick={() => onEditPresets()}
+                                                                        className="flex-1 px-1 py-1 rounded-md bg-white border border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg active:scale-95 transition"
+                                                                        title={isEn ? 'Edit these hour options' : 'Editar estas opciones de horas'}>
+                                                                        ⚙
+                                                                    </button>
+                                                                )}
                                                                 <button type="button"
                                                                     onClick={() => onQuickAddClose && onQuickAddClose()}
                                                                     className="flex-1 px-1 py-1 rounded-md glass-sheet text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg active:scale-95 transition"
@@ -9770,7 +9834,79 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
 
 // ── Add Shift Modal ────────────────────────────────────────────────────────
 
-function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed, existingShifts, timeOff = [], canEditFOH = true, canEditBOH = true }) {
+// ── ShiftPresetsEditor ───────────────────────────────────────────────
+// Manager-editable quick-add hour chips (Andrew 2026-06-17 "make those hours
+// editable"). Edits the FOH + BOH preset lists stored in
+// config/schedule_settings.shiftPresets. Empty/invalid rows are dropped on save
+// by sanitizeShiftPresets, so a half-filled row can't corrupt the config.
+function ShiftPresetsEditor({ presets, onSave, onClose, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const [side, setSide] = useState('foh');
+    const [draft, setDraft] = useState(() => ({
+        foh: (presets?.foh || []).map(p => ({ ...p })),
+        boh: (presets?.boh || []).map(p => ({ ...p })),
+    }));
+    const [busy, setBusy] = useState(false);
+    const list = draft[side] || [];
+    const setList = (next) => setDraft(d => ({ ...d, [side]: next }));
+    const updateRow = (i, k, v) => setList(list.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+    const addRow = () => setList([...list, { label: '', start: '15:00', end: '20:00', isDouble: false }]);
+    const delRow = (i) => setList(list.filter((_, idx) => idx !== i));
+    const save = async () => {
+        if (busy) return;
+        setBusy(true);
+        try { await onSave(draft); } finally { setBusy(false); }
+    };
+    return (
+        <ModalPortal>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-2 sm:p-4 pt-16 sm:pt-20">
+            <div className="glass-sheet w-full sm:max-w-md rounded-2xl max-h-[calc(100vh-90px)] sm:max-h-[calc(100vh-120px)] overflow-hidden flex flex-col shadow-2xl">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between shrink-0">
+                    <h3 className="text-lg font-bold text-dd-green-700">⚙ {tx('Edit shift hours', 'Editar horas de turno')}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 text-lg">×</button>
+                </div>
+                <div className="px-4 pt-3 grid grid-cols-2 gap-2 shrink-0">
+                    {['foh', 'boh'].map(sd => (
+                        <button key={sd} type="button" onClick={() => setSide(sd)}
+                            className={`py-2 rounded-lg text-sm font-bold border transition ${side === sd ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                            {sd.toUpperCase()}
+                        </button>
+                    ))}
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    <p className="text-[11px] text-dd-text-2">{tx('These are the one-tap chips shown when you press + on the schedule. The label is what shows on the chip; the times fill the shift.', 'Estos son los botones al presionar + en el horario. La etiqueta se muestra en el botón; las horas llenan el turno.')}</p>
+                    {list.map((r, i) => (
+                        <div key={i} className="flex items-center gap-1.5 bg-white border border-dd-line rounded-lg p-1.5">
+                            <input value={r.label} onChange={e => updateRow(i, 'label', e.target.value)} placeholder={tx('Label', 'Etiqueta')}
+                                className="w-14 border border-dd-line rounded px-1.5 py-1 text-xs" />
+                            <input type="time" value={r.start} onChange={e => updateRow(i, 'start', e.target.value)}
+                                className="border border-dd-line rounded px-1 py-1 text-xs" />
+                            <span className="text-dd-text-2 text-xs">–</span>
+                            <input type="time" value={r.end} onChange={e => updateRow(i, 'end', e.target.value)}
+                                className="border border-dd-line rounded px-1 py-1 text-xs" />
+                            <label className="text-[10px] flex items-center gap-0.5" title={tx('Double shift', 'Turno doble')}>
+                                <input type="checkbox" checked={!!r.isDouble} onChange={e => updateRow(i, 'isDouble', e.target.checked)} /> 2x
+                            </label>
+                            <button type="button" onClick={() => delRow(i)} className="ml-auto text-red-600 text-sm px-1" title={tx('Remove', 'Quitar')}>✕</button>
+                        </div>
+                    ))}
+                    {list.length === 0 && <p className="text-xs text-dd-text-2 py-2">{tx('No presets yet — add one.', 'Sin presets — agrega uno.')}</p>}
+                    <button type="button" onClick={addRow}
+                        className="w-full py-2 rounded-lg border border-dashed border-dd-green/40 text-dd-green-700 text-xs font-bold hover:bg-dd-green-50">
+                        + {tx('Add preset', 'Agregar preset')}
+                    </button>
+                </div>
+                <div className="border-t border-gray-200 p-4 flex gap-2 shrink-0">
+                    <button onClick={onClose} className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                    <button onClick={save} disabled={busy} className="flex-1 py-2 rounded-lg font-bold text-white bg-dd-green hover:bg-dd-green-700 disabled:opacity-50">{busy ? '…' : tx('Save', 'Guardar')}</button>
+                </div>
+            </div>
+        </div>
+        </ModalPortal>
+    );
+}
+
+function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed, existingShifts, timeOff = [], canEditFOH = true, canEditBOH = true, shiftPresets = null, onEditPresets = null }) {
     const today = toDateStr(new Date());
     const tx = (en, es) => (isEn ? en : es);
     // Audit 2026-05-20 — guard against double-submit. Without this, a
@@ -9817,7 +9953,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
             setForm(f => ({ ...f, side: 'boh' }));
         }
     }, [canEditFOH, canEditBOH, presetSide]);
-    const SHIFT_PRESETS = getShiftPresets(presetSide);
+    const SHIFT_PRESETS = (shiftPresets && shiftPresets[presetSide]) || getShiftPresets(presetSide);
     const isPresetActive = (p) => form.startTime === p.start && form.endTime === p.end && form.isDouble === !!p.isDouble;
 
     const eligibleStaff = useMemo(() => {
@@ -9964,7 +10100,15 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 
                     {/* Quick presets — tap to fill start/end. Preset list adapts to FOH/BOH. */}
                     <div>
-                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Quick presets', 'Presets rápidos')}</label>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider">{tx('Quick presets', 'Presets rápidos')}</label>
+                            {onEditPresets && (
+                                <button type="button" onClick={onEditPresets}
+                                    className="text-[10px] font-bold text-dd-green-700 hover:underline">
+                                    ⚙ {tx('Edit hours', 'Editar horas')}
+                                </button>
+                            )}
+                        </div>
                         <div className="flex flex-wrap gap-1.5">
                             {SHIFT_PRESETS.map(p => (
                                 <button key={p.label} type="button"
