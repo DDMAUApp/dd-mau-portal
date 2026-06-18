@@ -189,6 +189,42 @@ export default function TranslatableText({
 // Render text body with @mentions highlighted. Cheap regex split.
 // Unicode-aware to match parseMentions in chat.js — @María / @José
 // get the highlight treatment same as ASCII names.
+// Turn http(s):// and www. URLs in a plain-text run into clickable links.
+// target="_blank" opens a new tab on web and is intercepted by the native
+// bridge (capacitor-bridge a[target="_blank"] handler → in-app browser) on
+// iOS/Android. stopPropagation so tapping a link doesn't also trigger the
+// message bubble's reply/react tap. (Andrew 2026-06-17 — "make posted web
+// pages clickable in chat".)
+const URL_RE = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
+function linkifyRun(text, keyPrefix, isMine) {
+    if (!text || !/(https?:\/\/|www\.)/i.test(text)) return text;
+    const out = [];
+    let last = 0;
+    let m;
+    URL_RE.lastIndex = 0;
+    while ((m = URL_RE.exec(text)) !== null) {
+        let url = m[0];
+        // Don't swallow trailing sentence punctuation into the URL.
+        let trail = '';
+        const tm = url.match(/[.,!?;:)\]]+$/);
+        if (tm) { trail = tm[0]; url = url.slice(0, -trail.length); }
+        if (!url) { continue; }
+        if (m.index > last) out.push(text.slice(last, m.index));
+        const href = url.startsWith('www.') ? `https://${url}` : url;
+        out.push(
+            <a key={`${keyPrefix}-u${m.index}`} href={href} target="_blank" rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className={`underline break-all ${isMine ? 'text-white' : 'text-dd-green'}`}>
+                {url}
+            </a>
+        );
+        if (trail) out.push(trail);
+        last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push(text.slice(last));
+    return out;
+}
+
 export function renderWithMentions(text, isMine) {
     if (!text) return null;
     const parts = text.split(/(@"[^"]+"|@\p{L}[\p{L}'\-]*)/gu);
@@ -205,6 +241,6 @@ export function renderWithMentions(text, isMine) {
                 </span>
             );
         }
-        return <span key={i}>{p}</span>;
+        return <span key={i}>{linkifyRun(p, i, isMine)}</span>;
     });
 }

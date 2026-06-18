@@ -1,139 +1,91 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState } from 'react';
 import ModalPortal from './ModalPortal';
+import { openExternalUrl } from '../capacitor-bridge';
 
-// Lazy-load the full install splash (IOSSteps / AndroidSteps / DesktopHint).
-// 2026-05-24: lock-screen Install button used to do nothing on platforms
-// without the deferredInstallPrompt event AND that weren't iOS (most
-// notably desktop Chrome/Safari, plus Android Chrome that hadn't yet
-// fired beforeinstallprompt). The button now routes through the same
-// add-to-home-screen guide reached via the NFC-sticker install URL,
-// so EVERY tap shows OS-appropriate steps. Splash is rendered inline
-// in a fixed overlay so we don't leave the lock screen.
-const InstallSplash = lazy(() => import('./InstallSplash'));
-
-let deferredInstallPrompt = null;
+// Native-app store links (Andrew 2026-06-17: "ask iOS or Android").
+//   • iOS  — the UNLISTED App Store build (only reachable via this direct link).
+//   • Android — the Play listing for com.ddmau.staff. NOTE: if Android is still
+//     on Play *internal testing*, this public URL only resolves for users who
+//     joined the test; swap in the tester opt-in link if needed.
+const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
+const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=com.ddmau.staff';
 
 export default function InstallAppButton({ language, compact = false }) {
-    const [installable, setInstallable] = useState(!!deferredInstallPrompt);
-    const [installed, setInstalled] = useState(false);
-    const [showInstallGuide, setShowInstallGuide] = useState(false);
+    const isEs = language === 'es';
+    const tx = (en, es) => (isEs ? es : en);
+    const [showChooser, setShowChooser] = useState(false);
 
-    // Detect if already installed as PWA
+    // Nothing to install if we're already the installed app (PWA standalone or
+    // the native shell — both report false for the display-mode/navigator
+    // checks inside a Capacitor WebView, so check Capacitor too).
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    if (isStandalone || window.Capacitor?.isNativePlatform?.()) return null;
 
-    useEffect(() => {
-        const handler = () => setInstallable(true);
-        window.addEventListener('pwainstallready', handler);
-        return () => window.removeEventListener('pwainstallready', handler);
-    }, []);
+    const go = (url) => { setShowChooser(false); openExternalUrl(url); };
 
-    // Inside the native iOS/Android app shell there is nothing to install
-    // (display-mode:standalone and navigator.standalone are both false in the
-    // WebView), so check Capacitor too — otherwise the "Install app" button
-    // shows up inside an app the user already installed from the store.
-    if (isStandalone || window.Capacitor?.isNativePlatform?.()) return null; // Already running as app
-
-    const handleInstall = async () => {
-        if (deferredInstallPrompt) {
-            // Native Android Chrome / desktop Chrome prompt available —
-            // use it for the smoothest experience.
-            deferredInstallPrompt.prompt();
-            const result = await deferredInstallPrompt.userChoice;
-            if (result.outcome === 'accepted') {
-                setInstalled(true);
-                deferredInstallPrompt = null;
-            }
-            return;
-        }
-        // No native prompt — fall back to the platform-aware guide.
-        // This is what 2026-05-24 fixed: previously on iOS we showed
-        // an iOS-only modal here, and on every other platform the tap
-        // was a no-op. Now we always open the full guide which
-        // detects platform and shows the right steps (iOS Share->Add,
-        // Android Chrome menu->Install, desktop tip).
-        setShowInstallGuide(true);
-    };
-
-    if (installed) {
-        return (
-            <div className="p-4 bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-300 rounded-lg text-center">
-                <div className="text-3xl mb-2">✅</div>
-                <div className="font-bold text-green-700">{language === "es" ? "App Instalada" : "App Installed!"}</div>
-                <div className="text-xs text-green-600">{language === "es" ? "Busca DD Mau en tu pantalla de inicio" : "Find DD Mau on your home screen"}</div>
+    const chooser = showChooser && (
+        <ModalPortal>
+            <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-3"
+                onClick={() => setShowChooser(false)} role="dialog" aria-modal="true">
+                <div className="glass-sheet w-full sm:max-w-xs rounded-2xl p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-between mb-1">
+                        <h3 className="text-base font-bold text-dd-text">📲 {tx('Get the app', 'Obtener la app')}</h3>
+                        <button onClick={() => setShowChooser(false)}
+                            className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 text-lg">×</button>
+                    </div>
+                    <p className="text-xs text-dd-text-2 mb-3">{tx('Which phone do you have?', '¿Qué teléfono tienes?')}</p>
+                    <div className="space-y-2">
+                        <button onClick={() => go(IOS_APP_URL)}
+                            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-white border border-dd-line hover:bg-dd-bg active:scale-95 transition">
+                            <span className="text-2xl">📱</span>
+                            <div className="text-left">
+                                <div className="font-bold text-dd-text text-sm">iPhone</div>
+                                <div className="text-[11px] text-dd-text-2">{tx('Open the App Store', 'Abrir el App Store')}</div>
+                            </div>
+                        </button>
+                        <button onClick={() => go(ANDROID_APP_URL)}
+                            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-white border border-dd-line hover:bg-dd-bg active:scale-95 transition">
+                            <span className="text-2xl">🤖</span>
+                            <div className="text-left">
+                                <div className="font-bold text-dd-text text-sm">Android</div>
+                                <div className="text-[11px] text-dd-text-2">{tx('Open Google Play', 'Abrir Google Play')}</div>
+                            </div>
+                        </button>
+                    </div>
+                </div>
             </div>
-        );
-    }
+        </ModalPortal>
+    );
 
-    // Compact variant — a slim chip-style button (one line, no big icon).
-    // Used on the lock screen as a secondary action below the larger
-    // "Apply here" CTA. Set compact={true} from the parent.
+    // Compact variant — slim chip on the lock screen (compact={true}).
     if (compact) {
         return (
             <div>
                 <button
-                    onClick={handleInstall}
+                    onClick={() => setShowChooser(true)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-50 border border-cyan-200 rounded-full text-[12px] font-semibold text-cyan-700 hover:bg-cyan-100 transition"
                 >
                     <span className="text-base leading-none">📲</span>
-                    <span>{language === "es" ? "Instalar app" : "Install app"}</span>
+                    <span>{tx('Install app', 'Instalar app')}</span>
                 </button>
-                {showInstallGuide && (
-                    <InstallGuideOverlay
-                        language={language}
-                        onClose={() => setShowInstallGuide(false)}
-                    />
-                )}
+                {chooser}
             </div>
         );
     }
+
     return (
         <div>
             <button
-                onClick={handleInstall}
+                onClick={() => setShowChooser(true)}
                 className="w-full p-4 bg-gradient-to-br from-cyan-50 to-cyan-100 border-2 border-cyan-300 rounded-lg hover:shadow-lg transition text-left"
             >
                 <div className="text-3xl mb-2">📲</div>
-                <div className="font-bold text-cyan-700">{language === "es" ? "Descargar App" : "Download App"}</div>
+                <div className="font-bold text-cyan-700">{tx('Download App', 'Descargar App')}</div>
                 <div className="text-xs text-cyan-600">
-                    {language === "es"
-                        ? "Instala DD Mau en tu teléfono para acceso rápido"
-                        : "Install DD Mau on your phone for quick access"}
+                    {tx('Install DD Mau on your phone for quick access', 'Instala DD Mau en tu teléfono para acceso rápido')}
                 </div>
             </button>
-
-            {showInstallGuide && (
-                <InstallGuideOverlay
-                    language={language}
-                    onClose={() => setShowInstallGuide(false)}
-                />
-            )}
+            {chooser}
         </div>
     );
 }
-
-// InstallGuideOverlay — full-viewport scrollable overlay that wraps
-// the existing InstallSplash component. Same content as the page reached
-// via the NFC sticker URL (?install=1), rendered as a modal overlay so
-// the lock screen stays in the stack underneath. InstallSplash already
-// handles platform detection and language; we just supply onSkip to
-// dismiss the overlay.
-function InstallGuideOverlay({ language, onClose }) {
-    return (
-        <ModalPortal>
-        <div className="fixed inset-0 z-50 bg-white overflow-y-auto" role="dialog" aria-modal="true">
-            <Suspense fallback={
-                <div className="min-h-screen flex items-center justify-center text-sm text-dd-text-2">
-                    {language === 'es' ? 'Cargando…' : 'Loading…'}
-                </div>
-            }>
-                <InstallSplash language={language} onSkip={onClose} />
-            </Suspense>
-        </div>
-        </ModalPortal>
-    );
-}
-
-// Legacy iOS-only bottom-sheet (kept here for posterity; replaced by the
-// InstallGuideOverlay above which reuses the full platform-aware
-// InstallSplash component). Safe to delete once the lock-screen install
-// flow has been live for a release without issues.
