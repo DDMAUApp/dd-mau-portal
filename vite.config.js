@@ -242,6 +242,12 @@ export default defineConfig({
           // (npm hoists it as /pdf-lib/), match by the package name.
           if (
             id.includes('/pdf-lib/') ||
+            // pdf-lib's SCOPED deps (@pdf-lib/standard-fonts ≈ 70KB of zlib
+            // base64 font data, @pdf-lib/upng). The '/pdf-lib/' check above does
+            // NOT match '/@pdf-lib/', so these were being force-bundled into the
+            // EAGER vendor-misc chunk and downloaded on every cold boot — even
+            // though pdf-lib is only dynamic-imported. Andrew 2026-06-17 audit.
+            id.includes('/@pdf-lib/') ||
             id.includes('/pdfjs-dist/') ||
             id.includes('/jszip/') ||
             id.includes('/qrcode/') ||
@@ -263,6 +269,18 @@ export default defineConfig({
           ) {
             return;
           }
+          // Capacitor plugins + the Capgo OTA updater are DYNAMIC-imported
+          // (capacitor-bridge / messaging / downloadFile all `await import()`
+          // them, gated behind isCapacitorNative()). The catch-all below would
+          // otherwise force them into the eager vendor-misc chunk — so they were
+          // being downloaded + parsed on every cold boot, on WEB (where the
+          // plugins no-op and are never imported) and on native's cold-start
+          // eager path. Returning undefined lets Rollup co-locate them with the
+          // lazy code that imports them → zero web first-paint cost, off native's
+          // critical path. @capacitor/core stays eager (statically imported to
+          // detect the native platform on boot). Andrew 2026-06-17 speed audit.
+          if (id.includes('/@capgo/')) return;
+          if (id.includes('/@capacitor/') && !id.includes('/@capacitor/core/')) return;
           // Sentry SDK is imported LAZILY (dynamic import in data/sentryClient)
           // so it stays out of the eager entry. Give it its own async chunk;
           // because nothing imports it statically, this chunk is NOT preloaded

@@ -168,6 +168,11 @@ const prewarmShellChunks = () => {
     import('./v2/AppShellV2').catch(() => {});
     import('./v2/MobileHome').catch(() => {});
     import('./v2/HomeV2').catch(() => {});
+    // The required-task gate runs the instant a PIN is accepted and blocks the
+    // home behind a spinner until it resolves — warming its module here (while
+    // the user is still on the PIN pad) removes that cold dynamic-import from the
+    // exact moment of login. Andrew 2026-06-17 speed audit.
+    import('./data/requiredTasks').catch(() => {});
 };
 
 // Error boundary — catches render errors in child components.
