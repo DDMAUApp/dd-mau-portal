@@ -4,11 +4,11 @@ import { openExternalUrl } from '../capacitor-bridge';
 
 // Native-app store links (Andrew 2026-06-17: "ask iOS or Android").
 //   • iOS  — the UNLISTED App Store build (only reachable via this direct link).
-//   • Android — the Play listing for com.ddmau.staff. NOTE: if Android is still
-//     on Play *internal testing*, this public URL only resolves for users who
-//     joined the test; swap in the tester opt-in link if needed.
+//   • Android — the Play *internal testing* opt-in link (Andrew 2026-06-17).
+//     A staffer taps it once to join the test, then installs from Play. The
+//     plain store URL won't resolve for non-testers while the app is internal.
 const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
-const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=com.ddmau.staff';
+const ANDROID_APP_URL = 'https://play.google.com/apps/internaltest/4701656348790704265';
 
 export default function InstallAppButton({ language, compact = false }) {
     const isEs = language === 'es';
