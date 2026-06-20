@@ -202,8 +202,11 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                             </div>
                         </FieldsetCard>
 
-                        {/* Actions */}
-                        <div className="flex gap-2 sticky bottom-0 bg-white pt-2">
+                        {/* Actions — NOT sticky: a sticky bg-white bar
+                            pinned to the scroll-container bottom sat on top
+                            of the toggles/steppers and swallowed taps in the
+                            WebView (Andrew 2026-06-20 "controls don't respond"). */}
+                        <div className="flex gap-2 pt-2">
                             <button onClick={resetToDefaults}
                                 className="px-3 py-2 rounded-lg bg-white border border-stone-300 text-stone-700 text-xs font-bold hover:bg-stone-50">
                                 {tx('Reset to defaults', 'Restaurar')}
@@ -220,7 +223,7 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                         <div className="text-[10px] font-bold uppercase tracking-wider text-violet-800 mb-1.5">
                             {tx('Live preview', 'Vista previa')}
                         </div>
-                        <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 text-dd-text sticky top-2">
+                        <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 text-dd-text">
                             <PreviewBox payload={previewPayload} />
                         </div>
                     </div>
@@ -322,29 +325,58 @@ function FieldsetCard({ title, children }) {
     );
 }
 
+// Button-based toggle (not a native <input type="checkbox">). Andrew
+// 2026-06-20: the native checkboxes + range sliders "don't respond at
+// all" in the iOS/Android WebView. Tappable <button>s with a big hit
+// target are the app's proven pattern (allergen chips, size tabs) and
+// work reliably on every device. aria-pressed keeps it accessible.
 function ToggleRow({ checked, onChange, label }) {
     return (
-        <label className="flex items-center gap-1.5 text-[11px] font-bold text-dd-text cursor-pointer">
-            <input type="checkbox" checked={checked}
-                onChange={(e) => onChange(e.target.checked)}
-                className="w-4 h-4 accent-violet-600" />
-            {label}
-        </label>
+        <button
+            type="button"
+            onClick={() => onChange(!checked)}
+            aria-pressed={checked}
+            className={`flex items-center justify-between gap-2 w-full px-2.5 py-2 rounded-lg border text-[11px] font-bold transition active:scale-95 ${checked
+                ? 'bg-violet-600 border-violet-700 text-white'
+                : 'bg-white border-dd-line text-dd-text-2 hover:bg-dd-bg'}`}
+        >
+            <span className="text-left leading-tight">{label}</span>
+            <span className={`flex-shrink-0 w-9 h-5 rounded-full relative transition ${checked ? 'bg-white/30' : 'bg-dd-line'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${checked ? 'left-[18px]' : 'left-0.5'}`} />
+            </span>
+        </button>
     );
 }
 
-function SliderRow({ label, value, onChange, min, max, step, hint }) {
+// −/+ stepper (not a native <input type="range">). Same reasoning as
+// ToggleRow — range sliders are the single most unreliable control in
+// a mobile WebView; the −/value/+ stepper mirrors the shelf-life /
+// copies steppers staff already use without trouble. min/max/step are
+// honored; onChange still receives a Number so callers are unchanged.
+function SliderRow({ label, value, onChange, min, max, step = 1, hint }) {
+    const v = Number(value);
+    const dec = () => onChange(Math.max(min, v - step));
+    const inc = () => onChange(Math.min(max, v + step));
     return (
-        <label className="block">
-            <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[10px] font-bold text-dd-text-2">{label}</span>
-                <span className="text-[11px] font-black text-violet-700 tabular-nums">{value}</span>
+        <div className="block">
+            <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold text-dd-text-2 leading-tight">{label}</span>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button type="button" onClick={dec} disabled={v <= min}
+                        aria-label="decrease"
+                        className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text font-black text-lg leading-none disabled:opacity-30 hover:bg-dd-line active:scale-95">
+                        −
+                    </button>
+                    <span className="w-6 text-center text-sm font-black text-violet-700 tabular-nums">{v}</span>
+                    <button type="button" onClick={inc} disabled={v >= max}
+                        aria-label="increase"
+                        className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text font-black text-lg leading-none disabled:opacity-30 hover:bg-dd-line active:scale-95">
+                        +
+                    </button>
+                </div>
             </div>
-            <input type="range" min={min} max={max} step={step} value={value}
-                onChange={(e) => onChange(Number(e.target.value))}
-                className="w-full accent-violet-600" />
-            {hint && <div className="text-[9px] text-dd-text-2/70 italic">{hint}</div>}
-        </label>
+            {hint && <div className="text-[9px] text-dd-text-2/70 italic mt-0.5">{hint}</div>}
+        </div>
     );
 }
 
