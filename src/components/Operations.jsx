@@ -806,6 +806,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // to "location" (items grouped by walk-in / dry storage / etc.) -
             // matches how staff actually count during a shift.
             const [invViewMode, setInvViewMode] = useState("location"); // "category" | "location" | "vendor" | "split" | "pricing"
+            // 2026-06-20 (QA audit O7) — discard any in-progress edit/move when the
+            // view mode or location changes. invEditingIdx is positional
+            // {catIdx,itemIdx}; after a switch those indices point at a DIFFERENT
+            // item (the Vendor view also re-sorts), so a leftover edit form could
+            // re-arm on — and then save onto — the wrong row. Closing the form
+            // (invEditingIdx=null) is the safe behavior; opening a new edit
+            // re-initializes every field, so nothing stale leaks. A movingItem is
+            // also stranded across views (drop targets only exist in category view),
+            // so clear it too. Runs once on mount as a harmless no-op.
+            useEffect(() => {
+                setInvEditingIdx(null);
+                setMovingItem(null);
+            }, [invViewMode, storeLocation]);
             // 2026-06-13 perf — the 7 vendor_prices listeners (sysco/usfoods/
             // costco + trigger/status docs) only feed the Pricing sub-tab,
             // which most opens never touch. Gate them behind the first time
