@@ -44,7 +44,10 @@ import { redactString, redactStack, redactObject } from './redact';
 let Sentry = null;
 async function loadSentry() {
     if (Sentry) return Sentry;
-    try { Sentry = await import('@sentry/react'); } catch { Sentry = null; }
+    // 2026-06-20 (QA audit P1) — import the slim wrapper (named re-exports only)
+    // so Rollup tree-shakes Session Replay / Feedback / Console out of the lazy
+    // vendor-sentry chunk. The wrapper exposes exactly the 6 methods used below.
+    try { Sentry = await import('./sentryReal'); } catch { Sentry = null; }
     return Sentry;
 }
 

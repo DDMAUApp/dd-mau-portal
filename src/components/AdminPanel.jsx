@@ -3654,12 +3654,25 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">
                                                             {t.emoji} {language === "es" ? t.labelEs : t.labelEn}
                                                         </div>
-                                                        <button onClick={() => bulkSetField(visibleIds, t.field, true)}
+                                                        <button onClick={() => {
+                                                            // 2026-06-20 (QA audit AD3) — confirm a mass PII-access flip.
+                                                            // canViewOnboarding gates SSN/W-4/I-9/DL-photo access; one
+                                                            // fat-finger on a broad filter shouldn't grant it to everyone.
+                                                            if (t.field === 'canViewOnboarding' && !window.confirm(language === "es"
+                                                                ? `¿Activar acceso a Onboarding (datos sensibles) para ${visible.length} personas?`
+                                                                : `Turn Onboarding (PII) access ON for ${visible.length} staff?`)) return;
+                                                            bulkSetField(visibleIds, t.field, true);
+                                                        }}
                                                             className={`px-2 py-1 rounded text-[9px] font-bold text-white ${t.onColor} hover:opacity-90`}
                                                             title={language === "es" ? `Activar para ${visible.length}` : `Turn ON for ${visible.length}`}>
                                                             ON
                                                         </button>
-                                                        <button onClick={() => bulkSetField(visibleIds, t.field, false)}
+                                                        <button onClick={() => {
+                                                            if (t.field === 'canViewOnboarding' && !window.confirm(language === "es"
+                                                                ? `¿Quitar acceso a Onboarding (datos sensibles) para ${visible.length} personas?`
+                                                                : `Turn Onboarding (PII) access OFF for ${visible.length} staff?`)) return;
+                                                            bulkSetField(visibleIds, t.field, false);
+                                                        }}
                                                             className={`px-2 py-1 rounded text-[9px] font-bold text-white ${t.offColor} hover:opacity-90`}
                                                             title={language === "es" ? `Desactivar para ${visible.length}` : `Turn OFF for ${visible.length}`}>
                                                             OFF
@@ -3674,12 +3687,24 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">
                                                         📱 {language === "es" ? "SMS solo para urgente" : "SMS for urgent only"}
                                                     </div>
-                                                    <button onClick={() => bulkSmsOptIn(visibleIds, true)}
+                                                    <button onClick={() => {
+                                                        // 2026-06-20 (QA audit AD3) — SMS opt-in is a legal (TCPA)
+                                                        // consent flag with an audit trail; confirm a mass opt-in.
+                                                        if (!window.confirm(language === "es"
+                                                            ? `¿Inscribir a ${visible.length} personas en SMS? (consentimiento)`
+                                                            : `Opt ${visible.length} staff IN to SMS? (consent)`)) return;
+                                                        bulkSmsOptIn(visibleIds, true);
+                                                    }}
                                                         className="px-2 py-1 rounded text-[9px] font-bold text-white bg-green-700 hover:opacity-90"
                                                         title={language === "es" ? `Activar SMS para ${visible.length}` : `Opt IN ${visible.length} to SMS`}>
                                                         ON
                                                     </button>
-                                                    <button onClick={() => bulkSmsOptIn(visibleIds, false)}
+                                                    <button onClick={() => {
+                                                        if (!window.confirm(language === "es"
+                                                            ? `¿Desactivar SMS para ${visible.length} personas?`
+                                                            : `Opt ${visible.length} staff OUT of SMS?`)) return;
+                                                        bulkSmsOptIn(visibleIds, false);
+                                                    }}
                                                         className="px-2 py-1 rounded text-[9px] font-bold text-white bg-gray-300 hover:opacity-90"
                                                         title={language === "es" ? `Desactivar SMS para ${visible.length}` : `Opt OUT ${visible.length} from SMS`}>
                                                         OFF

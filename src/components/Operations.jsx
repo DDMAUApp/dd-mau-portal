@@ -1672,14 +1672,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!cat) return;
                 const targetIdx = itemIdx + direction;
                 if (targetIdx < 0 || targetIdx >= cat.items.length) return;
-                const updated = customInventory.map((c, cIdx) => {
+                // 2026-06-20 (QA audit O8) — route through the race-safe transaction
+                // instead of legacy saveInventory, which setDoc-clobbered the WHOLE
+                // customInventory array from local state (silently overwriting a
+                // concurrent edit from another tablet). mutateInventory re-reads the
+                // live list inside the txn and sets local state on success.
+                await mutateInventory((live) => (live || customInventory).map((c, cIdx) => {
                     if (cIdx !== catIdx) return c;
-                    const items = [...c.items];
+                    const items = [...(c.items || [])];
+                    if (targetIdx < 0 || targetIdx >= items.length) return c;
                     [items[itemIdx], items[targetIdx]] = [items[targetIdx], items[itemIdx]];
                     return { ...c, items };
-                });
-                setCustomInventory(updated);
-                await saveInventory(inventory, updated);
+                }));
             };
 
             // 2026-06-02 — labor subscription removed. `laborData` now
