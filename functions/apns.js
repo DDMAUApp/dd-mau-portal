@@ -39,17 +39,23 @@
 
 const apn = require("apn");
 
-let _provider = null;
+// One long-lived apn.Provider per APNs ENVIRONMENT. APNs uses persistent
+// HTTP/2 connections, so we cache + reuse them across Cloud Function
+// invocations. We keep BOTH because a device token is bound to exactly
+// one environment and the staff fleet is a mix:
+//   • App Store build         → PRODUCTION token (api.push.apple.com)
+//   • Xcode / TestFlight build → SANDBOX token   (api.sandbox.push.apple.com)
+// Sending a token to the wrong environment returns "BadDeviceToken".
+const _providers = { prod: null, sandbox: null };
 
-// Build the apn.Provider lazily on first send. Reads secrets from
-// Firebase Functions config (defineSecret pattern - the secrets are
-// declared in index.js and passed in).
-function getProvider({ authKey, keyId, teamId, production }) {
-    if (_provider) return _provider;
+// Build (and cache) the apn.Provider for one environment. Reads the .p8
+// key + ids passed through from index.js (defineSecret values).
+function getProvider(env, { authKey, keyId, teamId }) {
+    if (_providers[env]) return _providers[env];
     if (!authKey || !keyId || !teamId) {
         throw new Error(`APNs not configured (missing key/id/team)`);
     }
-    _provider = new apn.Provider({
+    _providers[env] = new apn.Provider({
         token: {
             // apn library accepts the .p8 contents (PEM) as `key`.
             // No file path / no fs reads - we keep the key in
@@ -58,9 +64,32 @@ function getProvider({ authKey, keyId, teamId, production }) {
             keyId,
             teamId,
         },
-        production: production === true || production === "true",
+        production: env === "prod",
     });
-    return _provider;
+    return _providers[env];
+}
+
+// Send a prepared note to ONE token on ONE environment. Returns
+// { ok:true } or { ok:false, reason } where `reason` is the APNs reason
+// string ("BadDeviceToken", "Unregistered", "TooManyRequests", …) when
+// the failure came back over HTTP/2, else null for a transport error.
+async function sendOnEnv(env, token, note, opts) {
+    let provider;
+    try {
+        provider = getProvider(env, opts);
+    } catch (e) {
+        return { ok: false, reason: null, error: e?.message || "no provider" };
+    }
+    let result;
+    try {
+        result = await provider.send(note, token);
+    } catch (e) {
+        return { ok: false, reason: null, error: e?.message || "send threw" };
+    }
+    if (result?.sent?.length > 0) return { ok: true };
+    const f = result?.failed?.[0];
+    const reason = f?.response?.reason || null;
+    return { ok: false, reason, error: reason || f?.error?.message || "delivery failed" };
 }
 
 // Send a push notification to a single APNs raw device token.
@@ -82,10 +111,13 @@ function getProvider({ authKey, keyId, teamId, production }) {
 //   { success: true, response: <apn result> } on success
 //   { success: false, error: <message>, response: <apn result> } on fail
 async function sendApnsPush(token, payload, opts = {}) {
-    const provider = getProvider(opts);
-
     const note = new apn.Notification();
     note.topic = opts.bundleId || "com.ddmau.staff";
+    // apns-push-type header. REQUIRED by production APNs (and the modern
+    // HTTP/2 API). Missing it is tolerated by sandbox but rejected by
+    // production — a real cause of "worked in TestFlight, dead after the
+    // App Store release." These are always user-facing alerts.
+    note.pushType = "alert";
     note.alert = {
         title: payload.title || "DD Mau",
         body: payload.body || "",
@@ -114,46 +146,50 @@ async function sendApnsPush(token, payload, opts = {}) {
     note.priority = 10; // immediate
     note.expiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24; // 24h
 
-    let result;
-    try {
-        result = await provider.send(note, token);
-    } catch (e) {
-        return { success: false, error: e?.message || "send threw", response: null };
-    }
+    // 2026-06-20 — Andrew: "the iOS app notifications are broken, I'm not
+    // getting anything." Root cause: the dispatcher was pinned to SANDBOX
+    // APNs, but the App Store build registers PRODUCTION tokens, so every
+    // send came back "BadDeviceToken" and the token got pruned as dead.
+    //
+    // We can't tell which environment a stored token belongs to, so try
+    // the preferred env first (production by default — the app is live on
+    // the App Store) and, ONLY on "BadDeviceToken" (the wrong-environment
+    // signal), retry the OTHER env before giving up. This makes delivery
+    // work for App Store, TestFlight, and Xcode dev builds simultaneously.
+    // A token is reported dead (deadToken:true, prune it) ONLY when both
+    // environments reject it as a bad token, or APNs says "Unregistered"
+    // (uninstalled / opted out — environment-independent).
+    const preferSandboxFirst = opts.production === false || opts.production === "false";
+    const order = preferSandboxFirst ? ["sandbox", "prod"] : ["prod", "sandbox"];
 
-    // result.sent and result.failed are arrays. Single-token send means
-    // exactly one of them has the device.
-    const sent = result?.sent?.length > 0;
-    const failed = result?.failed?.length > 0;
-
-    if (sent) {
-        return { success: true, response: result };
+    let last = null;
+    for (let i = 0; i < order.length; i++) {
+        const r = await sendOnEnv(order[i], token, note, opts);
+        if (r.ok) return { success: true, env: order[i] };
+        last = r;
+        if (r.reason === "Unregistered") {
+            return { success: false, error: r.error, deadToken: true };
+        }
+        if (r.reason !== "BadDeviceToken") {
+            // Transient / config error (TooManyRequests, connection drop,
+            // bad key, …). Not a dead token, and the other environment uses
+            // the same key/topic so it'd fail identically — surface + stop.
+            return { success: false, error: r.error, deadToken: false };
+        }
+        // BadDeviceToken → loop and try the other environment.
     }
-    if (failed) {
-        const f = result.failed[0];
-        return {
-            success: false,
-            error: f?.response?.reason || f?.error?.message || "delivery failed",
-            response: result,
-            // APNs HTTP/2 returns specific reason strings for dead tokens:
-            //   "BadDeviceToken" - token doesn't match our bundle/env
-            //   "Unregistered"   - user uninstalled or denied notifs
-            // The caller uses these to decide whether to prune the
-            // token from /config/staff.list[].fcmTokens.
-            deadToken:
-                f?.response?.reason === "BadDeviceToken" ||
-                f?.response?.reason === "Unregistered",
-        };
-    }
-    return { success: false, error: "no sent or failed entries returned", response: result };
+    // BadDeviceToken on BOTH environments → the token really is dead.
+    return { success: false, error: last?.error || "BadDeviceToken", deadToken: true };
 }
 
-// Shut down the provider's HTTP/2 connections cleanly. Called from
+// Shut down both providers' HTTP/2 connections cleanly. Called from
 // the cleanup hook if we ever wire a finalizer.
 function shutdownApns() {
-    if (_provider) {
-        try { _provider.shutdown(); } catch {}
-        _provider = null;
+    for (const env of ["prod", "sandbox"]) {
+        if (_providers[env]) {
+            try { _providers[env].shutdown(); } catch {}
+            _providers[env] = null;
+        }
     }
 }
 

@@ -681,14 +681,16 @@ exports.dispatchNotification = onDocumentCreated(
                 apnsKey = APNS_AUTH_KEY.value();
                 apnsKeyId = APNS_KEY_ID.value();
                 apnsTeamId = APNS_TEAM_ID.value();
-                // 'true' for App Store builds, 'false' for development
-                // builds (Xcode → device). We default to false so
-                // sandbox push works during testing; flip via
-                //   firebase functions:secrets:set APNS_PRODUCTION
-                // when ready for production traffic. (Hardcoding false
-                // here for the v1.1 first ship since Andrew is testing
-                // from Xcode-signed dev builds.)
-                apnsProduction = false;
+                // 2026-06-20 — App is LIVE on the App Store, which mints
+                // PRODUCTION APNs tokens. This was pinned to `false`
+                // (sandbox) from the TestFlight days, so every iOS push hit
+                // "BadDeviceToken" and the token got pruned → Andrew got
+                // nothing. We now try PRODUCTION first; sendApnsPush()
+                // automatically falls back to SANDBOX per-token on
+                // BadDeviceToken, so App Store + TestFlight + Xcode dev
+                // builds all deliver. `production` here just picks which
+                // environment to attempt first.
+                apnsProduction = true;
             } catch (e) {
                 logger.warn(`APNs secrets unavailable, skipping ${iosTokens.length} iOS token(s) for ${forStaff}:`, e?.message);
             }
