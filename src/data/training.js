@@ -3704,9 +3704,16 @@ export const MODULES = [
                             textEs: "Vermicelli Bowl de Carne Vegana con Vinagreta Vegana"
                         },
                         {
+                            // 2026-06-20 (QA audit T6) — was "DD Dressing", which the
+                            // allergen matrix marks fish-FREE (eggs only), so this
+                            // "not safe" answer actually had no fish — and both this
+                            // and option (a) were Rice Bowls, making the question
+                            // unanswerable. Vietnamese Vinaigrette is the one item the
+                            // matrix marks fish:● (nuoc mam fish-sauce base), so it's
+                            // the unambiguous fish-allergy hazard.
                             id: "c",
-                            textEn: "Lemongrass Chicken Rice Bowl with DD Dressing",
-                            textEs: "Rice Bowl de Pollo con Hierba Limón con DD Dressing"
+                            textEn: "Lemongrass Chicken Rice Bowl with Vietnamese Vinaigrette",
+                            textEs: "Rice Bowl de Pollo con Hierba Limón con Vinagreta Vietnamita"
                         },
                         {
                             id: "d",
