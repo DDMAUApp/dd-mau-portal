@@ -3510,11 +3510,18 @@ function Composer({
                     // from JS instead). Initial inline height ensures the
                     // first paint is exactly MIN_COMPOSER_PX even before
                     // the effect runs.
-                    // rounded-full gives a proper pill shape: corners
-                    // clamp to half the box height, so single-line stays
-                    // a stadium / lozenge and multi-line stays smoothly
-                    // rounded at the ends. Matches the Zenzap reference.
-                    className="flex-1 min-w-0 px-4 py-2.5 rounded-full bg-dd-bg border border-dd-line text-base text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                    // 2026-06-20 (Andrew) — was rounded-full. On a SINGLE line
+                    // that's a clean pill, but rounded-full clamps the radius to
+                    // half the box height, so once the textarea auto-grows to
+                    // multi-line (up to 160px) the corners balloon into ~80px
+                    // semicircles: the input looks "too circular", text near the
+                    // ends gets visually crowded/cut, and — worst on iOS WKWebView
+                    // — the giant corner arc becomes a touch dead-zone so you
+                    // can't tap the caret to the END of a long message. rounded-2xl
+                    // (a fixed 16px radius) keeps a friendly rounded box at every
+                    // height: squarer when tall, and the full text region stays
+                    // hit-testable to the last character.
+                    className="flex-1 min-w-0 px-4 py-2.5 rounded-2xl bg-dd-bg border border-dd-line text-base text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
                     style={{ lineHeight: 1.4, minHeight: '44px', maxHeight: '160px', height: '44px' }}
                 />
                 {canSend ? (
