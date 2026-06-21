@@ -34,9 +34,6 @@ import {
     resolveShelfLifeDays,
     subscribePrinterConfig,
     printPrepLabel,
-    getLabelSizePresets,
-    DEFAULT_LABEL_SIZE_PRESET,
-    applyLabelSizePreset,
     warmPrintConfigs,
 } from '../data/labelPrinting';
 import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
@@ -152,33 +149,18 @@ export default function PrintLabelModal({
     // printer still renders a sensible 3-tab UI.
     const printerType = printer?.type || 'epson_linerless';
     const isBrotherPrinter = printerType === 'brother_ql';
-    const sizePresets = useMemo(
-        () => getLabelSizePresets(printerType),
-        [printerType]);
 
-    // Label-size preset — Andrew 2026-05-20 "lets make 3 tabs in
-    // the print screen for the labels. 3x3 3x2 3x1.5". Staff picks
-    // the size that matches the roll loaded on the printer. Choice
-    // persists in localStorage so the same size sticks across prints.
-    const [presetId, setPresetId] = useState(() => {
-        try { return localStorage.getItem('ddmau:labelPreset') || DEFAULT_LABEL_SIZE_PRESET; }
-        catch { return DEFAULT_LABEL_SIZE_PRESET; }
-    });
-    const setPresetPersistent = useCallback((id) => {
-        setPresetId(id);
-        try { localStorage.setItem('ddmau:labelPreset', id); } catch {}
-    }, []);
-    // Effective format: admin's saved format + preset overrides on top.
-    // printerType picks the right preset list (Epson vs Brother) so
-    // the stamped _presetWidthMm/_presetHeightMm match the loaded
-    // roll.
-    const effectiveFormat = useMemo(
-        () => applyLabelSizePreset(labelFormat, presetId, printerType),
-        [labelFormat, presetId, printerType]);
+    // Size presets removed (Andrew 2026-06-20: "drop the size tabs").
+    // The admin Label Format is now the single source of truth for every
+    // sticker, so the print modal renders it directly — what the Label
+    // Format editor previews is exactly what prints. Physical roll dims
+    // (Brother @page) come from the printer config in printPrepLabel.
 
-    // Build the preview payload — same builder the print path uses,
-    // so what the user sees IS what prints. In editable mode this
-    // pulls from the local edit state via effectiveRecipe.
+    // Build the preview payload — same builder the print path uses, so
+    // what the user sees IS what prints. We feed the printer's real roll
+    // width so a narrow (e.g. 40mm) Maryland roll previews at the same
+    // clamped size it actually prints. In editable mode the content
+    // pulls from local edit state via effectiveRecipe.
     const previewPayload = useMemo(() => buildLabelPayload({
         itemName: effectiveRecipe?.titleEn || effectiveRecipe?.title || 'Item',
         itemNameEs: effectiveRecipe?.titleEs,
@@ -190,8 +172,10 @@ export default function PrintLabelModal({
         ingredients: pickIngredientsForLabel(effectiveRecipe, language),
         language,
         notes,
-        format: effectiveFormat,
-    }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes, effectiveFormat]);
+        format: labelFormat,
+        paperWidthMm: printer?.paperWidthMm,
+        leftOffsetMm: printer?.leftOffsetMm,
+    }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes, labelFormat, printer?.paperWidthMm, printer?.leftOffsetMm]);
     // Defer the preview one beat behind input. Without this, every
     // keystroke / chip tap re-painted the preview in the SAME frame as
     // the input echo — on older iPads that dropped frames ("glitchy",
@@ -244,7 +228,6 @@ export default function PrintLabelModal({
             byName: staffName,
             copies,
             source,
-            presetId,
             shouldAbort: () => cancelledRef.current,
         });
         setPrinting(false);
@@ -316,20 +299,9 @@ export default function PrintLabelModal({
                         the printer cuts in sequence. */}
                     <CopiesSection copies={copies} setCopies={setCopies} isEs={isEs} />
 
-                    {/* Label size tabs — Andrew 2026-05-20: "3 tabs
-                        in the print screen for the labels. 3x3 3x2
-                        3x1.5". Staff picks the size that matches the
-                        roll loaded on the printer. The tab options come
-                        from `sizePresets` which is per-printer-type:
-                        Epson shows 3×3/3×2/3×1.5 (80mm paper),
-                        Brother shows 2.4×2.4/2.4×1.5/2.4×1 (62mm
-                        DK-4205 roll). */}
-                    <SizePresetTabs
-                        sizePresets={sizePresets}
-                        presetId={presetId}
-                        onPick={setPresetPersistent}
-                        isEs={isEs}
-                    />
+                    {/* Size tabs removed 2026-06-20 (Andrew "drop the size
+                        tabs") — the Label Format editor in Admin is now the
+                        single control for how every sticker looks. */}
 
                     {/* Preview — what the printer will produce */}
                     <div>
@@ -566,35 +538,6 @@ const CopiesSection = memo(function CopiesSection({ copies, setCopies, isEs }) {
                         </button>
                     ))}
                 </div>
-            </div>
-        </div>
-    );
-});
-
-// Tabs — Small / Medium / Large. Dimensions stripped 2026-05-20
-// ("staff will know the size") — preset still carries widthMm /
-// heightMm under the hood for the Brother @page sizing.
-const SizePresetTabs = memo(function SizePresetTabs({ sizePresets, presetId, onPick, isEs }) {
-    return (
-        <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
-                {isEs ? 'Tamaño de etiqueta' : 'Label size'}
-            </div>
-            <div className="flex gap-1 mb-2">
-                {sizePresets.map(p => {
-                    const active = p.id === presetId;
-                    return (
-                        <button key={p.id}
-                            onClick={() => onPick(p.id)}
-                            className={`flex-1 px-2 py-3 rounded-lg text-sm font-bold border-2 transition ${
-                                active
-                                    ? 'bg-dd-text text-white border-dd-text'
-                                    : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
-                            }`}>
-                            {isEs ? p.nameEs : p.nameEn}
-                        </button>
-                    );
-                })}
             </div>
         </div>
     );

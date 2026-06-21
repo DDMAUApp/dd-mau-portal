@@ -1978,7 +1978,6 @@ export async function printPrepLabel({
     location, slot = DEFAULT_PRINTER_SLOT,
     recipe, preppedBy, shelfLifeDays, language = 'en',
     notes, byName, copies = 1, source = 'recipe',
-    presetId = DEFAULT_LABEL_SIZE_PRESET,
     // Andrew 2026-06-11: "couple of time i canceled the print and then
     // it came out." Cancel used to only close the modal — the queued
     // job kept going and printed seconds later. Callers pass a
@@ -2004,10 +2003,13 @@ export async function printPrepLabel({
         if (printer.enabled === false) {
             return { ok: false, error: 'printer_disabled' };
         }
-        // Pass the printer's type so the right preset list (Epson
-        // 80mm vs Brother 62mm) resolves the physical dims stamped
-        // onto the payload.
-        const format = applyLabelSizePreset(baseFormat, presetId, type);
+        // Size presets dropped (Andrew 2026-06-20: "drop the size tabs").
+        // The admin Label Format is now the single source of truth for
+        // every sticker — no per-print size tab silently overriding its
+        // section toggles / font scales. So what the Label Format editor
+        // previews is exactly what prints. Brother physical dims fall back
+        // to the printer config below (payload._presetWidthMm is absent now).
+        const format = baseFormat;
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
             : (resolveShelfLifeDays(recipe) || baseFormat?.defaultShelfLifeDays || DEFAULT_SHELF_LIFE_DAYS);
