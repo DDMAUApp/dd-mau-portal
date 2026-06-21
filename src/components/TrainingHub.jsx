@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db } from "../firebase";
-import { doc, setDoc, getDoc, collection, getDocs, updateDoc, deleteField, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, collection, getDocs, updateDoc, deleteField, onSnapshot } from "firebase/firestore";
 import { t } from "../data/translations";
 import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";
@@ -280,15 +280,19 @@ export default function TrainingHub({ staffName, language, staffList }) {
 
     /* ───────── Firestore I/O ───────── */
     useEffect(() => {
-        let mounted = true;
         if (!staffName) { setLoading(false); return; }
-        getDoc(doc(db, "training_v2", staffDocId(staffName)))
-            .then(snap => {
-                if (!mounted) return;
-                setProgress(snap.exists() ? snap.data() : { modules: {} });
-            })
-            .finally(() => mounted && setLoading(false));
-        return () => { mounted = false; };
+        // 2026-06-20 (QA audit T5) — live listener (was a one-shot getDoc) so a
+        // manager clearing a lock on another device reaches the staffer's open
+        // Training tab without a reload. Firestore latency-compensation includes
+        // our own pending writes in the snapshot, so optimistic quiz updates
+        // don't flicker; all local progress changes are persisted, so replacing
+        // the whole progress object on each snapshot loses nothing.
+        const unsub = onSnapshot(
+            doc(db, "training_v2", staffDocId(staffName)),
+            (snap) => { setProgress(snap.exists() ? snap.data() : { modules: {} }); setLoading(false); },
+            (e) => { console.warn('training progress snapshot error:', e); setLoading(false); },
+        );
+        return () => unsub();
     }, [staffName]);
 
     const persistProgress = async (next) => {

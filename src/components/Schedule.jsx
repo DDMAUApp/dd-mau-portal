@@ -2144,8 +2144,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!canEditSide(shift.side)) return;
         // No-op if dropped on its own cell.
         if (shift.staffName === newStaffName && shift.date === newDate) return;
-        // Refuse to drop on a closed date.
-        if (dateClosed(newDate)) {
+        // Refuse to drop on a closed date. 2026-06-20 (QA audit S2): pass the
+        // shift's OWN location so a single-store closure is enforced in "both"
+        // view — the no-arg form only blocks when BOTH stores are closed, so a
+        // Webster shift could be dropped onto a Webster-closed Sunday.
+        if (dateClosed(newDate, shift.location)) {
             toast(tx('Cannot drop on a closed date.', 'No puedes soltar en una fecha cerrada.'));
             return;
         }
@@ -9987,7 +9990,11 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     const selectedStaff = staffList?.find(s => s.name === form.staffName);
     const minorWarnings = selectedStaff?.isMinor ? minorShiftWarnings(form, isEn) : [];
 
-    const isOnClosedDate = dateClosed && dateClosed(form.date);
+    // 2026-06-20 (QA audit S2) — pass the staffer's store so a single-location
+    // closure is enforced when adding from the "both" view (no-arg only blocks
+    // when BOTH stores are closed). Undefined location falls back to that
+    // existing behavior, so this only ever tightens the check.
+    const isOnClosedDate = dateClosed && dateClosed(form.date, selectedStaff?.location);
 
     // CONFLICT DETECTION — added 2026-05-10. Surfaces three classes of
     // "this might be wrong" warnings the manager should see BEFORE saving:

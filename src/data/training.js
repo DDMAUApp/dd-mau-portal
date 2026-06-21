@@ -754,6 +754,37 @@ export const MODULES = [
                     correct: "c"
                 },
                 {
+                    // 2026-06-20 (QA audit T4) — 5th question so M3's 80% threshold
+                    // allows one miss (4 questions made 80% mean 100%). Tests a
+                    // basic the lessons cover (handwashing triggers).
+                    id: "m3-q4",
+                    questionEn: "When should you wash your hands?",
+                    questionEs: "¿Cuándo debes lavarte las manos?",
+                    options: [
+                        {
+                            id: "a",
+                            textEn: "Only at the start of your shift",
+                            textEs: "Solo al inicio de tu turno"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Only when they look dirty",
+                            textEs: "Solo cuando se ven sucias"
+                        },
+                        {
+                            id: "c",
+                            textEn: "After the restroom, touching your face/hair/phone, handling raw meat or trash — and before handling food",
+                            textEs: "Después del baño, de tocarte la cara/cabello/teléfono, de manejar carne cruda o basura — y antes de manejar comida"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Only before going home",
+                            textEs: "Solo antes de irte a casa"
+                        }
+                    ],
+                    correct: "c"
+                },
+                {
                     id: "m3-q5",
                     questionEn: "What do you do for a cut on your hand?",
                     questionEs: "¿Qué haces si te cortas la mano?",
