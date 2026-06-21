@@ -21,6 +21,7 @@
 // wants the chip).
 
 import { useState, useEffect } from 'react';
+import { openExternalUrl } from '../capacitor-bridge';
 import {
     translateMessage as translateMsg,
     readCachedTranslation,
@@ -212,8 +213,18 @@ function linkifyRun(text, keyPrefix, isMine) {
         if (m.index > last) out.push(text.slice(last, m.index));
         const href = url.startsWith('www.') ? `https://${url}` : url;
         out.push(
-            <a key={`${keyPrefix}-u${m.index}`} href={href} target="_blank" rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
+            // Open EXPLICITLY via openExternalUrl on click — NOT target="_blank".
+            // In the native iOS/Android WebView a `target="_blank"` link does
+            // nothing on its own, and the global a[target="_blank"] click
+            // interceptor in capacitor-bridge wasn't reliably firing for these
+            // (App Store app: links "weren't clickable", Andrew 2026-06-20).
+            // openExternalUrl routes to the in-app browser on native
+            // (@capacitor/browser, which IS in the native build) and a new tab
+            // on web. preventDefault stops the default no-op nav; stopPropagation
+            // keeps the tap from also opening the bubble's reply/react menu.
+            // No target="_blank" so the interceptor can't ALSO fire (double-open).
+            <a key={`${keyPrefix}-u${m.index}`} href={href} rel="noopener noreferrer"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); openExternalUrl(href); }}
                 className={`underline break-all ${isMine ? 'text-white' : 'text-dd-green'}`}>
                 {url}
             </a>
