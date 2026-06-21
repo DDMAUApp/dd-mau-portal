@@ -41,6 +41,14 @@ const REFRESHING_PAINT_MS = 300; // brief window so user sees the spinner
 // pull gesture, exposed so a desktop button (or a future "refresh" menu
 // item) can trigger the exact same recovery without touch events.
 export async function forceRefresh() {
+    // 2026-06-20 (QA audit A1) — on native, the web cache-bust + location.replace
+    // below is a NO-OP: the WebView loads from the active Capgo bundle, not the
+    // network, so a query-string reload re-runs the SAME bundle. Apply any
+    // pending OTA bundle first; if that reloads the WebView, we're done.
+    try {
+        const { applyNativeOtaRefresh } = await import('../../capacitor-bridge');
+        if (await applyNativeOtaRefresh()) return;
+    } catch { /* not native / import failed — fall through to the web path */ }
     try {
         if ('serviceWorker' in navigator) {
             const regs = await navigator.serviceWorker.getRegistrations();

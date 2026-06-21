@@ -348,6 +348,27 @@ export async function initCapacitor() {
     }
 }
 
+// 2026-06-20 (QA audit A1) — force-apply any pending Capgo OTA bundle and
+// reload onto it. The "Refresh now" button / pull-to-refresh used only the
+// web cache-bust + location.replace path, which is a NO-OP inside the native
+// WebView (it reloads the SAME active bundle, never the downloaded-but-
+// unapplied one). reload() swaps the WebView onto the latest bundle Capgo has
+// set. Returns true if a native reload was attempted (caller skips the web
+// path), false on web so the caller falls back to the cache-bust reload.
+export async function applyNativeOtaRefresh() {
+    try {
+        if (!window?.Capacitor?.isNativePlatform?.()) return false;
+    } catch { return false; }
+    try {
+        const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
+        await CapacitorUpdater.reload();
+        return true;
+    } catch (e) {
+        console.warn('[cap] applyNativeOtaRefresh failed:', e?.message);
+        return false;
+    }
+}
+
 // 2026-06-02 — Tear down every Capacitor plugin listener registered
 // by initCapacitor(). Nothing in the app calls this today (the
 // _initialized guard makes the practical leak small), but Vite HMR

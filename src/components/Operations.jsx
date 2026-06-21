@@ -3648,7 +3648,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Same dotted-path pattern as updateInventoryCount so concurrent edits on
             // other items aren't clobbered.
             const updateVendorCount = async (vendor, vendorId, newCount) => {
-                const count = parseInt(newCount) || 0;
+                // 2026-06-20 (QA audit O3) — clamp to a non-negative integer.
+                // `min="0"` on a type=number only governs the spinner, not typed/
+                // pasted text, so "-5"/"3.7"/22-digit overflow used to persist
+                // straight to Firestore (and a negative flowed into order math).
+                // Mirror InventoryCountInput's digits-only, >=0 clamp.
+                const count = Math.max(0, parseInt(newCount, 10) || 0);
                 const key = `${vendor}:${vendorId}`;
                 // 2026-06-16 (#21): functional setState (parity with
                 // updateInventoryCount) so a concurrent edit on another vendor

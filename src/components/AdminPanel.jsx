@@ -1994,11 +1994,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     const key = `${s.id}|${s.name}`;
                     const oldPin = oldByName.get(key);
                     if (oldPin != null && oldPin !== s.pin) {
+                        // 2026-06-20 (QA audit AD1) — log only THAT a PIN changed,
+                        // never the PIN values. pin_audits is world-readable
+                        // (rule: allow read: if true) and the 4-digit PIN is the
+                        // entire auth mechanism, so persisting old/new PINs here
+                        // was a credential-history leak — and it contradicted this
+                        // function's own "never log a PIN" policy above. Who/when
+                        // is enough to triage a change.
                         addDoc(collection(db, 'pin_audits'), {
                             staffId: s.id,
                             staffName: s.name,
-                            oldPin: oldPin,
-                            newPin: s.pin,
                             changedBy: staffName,
                             changedAt: serverTimestamp(),
                             userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',

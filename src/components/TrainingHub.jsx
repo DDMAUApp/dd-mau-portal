@@ -355,8 +355,16 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const cur = moduleState(m.id);
         const attempts = [...(cur.attempts || []), { at: new Date().toISOString(), score, passed, answers: { ...quizAnswers } }];
 
-        // Lock after 2 consecutive failed attempts
-        const lastTwoFailed = attempts.length >= 2 && !attempts[attempts.length - 1].passed && !attempts[attempts.length - 2].passed;
+        // Lock after 2 consecutive failed attempts. 2026-06-20 (QA audit T1):
+        // only count attempts AFTER the most recent manager unlock. Before this,
+        // clearLock left the full attempts history intact, so the pre-unlock
+        // fail + a single post-unlock fail satisfied lastTwoFailed and re-locked
+        // instantly — an unlock bought only ONE retry instead of a fresh window.
+        const unlockedAt = cur.unlockedAt || null;
+        const sinceUnlock = unlockedAt ? attempts.filter(a => (a.at || '') > unlockedAt) : attempts;
+        const lastTwoFailed = sinceUnlock.length >= 2
+            && !sinceUnlock[sinceUnlock.length - 1].passed
+            && !sinceUnlock[sinceUnlock.length - 2].passed;
         const locked = passed ? false : lastTwoFailed;
 
         const patch = {
@@ -666,9 +674,15 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const st = moduleState(m.id);
         const allLessonsRead = m.lessons.every(l => st.lessonsCompleted.includes(l.id));
         const failsInRow = (() => {
+            // 2026-06-20 (QA audit T1): stop counting at the most recent manager
+            // unlock so the "X failed in a row" warning resets after an unlock
+            // (was counting across unlocks → an ever-growing stale count).
+            const unlockedAt = st.unlockedAt || null;
             let c = 0;
             for (let i = (st.attempts || []).length - 1; i >= 0; i--) {
-                if (st.attempts[i].passed) break;
+                const a = st.attempts[i];
+                if (a.passed) break;
+                if (unlockedAt && (a.at || '') <= unlockedAt) break;
                 c += 1;
             }
             return c;

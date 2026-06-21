@@ -260,12 +260,15 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
             amount_cents: amountCents, direct_deposit: true,
         });
         // Salary people are NOT part of the hours/tips reconciliation, so a
-        // non-numeric salary $ (e.g. someone typed "1,200") would otherwise
-        // ship a $NaN line with no check catching it. Hard-block it.
-        if (!Number.isFinite(amountCents)) {
+        // bad salary $ would otherwise ship a wrong line with no check catching
+        // it. Hard-block: NaN (e.g. someone typed "1,200" -> NaN), AND a blank/
+        // zero amount. 2026-06-20 (QA audit AD2): a blank field becomes
+        // Number(''||0)=0 -> c(0)=0, which IS finite, so the old NaN-only guard
+        // silently shipped a $0.00 paycheck. Flag <=0 too.
+        if (!Number.isFinite(amountCents) || amountCents <= 0) {
             checks.push(check(`salary:${s.key || (s.first + s.last)}`, 'fail',
-                `${s.first} ${s.last}: salary amount isn't a valid number`,
-                "Their salary $/period didn't read as a number — fix it on the People step (digits only, no commas)."));
+                `${s.first} ${s.last}: salary amount is missing, zero, or not a number`,
+                "Their salary $/period is blank, zero, or didn't read as a number — fix it on the People step (digits only, no commas)."));
         }
     }
 

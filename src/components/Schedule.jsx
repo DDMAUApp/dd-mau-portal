@@ -952,14 +952,33 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     }, [sixMonthsAgo]);
 
     // ── Listen for time-off entries ──
+    // 2026-06-20 (QA audit S1): time_off has a mixed schema — current modals
+    // write `startDate`, but legacy/imported docs use only `date`. A single
+    // `where('startDate','>=',cutoff)` inequality SILENTLY DROPS any doc that
+    // lacks `startDate`, so approved PTO on those docs never blocked auto-fill /
+    // copy-week / publish / drag, and staff could be scheduled over it. Run TWO
+    // bounded queries (one per field) and merge+dedupe — keeps the 6-month read
+    // bound while catching both schemas. A doc with both fields is deduped by id.
     useEffect(() => {
-        const q = query(collection(db, 'time_off'), where('startDate', '>=', sixMonthsAgo));
-        const unsub = onSnapshot(q, (snap) => {
-            const items = [];
-            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
-            setTimeOff(items);
-        }, (err) => console.error('time_off snapshot error:', err));
-        return unsub;
+        let byStartDate = [];
+        let byDate = [];
+        const merge = () => {
+            const seen = new Map();
+            for (const it of byStartDate) seen.set(it.id, it);
+            for (const it of byDate) if (!seen.has(it.id)) seen.set(it.id, it);
+            setTimeOff([...seen.values()]);
+        };
+        const unsub1 = onSnapshot(
+            query(collection(db, 'time_off'), where('startDate', '>=', sixMonthsAgo)),
+            (snap) => { byStartDate = []; snap.forEach((d) => byStartDate.push({ id: d.id, ...d.data() })); merge(); },
+            (err) => console.error('time_off(startDate) snapshot error:', err),
+        );
+        const unsub2 = onSnapshot(
+            query(collection(db, 'time_off'), where('date', '>=', sixMonthsAgo)),
+            (snap) => { byDate = []; snap.forEach((d) => byDate.push({ id: d.id, ...d.data() })); merge(); },
+            (err) => console.error('time_off(date) snapshot error:', err),
+        );
+        return () => { try { unsub1(); } catch {} try { unsub2(); } catch {} };
     }, [sixMonthsAgo]);
 
     // ── Listen for staffing-needs / shift slots ──

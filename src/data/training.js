@@ -345,7 +345,7 @@ export const MODULES = [
                     "• No tasting food with your fingers. Use a clean spoon, and never double-dip the same spoon.",
                     "• Cover coughs and sneezes into your elbow, turn away from food and people, then wash your hands.",
                     "• Don't touch your face, hair, teeth, ears, or eyes on the floor. If you do, wash your hands before touching food again.",
-                    "• "
+                    "• Don't share drinks, vapes, or utensils between coworkers."
                 ],
                 contentEs: [
                     "Primero el código de vestimenta, segundo la higiene. Ambos importan — el cliente los lee de inmediato cuando llegas a tomar su orden.",
@@ -366,8 +366,7 @@ export const MODULES = [
                     "• No probar comida con los dedos. Usa una cuchara limpia, y nunca vuelvas a meter la misma cuchara.",
                     "• Cubre tos y estornudos con el codo, voltéate de la comida y de la gente, luego lávate las manos.",
                     "• No te toques la cara, cabello, dientes, oídos ni ojos en el piso. Si lo haces, lávate las manos antes de tocar comida otra vez.",
-                    "• No compartas bebidas, vapes ni utensilios entre compañeros.",
-                    ""
+                    "• No compartas bebidas, vapes ni utensilios entre compañeros."
                 ]
             },
             {
@@ -804,7 +803,7 @@ export const MODULES = [
                     "OPENING SETUP — first 30 minutes of your shift:",
                     "• Clock in. Wash hands.",
                     "• Log into Toast with your PIN. Confirm the printer at the kitchen line is printing.",
-                    "• ",
+                    "• Sign the cash sheet. The drawer is already counted by the manager — just confirm and sign.",
                     "• Wipe down the register, card reader, phone, and counter. Make sure the area is organized and the table numbers are stacked and ready to go.",
                     "• Stock cups, lids, napkins, utensils, and to-go bags within reach.",
                     "• Stock extra bowls, plates, and to-go utensils.",

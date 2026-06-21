@@ -1563,14 +1563,20 @@ function ChatThreadInner({
             //    Eighty6Dashboard fan-out behavior at a smaller
             //    scope. (Dashboard fan-out is location-wide; chat
             //    fan-out is chat-wide. Caller's choice.)
-            const recipients = (chat?.members || []).filter(n => n && n !== staffName);
+            // 2026-06-20 (QA audit C1) — DON'T fan out a second push here. The 86
+            // card was already posted as a chat message above, which pushed every
+            // chat member a chat_message (deep-linking to the chat where the card
+            // lives). postEightySixToChat's own fan-out duplicated that with a
+            // separate eighty_six push (different tag → the OS won't collapse it),
+            // double-buzzing the whole team on every 86. Keep the audit row +
+            // /ops/86 dashboard sync; just drop the duplicate notify.
             await postEightySixToChat({
                 location,
                 itemName,
                 transition: 'out',
                 actorName: staffName,
                 actorId: viewer?.id,
-                notifyRecipients: recipients,
+                notifyRecipients: [],
             });
 
             setShow86Modal(false);
