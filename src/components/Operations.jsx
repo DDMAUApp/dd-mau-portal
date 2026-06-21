@@ -275,6 +275,17 @@ const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit,
             onCommit(safe);
         }
     };
+    // 2026-06-20 (QA audit O6) — flush a half-typed count on unmount. The input
+    // commits only on blur/Enter; on touch devices, navigating away (bottom-nav
+    // tap, app background, idle relock) unmounts the field before a clean blur,
+    // silently losing a typed bulk entry like "48". Keep the latest editing
+    // state in a ref and commit it once on unmount (commit() no-ops if unchanged).
+    const flushRef = useRef({ editing: false, local: '', commit });
+    flushRef.current = { editing, local, commit };
+    useEffect(() => () => {
+        const f = flushRef.current;
+        if (f.editing) f.commit(f.local);
+    }, []);
     const numericLocal = parseInt(local || '0', 10) || 0;
     return (
         <input

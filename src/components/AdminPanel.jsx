@@ -1251,7 +1251,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 );
                 const unsubA = onSnapshot(appsQ,
                     (snap) => setOnboardingPendingApps(snap.size),
-                    () => setOnboardingPendingApps(0));
+                    // 2026-06-20 (QA audit L3) — DON'T reset the badge to 0 on a
+                    // load error. A transient blip used to silently hide real
+                    // pending applications from managers ("0" reads as "nothing to
+                    // do"). Keep the last known count — the badge is a launcher
+                    // hint and the detail screen re-queries — and just log.
+                    (err) => console.warn('onboarding apps count load error:', err?.code || err));
                 const hiresQ = query(
                     collection(db, 'onboarding_hires'),
                     orderBy('createdAt', 'desc'),
@@ -1266,7 +1271,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         });
                         setOnboardingActiveHires(active);
                     },
-                    () => setOnboardingActiveHires(0));
+                    // 2026-06-20 (QA audit L3) — keep the last known count on a
+                    // load error rather than zeroing it (see the apps listener).
+                    (err) => console.warn('onboarding hires count load error:', err?.code || err));
                 return () => { unsubA(); unsubH(); };
             }, [hasOnboardingAccess]);
             // Two-step confirmation for the System Refresh broadcast.
