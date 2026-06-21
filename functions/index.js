@@ -597,6 +597,14 @@ exports.dispatchNotification = onDocumentCreated(
             logger.warn(`unread count failed for ${forStaff} (using badge=1):`, e?.message);
         }
 
+        // 2026-06-20 (QA audit N1/N7) — carry deepLink into the DELIVERED
+        // payload so a tap routes to the right tab. The notification doc stores
+        // notif.deepLink, but it was never copied here, so the native handler
+        // (onPushTapNavigate) and the web SW (notificationclick) always read
+        // undefined and opened the wrong screen on ~100% of taps. Normalize a
+        // legacy "/" (a URL path, not a tab id) to "" → a safe no-op nav
+        // (the app just opens); both consumers treat "" as null.
+        const pushDeepLink = (notif.deepLink && notif.deepLink !== "/") ? notif.deepLink : "";
         const message = {
             tokens,
             data: {
@@ -604,6 +612,7 @@ exports.dispatchNotification = onDocumentCreated(
                 body: pushBody,
                 type: notif.type || "",
                 tag,
+                deepLink: pushDeepLink,
                 link: notif.link || "/",
             },
             android: {
@@ -645,8 +654,13 @@ exports.dispatchNotification = onDocumentCreated(
                         // this pass. Result: badge climbs accurately on
                         // each new push but only goes down when a fresh
                         // push arrives after the user has read messages.
+                        // 2026-06-20 (QA audit N6) — dropped "content-available": 1.
+                        // It's the SILENT-push flag; paired with an alert it can
+                        // suppress the visible banner (the node-apn path in apns.js
+                        // deliberately omits it for this reason). This message.apns
+                        // block only reaches FCM web/android tokens anyway (iOS goes
+                        // via node-apn), so this is safe cleanup either way.
                         badge: unreadCount,
-                        "content-available": 1,
                     },
                 },
             },
@@ -711,6 +725,7 @@ exports.dispatchNotification = onDocumentCreated(
                                     body: pushBody,
                                     type: notif.type || "",
                                     tag,
+                                    deepLink: pushDeepLink,
                                     link: notif.link || "/",
                                 },
                             },
@@ -4615,7 +4630,10 @@ Body snippet: ${snippet}`;
                         type: "email_forwarded",
                         title: fwdTitle,
                         body: fwdBody,
-                        deepLink: "/",
+                        // 2026-06-20 (QA audit N7) — was "/" (a path, not a tab id),
+                        // which setActiveTab can't route. Email-forwarded alerts
+                        // belong in the Inbox tab.
+                        deepLink: "inbox",
                         tag: `email_forwarded:${id}:${name}`,
                         priority: "high",
                         forceDeliver: true,
