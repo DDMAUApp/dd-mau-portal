@@ -135,6 +135,12 @@ export default function MobileHome({
     }, [shifts14, storeLocation, isManager, isAdmin]);
 
     const eighty6Count = useMemo(() => eightySixByLoc[queryLoc]?.count || 0, [eightySixByLoc, queryLoc]);
+    // 2026-06-20 (QA audit L5) — eightySixByLoc[queryLoc] seeds null until the
+    // ops/86 doc loads. Without this flag the KPI showed "86 items 0" in green
+    // (tone 'good') during cold-start load — falsely implying "all clear" before
+    // the real, possibly-blocking count arrived. Desktop HomeV2 already shows a
+    // neutral placeholder; mirror it here.
+    const eighty6Loading = useMemo(() => eightySixByLoc[queryLoc] == null, [eightySixByLoc, queryLoc]);
 
     const pendingPto = useMemo(() => {
         if (!isManager && !isAdmin) return 0;
@@ -237,9 +243,9 @@ export default function MobileHome({
         }] : []),
         {
             label: tx('86 items', 'Items 86'),
-            value: eighty6Count,
+            value: eighty6Loading ? '—' : eighty6Count,
             unit: '',
-            tone: eighty6Count > 0 ? 'danger' : 'good',
+            tone: eighty6Loading ? 'neutral' : (eighty6Count > 0 ? 'danger' : 'good'),
         },
         ...((isManager || isAdmin) && draftCount > 0 ? [{
             label: tx('Drafts', 'Borradores'),

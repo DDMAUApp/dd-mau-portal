@@ -1191,14 +1191,14 @@ function Step4({ values, setField, toggleInArray, setValues, resumeFile, setResu
                                 placeholder={tx('Role (e.g. Line cook)', 'Puesto (ej: Cocinero)')} maxLength={40} />
                             <div className="grid grid-cols-2 gap-2">
                                 <input type="month" value={emp.startMonth} onChange={e => updateEmployer(i, { startMonth: e.target.value })}
-                                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs" placeholder={tx('Start', 'Inicio')} />
+                                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-base" placeholder={tx('Start', 'Inicio')} />
                                 {emp.stillHere ? (
                                     <span className="border border-dd-green/40 rounded-lg px-2 py-1.5 text-xs bg-dd-sage-50 text-dd-green-700 font-bold flex items-center">
                                         {tx('Still here', 'Aún trabajo aquí')}
                                     </span>
                                 ) : (
                                     <input type="month" value={emp.endMonth} onChange={e => updateEmployer(i, { endMonth: e.target.value })}
-                                        className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs" placeholder={tx('End', 'Fin')} />
+                                        className="border border-gray-300 rounded-lg px-2 py-1.5 text-base" placeholder={tx('End', 'Fin')} />
                                 )}
                             </div>
                             <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer">
@@ -1284,7 +1284,7 @@ function Step5({ values, setField, isEs }) {
                         <FieldLabel>{tx('Expected graduation', 'Graduación esperada')}</FieldLabel>
                         <input type="month" value={values.expectedGraduation}
                             onChange={e => setField('expectedGraduation', e.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
                     </div>
                 </div>
             )}
@@ -1362,7 +1362,7 @@ function Step7({ values, setValues, isEs }) {
                         <TextInput value={r.name} onChange={v => updateRef(i, { name: v })}
                             placeholder={tx('Their name', 'Su nombre')} maxLength={60} />
                         <select value={r.relation} onChange={e => updateRef(i, { relation: e.target.value })}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base bg-white">
                             <option value="">{tx('Relationship', 'Relación')}</option>
                             {REFERENCE_RELATIONS.map(o => (
                                 <option key={o.id} value={o.id}>{isEs ? o.es : o.en}</option>
@@ -1434,7 +1434,7 @@ function Step9({ values, setField, toggleInArray, isEs }) {
                 </FieldLabel>
                 <textarea value={values.anythingElse} onChange={e => setField('anythingElse', e.target.value)}
                     rows={4} maxLength={500} placeholder={tx('Skip if you don\'t want to.', 'Salta si no quieres.')}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:border-dd-green focus:outline-none focus:ring-2 focus:ring-dd-green/30" />
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base resize-none focus:border-dd-green focus:outline-none focus:ring-2 focus:ring-dd-green/30" />
                 <p className="text-[10px] text-gray-400 text-right mt-0.5">{values.anythingElse.length}/500</p>
             </div>
         </div>
@@ -1709,7 +1709,7 @@ function SignatureField({
                         placeholder={legalName || tx('Your legal name', 'Tu nombre legal')}
                         maxLength={80}
                         autoComplete="off"
-                        className={`w-full border-2 rounded-lg px-3 py-3 text-sm font-bold italic ${
+                        className={`w-full border-2 rounded-lg px-3 py-3 text-base font-bold italic ${
                             typedOk ? 'border-green-500 bg-green-50' :
                             typed ? 'border-amber-500 bg-amber-50' :
                             'border-gray-300'

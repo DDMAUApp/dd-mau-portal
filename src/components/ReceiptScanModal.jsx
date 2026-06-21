@@ -11,7 +11,7 @@
 //
 // Also reusable by the file-import path: pass `initialExtraction`
 // ({ vendor, date, lineItems }) to jump straight to the review screen.
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Camera, X, Check, RefreshCw, Search, ArrowLeft } from 'lucide-react';
 import { buildMasterIndex, matchItemByName } from '../data/itemMatch';
@@ -89,8 +89,24 @@ export default function ReceiptScanModal({ location, staffName, language, master
     const [savedSummary, setSavedSummary] = useState(null);
     const fileRef = useRef(null);
 
+    // 2026-06-20 (QA audit L1) — keep an object-URL preview of the captured
+    // receipt. The file was base64'd, sent to the AI, then discarded with no
+    // preview anywhere — so on "retake" the manager couldn't see what was
+    // captured, and on "review" couldn't cross-check a misread price against
+    // the source image. Revoke the prior URL on replace + on unmount.
+    const [previewUrl, setPreviewUrl] = useState(null);
+    const previewUrlRef = useRef(null);
+    const setPreview = (file) => {
+        try { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); } catch {}
+        const url = file ? URL.createObjectURL(file) : null;
+        previewUrlRef.current = url;
+        setPreviewUrl(url);
+    };
+    useEffect(() => () => { try { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); } catch {} }, []);
+
     const handleFile = async (file) => {
         if (!file) return;
+        setPreview(file);
         setStage('parsing');
         setProblems([]);
         try {
@@ -264,6 +280,10 @@ export default function ReceiptScanModal({ location, staffName, language, master
                                 {problems.map((p, i) => <li key={i}>{p}</li>)}
                             </ul>
                         </div>
+                        {previewUrl && (
+                            <img src={previewUrl} alt={tx('Captured receipt', 'Recibo capturado')}
+                                className="w-full max-h-56 object-contain rounded-xl border border-gray-200 bg-gray-50" />
+                        )}
                         <button onClick={() => setStage('capture')}
                             className="w-full py-3 rounded-2xl bg-dd-green text-white font-bold flex items-center justify-center gap-2">
                             <Camera size={18} /> {tx('Retake photo', 'Tomar otra foto')}
@@ -283,6 +303,12 @@ export default function ReceiptScanModal({ location, staffName, language, master
                         </div>
 
                         <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+                            {previewUrl && (
+                                <div className="p-3">
+                                    <img src={previewUrl} alt={tx('Captured receipt', 'Recibo capturado')}
+                                        className="w-full max-h-48 object-contain rounded-xl border border-gray-200 bg-gray-50" />
+                                </div>
+                            )}
                             {rows.length === 0 && (
                                 <div className="p-6 text-center text-sm text-dd-text-2">{tx('No line items found.', 'No se encontraron artículos.')}</div>
                             )}
