@@ -3548,7 +3548,18 @@ function Composer({
                         // suspected reason the arrow does nothing while the
                         // keyboard is open. sendingRef in handleSendText swallows
                         // the duplicate so a single tap still sends exactly once.
-                        onPointerDown={fireSend}
+                        // 2026-06-20 (Andrew, iOS app) — send did NOTHING while the
+                        // keyboard was up; only worked after tapping OUT of the input
+                        // first. Root cause: a tap on a button while the textarea is
+                        // focused defaults to BLURRING the field, and iOS WKWebView
+                        // consumes that first tap for the blur — so the handler never
+                        // got to send. The fix is e.preventDefault() on pointerdown:
+                        // it stops the blur (keyboard stays up) so the tap reaches us,
+                        // and we send RIGHT HERE rather than relying on the click
+                        // (which iOS often drops after a focus change). onClick stays
+                        // for desktop + keyboard (Enter/Space) activation; sendingRef
+                        // inside handleSend dedupes if both fire.
+                        onPointerDown={(e) => { e.preventDefault(); fireSend(); }}
                         onClick={fireSend}
                         disabled={sending}
                         // `ddmau-composer-btn-send` keeps the brand green on
