@@ -3548,18 +3548,22 @@ function Composer({
                         // suspected reason the arrow does nothing while the
                         // keyboard is open. sendingRef in handleSendText swallows
                         // the duplicate so a single tap still sends exactly once.
-                        // 2026-06-20 (Andrew, iOS app) — send did NOTHING while the
-                        // keyboard was up; only worked after tapping OUT of the input
-                        // first. Root cause: a tap on a button while the textarea is
-                        // focused defaults to BLURRING the field, and iOS WKWebView
-                        // consumes that first tap for the blur — so the handler never
-                        // got to send. The fix is e.preventDefault() on pointerdown:
-                        // it stops the blur (keyboard stays up) so the tap reaches us,
-                        // and we send RIGHT HERE rather than relying on the click
-                        // (which iOS often drops after a focus change). onClick stays
-                        // for desktop + keyboard (Enter/Space) activation; sendingRef
-                        // inside handleSend dedupes if both fire.
-                        onPointerDown={(e) => { e.preventDefault(); fireSend(); }}
+                        // 2026-06-20 (Andrew, iOS) — send-button saga, final form:
+                        //  • preventDefault on pointerDOWN: tapping a button while the
+                        //    textarea is focused defaults to blurring it, and iOS eats
+                        //    that first tap for the blur — so send did nothing until you
+                        //    tapped OUT first. preventDefault keeps the field focused
+                        //    (keyboard up) so the tap reaches us.
+                        //  • fire send on pointerUP, NOT pointerdown: firing on DOWN
+                        //    auto-sent on any incidental touch / scroll-start over the
+                        //    button. pointerup = a deliberate finger-lift over the
+                        //    button (drag off before lifting = no send). preventDefault
+                        //    on pointerup suppresses the derived click so the send→mic
+                        //    swap underneath can't catch a stray tap.
+                        //  • onClick stays ONLY for keyboard (Enter/Space) activation,
+                        //    which fires no pointer events; sendingRef dedupes regardless.
+                        onPointerDown={(e) => { e.preventDefault(); }}
+                        onPointerUp={(e) => { e.preventDefault(); fireSend(); }}
                         onClick={fireSend}
                         disabled={sending}
                         // `ddmau-composer-btn-send` keeps the brand green on
