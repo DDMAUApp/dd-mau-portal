@@ -63,6 +63,14 @@ const INBOUND_REPLIES = {
         en: "DD Mau urgent alerts. Reply STOP to opt out. Contact your manager for help.",
         es: "Alertas urgentes DD Mau. Responde STOP para no recibir. Pregunta a tu gerente.",
     },
+    // 2026-06-22 — "text to apply" recruiting funnel. A prospect texts
+    // APPLY / TRABAJO (etc.) to our number; we reply with the public
+    // apply link. They initiated the message, so a single informational
+    // auto-reply is compliant; STOP footer kept for good measure.
+    apply: {
+        en: "DD Mau: Thanks for your interest! Apply in ~5 min: https://apply.ddmaustl.com Reply STOP to opt out.",
+        es: "DD Mau: ¡Gracias por tu interés! Aplica en ~5 min: https://apply.ddmaustl.com Responde STOP para no recibir.",
+    },
 };
 
 // ── Templates ──────────────────────────────────────────────────────────

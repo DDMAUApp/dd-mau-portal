@@ -1317,14 +1317,16 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
     }, [expanded]);
 
     const setStatus = async (next, note = '') => {
+        // Write ONLY the review fields via deep dotted paths. The old code
+        // wrote the whole `checklist.{id}` object from a render-time `state`
+        // snapshot, so an admin Approve could clobber a hire's just-submitted
+        // submittedAt/fields (and a hire re-submit could wipe the admin's
+        // rejection note). Dotted paths touch only what this action changes.
         await updateDoc(doc(db, 'onboarding_hires', hire.id), {
-            [`checklist.${docDef.id}`]: {
-                ...state,
-                status: next,
-                reviewedBy: staffName,
-                reviewedAt: new Date().toISOString(),
-                note: note || state.note || '',
-            },
+            [`checklist.${docDef.id}.status`]: next,
+            [`checklist.${docDef.id}.reviewedBy`]: staffName,
+            [`checklist.${docDef.id}.reviewedAt`]: new Date().toISOString(),
+            [`checklist.${docDef.id}.note`]: note || state.note || '',
         });
         onWriteAudit(`doc_${next}`, { hireId: hire.id, docId: docDef.id, hireName: hire.name });
     };

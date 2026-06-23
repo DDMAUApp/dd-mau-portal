@@ -959,6 +959,7 @@ export default function App() {
         // the gap is over the threshold, force the same logout path
         // as the visibility handler.
         let capAppCleanup = null;
+        let bridgeCancelled = false;
         let bgTimerId = null;
         let bgStartedAt = 0;
         (async () => {
@@ -994,6 +995,11 @@ export default function App() {
                     }
                     bgStartedAt = 0;
                 });
+                // If the effect already cleaned up while these awaits were
+                // resolving (fast logout→login / idle relock), remove the
+                // listener immediately so it can't leak and relock later with
+                // a stale staffName closure across login cycles.
+                if (bridgeCancelled) { try { handle.remove?.(); } catch {} return; }
                 capAppCleanup = () => { try { handle.remove?.(); } catch {} };
             } catch {
                 // Not on native or plugin missing — silent, web path
@@ -1009,6 +1015,7 @@ export default function App() {
             document.removeEventListener('touchmove',  resetActive);
             window.removeEventListener('scroll',       resetActive, { capture: true });
             if (bgTimerId) clearTimeout(bgTimerId);
+            bridgeCancelled = true;
             if (capAppCleanup) capAppCleanup();
         };
     }, [staffName]);

@@ -2104,6 +2104,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await updateDoc(doc(db, 'shifts', shiftId), {
                 startTime,
                 endTime,
+                // Re-arm the 1-hour reminder. The server cron stamps
+                // reminderSent:true once it fires and skips flagged shifts,
+                // so a shift moved to a new time would otherwise never
+                // re-remind (sendShiftReminders, functions/index.js).
+                reminderSent: false,
+                reminderSentAt: null,
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             });
@@ -2206,6 +2212,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 txn.update(ref, {
                     staffName: newStaffName,
                     date: newDate,
+                    // Re-arm the 1-hour reminder when the shift moves to a new
+                    // day/time (cron skips shifts already flagged reminderSent).
+                    reminderSent: false,
+                    reminderSentAt: null,
                     ...(newOwnerSide && newOwnerSide !== live.side ? { side: newOwnerSide } : {}),
                     // 2026-06-16 (#7): if this move changes the OWNER, cancel any
                     // open/pending offer so a stale claim can't later be approved
@@ -2854,6 +2864,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     updatedAt: serverTimestamp(),
                 });
             });
+            // Tell management a claim is waiting — without this a pending
+            // takeover sits undiscovered until a manager happens to open the
+            // schedule. Reuse the existing 'swap_request' type so it routes +
+            // isn't dropped by the notification whitelist. Best-effort.
+            notifyManagement({
+                type: 'swap_request',
+                title: { en: `✋ Shift claim: ${staffName}`, es: `✋ Reclamo de turno: ${staffName}` },
+                body: `${shift.staffName} · ${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}${partial ? tx(' (partial)', ' (parcial)') : ''}`,
+                link: '/schedule',
+                deepLink: 'schedule',
+                tag: `shift_claim:${shift.id}`,
+                createdBy: staffName,
+                excludeStaff: staffName,
+            }).catch(e => console.warn('shift-claim management notify failed (non-fatal):', e));
             toast(tx(partial ? '✋ Partial pickup posted — waiting for manager' : '✋ Take posted — waiting for manager',
                       partial ? '✋ Toma parcial enviada — esperando gerente' : '✋ Toma enviada — esperando gerente'),
                   { kind: 'success', duration: 3000 });

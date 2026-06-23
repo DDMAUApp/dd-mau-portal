@@ -181,7 +181,10 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
         if (snap.exists()) {
           const data = snap.data();
           setExistingData(data);
-          setForm(prev => ({ ...prev, ...data.formData }));
+          // Normalize dependents to an array — a stored doc with a missing/null
+          // `dependents` would otherwise overwrite the safe [] default and crash
+          // the self-view at .length/.map (the admin panel already guards this).
+          setForm(prev => ({ ...prev, ...data.formData, dependents: Array.isArray(data.formData?.dependents) ? data.formData.dependents : [] }));
           // Remember which ID actually held the record so handleSubmit
           // overwrites the same doc instead of forking a new one.
           setResolvedDocId(effectiveDocId);

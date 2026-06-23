@@ -480,6 +480,35 @@
         .glass-keypad-button-secondary { background-color: rgba(229, 240, 252, 0.85); }
     }
 
+    /* 2026-06-23 — iOS/Android WKWebView lock-screen lag fix.
+       The PIN pad renders 11 live `backdrop-filter: blur(28px)` discs.
+       iOS WebView degrades backdrop-filter across a suspend/resume
+       (lock the phone, come back): it re-rasterizes every blur layer on
+       each repaint, so taps go laggy and get dropped ("the 9 is hard to
+       press, very laggy") — a full app relaunch rebuilds the compositor
+       and it's fine again. The gradients are already 80–96% opaque so
+       the blur is nearly invisible; on NATIVE we flatten to an opaque
+       gradient (no GPU blur layers) → instant taps. Web/desktop keep the
+       full live glass, where backdrop-filter is cheap and there's no
+       suspend/resume cycle. The :hover/:active rules still apply. */
+    body.capacitor-native .glass-keypad-button,
+    body.capacitor-native .glass-keypad-button-secondary {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+    body.capacitor-native .glass-keypad-button {
+        background: linear-gradient(145deg,
+            rgba(255, 255, 255, 1) 0%,
+            rgba(246, 250, 255, 1) 45%,
+            rgba(237, 246, 255, 1) 100%);
+    }
+    body.capacitor-native .glass-keypad-button-secondary {
+        background: linear-gradient(145deg,
+            rgba(250, 252, 255, 1) 0%,
+            rgba(243, 249, 255, 1) 50%,
+            rgba(237, 246, 255, 1) 100%);
+    }
+
     /* glass-avatar-green — Apple-style frosted initials disc, brand
        tint. 2026-05-27 — Andrew: "any dark green bubble for the
        top right that has our name and the bubble had our initials

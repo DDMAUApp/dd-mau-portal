@@ -221,6 +221,13 @@ export async function renameStaffEverywhere({ oldName, newName, staffId } = {}) 
         ['shifts',          () => renameEqualityField('shifts', 'staffName', o, n)],
         ['recurring_shifts',() => renameEqualityField('recurring_shifts', 'staffName', o, n, ['createdBy', 'updatedBy'])],
         ['time_off',        () => renameEqualityField('time_off', 'staffName', o, n, ['submittedBy', 'createdBy'])],
+        // swap_requests stores staff NAMES (fromStaff/toStaff/createdBy).
+        // Without these, Schedule.jsx's swap re-verify (fromData.staffName ===
+        // request.fromStaff) fails after a rename and the pending swap can
+        // never approve. Two disjoint passes cover initiator + recipient;
+        // `extra` fields flip only when they equal oldName (renameEqualityField).
+        ['swap_requests',   () => renameEqualityField('swap_requests', 'fromStaff', o, n, ['toStaff', 'createdBy'])],
+        ['swap_requests_to',() => renameEqualityField('swap_requests', 'toStaff', o, n, ['fromStaff', 'createdBy'])],
         ['notifications',   () => renameEqualityField('notifications', 'forStaff', o, n)],
         ['offsite_shifts',  () => renameEqualityField('offsite_shifts', 'staffName', o, n, ['forcedOutBy', 'createdBy'])],
         ['tardies',         () => renameEqualityField('tardies', 'staffName', o, n)],

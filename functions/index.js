@@ -1087,18 +1087,38 @@ exports.twilioInbound = onRequest(
     },
     async (req, res) => {
         // Signature verification — protects against spoofed inbound.
+        //
+        // 2nd-gen functions run on Cloud Run behind Google's front-end, so
+        // req.hostname/originalUrl reflect the INTERNAL run.app route, not
+        // the public URL Twilio signed (e.g. .../twilioInbound on
+        // cloudfunctions.net). A single reconstructed URL therefore never
+        // matches → every real inbound 403'd. Validate against ALL plausible
+        // public URLs instead. This stays secure: the HMAC signature must
+        // still match the auth token + exact POST params, so an attacker
+        // can't forge a valid signature for any candidate URL.
         try {
             const twilio = require("twilio");
             const sig = req.header("X-Twilio-Signature") || "";
-            const url = `https://${req.hostname}${req.originalUrl}`;
-            const valid = twilio.validateRequest(
-                TWILIO_AUTH_TOKEN.value(),
-                sig,
-                url,
-                req.body || {},
-            );
+            const token = TWILIO_AUTH_TOKEN.value();
+            const params = req.body || {};
+            const fwdHost = req.headers["x-forwarded-host"];
+            const path = req.originalUrl || "/";
+            const candidates = [
+                fwdHost ? `https://${fwdHost}${path}` : null,
+                `https://${req.hostname}${path}`,
+                "https://us-central1-dd-mau-staff-app.cloudfunctions.net/twilioInbound",
+                "https://twilioinbound-ccavtlnt7a-uc.a.run.app/twilioInbound",
+                "https://twilioinbound-ccavtlnt7a-uc.a.run.app/",
+                "https://twilioinbound-ccavtlnt7a-uc.a.run.app",
+            ].filter(Boolean);
+            const valid = candidates.some((u) => {
+                try { return twilio.validateRequest(token, sig, u, params); }
+                catch { return false; }
+            });
             if (!valid) {
-                logger.warn("twilioInbound: invalid signature, rejecting");
+                logger.warn("twilioInbound: invalid signature, rejecting", {
+                    host: req.hostname, fwdHost, path,
+                });
                 res.status(403).send("forbidden");
                 return;
             }
@@ -1200,6 +1220,48 @@ exports.twilioInbound = onRequest(
 
         if (kind === "help") {
             sendTwiml(res, INBOUND_REPLIES.help[lang]);
+            return;
+        }
+
+        // ── Text-to-apply (recruiting funnel) ───────────────────────────
+        // A prospect texts APPLY / JOBS / TRABAJO / EMPLEO to our number;
+        // reply with the public apply link and log a lead so the hiring
+        // tracker can see inbound interest. classifyInboundBody returns
+        // "other" for these, so detect them explicitly — AFTER stop/start/
+        // help so compliance keywords always win. The reply is a single
+        // auto-response to a message THEY initiated (compliant).
+        const applyMatch = /\b(APPLY|APLICAR|JOBS?|HIRING|TRABAJO|EMPLEO)\b/i.exec(body || "");
+        if (applyMatch) {
+            const applyKeyword = applyMatch[1].toUpperCase();
+            const applyLang = /^(TRABAJO|EMPLEO|APLICAR)$/.test(applyKeyword) ? "es" : lang;
+            // Best-effort lead capture — never block the applicant's reply.
+            // One row per phone (doc id = digits) so repeat texts update,
+            // not duplicate; firstContactAt + status set only on create.
+            try {
+                const leadId = (from || "").replace(/[^\d]/g, "") || sid || "unknown";
+                const leadRef = db.collection("recruiting_leads").doc(leadId);
+                await db.runTransaction(async (tx) => {
+                    const snap = await tx.get(leadRef);
+                    const row = {
+                        fromE164: from,
+                        source: "sms_text_to_apply",
+                        lastKeyword: applyKeyword,
+                        lastBody: body,
+                        lastTwilioSid: sid,
+                        matchedStaff: staffName,   // null for true prospects
+                        lastContactAt: FieldValue.serverTimestamp(),
+                        textCount: FieldValue.increment(1),
+                    };
+                    if (!snap.exists) {
+                        row.status = "new";
+                        row.firstContactAt = FieldValue.serverTimestamp();
+                    }
+                    tx.set(leadRef, row, { merge: true });
+                });
+            } catch (e) {
+                logger.error("recruiting_leads write failed:", e?.message || e);
+            }
+            sendTwiml(res, INBOUND_REPLIES.apply[applyLang]);
             return;
         }
 
@@ -1392,6 +1454,7 @@ exports.sendShiftReminders = onSchedule(
                 type: "shift_reminder_1h",
                 title: "DD Mau — Shift in 1 hour",
                 body: `Your shift starts at ${formatTime12h(sh.startTime)} · ${sh.location || ""}`.trim(),
+                deepLink: "schedule",
                 createdAt: FieldValue.serverTimestamp(),
                 read: false,
                 createdBy: "system",
@@ -1684,6 +1747,7 @@ exports.sendDueReminders = onSchedule(
     {
         schedule: "0 8 * * *",
         timeZone: "America/Chicago",
+        region: "us-central1",
         retryCount: 1,
         memory: "256MiB",
     },
@@ -1828,6 +1892,14 @@ exports.sendDueReminders = onSchedule(
         // to YYYY-MM-DD for the comparison.
         try {
             const invSnap = await db.collection('toast_invoices')
+                // Order by due date so the earliest-due invoices are the
+                // ones that survive the cap — an unordered .limit(500)
+                // returns an arbitrary slice and silently drops due
+                // reminders once the collection exceeds 500 docs. Docs with
+                // no promisedDate are skipped in the loop anyway, so the
+                // orderBy excluding them is harmless. (single-field index,
+                // auto-created.)
+                .orderBy('promisedDate')
                 .limit(500)
                 .get();
             for (const iDoc of invSnap.docs) {
@@ -2347,6 +2419,7 @@ exports.i9ReverificationReminder = onSchedule(
                         title,
                         body,
                         link: "/onboarding",
+                        deepLink: "onboarding",
                         createdAt: FieldValue.serverTimestamp(),
                         read: false,
                         createdBy: "i9ReverificationReminder",
@@ -2585,6 +2658,7 @@ const eightySixSchedule = async (slot, slotLabelEn, slotLabelEs) => {
                 title,
                 body,
                 link: "/eighty6",
+                deepLink: "eighty6",
                 tag,
                 createdAt: FieldValue.serverTimestamp(),
                 read: false,
@@ -2780,6 +2854,7 @@ const realtime86Handler = (location) => async (event) => {
                     title: `🚫 86: ${item.name}`,
                     body: `Just went out at ${locLabel}.`,
                     link: "/eighty6",
+                    deepLink: "eighty6",
                     tag: `eighty_six:${location}:${item.name}`,
                     createdAt: FieldValue.serverTimestamp(),
                     read: false,
@@ -2795,6 +2870,7 @@ const realtime86Handler = (location) => async (event) => {
                     title: `✅ Back in stock: ${name}`,
                     body: `${locLabel} can sell ${name} again.`,
                     link: "/eighty6",
+                    deepLink: "eighty6",
                     tag: `eighty_six:${location}:${name}`,
                     createdAt: FieldValue.serverTimestamp(),
                     read: false,

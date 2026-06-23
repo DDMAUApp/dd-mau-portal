@@ -566,9 +566,17 @@ function ChatThreadInner({
     // scroll the element into view + flash the highlight ring. The
     // effect only fires when the id changes AND messages contain it,
     // so the initial load doesn't trigger before subscriptions land.
+    const lastJumpedRef = useRef(null);
     useEffect(() => {
         if (!jumpToMessageId) return;
         if (!messages.some(m => m.id === jumpToMessageId)) return;
+        // Fire once per target. `messages` gets a fresh array ref on every
+        // snapshot (incoming msg, reaction, ~1.5s mark-read write), and
+        // jumpToMessageId stays set until a different chat opens — without
+        // this guard every snapshot re-yanks scroll back to the jumped-to
+        // message and re-arms the highlight timer.
+        if (lastJumpedRef.current === jumpToMessageId) return;
+        lastJumpedRef.current = jumpToMessageId;
         setHighlightMsgId(jumpToMessageId);
         setAtBottom(false);
         const t = setTimeout(() => {
@@ -1662,7 +1670,11 @@ function ChatThreadInner({
                 transition: 'in',
                 actorName: staffName,
                 actorId: viewer?.id,
-                notifyRecipients: (chat?.members || []).filter(n => n && n !== staffName),
+                // C1 (resolve path): the "back in stock" chat message above
+                // already pushed every member a chat_message — don't fan out a
+                // second eighty_six push to the same people (double-buzz). The
+                // audit row + /ops/86 sync still run; only the notify is dropped.
+                notifyRecipients: [],
             });
         } catch (e) {
             console.warn('86 resolve failed:', e);

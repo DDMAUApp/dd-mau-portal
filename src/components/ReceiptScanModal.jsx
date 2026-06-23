@@ -43,7 +43,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
     //      the manager may have hand-corrected it;
     //   2) a LEARNED alias — a name we matched on a previous scan; remembered;
     //   3) the fuzzy matcher's best guess.
-    const buildRows = (lineItems) => (lineItems || []).map((li) => {
+    const buildRows = (lineItems) => (Array.isArray(lineItems) ? lineItems : []).map((li) => {
         const hasSavedMatch = Object.prototype.hasOwnProperty.call(li || {}, 'masterId');
         let masterId = null, confidence = null, learned = false;
         if (hasSavedMatch) {
@@ -138,21 +138,28 @@ export default function ReceiptScanModal({ location, staffName, language, master
         return masterIndex.filter((m) => m.nameLower.includes(q)).slice(0, 8);
     };
 
+    // Parse a price string tolerant of "$", thousands commas and stray
+    // spaces. A manager pasting "$1,234.56" must NOT persist as $1.00 (bare
+    // parseFloat stops at the comma) nor get silently dropped
+    // (parseFloat("$12") === NaN). US format; ambiguous EU "1.234,56" falls
+    // through to parseFloat — still no worse than before.
+    const parsePrice = (v) => parseFloat(String(v ?? '').replace(/[$\s]/g, '').replace(/,(?=\d{3}\b)/g, ''));
+
     // Mirror the save() guard exactly (incl. price >= 0) so the footer count
     // never promises a row that save() will silently skip.
-    const confirmedCount = rows.filter((r) => r.included && r.masterId && r.price !== '' && isFinite(parseFloat(r.price)) && parseFloat(r.price) >= 0).length;
+    const confirmedCount = rows.filter((r) => r.included && r.masterId && r.price !== '' && isFinite(parsePrice(r.price)) && parsePrice(r.price) >= 0).length;
 
     // Snapshot EVERY row (matched or not, included or not) so a re-opened
     // scan shows the whole receipt — including lines still to be matched.
     // masterName is snapshotted so history reads even if the master list
     // later changes.
     const snapshotLines = () => rows.map((r) => {
-        const price = parseFloat(r.price);
+        const price = parsePrice(r.price);
         const qn = Number(r.qty);
         const master = r.masterId ? masterById.get(r.masterId) : null;
         return {
             name: r.name || '',
-            qty: isFinite(qn) ? qn : null,
+            qty: (isFinite(qn) && qn >= 0 && qn < 100000) ? qn : null,
             price: isFinite(price) ? price : null,
             pack: r.pack || null,
             masterId: r.masterId || null,
@@ -169,7 +176,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
         try {
             for (const r of rows) {
                 if (!r.included || !r.masterId) continue;
-                const price = parseFloat(r.price);
+                const price = parsePrice(r.price);
                 if (!isFinite(price) || price < 0) continue;
                 await recordPurchase(location, r.masterId, {
                     vendor: vendor || 'Other',
@@ -239,7 +246,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
     };
 
     return createPortal(
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { if (!saving) onClose(); }}>
             <div className="bg-white w-full sm:max-w-2xl rounded-t-3xl sm:rounded-2xl shadow-xl max-h-[94vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
@@ -247,7 +254,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
                         <Camera size={16} className="text-dd-green" aria-hidden="true" />
                         {tx('Scan receipt', 'Escanear recibo')}
                     </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-700 p-1"><X size={20} /></button>
+                    <button onClick={() => { if (!saving) onClose(); }} className="text-gray-400 hover:text-gray-700 p-1"><X size={20} /></button>
                 </div>
 
                 {/* CAPTURE */}
@@ -314,7 +321,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
                             )}
                             {rows.map((r, i) => {
                                 const matched = r.masterId ? masterById.get(r.masterId) : null;
-                                const pu = perUnitPrice(parseFloat(r.price), r.pack);
+                                const pu = perUnitPrice(parsePrice(r.price), r.pack);
                                 return (
                                     <div key={i} className={`p-3 ${r.included ? '' : 'opacity-40'}`}>
                                         <div className="flex items-start justify-between gap-2">
