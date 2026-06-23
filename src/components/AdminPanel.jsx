@@ -2248,9 +2248,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
-                // Cascade-delete future shifts for the removed staff so
-                // they don't sit as orphans on the schedule. Past shifts
-                // are kept (for hours history / audit).
+                // Put the removed staffer's FUTURE shifts UP FOR GRABS (open
+                // offer) instead of deleting them — coverage isn't silently
+                // lost, and another staffer can claim them (a manager approves
+                // the claim, which reassigns the shift). Past shifts are kept
+                // (hours history / audit). Skip any shift with a claim already
+                // in flight (offerStatus 'pending') so we don't stomp it.
+                // Andrew 2026-06-23.
                 if (removedName) {
                     try {
                         const today = new Date();
@@ -2262,13 +2266,25 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         ));
                         if (!futureShifts.empty) {
                             const batch = writeBatch(db);
-                            futureShifts.forEach(d => batch.delete(d.ref));
+                            futureShifts.forEach(d => {
+                                if ((d.data() || {}).offerStatus === 'pending') return; // claim mid-flight — leave it
+                                batch.update(d.ref, {
+                                    offerStatus: 'open',
+                                    offeredBy: removedName,
+                                    offeredAt: serverTimestamp(),
+                                    offerNote: 'Staff removed — shift open for pickup',
+                                    offerUrgent: false,
+                                    coverNeeded: false,
+                                    coverNeededAt: null,
+                                    pendingClaimBy: null,
+                                    claimedAt: null,
+                                    updatedAt: serverTimestamp(),
+                                });
+                            });
                             await batch.commit();
-                            // MED-5, 2026-05-30: removed [handleRemoveStaff] console.log;
-                            // the cascade is observable in /shifts collection diff anyway.
                         }
                     } catch (e) {
-                        console.warn('cascade shift cleanup failed:', e);
+                        console.warn('cascade shift offer failed:', e);
                     }
                     // 2026-06-16 (#24): strip the removed name from chat
                     // membership/admins so a future same-name hire can't inherit

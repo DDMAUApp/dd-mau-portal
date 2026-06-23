@@ -8959,6 +8959,15 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
                     onToggleSelection(shift.id);
                 }
             }}
+            onDoubleClick={(e) => {
+                // Manager/admin quick "put up for grabs": double-click any
+                // shift you can edit to open the offer composer. Works on ANY
+                // owner's shift (the inline offer button is own-shift only).
+                // Andrew 2026-06-23. Touch users get the same via long-press.
+                if (!canEdit) return;
+                e.preventDefault();
+                onOfferShift?.(shift);
+            }}
             onContextMenu={(e) => { if (!canEdit) return; e.preventDefault(); setMenuOpen(true); }}
             onTouchStart={beginLongPress}
             onTouchEnd={cancelLongPress}
