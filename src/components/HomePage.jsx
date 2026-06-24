@@ -209,22 +209,21 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         // .ddmau-app-backdrop class so the lock screen matches the rest
         // of the app's backdrop (refined 3-stop gradient + soft radial
         // top-light from Batch A). One source of truth for the canvas.
-        // iOS tap-target fix (2026-06-24): min-h-screen = 100vh is the LARGE
-        // iOS viewport (taller than what's visible), and justify-center then
-        // pushes the lower keypad rows (7-8-9) below the visible/interactive
-        // fold + into the home-indicator zone — so a key like "9" reads as
-        // un-pressable until you scroll ("pull up"). Andrew: "the 9 is not
-        // pressable when the keypad is low; pull it up and it works."
-        //   • minHeight:100dvh — the DYNAMIC viewport = the actually-visible
-        //     height, so centered content never overflows below the fold.
-        //     (min-h-screen stays as the fallback for any engine w/o dvh.)
-        //   • justify-content:'safe center' — centers when it fits but falls
-        //     back to top-aligned + page-scroll on short phones, so every key
-        //     stays reachable instead of clipping.
-        //   • bottom padding clears the home indicator's gesture strip.
-        <div className="ddmau-app-backdrop flex flex-col items-center min-h-screen p-4"
-            style={{ minHeight: '100dvh', justifyContent: 'safe center', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
-            <div className="text-center mb-8">
+        // iOS lock-screen NO-SCROLL fix (2026-06-24). Andrew: a cold launch is
+        // smooth, but "if i move the screen up and down it gets stuck again —
+        // i think that was the problem to begin with." That scroll IS the bug:
+        // the content was ~800px tall vs a ~700px visible viewport, so the page
+        // could scroll, and dragging it on a post-resume (degraded) WKWebView
+        // compositor jams the keypad. FIX: lock the screen to exactly the
+        // visible height and FORBID scrolling — height:100dvh + overflow:hidden
+        // — and shrink the logo + margins (below) so the keypad always fits
+        // inside. No scroll surface ⇒ the up/down drag does nothing ⇒ no jam.
+        // `safe center` keeps it centered when it fits but top-aligns on a tiny
+        // phone so the keypad never clips (only the bottom chip would). Pairs
+        // with the v1.0.123 lightweight-keypad flatten. Web/desktop unaffected.
+        <div className="ddmau-app-backdrop flex flex-col items-center overflow-hidden p-4"
+            style={{ height: '100dvh', justifyContent: 'safe center', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+            <div className="text-center mb-4">
                 {/* DD Mau logo — the actual brand mark (scooter + lotus
                     over the DD MAU wordmark + VIETNAMESE EATERY tagline).
                     Replaces the previous 🍜 emoji + "DD Mau" text. If
@@ -244,10 +243,10 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                 <img
                     src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
                     alt="DD Mau Vietnamese Eatery"
-                    width="176"
-                    height="176"
+                    width="128"
+                    height="128"
                     style={{ aspectRatio: '1 / 1' }}
-                    className="mx-auto h-44 w-44 object-contain mb-4 select-none pointer-events-none"
+                    className="mx-auto h-32 w-32 object-contain mb-2 select-none pointer-events-none"
                     draggable={false}
                 />
                 <p className="text-headline text-dd-text-2">{t("staffPortal", language)}</p>
@@ -380,7 +379,7 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                         : "Lost your onboarding link? Tap to resend"}
                 </button>
             )}
-            <div className="mt-6">
+            <div className="mt-3">
                 <InstallAppButton language={language} compact />
             </div>
             {showRecover && (
