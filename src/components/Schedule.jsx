@@ -8154,6 +8154,11 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
             let lunchLeads = 0, lunchManagers = 0;
             let dinnerLeads = 0, dinnerManagers = 0;
             for (const sh of dayShifts) {
+                // Don't count shifts that are up for grabs (offerStatus
+                // 'open') or unassigned — nobody is committed to them, so they
+                // shouldn't inflate the day's lunch/dinner staffing count
+                // (esp. a removed staffer's now-open shift). Andrew 2026-06-23.
+                if (sh.offerStatus === 'open' || !sh.staffName) continue;
                 const sm = toMin(sh.startTime);
                 const em = toMin(sh.endTime);
                 if (sm == null || em == null) continue;
