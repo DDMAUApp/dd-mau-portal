@@ -57,4 +57,24 @@ fi
 npx @capgo/cli@latest bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION"
 echo "  ✓ OTA v$VERSION uploaded to channel '$CHANNEL' — phones update on next open."
 
+# 5) Post-deploy verification (Debug/QA automation). Calls the read-only
+#    healthCheck Cloud Function, which records the deploy to /deploys + runs
+#    site/Firestore liveness checks → /health_checks. NON-FATAL: the deploy
+#    already shipped above; this just records + flags. Web version propagation
+#    (GitHub Pages, ~1-2 min) is verified separately by the scheduled check, so
+#    a brief version mismatch here is expected and informational only.
+SHA="$(git rev-parse --short HEAD)"
+HC_URL="https://us-central1-dd-mau-staff-app.cloudfunctions.net/healthCheck?version=$VERSION&sha=$SHA&trigger=deploy"
+echo "▸ Recording deploy + health check…"
+if curl -fsS --max-time 30 "$HC_URL" -o /tmp/dd_healthcheck.json 2>/dev/null; then
+  if grep -q '"ok":true' /tmp/dd_healthcheck.json; then
+    echo "  ✓ Site + Firestore reachable; deploy recorded (v$VERSION)."
+  else
+    echo "  ⚠ Health check flagged a failure — see the Debug dashboard:"
+    cat /tmp/dd_healthcheck.json; echo
+  fi
+else
+  echo "  ⚠ Health check endpoint unreachable (deploy still shipped; the scheduled check will catch up)."
+fi
+
 echo "✅ Deploy complete — web live; apps on v$VERSION."

@@ -93,6 +93,7 @@ const APNS_TEAM_ID = defineSecret("APNS_TEAM_ID");
 // declare `secrets: [SENTRY_DSN]` in its options block — Firebase
 // only mounts secrets on functions that explicitly list them.
 const { initSentry: initBackendSentry, captureWithContext } = require("./sentry");
+const { runHealthChecks } = require("./healthChecks");
 try {
     const dsn = SENTRY_DSN.value();
     initBackendSentry({
@@ -4864,6 +4865,45 @@ exports.onCriticalError = onDocumentCreated(
             captureWithContext(e, { fn: "onCriticalError", tags: { phase: "cooldown" } });
         }
         logger.info(`onCriticalError: recorded sig="${sig}" ref=${event.params.id.slice(0, 8)} — bell fan-out disabled per owner directive.`);
+    },
+);
+
+// ── Health-check engine (Debug/QA automation, 2026-06-24) ──────────────
+// Server-side, always-on, read-only probes (site/version/Firestore/scraper/
+// recent-errors). Records to /health_checks + /health_check_runs + /deploys,
+// and escalates a HARD failure (site/Firestore down) to a critical
+// /error_logs row (cooldown-deduped) → onCriticalError + the cloud agent.
+// No bell/SMS — the agent's PR is the signal. See DEBUG_AUTOMATION_PLAN.md.
+
+// Scheduled: morning + midday + evening (CT). Escalates hard failures.
+exports.healthCheckScheduled = onSchedule(
+    { schedule: "0 8,13,20 * * *", timeZone: "America/Chicago", region: "us-central1" },
+    async () => {
+        const r = await runHealthChecks(db, { trigger: "scheduled", escalate: true });
+        logger.info(`healthCheckScheduled: ok=${r.ok} hardFails=[${r.hardFails.join(",")}]`);
+    },
+);
+
+// HTTP: post-deploy verification (deploy.sh curls ?version=X) + a "run now"
+// button for the Debug dashboard. Read-only, records the deploy + checks, but
+// does NOT escalate (public endpoint — the scheduled run + agent own alerting).
+exports.healthCheck = onRequest(
+    { region: "us-central1", cors: true },
+    async (req, res) => {
+        try {
+            const version = (req.query.version || "").toString().slice(0, 40) || null;
+            const sha = (req.query.sha || "").toString().slice(0, 40) || null;
+            const r = await runHealthChecks(db, {
+                trigger: version ? "deploy" : "manual",
+                expectedVersion: version,
+                expectedSha: sha,
+                escalate: false,
+            });
+            res.status(r.ok ? 200 : 503).json(r);
+        } catch (e) {
+            logger.error("healthCheck onRequest failed:", e && e.message);
+            res.status(500).json({ ok: false, error: String((e && e.message) || e).slice(0, 300) });
+        }
     },
 );
 
