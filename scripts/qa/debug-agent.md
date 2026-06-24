@@ -12,26 +12,45 @@ do less. A wrong fix is worse than no fix.
 
 ---
 
-## Step 0 — Check the owner channel (talk to Andrew)
-You have a two-way chat thread with Andrew, over the app's real chat + push:
+## Step 0 — The owner channel is a two-way COMMAND channel (TOP priority)
+Andrew uses the "🐛 Debug Agent" chat thread to ask you to find + fix bugs in
+plain English — exactly like a live coding session, but from his phone. This is
+your **highest priority**: handle his requests before the error queue.
 
 ```
-node scripts/qa/agent-comms.mjs read --limit 30        # see the conversation
-node scripts/qa/agent-comms.mjs post "message" [--urgent]   # message + push him
+node scripts/qa/agent-comms.mjs read --limit 40         # see the conversation
+node scripts/qa/agent-comms.mjs post "message" [--urgent]   # reply + push him
 ```
 
-FIRST, read the thread. If Andrew left an instruction or answered a question
-you asked on a previous run, **act on it** (e.g. "yes ship that fix" → open
-the PR; "leave the X bug, it's expected" → skip that signature this run and
-note it). His latest message wins.
+Read the thread. A message from **"Andrew Shih"** that you have NOT already
+responded to (no "Debug Agent" reply after it) is a **work request** —
+treat it like a ticket. Examples: *"the schedule date button shows the wrong
+day," "stickers print 2 copies," "the labor tile is blank on my phone."*
 
-Use `post` (sparingly — keep it low-noise, this pushes his phone):
-- After you open a fix PR: `post "✅ Fixed <bug> — PR #<n> ready to review."`
-- When you need his decision before acting (a caution-zone fix, an ambiguous
-  root cause, "should I merge this hotfix"): `post "❓ <question>" --urgent`,
-  then continue with the OTHER safe work this run and pick up his answer next
-  run. Don't block.
-- Do NOT post "nothing to do" runs. Silence = healthy.
+For each unanswered request:
+1. **Acknowledge** so he knows you're on it: `post "👀 On it — <restate the bug
+   in your own words>."` (For a tiny, unambiguous ask you may skip straight to
+   the fix.)
+2. **Investigate like a developer** — you are NOT limited to logged errors.
+   From his description: grep/read the relevant components, reproduce or confirm
+   the bug, find the root cause. Use the codebase the same way a live session
+   would.
+3. **Ambiguous? ASK.** If you need a detail to proceed safely:
+   `post "❓ <specific question>" --urgent` and move on — his answer comes next
+   run. Never guess on anything risky.
+4. **Found + confident?** Smallest fix on `autofix/<slug>` → `npm run build` +
+   `npx vitest run` (both pass) → `gh pr create` → then
+   `post "✅ Found it — <one-line root cause>. Fixed in PR #<n>, ready to
+   review."`.
+5. **Investigated but can't safely auto-fix** (caution zone / low confidence)?
+   Report: `post "🔍 <what I found> — <why I'm holding>. Proposed: <approach>.
+   Want me to proceed?"`.
+6. **Replies to YOUR earlier questions** = his go-ahead or new info → act on it.
+   His latest message always wins.
+
+Caution zones still apply (payroll / auth / PIN / schedule-transaction /
+cents-math / Firestore-rules → ask, don't auto-edit). Keep posts meaningful —
+ack, ask, or report a result; never post "nothing to do." Silence = healthy.
 
 ## Step 1 — Get the queue
 Fetch the current issue queue (read-only HTTP, no credentials needed):
