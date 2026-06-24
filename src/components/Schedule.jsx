@@ -35,6 +35,7 @@ import {
 import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
+import { auditAvailabilityChange, auditPtoChange, auditShiftChange } from '../data/audit';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, aggregateSplh, scheduledHoursByDayPart, variance } from '../data/splh';
 // 2026-05-27 — Andrew: forecast bar redesigned to a weather-channel-
@@ -2039,6 +2040,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 // Prune the linked staffing_need so the Open Slots panel
                 // reflects this delete (no-op when sh.fromNeedId is absent).
                 await pruneNeedAfterShiftDelete(sh);
+                auditShiftChange({ shiftId, staffName: sh.staffName, action: 'deleted',
+                    before: { date: sh.date, startTime: sh.startTime, endTime: sh.endTime, side: sh.side || null }, surface: 'admin-dashboard' });
                 if (wasPublished && sh.staffName) {
                     notify(sh.staffName, 'shift_deleted',
                         { en: `🗑 Shift removed: ${detail}`, es: `🗑 Turno eliminado: ${detail}` },
@@ -2064,6 +2067,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     // Same need-prune as the immediate path. If the user hits
                     // Undo, this callback never runs, so the need stays filled.
                     await pruneNeedAfterShiftDelete(sh);
+                    auditShiftChange({ shiftId, staffName: sh.staffName, action: 'deleted',
+                        before: { date: sh.date, startTime: sh.startTime, endTime: sh.endTime, side: sh.side || null }, surface: 'admin-dashboard' });
                     if (wasPublished && sh.staffName) {
                         await notify(sh.staffName, 'shift_deleted',
                             { en: 'Shift removed', es: 'Turno eliminado' },
@@ -2113,6 +2118,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             });
+            auditShiftChange({ shiftId, staffName: sh.staffName, action: 'edited',
+                before: { startTime: sh.startTime, endTime: sh.endTime }, after: { startTime, endTime }, surface: 'admin-dashboard' });
             // Availability acknowledgment modal on conflict (replaces the
             // toast — toast was easy to miss while the manager kept
             // dragging). See setAvailabilityWarn comment.
@@ -2229,6 +2236,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     updatedAt: serverTimestamp(),
                 });
             });
+            auditShiftChange({ shiftId, staffName: newStaffName, action: 'moved',
+                before: { staffName: oldStaff, date: oldDate }, after: { staffName: newStaffName, date: newDate }, surface: 'admin-dashboard' });
             // Availability acknowledgment modal — same pattern as add and
             // drag-resize, surfaces if the move lands the shift outside
             // the (new) staff's window for the (new) day-of-week.
@@ -2335,6 +2344,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
             });
+            auditShiftChange({ shiftId: myShift.id, staffName, action: 'swap_requested',
+                before: { date: myShift.date }, after: { swapWith: theirShift.staffName, theirShiftId: theirShift.id }, surface: 'self-serve' });
             const dateLine = myShift.date === theirShift.date
                 ? myShift.date
                 : `${myShift.date} ↔ ${theirShift.date}`;
@@ -3923,11 +3934,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const handleAddTimeOff = async (entry) => {
         if (!canEdit) return;
         try {
-            await addDoc(collection(db, 'time_off'), {
+            const ref = await addDoc(collection(db, 'time_off'), {
                 ...entry,
                 status: 'approved', // admin-entered = pre-approved
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
+            });
+            auditPtoChange({
+                entryId: ref.id, staffName: entry.staffName, action: 'created',
+                after: { status: 'approved', startDate: entry.startDate, endDate: entry.endDate || entry.startDate },
+                reason: entry.reason, surface: 'admin-dashboard',
             });
             setShowTimeOffModal(false);
         } catch (e) {
@@ -3948,8 +3964,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!canEdit) return;
         const id = typeof entry === 'string' ? entry : entry?.id;
         if (!id) return;
+        const entryObj = typeof entry === 'object' ? entry : null;
         try {
             await deleteDoc(doc(db, 'time_off', id));
+            auditPtoChange({
+                entryId: id, staffName: entryObj?.staffName, action: 'deleted',
+                before: entryObj ? { status: entryObj.status || 'approved', startDate: entryObj.startDate || entryObj.date, endDate: entryObj.endDate || entryObj.startDate || entryObj.date } : null,
+                surface: 'admin-dashboard',
+            });
             // Deleting an approved/pending entry changes someone's plans —
             // ping them. Denied entries vanish silently (nothing changes
             // for the staff member). Locked-on type so it can't be muted.
@@ -3994,6 +4016,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // already know what they're doing.
         try {
             await deleteDoc(doc(db, 'time_off', entry.id));
+            auditPtoChange({
+                entryId: entry.id, staffName: entry.staffName, action: 'deleted',
+                before: { status, startDate: entry.startDate || entry.date, endDate: entry.endDate || entry.startDate || entry.date },
+                reason: 'staff withdrew own request', surface: 'self-serve',
+            });
             // Approved withdraws notify admins. Pending cancels stay
             // silent — the original "pto_request" notification's tag
             // (pto_request:<id>) collapses naturally when clicked since
@@ -4086,6 +4113,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 submittedAt: serverTimestamp(),
                 createdAt: serverTimestamp(),
             });
+            auditPtoChange({
+                entryId: ref.id, staffName, action: 'created',
+                after: { status: 'pending', startDate: entry.startDate, endDate: entry.endDate || entry.startDate },
+                reason: entry.reason, surface: 'self-serve',
+            });
             setShowPtoRequestModal(false);
             toast(tx('✅ Request submitted. A manager will review it.', '✅ Solicitud enviada. Un gerente la revisará.'));
             // Ping admins so they actually know to go review it. Tag
@@ -4160,6 +4192,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // saved as approved, but the staff notify below never fired and the
             // manager saw a false "Could not approve" toast. Same expression as
             // handleDenyPto. Audit 2026-06-09.
+            auditPtoChange({
+                entryId: entry.id, staffName: entry.staffName, action: 'approved',
+                before: { status: 'pending' }, after: { status: 'approved' },
+                surface: 'admin-dashboard',
+            });
             const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
             await notify(entry.staffName, 'pto_approved',
                 { en: 'Time-off approved', es: 'Tiempo libre aprobado' },
@@ -4233,6 +4270,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         reviewedAt: serverTimestamp(),
                     });
                 }
+            });
+            auditPtoChange({
+                entryId: entry.id, staffName: entry.staffName,
+                action: newStatus === 'pending' ? 'reopened' : newStatus,
+                before: { status: fromStatus }, after: { status: newStatus },
+                surface: 'admin-dashboard',
             });
             const range = (entry.startDate || entry.date) + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
             const copy = {
@@ -4309,6 +4352,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     reviewedAt: serverTimestamp(),
                 });
             });
+            auditPtoChange({
+                entryId: entry.id, staffName: entry.staffName, action: 'denied',
+                before: { status: 'pending' }, after: { status: 'denied' },
+                surface: 'admin-dashboard',
+            });
             const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
             await notify(entry.staffName, 'pto_denied',
                 { en: 'Time-off denied', es: 'Tiempo libre negado' },
@@ -4380,6 +4428,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const handleSaveMyAvailability = async (newAvailability) => {
         if (!staffList || !setStaffList) return;
+        // Snapshot the pre-change availability for the audit trail (read
+        // before the optimistic update swaps the record out).
+        const meRec = staffList.find(s => s.name === staffName);
+        const beforeAvail = meRec ? (meRec.availability || null) : null;
         // Optimistic local update for snappy UI.
         const updatedLocal = staffList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
         setStaffList(updatedLocal);
@@ -4408,6 +4460,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     throw new Error(`PIN integrity check failed on ${bad.name}`);
                 }
                 tx.set(ref, { list: next });
+            });
+            // Audit 2026-06-24: log every availability change (who / old /
+            // new / where / how) for the Debug/QA change-history. Best-effort.
+            auditAvailabilityChange({
+                staffId: meRec?.id, staffName,
+                before: beforeAvail, after: newAvailability,
+                surface: 'self-serve',
             });
         } catch (e) {
             console.error('Save availability failed:', e);

@@ -10,6 +10,7 @@ import { getPositionTemplate, hasPositionTemplate } from '../data/positionTempla
 // separate chunk that failed to load on a stale-cached PWA — the rename then
 // silently no-op'd while the staff record had already saved (orphaned data).
 import { renameStaffEverywhere, removeStaffFromChats } from '../data/renameStaff';
+import { auditAvailabilityChange } from '../data/audit';
 import {
     normalizeToE164,
     formatE164ForDisplay,
@@ -3335,16 +3336,27 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             // Read fresh availability from `prev` rather than
                             // closing over `avail` from the parent scope.
                             let latest = null;
+                            let auditDiff = null;
                             setStaffList(prev => {
                                 const me = prev.find(s => s.id === person.id);
                                 const curAvail = (me && me.availability) || {};
                                 const cur = curAvail[dayKey] || { available: true, from: "09:00", to: "21:00" };
                                 const nextDay = { ...cur, ...patch };
                                 const nextAvail = { ...curAvail, [dayKey]: nextDay };
+                                auditDiff = { before: { [dayKey]: cur }, after: { [dayKey]: nextDay } };
                                 latest = prev.map(s => s.id === person.id ? { ...s, availability: nextAvail } : s);
                                 return latest;
                             });
-                            if (latest) await saveStaffToFirestore(latest);
+                            if (latest) {
+                                await saveStaffToFirestore(latest);
+                                // Audit 2026-06-24: manager-edited availability →
+                                // Debug/QA change-history (who/old/new/where). Best-effort.
+                                if (auditDiff) auditAvailabilityChange({
+                                    staffId: person.id, staffName: person.name,
+                                    before: auditDiff.before, after: auditDiff.after,
+                                    surface: 'admin-dashboard',
+                                });
+                            }
                         };
                         return (
                             <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
