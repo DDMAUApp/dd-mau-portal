@@ -387,10 +387,14 @@
             0 20px 42px -12px rgba(30, 80, 140, 0.20);
     }
     .glass-keypad-button:active {
-        transform: scale(0.94);
+        /* 2026-06-24 — snap IN instantly (transition:none) so a fast tap still
+           visibly depresses; the spring-BACK on release eases via the base
+           transition. Firmer scale + a deeper inset = a real "pressed" feel. */
+        transition: none;
+        transform: scale(0.92);
         box-shadow:
             inset 0 1px 0 rgba(255, 255, 255, 0.85),
-            inset 0 -2px 3px rgba(35, 65, 115, 0.10),
+            inset 0 -2px 5px rgba(35, 65, 115, 0.16),
             0 0px 1px rgba(30, 60, 110, 0.07),
             0 1px 3px rgba(30, 70, 130, 0.08);
     }
@@ -430,7 +434,8 @@
             );
     }
     .glass-keypad-button-secondary:active {
-        transform: scale(0.94);
+        transition: none;
+        transform: scale(0.92);
     }
     /* Primary OK key — brand green, same dimensional shadow grammar
        as the glass keys so it doesn't read flat next to them. */
@@ -471,7 +476,8 @@
             0 20px 42px -12px rgba(15, 60, 35, 0.50);
     }
     .glass-keypad-button-primary:active {
-        transform: scale(0.94);
+        transition: none;
+        transform: scale(0.92);
     }
     /* Browsers without backdrop-filter fall back to a near-opaque cool
        tint so the keys still read as discrete buttons. */
@@ -486,6 +492,15 @@
     .glass-keypad-button-secondary,
     .glass-keypad-button-primary {
         touch-action: manipulation;
+        /* 2026-06-24 — instant, reliable tap feedback ("make the button press
+           better"). iOS ALWAYS flashes -webkit-tap-highlight-color on a tap —
+           even a 10ms one, where :active is too brief to see — so a visible
+           brand-green flash confirms EVERY press regardless of how fast the
+           finger lifts. user-select:none kills the text-selection flicker on a
+           fast repeat-tap. */
+        -webkit-tap-highlight-color: rgba(31, 122, 77, 0.22);
+        -webkit-user-select: none;
+        user-select: none;
     }
 
     /* 2026-06-23 — iOS/Android WKWebView lock-screen lag fix.
