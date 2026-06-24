@@ -4819,6 +4819,41 @@ Body snippet: ${snippet}`;
 // Dedup: /system/error_alert_cooldown_{sigHash} doc carries the last
 // observation time per signature. Useful for "this error has fired N
 // times in the past hour" telemetry in the Error Report dashboard.
+// notifyOwnerOfBug — live-debugging ping (2026-06-24). Posts a one-liner into
+// the "🐛 Debug Agent" chat thread (the same thread the agent uses, so the
+// conversation stays in one place) + a /notifications doc → dispatchNotification
+// pushes Andrew instantly. Called by onCriticalError ONLY for genuinely-new
+// frontend code bugs (deduped per signature). Ops/infra (ScraperStale,
+// HealthCheckFailed) are skipped — they're not code bugs.
+async function notifyOwnerOfBug(feature, errorName) {
+    const OWNER = "Andrew Shih";
+    const CHAT_ID = "debug_agent";
+    const chatRef = db.doc(`chats/${CHAT_ID}`);
+    const snap = await chatRef.get();
+    if (!snap.exists) {
+        await chatRef.set({
+            type: "group", name: "🐛 Debug Agent", emoji: "🐛",
+            members: [OWNER, "Debug Agent"], admins: [OWNER],
+            createdBy: "Debug Agent", createdByTier: "admin", editTier: "admin",
+            createdAt: FieldValue.serverTimestamp(), lastActivityAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+    }
+    const line = `🐛 New bug detected: ${errorName || "Error"}${feature ? ` in ${feature}` : ""}. I'll investigate and fix it on the next agent run.`;
+    await chatRef.collection("messages").add({
+        senderName: "Debug Agent", type: "text", text: line, createdAt: FieldValue.serverTimestamp(),
+    });
+    await chatRef.set({
+        lastMessage: { text: line.slice(0, 120), sender: "Debug Agent", ts: FieldValue.serverTimestamp(), type: "text" },
+        lastActivityAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    await db.collection("notifications").add({
+        forStaff: OWNER, type: "chat_message", chatId: CHAT_ID,
+        title: "🐛 New bug detected", body: line.slice(0, 160),
+        deepLink: "chat", link: "/chat", read: false,
+        createdAt: FieldValue.serverTimestamp(),
+    });
+}
+
 exports.onCriticalError = onDocumentCreated(
     { document: "error_logs/{id}", region: "us-central1", secrets: [SENTRY_DSN] },
     async (event) => {
@@ -4846,25 +4881,39 @@ exports.onCriticalError = onDocumentCreated(
 
         // Stamp the cooldown doc with the latest observation. Read-modify-
         // write in a transaction so concurrent crits keep an accurate
-        // hit-count. The lastAlertMs name is preserved for backcompat
-        // with the previous notification-fan-out version.
+        // hit-count. lastPushMs dedups the owner ping separately from
+        // lastAlertMs (one live-debugging ping per signature / 30 min).
+        const PUSH_COOLDOWN_MS = 30 * 60 * 1000;
+        // Only ping for real CODE bugs (frontend). Watchdog/healthcheck rows
+        // (ScraperStale, HealthCheckFailed) are ops/infra noise — skip them.
+        const isCodeBug = String(data.source || "frontend") === "frontend";
+        let shouldPush = false;
         try {
             await db.runTransaction(async (txn) => {
                 const cur = await txn.get(cooldownRef);
                 const prev = cur.exists ? cur.data() || {} : {};
+                const nowMs = Date.now();
+                shouldPush = isCodeBug && (!prev.lastPushMs || nowMs - prev.lastPushMs > PUSH_COOLDOWN_MS);
                 txn.set(cooldownRef, {
-                    lastAlertMs: Date.now(),
+                    lastAlertMs: nowMs,
                     lastSig: sig.slice(0, 200),
                     lastErrorLogId: event.params.id,
                     hitCount: (prev.hitCount || 0) + 1,
-                    firstSeenMs: prev.firstSeenMs || Date.now(),
+                    firstSeenMs: prev.firstSeenMs || nowMs,
+                    ...(shouldPush ? { lastPushMs: nowMs } : {}),
                 }, { merge: true });
             });
         } catch (e) {
             logger.warn(`onCriticalError: cooldown stamp failed for sig=${sig}:`, e?.message || e);
             captureWithContext(e, { fn: "onCriticalError", tags: { phase: "cooldown" } });
         }
-        logger.info(`onCriticalError: recorded sig="${sig}" ref=${event.params.id.slice(0, 8)} — bell fan-out disabled per owner directive.`);
+        // Live-debugging ping (2026-06-24): a genuinely-new frontend code bug
+        // pings Andrew instantly via the Debug Agent chat thread + push.
+        if (shouldPush) {
+            try { await notifyOwnerOfBug(data.feature, data.errorName); }
+            catch (e) { logger.warn(`onCriticalError: owner ping failed for sig=${sig}:`, e?.message || e); }
+        }
+        logger.info(`onCriticalError: recorded sig="${sig}" ref=${event.params.id.slice(0, 8)} push=${shouldPush}`);
     },
 );
 

@@ -12,6 +12,27 @@ do less. A wrong fix is worse than no fix.
 
 ---
 
+## Step 0 — Check the owner channel (talk to Andrew)
+You have a two-way chat thread with Andrew, over the app's real chat + push:
+
+```
+node scripts/qa/agent-comms.mjs read --limit 30        # see the conversation
+node scripts/qa/agent-comms.mjs post "message" [--urgent]   # message + push him
+```
+
+FIRST, read the thread. If Andrew left an instruction or answered a question
+you asked on a previous run, **act on it** (e.g. "yes ship that fix" → open
+the PR; "leave the X bug, it's expected" → skip that signature this run and
+note it). His latest message wins.
+
+Use `post` (sparingly — keep it low-noise, this pushes his phone):
+- After you open a fix PR: `post "✅ Fixed <bug> — PR #<n> ready to review."`
+- When you need his decision before acting (a caution-zone fix, an ambiguous
+  root cause, "should I merge this hotfix"): `post "❓ <question>" --urgent`,
+  then continue with the OTHER safe work this run and pick up his answer next
+  run. Don't block.
+- Do NOT post "nothing to do" runs. Silence = healthy.
+
 ## Step 1 — Get the queue
 Fetch the current issue queue (read-only HTTP, no credentials needed):
 
@@ -101,6 +122,7 @@ gh pr create --base main --head autofix/<slug> --title "..." --body "..."
   what changed and why · `build + <N> vitest green` · and the line
   *"Auto-opened by the self-healing debug agent — review before merging."*
 - **NEVER** run `gh pr merge`. **NEVER** push to `main`. PRs only.
+- After opening it, ping Andrew: `node scripts/qa/agent-comms.mjs post "✅ Fixed <errorName> — PR #<n> ready to review."`
 
 ## Step 7 — Summarize
 End with a concise report: items fixed (with PR links), items skipped and why
