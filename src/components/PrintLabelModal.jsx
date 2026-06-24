@@ -102,6 +102,27 @@ export default function PrintLabelModal({
             : [...prev, code]);
     }, []);
 
+    // 2026-06-24 — prep-date override. When a sauce is portioned from an
+    // EARLIER batch, the label needs to show the real made-date, not today.
+    // Double-clicking the big date in the preview (or the 📅 chip) opens this.
+    const [prepDate, setPrepDate] = useState(() => new Date());
+    const [editingDate, setEditingDate] = useState(false);
+    // Date <-> <input type="date"> (yyyy-mm-dd). Build the chosen date at
+    // LOCAL noon so a tz/DST shift can't bump the printed calendar day (the
+    // same care buildLabelPayload's shelf-life math takes).
+    const toInputDate = (d) => {
+        const x = d instanceof Date && !isNaN(d) ? d : new Date();
+        return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+    };
+    const onPickDate = (val) => {
+        const [y, m, day] = String(val || '').split('-').map(Number);
+        if (y && m && day) setPrepDate(new Date(y, m - 1, day, 12, 0, 0, 0));
+    };
+    const isToday = (() => {
+        const n = new Date();
+        return prepDate.getFullYear() === n.getFullYear() && prepDate.getMonth() === n.getMonth() && prepDate.getDate() === n.getDate();
+    })();
+
     // The recipe-shaped object we feed downstream. In editable mode
     // we synthesize it from local state so the preview + the final
     // print payload both reflect the user's edits. useMemo — as an
@@ -164,7 +185,7 @@ export default function PrintLabelModal({
     const previewPayload = useMemo(() => buildLabelPayload({
         itemName: effectiveRecipe?.titleEn || effectiveRecipe?.title || 'Item',
         itemNameEs: effectiveRecipe?.titleEs,
-        prepDate: new Date(),
+        prepDate,
         shelfLifeDays,
         preppedBy: staffName,
         location: locationLabel(location),
@@ -175,7 +196,7 @@ export default function PrintLabelModal({
         format: labelFormat,
         paperWidthMm: printer?.paperWidthMm,
         leftOffsetMm: printer?.leftOffsetMm,
-    }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes, labelFormat, printer?.paperWidthMm, printer?.leftOffsetMm]);
+    }), [effectiveRecipe, prepDate, shelfLifeDays, staffName, location, language, notes, labelFormat, printer?.paperWidthMm, printer?.leftOffsetMm]);
     // Defer the preview one beat behind input. Without this, every
     // keystroke / chip tap re-painted the preview in the SAME frame as
     // the input echo — on older iPads that dropped frames ("glitchy",
@@ -228,6 +249,7 @@ export default function PrintLabelModal({
             byName: staffName,
             copies,
             source,
+            prepDate,
             shouldAbort: () => cancelledRef.current,
         });
         setPrinting(false);
@@ -305,11 +327,36 @@ export default function PrintLabelModal({
 
                     {/* Preview — what the printer will produce */}
                     <div>
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
-                            {tx('Preview (what prints)', 'Vista previa')}
+                        <div className="flex items-center justify-between mb-1.5">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
+                                {tx('Preview (what prints)', 'Vista previa')}
+                            </div>
+                            {/* 2026-06-24 — date override for sauces portioned
+                                from an earlier batch. Chip turns green once a
+                                non-today date is set so it's obvious. */}
+                            <button type="button" onClick={() => setEditingDate(v => !v)}
+                                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border transition ${editingDate || !isToday ? 'bg-dd-green text-white border-dd-green' : 'bg-dd-bg text-dd-text-2 border-dd-line hover:bg-dd-sage-50'}`}>
+                                📅 {isToday ? tx('Change date', 'Cambiar fecha') : tx('Date changed', 'Fecha cambiada')}
+                            </button>
                         </div>
+                        {editingDate && (
+                            <div className="mb-1.5 flex items-center gap-2 bg-dd-sage-50 border border-dd-green/30 rounded-lg p-2">
+                                <input type="date" value={toInputDate(prepDate)} max={toInputDate(new Date())}
+                                    onChange={e => onPickDate(e.target.value)} autoFocus
+                                    className="text-base flex-1 min-w-0 bg-white border border-dd-line rounded px-2 py-1 text-dd-text" />
+                                {!isToday && (
+                                    <button type="button" onClick={() => setPrepDate(new Date())}
+                                        className="text-[11px] font-bold text-dd-text-2 px-2 py-1 rounded hover:bg-white">{tx('Today', 'Hoy')}</button>
+                                )}
+                                <button type="button" onClick={() => setEditingDate(false)}
+                                    className="text-[11px] font-bold text-dd-green px-2 py-1 rounded hover:bg-white">{tx('Done', 'Listo')}</button>
+                            </div>
+                        )}
                         <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 text-dd-text">
-                            <LabelPreview payload={deferredPayload} />
+                            <LabelPreview payload={deferredPayload} onEditDate={() => setEditingDate(true)} />
+                        </div>
+                        <div className="text-[10px] text-dd-text-2 mt-1 text-center">
+                            {tx('Made earlier? Double-tap the date to change it.', '¿Hecho antes? Toca dos veces la fecha para cambiarla.')}
                         </div>
                     </div>
 
@@ -555,16 +602,21 @@ const CopiesSection = memo(function CopiesSection({ copies, setCopies, isEs }) {
 // memo: with effectiveRecipe/previewPayload stable above, copies +/-
 // and other unrelated taps now skip re-rendering the preview entirely
 // — it only repaints when the label content actually changes.
-const LabelPreview = memo(function LabelPreview({ payload }) {
+const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
+    // The big date is double-click / double-tap to edit (Andrew 2026-06-24 —
+    // portioning a sauce made on an earlier date).
+    const editAttrs = onEditDate ? { onDoubleClick: onEditDate, title: 'Double-click to change the date' } : {};
+    const editCls = onEditDate ? ' cursor-pointer' : '';
     return (
         <div className="text-center font-sans">
             {payload.prepDateLabel && (
-                <div className="text-[10px] font-bold uppercase tracking-widest text-dd-text-2">
+                <div {...editAttrs} className={`text-[10px] font-bold uppercase tracking-widest text-dd-text-2${editCls}`}>
                     {payload.prepDateLabel}
                 </div>
             )}
             {payload.prepDateNumber ? (
-                <div className="font-black tabular-nums text-dd-text leading-none mb-0.5"
+                <div {...editAttrs}
+                    className={`font-black tabular-nums text-dd-text leading-none mb-0.5${editCls}`}
                     style={{
                         // 8px per Epson scale unit so admin's chosen
                         // size (2..8) maps to a meaningful preview
@@ -575,7 +627,8 @@ const LabelPreview = memo(function LabelPreview({ payload }) {
                     {payload.prepDateNumber}
                 </div>
             ) : payload.prepDateBig ? (
-                <div className="font-black tabular-nums text-dd-text leading-none mb-0.5"
+                <div {...editAttrs}
+                    className={`font-black tabular-nums text-dd-text leading-none mb-0.5${editCls}`}
                     style={{ fontSize: '24px' }}>
                     {payload.prepDateBig}
                 </div>

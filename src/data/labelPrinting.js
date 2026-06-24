@@ -1978,6 +1978,10 @@ export async function printPrepLabel({
     location, slot = DEFAULT_PRINTER_SLOT,
     recipe, preppedBy, shelfLifeDays, language = 'en',
     notes, byName, copies = 1, source = 'recipe',
+    // Andrew 2026-06-24: portioning a sauce made on an EARLIER date —
+    // double-clicking the date in the print preview overrides it so the
+    // label reflects the real made-date. Defaults to now when omitted.
+    prepDate = new Date(),
     // Andrew 2026-06-11: "couple of time i canceled the print and then
     // it came out." Cancel used to only close the modal — the queued
     // job kept going and printed seconds later. Callers pass a
@@ -2018,7 +2022,7 @@ export async function printPrepLabel({
         const payload = buildLabelPayload({
             itemName: recipe?.titleEn || recipe?.title || 'Item',
             itemNameEs: recipe?.titleEs,
-            prepDate: new Date(),
+            prepDate,
             shelfLifeDays: days,
             preppedBy: preppedBy || byName,
             location: locationLabel(location),
