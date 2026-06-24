@@ -92,6 +92,31 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         return () => el.removeEventListener('touchmove', blockDrag);
     }, []);
 
+    // 2026-06-24 — force the WKWebView to REBUILD its (degraded-on-resume)
+    // compositor when the app returns to the foreground, so the lock screen
+    // behaves like a cold launch (which is always smooth — that's the whole
+    // tell). Promote→demote the screen to its own GPU layer (a translateZ kick)
+    // to force a re-composite of the keypad subtree. Native-only; the Capacitor
+    // listener is registered async + torn down on unmount (login) with a
+    // cancelled guard (the App.jsx listener-leak pattern).
+    useEffect(() => {
+        if (!window.Capacitor?.isNativePlatform?.()) return;
+        let handle, cancelled = false;
+        (async () => {
+            try {
+                const { App } = await import('@capacitor/app');
+                if (cancelled) return;
+                handle = await App.addListener('appStateChange', ({ isActive }) => {
+                    const el = screenRef.current;
+                    if (!isActive || !el) return;
+                    el.style.transform = 'translateZ(0)';
+                    requestAnimationFrame(() => { if (el) el.style.transform = ''; });
+                });
+            } catch { /* @capacitor/app unavailable — no-op */ }
+        })();
+        return () => { cancelled = true; handle?.remove?.(); };
+    }, []);
+
     // Tick once a second while locked so the countdown updates.
     // MED-1, 2026-05-30: `now` was previously in the dep array, which
     // tore down + recreated the interval EVERY tick. Removing it lets

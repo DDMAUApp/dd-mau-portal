@@ -489,6 +489,42 @@
     .glass-keypad-button-primary {
         touch-action: manipulation;
     }
+    /* 2026-06-24 — keypad STILL glitchy on iOS after every effect-strip + the
+       drag-block + touch-action. LAST RESORT: make the NATIVE keys DEAD FLAT —
+       solid fill, 1px border, ZERO shadow / gradient / blur / transition /
+       transform. A degraded post-resume WKWebView compositor then has nothing
+       expensive to repaint, so taps are instant + reliable. Web/desktop keep
+       the full glass. (Overrides every keypad rule above via !important.) */
+    body.capacitor-native .glass-keypad-button {
+        background: #f3f8ff !important;
+        box-shadow: none !important;
+        border: 1px solid rgba(120, 160, 215, 0.35) !important;
+        transition: none !important;
+    }
+    body.capacitor-native .glass-keypad-button-secondary {
+        background: #e9f1fe !important;
+        box-shadow: none !important;
+        border: 1px solid rgba(120, 160, 215, 0.30) !important;
+        transition: none !important;
+    }
+    body.capacitor-native .glass-keypad-button-primary {
+        background: #1F7A4D !important;
+        box-shadow: none !important;
+        border: 1px solid rgba(8, 50, 30, 0.35) !important;
+        transition: none !important;
+    }
+    body.capacitor-native .glass-keypad-button:active {
+        background: #dceafe !important;
+        transform: none !important;
+    }
+    body.capacitor-native .glass-keypad-button-secondary:active {
+        background: #d6e6fd !important;
+        transform: none !important;
+    }
+    body.capacitor-native .glass-keypad-button-primary:active {
+        background: #176540 !important;
+        transform: none !important;
+    }
 
     /* 2026-06-23 — iOS/Android WKWebView lock-screen lag fix.
        The PIN pad renders 11 live `backdrop-filter: blur(28px)` discs.
