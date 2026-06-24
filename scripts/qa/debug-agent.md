@@ -39,11 +39,22 @@ Classify every `criticalError`:
   — an ops action, not a code change. The known remedy for `ScraperStale` is
   **restart the `dd-mau-labor-scraper` Railway service**. Note it in your
   summary and move on. (The watchdog already records these; you don't re-log.)
+  - **`source: watchdog` / `healthcheck` ALWAYS wins** — it is never a code PR,
+    no matter what `feature` or `errorName` looks like. Source is the gate; the
+    feature/name text is only a hint for the *code-bug* branch below.
+  - **Collapse one incident.** One scraper writes all the labor/86 docs, so
+    multiple `ScraperStale` signatures (both locations, labor + 86) at the same
+    staleness are **one incident → one restart**, not N problems. Say so.
 
 - **CODE BUG — candidate for a PR.** `source` is `frontend` (a genuine app
   crash) with a `stack`/`feature`/`componentStack` pointing at app code
   (e.g. a `TypeError` in `Schedule` / `Operations` / `ChatThread`). These are
   your targets.
+  - **Recency guard.** Prefer errors that are RECENT (`lastSeen` within ~24h)
+    and/or recurring (`count` ≥ 2). A single occurrence that's >24h stale and
+    hasn't recurred is likely already fixed or a one-off — **note it, don't
+    open a confident PR** (draft-PR the diagnosis at most). Don't "fix" the
+    past.
 
 ## Step 3 — Dedup
 Before fixing a code bug, check for an existing open PR:
