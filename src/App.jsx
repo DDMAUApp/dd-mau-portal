@@ -1740,6 +1740,15 @@ export default function App() {
                         try { disableFcmPush(staffName); } catch {}
                         setStaffName(null);
                         setActiveTab('home');
+                        // 2026-06-24 KEYPAD FIX: a FRESH page load logs in
+                        // perfectly every time; only the soft-re-mounted 2nd
+                        // login develops the iOS hit-target offset (tap 9 →
+                        // OK fires) — WKWebView desyncs its hit-test layer from
+                        // the paint on a re-mount. So make logout a true fresh
+                        // start: reload once the session has cleared, so EVERY
+                        // login is a "first login". (Mirrors the 50ms reload
+                        // pattern used elsewhere in this file.)
+                        setTimeout(() => { try { window.location.reload(); } catch {} }, 60);
                     }}
                 />
             </Suspense>
@@ -1904,6 +1913,10 @@ export default function App() {
                         try { disableFcmPush(staffName); } catch {}
                         setStaffName(null);
                         setActiveTab('home');
+                        // 2026-06-24 KEYPAD FIX (see onSignOut above): reload so
+                        // every login is a fresh "first login" — the only one
+                        // that doesn't hit the iOS keypad hit-target offset.
+                        setTimeout(() => { try { window.location.reload(); } catch {} }, 60);
                     }}
                     // Same forceRefresh used by pull-to-refresh + the legacy
                     // sidebar's refresh button. Clears all caches and reloads.

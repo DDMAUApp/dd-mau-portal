@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
@@ -69,53 +69,6 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
     // can't probe whether an address is on file).
     const [showRecover, setShowRecover] = useState(false);
     const isEs = language === "es";
-    const screenRef = useRef(null);
-
-    // 2026-06-24 — iOS keypad fix, round 5: KILL THE RUBBER-BAND DRAG.
-    // Even with the screen locked to 100dvh + overflow:hidden (so nothing
-    // actually scrolls), iOS WKWebView STILL elastic-bounces the whole webview
-    // when you drag it, and a tap that lands during that bounce misses the
-    // keypad — Andrew: "even if fresh, if i move the screen up and down it's
-    // not pressing right." Block the drag outright: a NON-PASSIVE touchmove
-    // preventDefault on the lock-screen element for as long as it's mounted.
-    // (React's onTouchMove is registered PASSIVE, so preventDefault there is
-    // ignored — must attach natively with {passive:false}.) Taps
-    // (touchstart→click) are unaffected; only the scroll/bounce gesture is
-    // killed. Scoped to this element (not the document) so any portal'd modal
-    // and the rest of the app — chat keyboard hit-targets etc. — are untouched.
-    // The content already fits, so there is nothing here that needs to scroll.
-    useEffect(() => {
-        const el = screenRef.current;
-        if (!el) return;
-        const blockDrag = (e) => { e.preventDefault(); };
-        el.addEventListener('touchmove', blockDrag, { passive: false });
-        return () => el.removeEventListener('touchmove', blockDrag);
-    }, []);
-
-    // 2026-06-24 — force the WKWebView to REBUILD its (degraded-on-resume)
-    // compositor when the app returns to the foreground, so the lock screen
-    // behaves like a cold launch (which is always smooth — that's the whole
-    // tell). Promote→demote the screen to its own GPU layer (a translateZ kick)
-    // to force a re-composite of the keypad subtree. Native-only; the Capacitor
-    // listener is registered async + torn down on unmount (login) with a
-    // cancelled guard (the App.jsx listener-leak pattern).
-    useEffect(() => {
-        if (!window.Capacitor?.isNativePlatform?.()) return;
-        let handle, cancelled = false;
-        (async () => {
-            try {
-                const { App } = await import('@capacitor/app');
-                if (cancelled) return;
-                handle = await App.addListener('appStateChange', ({ isActive }) => {
-                    const el = screenRef.current;
-                    if (!isActive || !el) return;
-                    el.style.transform = 'translateZ(0)';
-                    requestAnimationFrame(() => { if (el) el.style.transform = ''; });
-                });
-            } catch { /* @capacitor/app unavailable — no-op */ }
-        })();
-        return () => { cancelled = true; handle?.remove?.(); };
-    }, []);
 
     // Tick once a second while locked so the countdown updates.
     // MED-1, 2026-05-30: `now` was previously in the dep array, which
@@ -256,20 +209,21 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         // .ddmau-app-backdrop class so the lock screen matches the rest
         // of the app's backdrop (refined 3-stop gradient + soft radial
         // top-light from Batch A). One source of truth for the canvas.
-        // iOS lock-screen NO-SCROLL fix (2026-06-24). Andrew: a cold launch is
-        // smooth, but "if i move the screen up and down it gets stuck again —
-        // i think that was the problem to begin with." That scroll IS the bug:
-        // the content was ~800px tall vs a ~700px visible viewport, so the page
-        // could scroll, and dragging it on a post-resume (degraded) WKWebView
-        // compositor jams the keypad. FIX: lock the screen to exactly the
-        // visible height and FORBID scrolling — height:100dvh + overflow:hidden
-        // — and shrink the logo + margins (below) so the keypad always fits
-        // inside. No scroll surface ⇒ the up/down drag does nothing ⇒ no jam.
-        // `safe center` keeps it centered when it fits but top-aligns on a tiny
-        // phone so the keypad never clips (only the bottom chip would). Pairs
-        // with the v1.0.123 lightweight-keypad flatten. Web/desktop unaffected.
-        <div ref={screenRef} className="ddmau-app-backdrop flex flex-col items-center overflow-hidden p-4"
-            style={{ height: '100dvh', justifyContent: 'safe center', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+        // iOS tap-target layout (ef99983, restored 2026-06-24): min-h-screen =
+        // 100vh is the LARGE iOS viewport (taller than what's visible), and
+        // justify-center then pushes the lower keypad rows (7-8-9) below the
+        // fold — so "9" reads as un-pressable. minHeight:100dvh (the
+        // actually-visible height) keeps centered content on-screen;
+        // justify:'safe center' top-aligns + ALLOWS page-scroll on short phones
+        // so every key stays reachable.
+        // NOTE (2026-06-24): the real "tap 9 → OK fires" bug was the re-mounted
+        // 2nd login desyncing the WKWebView hit-test layer from the paint —
+        // fixed by reloading the page on logout (App.jsx) so every login is a
+        // fresh, always-correct first login. The earlier no-scroll lock /
+        // drag-block / wake transform-kick were reverted: they fought this
+        // scroll fallback and were NOT the cause.
+        <div className="ddmau-app-backdrop flex flex-col items-center min-h-screen p-4"
+            style={{ minHeight: '100dvh', justifyContent: 'safe center', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
             <div className="text-center mb-4">
                 {/* DD Mau logo — the actual brand mark (scooter + lotus
                     over the DD MAU wordmark + VIETNAMESE EATERY tagline).
