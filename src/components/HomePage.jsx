@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
@@ -69,6 +69,28 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
     // can't probe whether an address is on file).
     const [showRecover, setShowRecover] = useState(false);
     const isEs = language === "es";
+    const screenRef = useRef(null);
+
+    // 2026-06-24 — iOS keypad fix, round 5: KILL THE RUBBER-BAND DRAG.
+    // Even with the screen locked to 100dvh + overflow:hidden (so nothing
+    // actually scrolls), iOS WKWebView STILL elastic-bounces the whole webview
+    // when you drag it, and a tap that lands during that bounce misses the
+    // keypad — Andrew: "even if fresh, if i move the screen up and down it's
+    // not pressing right." Block the drag outright: a NON-PASSIVE touchmove
+    // preventDefault on the lock-screen element for as long as it's mounted.
+    // (React's onTouchMove is registered PASSIVE, so preventDefault there is
+    // ignored — must attach natively with {passive:false}.) Taps
+    // (touchstart→click) are unaffected; only the scroll/bounce gesture is
+    // killed. Scoped to this element (not the document) so any portal'd modal
+    // and the rest of the app — chat keyboard hit-targets etc. — are untouched.
+    // The content already fits, so there is nothing here that needs to scroll.
+    useEffect(() => {
+        const el = screenRef.current;
+        if (!el) return;
+        const blockDrag = (e) => { e.preventDefault(); };
+        el.addEventListener('touchmove', blockDrag, { passive: false });
+        return () => el.removeEventListener('touchmove', blockDrag);
+    }, []);
 
     // Tick once a second while locked so the countdown updates.
     // MED-1, 2026-05-30: `now` was previously in the dep array, which
@@ -221,7 +243,7 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         // `safe center` keeps it centered when it fits but top-aligns on a tiny
         // phone so the keypad never clips (only the bottom chip would). Pairs
         // with the v1.0.123 lightweight-keypad flatten. Web/desktop unaffected.
-        <div className="ddmau-app-backdrop flex flex-col items-center overflow-hidden p-4"
+        <div ref={screenRef} className="ddmau-app-backdrop flex flex-col items-center overflow-hidden p-4"
             style={{ height: '100dvh', justifyContent: 'safe center', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
             <div className="text-center mb-4">
                 {/* DD Mau logo — the actual brand mark (scooter + lotus
