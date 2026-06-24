@@ -242,6 +242,14 @@ export async function initSentry() {
             // third-party-script-heavy pages).
             'Script error.',
             'Non-Error promise rejection captured',
+            // Browser-level IndexedDB failure surfaced through Firestore's
+            // offline persistence layer (persistentLocalCache, firebase.js).
+            // Safari throws this routinely; also fires on storage eviction,
+            // low disk, private mode, or two tabs contending for the DB. It
+            // arrives handled, via unhandledrejection — not a crash. Firestore
+            // retries and falls back to the memory cache on its own, so no
+            // write is lost. Nothing actionable in app code; pure noise.
+            /An internal error was encountered in the Indexed Database server/i,
         ],
         // Run every event through our redactor before send.
         beforeSend: scrubSentryEvent,
