@@ -508,6 +508,31 @@
             rgba(243, 249, 255, 1) 50%,
             rgba(237, 246, 255, 1) 100%);
     }
+    /* 2026-06-24 — keypad STILL laggy on iOS after the backdrop-filter flatten
+       (Andrew, App Store v1.0.122 / commit 1715550, confirmed up to date). The
+       remaining GPU cost is the 7-layer box-shadow (large blur radii) on 11
+       discs + the scale(.94) tap transform + the transitions — all expensive to
+       repaint on WKWebView, especially across a suspend/resume. On native:
+       collapse to ONE cheap flat shadow, drop the tap-scale + heavy
+       transitions, give an instant inset-press feedback → snappy, reliable
+       taps. Web/desktop keep the full live glass. */
+    body.capacitor-native .glass-keypad-button,
+    body.capacitor-native .glass-keypad-button-secondary,
+    body.capacitor-native .glass-keypad-button-primary,
+    body.capacitor-native .glass-keypad-button:hover,
+    body.capacitor-native .glass-keypad-button-secondary:hover,
+    body.capacitor-native .glass-keypad-button-primary:hover {
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.7),
+            0 1px 2px rgba(30, 60, 110, 0.12) !important;
+        transition: none !important;
+    }
+    body.capacitor-native .glass-keypad-button:active,
+    body.capacitor-native .glass-keypad-button-secondary:active,
+    body.capacitor-native .glass-keypad-button-primary:active {
+        transform: none !important;
+        box-shadow: inset 0 1px 3px rgba(30, 60, 110, 0.22) !important;
+    }
 
     /* glass-avatar-green — Apple-style frosted initials disc, brand
        tint. 2026-05-27 — Andrew: "any dark green bubble for the
