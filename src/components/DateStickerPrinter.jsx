@@ -481,6 +481,17 @@ export default function DateStickerPrinter({
                         </button>
                     )}
                 </div>
+                {/* ➕ Add a custom item — admin only. Andrew 2026-06-24: "when a
+                    new item is added to the stickers make it live + stay." Opens
+                    the new-item form; on save it persists to /custom_items and
+                    immediately appears in the ⭐ Custom items section below
+                    (live subscription). */}
+                {adminUser && (
+                    <button onClick={() => setNewItemModal(true)}
+                        className="w-full mb-2 py-2.5 rounded-lg bg-white border-2 border-purple-300 text-purple-700 text-sm font-bold hover:bg-purple-50 active:scale-95 transition shadow-sm">
+                        ➕ {tx('Add a custom item (sauce, prep, drink…)', 'Agregar artículo personalizado')}
+                    </button>
+                )}
                 {editMode && (
                     <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 mb-2 leading-snug">
                         {tx(
@@ -622,6 +633,35 @@ export default function DateStickerPrinter({
                             editMode={editMode}
                             onSaveSection={handleSaveSection}
                         />
+                        {/* ⭐ Custom items — Andrew 2026-06-24: "when a new item
+                            is added to the stickers make it live + stay." These
+                            used to appear ONLY in search; now they're a permanent
+                            section in the idle browse view too, so a freshly-added
+                            item shows up and stays (live /custom_items subscription). */}
+                        {allItems.length > 0 && (
+                            <section className="mt-5">
+                                <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
+                                    ⭐ {tx('Custom items', 'Personalizados')}
+                                </h2>
+                                <div className="space-y-1.5">
+                                    {allItems.map(item => (
+                                        <MenuItemRow
+                                            key={item.id}
+                                            item={item}
+                                            isOpen={openItemId === item.id}
+                                            onToggle={() => setOpenItemId(prev => prev === item.id ? null : item.id)}
+                                            isEs={isEs}
+                                            tx={tx}
+                                            build={openItemId === item.id ? openBuild : null}
+                                            onPrintComponent={handlePrintComponent}
+                                            adminUser={adminUser}
+                                            onEdit={() => setEditingItem({ id: item.id, nameEn: item.nameEn, nameEs: item.nameEs })}
+                                            hasOverride={overrides.has(item.id)}
+                                        />
+                                    ))}
+                                </div>
+                            </section>
+                        )}
                     </>
                 )}
             </div>
