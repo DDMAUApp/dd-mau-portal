@@ -209,21 +209,26 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         // .ddmau-app-backdrop class so the lock screen matches the rest
         // of the app's backdrop (refined 3-stop gradient + soft radial
         // top-light from Batch A). One source of truth for the canvas.
-        // iOS tap-target layout (ef99983, restored 2026-06-24): min-h-screen =
-        // 100vh is the LARGE iOS viewport (taller than what's visible), and
-        // justify-center then pushes the lower keypad rows (7-8-9) below the
-        // fold — so "9" reads as un-pressable. minHeight:100dvh (the
-        // actually-visible height) keeps centered content on-screen;
-        // justify:'safe center' top-aligns + ALLOWS page-scroll on short phones
-        // so every key stays reachable.
-        // NOTE (2026-06-24): the real "tap 9 → OK fires" bug was the re-mounted
-        // 2nd login desyncing the WKWebView hit-test layer from the paint —
-        // fixed by reloading the page on logout (App.jsx) so every login is a
-        // fresh, always-correct first login. The earlier no-scroll lock /
-        // drag-block / wake transform-kick were reverted: they fought this
-        // scroll fallback and were NOT the cause.
-        <div className="ddmau-app-backdrop flex flex-col items-center min-h-screen p-4"
-            style={{ minHeight: '100dvh', justifyContent: 'safe center', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+        // iOS keypad HIT-TARGET fix (2026-06-24, v1.0.131). Andrew: after the
+        // first login, every key hits the one BELOW it (press 1 → registers 4).
+        // That's a uniform vertical offset between where the keys PAINT and
+        // where iOS HIT-TESTS them — the SAME family as the documented
+        // chat-send-arrow shift (see capacitor.config.ts ios.scrollEnabled
+        // history: "shifted iOS WKWebView touch hit-targets"). Root cause: the
+        // lock screen lived in the NATIVE SCROLL LAYER, so WKWebView's
+        // scrollView contentInset/offset (ios.contentInset:'always' + a prior
+        // keyboard resize from elsewhere in the app) shifted the touch grid off
+        // the paint. A JS reload can't reset a NATIVE inset — which is exactly
+        // why the earlier OTA fixes (dvh, safe-center, reload-on-logout) didn't
+        // make it stick. FIX: take the lock screen OUT of the scroll layer
+        // entirely — `position:fixed; inset:0` pins it to the viewport (immune
+        // to contentInset/contentOffset/scroll), plain `justify-center` (drop
+        // the exotic `safe` keyword WKWebView can paint/hit differently),
+        // `overflow-hidden` (nothing scrolls), safe-area padding top+bottom for
+        // the notch + home indicator. Paint == hit, every time. The nav already
+        // uses position:fixed successfully in this WebView, so it's proven.
+        <div className="ddmau-app-backdrop flex flex-col items-center justify-center overflow-hidden p-4"
+            style={{ position: 'fixed', inset: 0, paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
             <div className="text-center mb-4">
                 {/* DD Mau logo — the actual brand mark (scooter + lotus
                     over the DD MAU wordmark + VIETNAMESE EATERY tagline).
