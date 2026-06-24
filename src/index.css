@@ -479,6 +479,16 @@
         .glass-keypad-button { background-color: rgba(229, 240, 252, 0.95); }
         .glass-keypad-button-secondary { background-color: rgba(229, 240, 252, 0.85); }
     }
+    /* 2026-06-24 — touch-action:manipulation on every keypad key. Removes iOS's
+       double-tap-zoom detection + the ~300ms tap delay + gesture ambiguity on
+       these buttons, so a tap registers instantly and reliably (the recurring
+       "hard to press / not pressing right" reports). Pairs with the lock-screen
+       drag-block in HomePage.jsx. */
+    .glass-keypad-button,
+    .glass-keypad-button-secondary,
+    .glass-keypad-button-primary {
+        touch-action: manipulation;
+    }
 
     /* 2026-06-23 — iOS/Android WKWebView lock-screen lag fix.
        The PIN pad renders 11 live `backdrop-filter: blur(28px)` discs.

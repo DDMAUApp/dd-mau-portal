@@ -1,0 +1,89 @@
+# DD Mau self-healing debug agent — 24/7 in the cloud (GitHub Actions).
+#
+# Runs the SAME agent as the local scheduled task, but on GitHub's servers so it
+# works even when Andrew's Mac is off. It reads the "🐛 Debug Agent" chat thread
+# + the getDebugQueue endpoint, investigates, and opens fix PRs — NEVER merging.
+#
+# ── ONE-TIME ACTIVATION (Andrew) ─────────────────────────────────────────────
+# Settings → Secrets and variables → Actions:
+#   Secrets:
+#     • ANTHROPIC_API_KEY        — your Anthropic API key (this bills your API usage)
+#     • FIREBASE_SERVICE_ACCOUNT — paste the FULL contents of firebase-service-account.json
+#   Variables:
+#     • DEBUG_AGENT_ENABLED = true   ← the on-switch. Until this is "true" the job
+#                                      is skipped, so there are NO failing runs while
+#                                      you set up the secrets.
+# Then either wait for the next :00/:15/:30/:45, or run it once manually:
+# Actions → "DD Mau debug agent (24/7)" → Run workflow.
+# Cost: ~96 runs/day; almost all exit in seconds with nothing to do.
+
+name: DD Mau debug agent (24/7)
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 min (UTC; GitHub may delay under load)
+  workflow_dispatch: {}        # manual "Run workflow" button
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+# Never run two agents at once; let an in-flight run finish rather than cancel it
+# mid-fix.
+concurrency:
+  group: dd-mau-debug-agent
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    # On-switch: stays skipped (no red failing runs) until Andrew sets the
+    # repo variable DEBUG_AGENT_ENABLED = true.
+    if: ${{ vars.DEBUG_AGENT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps (build/test/agent-comms need them)
+        run: npm ci
+
+      - name: Materialize the Firebase service account (for the chat bridge)
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > firebase-service-account.json
+
+      - name: Run the debug agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the DD Mau self-healing debug agent, running in GitHub Actions (CI).
+
+            ENVIRONMENT — read carefully, it differs from the playbook's local notes:
+            - You are ALREADY in the repo root on a fresh, clean checkout of `main`. Do NOT `cd` to any /Users/... path, and do NOT run `git checkout main` / `git pull` — ignore those lines in the playbook; they're for the local Mac runner.
+            - `gh` is authenticated via the GH_TOKEN env var — `gh pr create` works directly.
+            - `firebase-service-account.json` is present at the repo root, so `node scripts/qa/agent-comms.mjs read|post` works for the chat thread.
+            - `npm ci` already ran, so `npm run build` and `npx vitest run` work.
+
+            TASK: Read `scripts/qa/debug-agent.md` and follow it EXACTLY. In short:
+            1. FIRST handle the owner command channel — `node scripts/qa/agent-comms.mjs read --limit 40`. Any message from "Andrew Shih" you haven't responded to is a work request: acknowledge, investigate the bug from his description, then fix it on a NEW branch `autofix/<slug>`, run `npm run build` + `npx vitest run` (both must pass), `gh pr create --base main`, and post the result. Or ask a clarifying question via `agent-comms.mjs post "❓ ..." --urgent`.
+            2. Then triage the error queue: `curl -fsS "https://us-central1-dd-mau-staff-app.cloudfunctions.net/getDebugQueue"` per the playbook (ops/infra → note, code bug → fix PR, dedup vs `gh pr list --state open`).
+
+            HARD RULES: NEVER merge a PR, NEVER push to `main`, NEVER `git add` firebase-service-account.json. PRs only. Cap ~3 PRs/run. Extra caution (ask, don't auto-edit) on payroll / auth / PIN / schedule-transaction / cents-math / Firestore-rules. If the chat is quiet AND the queue is clear, do nothing and exit.
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Scrub credentials (always)
+        if: always()
+        run: rm -f firebase-service-account.json
