@@ -180,4 +180,99 @@ async function runHealthChecks(db, { trigger = "manual", expectedVersion = null,
     return { ok, trigger, hardFails, version: expectedVersion ?? (checks.site.ok ? checks.site.detail.liveVersion : null), checks };
 }
 
-module.exports = { runHealthChecks };
+// ── Debug queue (the self-healing cloud agent's input) ─────────────────
+// Returns a Claude-ready dossier of what's broken, read-only, as JSON. The
+// scheduled cloud agent curls this (so it needs NO Firestore credentials),
+// triages, and opens a fix PR per genuine issue. Data is already PII/secret-
+// scrubbed at write time (logger.js + redact.js), and the underlying
+// collections are already world-readable under the catch-all rule, so this
+// endpoint exposes nothing new. Queries use single-field ranges/orders only
+// (auto-indexed) + in-code filtering — no composite index required.
+async function buildDebugQueue(db, { sinceHours = 48 } = {}) {
+    const nowMs = Date.now();
+    const sinceMs = nowMs - sinceHours * 3600 * 1000;
+
+    // 1. Unresolved CRITICAL errors in the window, grouped by signature so the
+    //    agent fixes a class once (not N duplicate crashes). Each group keeps a
+    //    representative sample with the stack + breadcrumbs for diagnosis.
+    const errSnap = await db.collection("error_logs")
+        .where("occurredAt", ">=", sinceMs).limit(500).get();
+    const groups = {};
+    errSnap.forEach((d) => {
+        const e = d.data() || {};
+        if (e.severity !== "critical" || e.resolved === true) return;
+        const sig = `${e.errorName || "Error"}::${(e.errorMessage || "").slice(0, 80)}`;
+        if (!groups[sig]) {
+            groups[sig] = {
+                signature: sig,
+                errorName: e.errorName || null,
+                feature: e.feature || null,
+                source: e.source || "frontend",
+                count: 0,
+                firstSeen: e.occurredAt || null,
+                lastSeen: e.occurredAt || null,
+                sampleId: d.id,
+                sample: {
+                    errorMessage: e.errorMessage || null,
+                    errorCode: e.errorCode || null,
+                    stack: e.stack || null,
+                    recentActions: e.recentActions || null,
+                    meta: e.meta || null,
+                    appVersion: e.appVersion || null,
+                    userRole: e.userRole || null,
+                    pageUrl: e.pageUrl || null,
+                },
+            };
+        }
+        const g = groups[sig];
+        g.count++;
+        if ((e.occurredAt || 0) > (g.lastSeen || 0)) g.lastSeen = e.occurredAt;
+        if ((e.occurredAt || 0) < (g.firstSeen || Infinity)) g.firstSeen = e.occurredAt;
+    });
+    const criticalErrors = Object.values(groups).sort((a, b) => b.count - a.count).slice(0, 25);
+
+    // 2. Failed health-check runs (most recent), filtered in code.
+    let failedChecks = [];
+    try {
+        const hcSnap = await db.collection("health_check_runs")
+            .orderBy("occurredAt", "desc").limit(50).get();
+        hcSnap.forEach((d) => {
+            const r = d.data() || {};
+            if (r.ok === false) failedChecks.push({
+                id: d.id, trigger: r.trigger || null, hardFails: r.hardFails || [],
+                version: r.version || null, occurredAt: r.occurredAt || null,
+                summary: r.summary || null,
+            });
+        });
+        failedChecks = failedChecks.slice(0, 10);
+    } catch (e) { /* informational */ }
+
+    // 3. Failed post-deploy probes.
+    let failedDeploys = [];
+    try {
+        const dpSnap = await db.collection("deploys")
+            .orderBy("occurredAt", "desc").limit(20).get();
+        dpSnap.forEach((d) => {
+            const r = d.data() || {};
+            if (r.probeOk === false) failedDeploys.push({
+                version: r.version || d.id, hardFails: r.probeHardFails || [],
+                liveVersion: r.liveVersion || null, occurredAt: r.occurredAt || null,
+            });
+        });
+    } catch (e) { /* informational */ }
+
+    return {
+        generatedAt: nowMs,
+        windowHours: sinceHours,
+        counts: {
+            criticalErrorClasses: criticalErrors.length,
+            failedChecks: failedChecks.length,
+            failedDeploys: failedDeploys.length,
+        },
+        criticalErrors,
+        failedChecks,
+        failedDeploys,
+    };
+}
+
+module.exports = { runHealthChecks, buildDebugQueue };

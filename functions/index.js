@@ -93,7 +93,7 @@ const APNS_TEAM_ID = defineSecret("APNS_TEAM_ID");
 // declare `secrets: [SENTRY_DSN]` in its options block — Firebase
 // only mounts secrets on functions that explicitly list them.
 const { initSentry: initBackendSentry, captureWithContext } = require("./sentry");
-const { runHealthChecks } = require("./healthChecks");
+const { runHealthChecks, buildDebugQueue } = require("./healthChecks");
 try {
     const dsn = SENTRY_DSN.value();
     initBackendSentry({
@@ -4903,6 +4903,26 @@ exports.healthCheck = onRequest(
         } catch (e) {
             logger.error("healthCheck onRequest failed:", e && e.message);
             res.status(500).json({ ok: false, error: String((e && e.message) || e).slice(0, 300) });
+        }
+    },
+);
+
+// getDebugQueue — the self-healing cloud agent's work queue, read-only JSON.
+// Returns recent unresolved critical errors (grouped by signature, w/ stack +
+// breadcrumbs) + failed health checks + failed deploys. The scheduled cloud
+// agent curls this (no Firestore creds needed), triages, and opens a fix PR
+// per genuine issue. Data is already scrubbed at write time; the underlying
+// collections are already world-readable under the catch-all rule.
+exports.getDebugQueue = onRequest(
+    { region: "us-central1", cors: true },
+    async (req, res) => {
+        try {
+            const hours = Math.max(1, Math.min(168, parseInt(req.query.hours, 10) || 48));
+            const q = await buildDebugQueue(db, { sinceHours: hours });
+            res.status(200).json(q);
+        } catch (e) {
+            logger.error("getDebugQueue failed:", e && e.message);
+            res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) });
         }
     },
 );
