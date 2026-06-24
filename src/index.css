@@ -479,6 +479,18 @@
         transition: none;
         transform: scale(0.92);
     }
+    /* 2026-06-24 — geometry-driven press highlight. The keypad resolves the
+       pressed key from touch COORDINATES (HomePage handleKeypadPointerDown),
+       not from which element iOS routed the event to, so we light up the
+       CORRECT key here instead of relying on :active (which would land on the
+       mis-routed element). Snaps in instantly; the JS removes it after 150ms. */
+    .glass-keypad-button.is-keypress,
+    .glass-keypad-button-secondary.is-keypress,
+    .glass-keypad-button-primary.is-keypress {
+        transition: none !important;
+        transform: scale(0.92) !important;
+        filter: brightness(0.96);
+    }
     /* Browsers without backdrop-filter fall back to a near-opaque cool
        tint so the keys still read as discrete buttons. */
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

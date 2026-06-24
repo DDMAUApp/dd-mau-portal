@@ -198,6 +198,40 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         setError("");
     };
 
+    // 2026-06-24 — GEOMETRY-BASED keypress (the real fix for "tap 1, get 4").
+    // iOS WKWebView can route a tap to the WRONG element: its hit-test layer
+    // sits offset from the painted keys (the same "shifted touch hit-targets"
+    // class the app's own capacitor.config documents for the chat arrow). So
+    // per-key onPointerDown fired whatever key iOS *routed* to, not the one
+    // under the finger. Fix: stop trusting the routed target. One handler on
+    // the lock-screen ROOT catches every tap (pointerdown bubbles up no matter
+    // which element iOS mis-routed it to), reads the touch COORDINATES
+    // (e.clientX/Y track the real finger position), and maps them to whichever
+    // key's PAINTED rect (getBoundingClientRect = current layout) actually
+    // contains the point. Geometry can't be fooled by a stale hit-test layer.
+    // Taps not over a key fall through, so the recover link / install button
+    // keep working normally.
+    const handleKeypadPointerDown = (e) => {
+        const root = e.currentTarget;
+        const x = e.clientX, y = e.clientY;
+        if (x == null || y == null) return;
+        let target = null;
+        for (const b of root.querySelectorAll('button[data-key]')) {
+            const r = b.getBoundingClientRect();
+            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) { target = b; break; }
+        }
+        if (!target) return;                       // not over a key — let it flow
+        const key = target.getAttribute('data-key');
+        // Light up the CORRECT key (don't rely on iOS :active, which lands on
+        // the mis-routed element). Pure DOM toggle → no React re-render.
+        target.classList.add('is-keypress');
+        setTimeout(() => { try { target.classList.remove('is-keypress'); } catch {} }, 150);
+        if (isLocked) return;
+        if (/^[0-9]$/.test(key)) { setError(""); setPin(p => p.length < 4 ? p + key : p); }
+        else if (key === 'clear') { handleClear(); }
+        else if (key === 'ok') { if (pin.length === 4 && staffListReady) handlePinSubmit(); }
+    };
+
     return (
         // 2026-05-27 — lock screen Liquid-Glass refresh.
         // Andrew: "lets make the lock screen with the logo instead of
@@ -228,6 +262,7 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         // the notch + home indicator. Paint == hit, every time. The nav already
         // uses position:fixed successfully in this WebView, so it's proven.
         <div className="ddmau-app-backdrop flex flex-col items-center justify-center overflow-hidden p-4"
+            onPointerDown={handleKeypadPointerDown}
             style={{ position: 'fixed', inset: 0, paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
             <div className="text-center mb-4">
                 {/* DD Mau logo — the actual brand mark (scooter + lotus
@@ -326,43 +361,37 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                         Material (48dp) touch targets with room.
                         Andrew 2026-05-28 — "make the buttons more
                         glass like like the apple glass." */}
+                    {/* 2026-06-24 — the keys carry NO tap handlers + NO disabled
+                        attr. A single geometry-based handler on the lock-screen
+                        root (handleKeypadPointerDown) resolves WHICH key was hit
+                        from the touch coordinates vs each key's painted rect, so
+                        it's immune to iOS routing a tap to the wrong element.
+                        `data-key` is how that handler identifies each key; the
+                        locked/pin-length rules live in the handler (no `disabled`
+                        so a key always receives the geometry hit-test). */}
                     <div className="grid grid-cols-3 gap-4 mt-2">
-                        {/* 2026-06-14 — Andrew: "when we type our pin it lags
-                            the first button so we miss type." Two fixes:
-                            (1) enter the digit on onPointerDown (fires the
-                            instant the finger lands, before the click that
-                            fires on RELEASE) so a busy main thread during cold
-                            start can't swallow/delay the first tap; (2) use the
-                            functional state updater (p => ...) so two fast taps
-                            can't both read a stale `pin` and drop a digit.
-                            onClick is removed on the digits to avoid a
-                            double-entry from the synthesized click. */}
                         {[1,2,3,4,5,6,7,8,9].map(n => (
-                            <button key={n} onPointerDown={() => { if (isLocked) return; setError(""); setPin(p => p.length < 4 ? p + n : p); }}
-                                disabled={isLocked}
-                                className={`glass-keypad-button w-16 h-16 rounded-full text-2xl font-semibold text-dd-text ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                            <button key={n} data-key={n} type="button"
+                                className={`glass-keypad-button w-16 h-16 rounded-full text-2xl font-semibold text-dd-text ${isLocked ? 'opacity-40' : ''}`}>
                                 {n}
                             </button>
                         ))}
-                        <button onClick={handleClear} disabled={isLocked}
-                            className={`glass-keypad-button-secondary w-16 h-16 rounded-full text-xs font-bold uppercase tracking-wider text-dd-text-2 ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                        <button data-key="clear" type="button"
+                            className={`glass-keypad-button-secondary w-16 h-16 rounded-full text-xs font-bold uppercase tracking-wider text-dd-text-2 ${isLocked ? 'opacity-40' : ''}`}>
                             {isEs ? "Borrar" : "Clear"}
                         </button>
-                        <button onPointerDown={() => { if (isLocked) return; setError(""); setPin(p => p.length < 4 ? p + "0" : p); }}
-                            disabled={isLocked}
-                            className={`glass-keypad-button w-16 h-16 rounded-full text-2xl font-semibold text-dd-text ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                        <button data-key="0" type="button"
+                            className={`glass-keypad-button w-16 h-16 rounded-full text-2xl font-semibold text-dd-text ${isLocked ? 'opacity-40' : ''}`}>
                             0
                         </button>
-                        {/* OK — brand-green Apple-glass disc once a
-                            4-digit PIN is in. Pre-fill state stays the
-                            neutral secondary glass so the layout
-                            doesn't jump. */}
-                        <button onClick={handlePinSubmit}
-                            disabled={isLocked || pin.length !== 4}
+                        {/* OK — brand-green Apple-glass disc once a 4-digit PIN
+                            is in. Pre-fill state stays neutral so layout doesn't
+                            jump. (Auto-submit also fires on the 4th digit.) */}
+                        <button data-key="ok" type="button"
                             className={`w-16 h-16 rounded-full text-sm font-bold ${
                                 pin.length === 4 && !isLocked
                                     ? 'glass-keypad-button-primary'
-                                    : 'glass-keypad-button-secondary text-dd-text-2/50 cursor-not-allowed'
+                                    : 'glass-keypad-button-secondary text-dd-text-2/50'
                             }`}>
                             OK
                         </button>
