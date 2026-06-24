@@ -209,7 +209,21 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         // .ddmau-app-backdrop class so the lock screen matches the rest
         // of the app's backdrop (refined 3-stop gradient + soft radial
         // top-light from Batch A). One source of truth for the canvas.
-        <div className="ddmau-app-backdrop flex flex-col items-center justify-center min-h-screen p-4">
+        // iOS tap-target fix (2026-06-24): min-h-screen = 100vh is the LARGE
+        // iOS viewport (taller than what's visible), and justify-center then
+        // pushes the lower keypad rows (7-8-9) below the visible/interactive
+        // fold + into the home-indicator zone — so a key like "9" reads as
+        // un-pressable until you scroll ("pull up"). Andrew: "the 9 is not
+        // pressable when the keypad is low; pull it up and it works."
+        //   • minHeight:100dvh — the DYNAMIC viewport = the actually-visible
+        //     height, so centered content never overflows below the fold.
+        //     (min-h-screen stays as the fallback for any engine w/o dvh.)
+        //   • justify-content:'safe center' — centers when it fits but falls
+        //     back to top-aligned + page-scroll on short phones, so every key
+        //     stays reachable instead of clipping.
+        //   • bottom padding clears the home indicator's gesture strip.
+        <div className="ddmau-app-backdrop flex flex-col items-center min-h-screen p-4"
+            style={{ minHeight: '100dvh', justifyContent: 'safe center', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
             <div className="text-center mb-8">
                 {/* DD Mau logo — the actual brand mark (scooter + lotus
                     over the DD MAU wordmark + VIETNAMESE EATERY tagline).
