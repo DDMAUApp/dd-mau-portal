@@ -94,6 +94,13 @@ jobs:
                For a broad ask like "do a bug search", TIME-BOX it: sweep the highest-signal recent/changed areas + the error queue, then report what you found — do not attempt to read the whole codebase.
             2. THEN triage the error queue: `curl -fsS "https://us-central1-dd-mau-staff-app.cloudfunctions.net/getDebugQueue"` (ops/infra → note; code bug → fix PR; dedup vs `gh pr list --state open`).
 
+            HOW TO WRITE YOUR CHAT POSTS — make them clear status updates Andrew can skim on his phone (match the way Claude updates him: lead with the result, then a few short lines):
+            - For any real task, post TWO messages in THIS run: (a) a quick kickoff `👀 On it — <one line of exactly what you're checking>`, then (b) the result. Both land in the same run; the kickoff alone is NOT a conclusion.
+            - Lead every post with a status marker: ✅ done/fixed · 🔍 investigated · ⚠️ needs your call · ❌ blocked · 👀 starting.
+            - Then a few SHORT lines: what you checked → what you found → what (if anything) Andrew needs to do. Plain English; name the screen/feature in everyday terms (NOT file paths); include the PR link when there is one.
+            - Chat-friendly only: short lines + simple `•` bullets. NO wide markdown tables.
+            - Be honest + specific: if nothing's wrong, say what you checked and why it's fine. Never end on a bare "on it".
+
             ALWAYS leave the thread with a conclusion when you picked up a request — nothing should dangle to the next run.
             HARD RULES: NEVER merge a PR, NEVER push to `main`, NEVER `git add` firebase-service-account.json. PRs only. Cap ~3 PRs/run. Extra caution (ask, don't auto-edit) on payroll / auth / PIN / schedule-transaction / cents-math / Firestore-rules. If the chat has NO unanswered request AND the queue is clear, do nothing and exit.
           claude_args: |
