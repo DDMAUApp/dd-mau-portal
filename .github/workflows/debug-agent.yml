@@ -85,13 +85,19 @@ jobs:
             - `firebase-service-account.json` is present at the repo root, so `node scripts/qa/agent-comms.mjs read|post` works for the chat thread.
             - `npm ci` already ran, so `npm run build` and `npx vitest run` work.
 
-            TASK: Read `scripts/qa/debug-agent.md` and follow it EXACTLY. In short:
-            1. FIRST handle the owner command channel — `node scripts/qa/agent-comms.mjs read --limit 40`. Any message from "Andrew Shih" you haven't responded to is a work request: acknowledge, investigate the bug from his description, then fix it on a NEW branch `autofix/<slug>`, run `npm run build` + `npx vitest run` (both must pass), `gh pr create --base main`, and post the result. Or ask a clarifying question via `agent-comms.mjs post "❓ ..." --urgent`.
-            2. Then triage the error queue: `curl -fsS "https://us-central1-dd-mau-staff-app.cloudfunctions.net/getDebugQueue"` per the playbook (ops/infra → note, code bug → fix PR, dedup vs `gh pr list --state open`).
+            TASK: Read `scripts/qa/debug-agent.md` and follow it, with these CI overrides:
 
-            HARD RULES: NEVER merge a PR, NEVER push to `main`, NEVER `git add` firebase-service-account.json. PRs only. Cap ~3 PRs/run. Extra caution (ask, don't auto-edit) on payroll / auth / PIN / schedule-transaction / cents-math / Firestore-rules. If the chat is quiet AND the queue is clear, do nothing and exit.
+            1. OWNER COMMAND CHANNEL FIRST — `node scripts/qa/agent-comms.mjs read --limit 40`. Find the LATEST "Andrew Shih" message that has NO agent CONCLUSION after it. CRITICAL: a bare "👀 On it"/acknowledgement does NOT count as handled — only a final findings / PR-link / answer / clarifying-question message counts. If you find such an unanswered request, you MUST FULLY complete it IN THIS SAME RUN (each run is stateless — there is no "later", so never post "on it, will report shortly" and stop). Investigate from his description — you are NOT limited to logged errors; read the relevant code (Grep/Read). Then END by posting ONE conclusive message via `node scripts/qa/agent-comms.mjs post "..."`:
+               • Found + safe to fix → new branch `autofix/<slug>`, `npm run build` + `npx vitest run` (BOTH must pass), `gh pr create --base main`, then post `✅ <what> — <PR url>`.
+               • Investigated but nothing to safely change → post `🔍 Looked into <X>: <what you found / why no change>`.
+               • Genuinely need input → post `❓ <question>` --urgent.
+               For a broad ask like "do a bug search", TIME-BOX it: sweep the highest-signal recent/changed areas + the error queue, then report what you found — do not attempt to read the whole codebase.
+            2. THEN triage the error queue: `curl -fsS "https://us-central1-dd-mau-staff-app.cloudfunctions.net/getDebugQueue"` (ops/infra → note; code bug → fix PR; dedup vs `gh pr list --state open`).
+
+            ALWAYS leave the thread with a conclusion when you picked up a request — nothing should dangle to the next run.
+            HARD RULES: NEVER merge a PR, NEVER push to `main`, NEVER `git add` firebase-service-account.json. PRs only. Cap ~3 PRs/run. Extra caution (ask, don't auto-edit) on payroll / auth / PIN / schedule-transaction / cents-math / Firestore-rules. If the chat has NO unanswered request AND the queue is clear, do nothing and exit.
           claude_args: |
-            --max-turns 40
+            --max-turns 80
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
         env:
           GH_TOKEN: ${{ github.token }}
