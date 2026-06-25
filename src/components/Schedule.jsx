@@ -2548,7 +2548,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                               es: `🆘 ${staffName} necesita cobertura` },
                             { en: `${sideLabel} · ${detail}${note ? ` · "${note}"` : ''}`,
                               es: `${sideLabel} · ${detail}${note ? ` · "${note}"` : ''}` },
-                            null, { tag: `cover_request:${shift.id}` })
+                            // notify() dedups on opts.tagSuffix (NOT `tag` — that
+                            // key is silently ignored and falls back to Date.now(),
+                            // so a retry/double-tap on "post urgent offer" would
+                            // fan out a SECOND toast to every qualified staffer
+                            // instead of the OS collapsing it). Matches the sibling
+                            // handleRequestCover fan-out below, which uses tagSuffix.
+                            null, { tagSuffix: `cover:${shift.id}` })
                     ));
                 } catch (e) { console.warn('Cover fan-out failed:', e); }
             }
