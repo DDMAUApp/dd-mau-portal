@@ -292,7 +292,21 @@ export default function OnboardingOfferLetter({
                     </p>
                 </div>
                 {!isLocked && (
-                    <button onClick={() => { setShowSubmitted(false); setErr(''); }}
+                    <button onClick={() => {
+                            // Reset the captured signature too — not just the
+                            // view flag. The canvas re-mounts blank (its init
+                            // effect re-runs on showSubmitted), but sigDataUrl
+                            // held the PREVIOUS signature, so Submit stayed
+                            // enabled and a hire could re-submit the old
+                            // signature without actually re-signing — exactly
+                            // what the "you MUST re-sign" banner promises won't
+                            // happen. Clearing sigDataUrl + empty forces a real
+                            // re-sign before Submit re-activates. (Can't call
+                            // clearSig() here — the canvas isn't mounted yet on
+                            // this click, so canvasRef.current is still null.)
+                            setShowSubmitted(false); setErr('');
+                            setSigDataUrl(null); setEmpty(true);
+                        }}
                         className="w-full py-2.5 rounded-xl bg-white border-2 border-dd-green text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95">
                         ✏️ {tx('Edit / re-sign', 'Editar / re-firmar')}
                     </button>
