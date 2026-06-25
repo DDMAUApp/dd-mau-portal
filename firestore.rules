@@ -550,6 +550,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ── Attendance log (clock-in punctuality) ──────────────────────────
+    // Andrew 2026-06-25. Written ONLY by the recordAttendance /
+    // markAttendanceNoShows Cloud Functions (admin SDK bypasses rules), so
+    // clients can read but never tamper with the record.
+    match /attendance/{id} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
     // ── Chats — tombstone deletes only ─────────────────────────────────
     // Chat documents (group/DM metadata) and their messages should never
     // be hard-deleted from clients. The chat surface deletes via tombstone

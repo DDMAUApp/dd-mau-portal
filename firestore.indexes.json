@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "attendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "staffKey", "order": "ASCENDING" },
+        { "fieldPath": "date",     "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "scheduled_messages",
       "queryScope": "COLLECTION",
       "fields": [

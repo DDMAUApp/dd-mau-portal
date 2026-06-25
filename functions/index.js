@@ -28,6 +28,9 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { GoogleAuth } = require("google-auth-library");
+// Attendance recorder helpers — safe to require here (it lazily resolves
+// getFirestore() inside its functions, never at module load).
+const attendanceLib = require("./attendance");
 
 initializeApp();
 const db = getFirestore();
@@ -2203,6 +2206,50 @@ exports.expireAndPurgeApplications = onSchedule(
 //     and pin_audits collision rows use `at`
 //   - pin_audits PIN-change rows use `changedAt`
 //   - sms_delivery_logs uses `createdAt`
+// ── Attendance recorder — Andrew 2026-06-25 ──────────────────────────────
+// Persists clock-in punctuality (on_time / late / no_show) so the admin
+// Attendance Log has real history. See functions/attendance.js for the why +
+// the classification (mirrors ClockedInPanel.getPunctuality).
+//
+// 1. recordAttendance{Webster,Maryland} — fire whenever the scraper rewrites a
+//    clocked-in roster doc (ops/clocked_in_{location}). Matches each clock-in
+//    to its scheduled shift and upserts one attendance doc. Idempotent
+//    (clockedInAt is the real Toast timestamp). TWO explicit-path triggers (not
+//    an ops/{docId} wildcard) so we DON'T fire on every inventory/labor write.
+function makeAttendanceRecorder(location) {
+    return async (event) => {
+        const after = event.data?.after?.data();
+        if (!after) return; // doc deleted — nothing to record
+        try {
+            const n = await attendanceLib.recordClockedInAttendance(location, after);
+            if (n) logger.info(`recordAttendance(${location}): wrote ${n} attendance rows`);
+        } catch (e) {
+            logger.warn(`recordAttendance(${location}) failed:`, e?.message || e);
+        }
+    };
+}
+exports.recordAttendanceWebster = onDocumentWritten("ops/clocked_in_webster", makeAttendanceRecorder("webster"));
+exports.recordAttendanceMaryland = onDocumentWritten("ops/clocked_in_maryland", makeAttendanceRecorder("maryland"));
+
+// 2. markAttendanceNoShows — nightly after close. Anyone scheduled (published)
+//    today who never clocked in (either location) gets a no_show row.
+exports.markAttendanceNoShows = onSchedule(
+    {
+        schedule: "30 23 * * *", // 11:30pm Central, after close
+        timeZone: "America/Chicago",
+        region: "us-central1",
+        maxInstances: 1,
+    },
+    async () => {
+        try {
+            const n = await attendanceLib.markNoShows();
+            logger.info(`markAttendanceNoShows: wrote ${n} no_show rows`);
+        } catch (e) {
+            logger.warn("markAttendanceNoShows failed:", e?.message || e);
+        }
+    }
+);
+
 //   - backup_history uses a date string `date` (no proper timestamp) — skipped
 // PRUNE_RULES below has one row per (collection, fieldName) pair. Add a row
 // here when adding a new audit collection — otherwise it grows unchecked.
@@ -2233,6 +2280,8 @@ exports.pruneAuditLogs = onSchedule(
             // pto, availability, schedule_config, inventory, 86, role, print…)
             // was growing unbounded. 2-year retention (RETENTION_DAYS default).
             { coll: "audit",                     field: "createdAt" },
+            // 2026-06-25 — clock-in attendance log (one row per staff/day).
+            { coll: "attendance",                field: "updatedAt" },
             // 2026-05-24 audit fix: notifications collection grew
             // unbounded. After a year of daily chat pings × 30 staff
             // each it's tens of thousands of docs and inflates the

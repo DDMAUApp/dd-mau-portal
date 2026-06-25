@@ -30,6 +30,7 @@ import StaffTodosAdmin from './StaffTodosAdmin';
 // read-only card; reads staffList in-place, no new Firestore writes.
 import StaffUsageAudit from './StaffUsageAudit';
 import ScheduleAuditLog from './ScheduleAuditLog';
+import AttendanceLog from './AttendanceLog';
 import { toast } from '../toast';
 import { enableFcmPush } from '../messaging';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
@@ -2388,6 +2389,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         append-only /audit collection (schedule features). */}
                     <div className="mt-4 p-4 rounded-2xl bg-white border border-dd-line shadow-card">
                         <ScheduleAuditLog language={language} />
+                    </div>
+
+                    {/* ── ATTENDANCE LOG ── Andrew 2026-06-25: who's clocked in —
+                        on-time/late/no-show + shifts worked per staff (4 weeks),
+                        click for a month/week drill-down. Reads /attendance. */}
+                    <div className="mt-4 p-4 rounded-2xl bg-white border border-dd-line shadow-card">
+                        <AttendanceLog language={language} staffList={staffList} />
                     </div>
 
                     {/* ── ONBOARDING LAUNCHER ──
