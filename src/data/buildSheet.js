@@ -370,6 +370,18 @@ export const BUILD_SHEET_SWEETS_SNACKS = [
     { nameEn: "Fried Shrimp Rolls",      nameEs: "Fried Shrimp Rolls",      descEn: "3 pieces of fried shrimp",                                       descEs: "3 piezas de camarón frito" },
 ];
 
+// Drinks — prep-ahead beverages, foams + popping boba that get a date
+// sticker. Andrew 2026-06-25. Descriptions left blank (editable in-app).
+export const BUILD_SHEET_DRINKS = [
+    { nameEn: "Thai Tea",                nameEs: "Té Tailandés",             descEn: "", descEs: "" },
+    { nameEn: "Vietnamese Coffee",       nameEs: "Café Vietnamita",          descEn: "", descEs: "" },
+    { nameEn: "Lychee Limeade",          nameEs: "Limonada de Lychee",       descEn: "", descEs: "" },
+    { nameEn: "Pandan Foam",             nameEs: "Espuma de Pandán",         descEn: "", descEs: "" },
+    { nameEn: "Banana Foam",             nameEs: "Espuma de Plátano",        descEn: "", descEs: "" },
+    { nameEn: "Strawberry Popping Boba", nameEs: "Boba Explosiva de Fresa",  descEn: "", descEs: "" },
+    { nameEn: "Lychee Popping Boba",     nameEs: "Boba Explosiva de Lychee", descEn: "", descEs: "" },
+];
+
 export const BUILD_SHEET_BOWL_PROTEINS = [
     { nameEn: "Lemongrass Pork",       nameEs: "Cerdo al limoncillo",      descEn: "Marinated, grilled — also for Bánh Mì / Sliders / Tacos / Lo Mein", descEs: "Marinado, a la parrilla — también para Bánh Mì / Sliders / Tacos / Lo Mein" },
     { nameEn: "Lemongrass Chicken",    nameEs: "Pollo al limoncillo",      descEn: "Marinated, grilled — also for Bánh Mì / Sliders / Tacos / Lo Mein", descEs: "Marinado, a la parrilla — también para Bánh Mì / Sliders / Tacos / Lo Mein" },

@@ -49,6 +49,7 @@ import {
     BUILD_SHEET_RICE_NOODLES,
     BUILD_SHEET_STOCKS,
     BUILD_SHEET_MADE_AHEAD,
+    BUILD_SHEET_DRINKS,
 } from './buildSheet';
 
 // The editable sections — Andrew 2026-06-11: "too many items. alot
@@ -110,6 +111,13 @@ export const STICKER_SECTIONS = Object.freeze([
         titleEn: '🍪 Sweets & Snacks',
         titleEs: '🍪 Dulces y Snacks',
         defaults: BUILD_SHEET_SWEETS_SNACKS,
+    },
+    {
+        key: 'drinks',
+        kind: 'drink',
+        titleEn: '🧋 Drinks',
+        titleEs: '🧋 Bebidas',
+        defaults: BUILD_SHEET_DRINKS,
     },
 ]);
 

@@ -665,4 +665,5 @@ export const COMPONENT_KIND_TONE = Object.freeze({
     side:    { bg: 'bg-purple-50',  text: 'text-purple-900',  icon: '🍙', labelEn: 'Item',     labelEs: 'Artículo' },
     garnish: { bg: 'bg-emerald-50', text: 'text-emerald-900', icon: '🌿', labelEn: 'Garnish',  labelEs: 'Guarnición' },
     note:    { bg: 'bg-blue-50',    text: 'text-blue-900',    icon: 'ℹ️', labelEn: 'Note',     labelEs: 'Nota' },
+    drink:   { bg: 'bg-cyan-50',    text: 'text-cyan-900',    icon: '🧋', labelEn: 'Drink',    labelEs: 'Bebida' },
 });
