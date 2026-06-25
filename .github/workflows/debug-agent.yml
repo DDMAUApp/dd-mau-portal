@@ -7,7 +7,10 @@
 # ── ONE-TIME ACTIVATION (Andrew) ─────────────────────────────────────────────
 # Settings → Secrets and variables → Actions:
 #   Secrets:
-#     • ANTHROPIC_API_KEY        — your Anthropic API key (this bills your API usage)
+#     • CLAUDE_CODE_OAUTH_TOKEN  — from `claude setup-token` (runs on your Claude
+#                                  subscription; no separate API billing). To use a
+#                                  metered API key instead, add ANTHROPIC_API_KEY and
+#                                  swap the `with:` line near the bottom of this file.
 #     • FIREBASE_SERVICE_ACCOUNT — paste the FULL contents of firebase-service-account.json
 #   Variables:
 #     • DEBUG_AGENT_ENABLED = true   ← the on-switch. Until this is "true" the job
@@ -63,7 +66,11 @@ jobs:
       - name: Run the debug agent
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Auth via your Claude SUBSCRIPTION (token from `claude setup-token`), so the
+          # agent runs on your existing plan, not pay-per-use API billing. To switch to
+          # a metered API key: replace the line below with
+          #   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are the DD Mau self-healing debug agent, running in GitHub Actions (CI).
 
