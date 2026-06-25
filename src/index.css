@@ -387,16 +387,11 @@
             0 20px 42px -12px rgba(30, 80, 140, 0.20);
     }
     .glass-keypad-button:active {
-        /* 2026-06-24 — snap IN instantly (transition:none) so a fast tap still
-           visibly depresses; the spring-BACK on release eases via the base
-           transition. Firmer scale + a deeper inset = a real "pressed" feel. */
-        transition: none;
-        transform: scale(0.92);
-        box-shadow:
-            inset 0 1px 0 rgba(255, 255, 255, 0.85),
-            inset 0 -2px 5px rgba(35, 65, 115, 0.16),
-            0 0px 1px rgba(30, 60, 110, 0.07),
-            0 1px 3px rgba(30, 70, 130, 0.08);
+        /* 2026-06-24 — NO native :active visual. iOS applies :active to the
+           element it ROUTED the tap to, which can be the wrong (offset) key —
+           so a press here would light up the wrong button (tap 9 → OK depresses
+           too). Press feedback is the geometry-correct .is-keypress class only. */
+        transform: none;
     }
     /* Quieter variant for secondary actions like Clear — same
        dimensional recipe, lower-contrast gradient so it reads as
@@ -434,8 +429,7 @@
             );
     }
     .glass-keypad-button-secondary:active {
-        transition: none;
-        transform: scale(0.92);
+        transform: none;   /* see .glass-keypad-button:active — feedback via .is-keypress */
     }
     /* Primary OK key — brand green, same dimensional shadow grammar
        as the glass keys so it doesn't read flat next to them. */
@@ -476,8 +470,7 @@
             0 20px 42px -12px rgba(15, 60, 35, 0.50);
     }
     .glass-keypad-button-primary:active {
-        transition: none;
-        transform: scale(0.92);
+        transform: none;   /* see .glass-keypad-button:active — feedback via .is-keypress */
     }
     /* 2026-06-24 — geometry-driven press highlight. The keypad resolves the
        pressed key from touch COORDINATES (HomePage handleKeypadPointerDown),
@@ -510,7 +503,12 @@
            brand-green flash confirms EVERY press regardless of how fast the
            finger lifts. user-select:none kills the text-selection flicker on a
            fast repeat-tap. */
-        -webkit-tap-highlight-color: rgba(31, 122, 77, 0.22);
+        /* 2026-06-24 — transparent: iOS applies the tap-highlight to whatever
+           element it ROUTES the tap to, which can be offset from the painted
+           key — so a green flash would light up the WRONG key (e.g. tap 9, OK
+           flashes). The geometry-correct .is-keypress class is the sole press
+           feedback now (it lights up the key actually under the finger). */
+        -webkit-tap-highlight-color: transparent;
         -webkit-user-select: none;
         user-select: none;
     }
