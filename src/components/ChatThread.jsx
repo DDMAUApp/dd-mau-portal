@@ -4280,9 +4280,19 @@ function MessageActionMenu({
     // earlier point about X").
     const replyable = !message.deleted && message.type !== 'system' && message.type !== 'system_event';
     return (
-        <>
-            <div className="fixed inset-0 z-40" onClick={onClose} />
-            <div className={`absolute z-50 -top-2 ${isMine ? 'right-0' : 'left-0'} translate-y-[-100%] bg-white rounded-xl shadow-2xl border border-dd-line min-w-[240px] overflow-hidden`}>
+        // 2026-06-25 — render through ModalPortal (escapes to <body>). The old
+        // `absolute -top-2 translate-y-[-100%]` opened the menu ABOVE the bubble,
+        // where it got clipped by the scroll container AND by the bubble's
+        // `content-visibility:auto` (contain:paint) wrapper → "too high, can't
+        // scroll to the items." A portaled, viewport-centered panel with its own
+        // max-height + scroll is always fully visible + reachable.
+        <ModalPortal onBackPress={onClose}>
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20" onClick={onClose}>
+                <div
+                    className="w-full max-w-[300px] bg-white rounded-2xl shadow-2xl border border-dd-line overflow-y-auto overscroll-contain"
+                    style={{ maxHeight: '80vh' }}
+                    onClick={(e) => e.stopPropagation()}
+                >
                 {/* Reaction row */}
                 <div className="flex justify-around px-2 py-2 border-b border-dd-line/60 bg-dd-bg/30">
                     {QUICK_REACTIONS.map(e => (
@@ -4328,8 +4338,9 @@ function MessageActionMenu({
                         </button>
                     )}
                 </div>
+                </div>
             </div>
-        </>
+        </ModalPortal>
     );
 }
 
