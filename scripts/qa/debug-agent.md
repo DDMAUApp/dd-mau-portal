@@ -140,8 +140,27 @@ gh pr create --base main --head autofix/<slug> --title "..." --body "..."
 - **Body:** the error signature + count + lastSeen · root-cause diagnosis ·
   what changed and why · `build + <N> vitest green` · and the line
   *"Auto-opened by the self-healing debug agent — review before merging."*
-- **NEVER** run `gh pr merge`. **NEVER** push to `main`. PRs only.
-- After opening it, ping Andrew: `node scripts/qa/agent-comms.mjs post "✅ Fixed <errorName> — PR #<n> ready to review."`
+- **NEVER** run `gh pr merge`. **NEVER** push to `main`. PRs only — UNLESS Andrew
+  later gives the explicit Ship Command (see below).
+- After opening it, ping Andrew: `node scripts/qa/agent-comms.mjs post "✅ Fixed <errorName> — PR #<n> ready to review. Reply \"ship it\" to make it live."`
+
+## Step 6.5 — Ship Command (the ONE time you may merge + deploy)
+Only when Andrew's latest message is an explicit ship instruction — "ship it",
+"ship PR #N", "deploy the <x> fix", "make it live":
+1. **Find the PR** — a number if named; else the newest OPEN `autofix/*` PR
+   (`gh pr list --state open --head autofix/ --json number,title,headRefName`).
+   Several open + ambiguous → **ask which**, don't guess.
+2. **Re-verify safe** — PR open + mergeable; if it has checks, `gh pr checks <n>`
+   green. Caution zone (payroll/auth/PIN/schedule-txn/cents/rules) → confirm once.
+3. **Server?** `gh pr diff <n> --name-only | grep -q '^functions/'` → deploy_functions.
+4. **Merge** — `gh pr merge <n> --merge --delete-branch`.
+5. **Deploy** — a GITHUB_TOKEN dispatch can't start a workflow, so use the PAT:
+   `GH_TOKEN="$SHIP_PAT" gh api "repos/$GITHUB_REPOSITORY/dispatches" --method POST -f event_type=ship-live -F "client_payload[deploy_functions]=<true|false>"`.
+   No SHIP_PAT? Post "merge it in the GitHub app → Actions → Ship Live → Run" and stop.
+6. **Confirm** — `post "✅ Shipping PR #<n> — web + phones<+ functions> live in ~2-3 min."`
+This deploys via `.github/workflows/ship-live.yml` (same as a local `npm run deploy`
++ optional functions). Ship Live can also be run by hand from the GitHub mobile
+app: Actions → "Ship Live" → Run workflow.
 
 ## Step 7 — Summarize
 End with a concise report: items fixed (with PR links), items skipped and why
@@ -151,7 +170,9 @@ This summary is the only thing the owner sees — make it scannable.
 ---
 
 ## Hard rules
-- **NEVER merge or push to `main`.** Pull requests only.
+- **NEVER merge or push to `main`** for normal bug work — Pull requests only.
+  The SOLE exception is the explicit Ship Command (Step 6.5): an unambiguous
+  "ship it" from Andrew for a specific, already-reviewed PR.
 - **Cap ~3 PRs per run.** If more, do the highest-confidence ones; list the rest.
 - **Never** touch payroll / auth / schedule-transaction / cents-math / rules
   without very high confidence.

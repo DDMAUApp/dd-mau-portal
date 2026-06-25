@@ -1,0 +1,112 @@
+name: Ship Live (web + phones)
+
+# Deploy a fix to PRODUCTION from anywhere — no Mac required.
+#
+# WHY: `npm run deploy` (scripts/deploy.sh) only runs on Andrew's Mac, so when
+# he's away he can't take a reviewed fix all the way live. This runs the EXACT
+# same deploy in GitHub's cloud, so the result is identical to shipping locally:
+#   • WEB  (app.ddmaustl.com via GitHub Pages — also the Pi menu TVs)
+#   • PHONES (iOS + Android via Capgo OTA)
+#   • (optional) Cloud Functions, only when a fix changed functions/
+#
+# HOW TO RUN IT FROM YOUR PHONE:
+#   • GitHub mobile app → this repo → Actions → "Ship Live" → Run workflow.
+#   • Or post "ship it" in the 🐛 Debug Agent chat (the agent merges the
+#     reviewed PR + fires this via repository_dispatch). See scripts/qa/debug-agent.md.
+#
+# ONE-TIME SECRETS (Settings → Secrets and variables → Actions) — Andrew adds
+# these himself; they are never printed:
+#   • CAPGO_TOKEN   (required for the phone OTA half; without it web still ships)
+#   • FIREBASE_TOKEN (optional — only needed to deploy Cloud Functions from CI;
+#                     get via `firebase login:ci` on the Mac)
+#
+# It is MANUAL-trigger only — it never fires on a normal push, so deploys stay
+# deliberate. The debug agent never reaches this without an explicit "ship it".
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_functions:
+        description: 'Also deploy Cloud Functions (only if the fix changed functions/)'
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [ship-live]   # fired by the debug agent on an explicit "ship it"
+
+permissions:
+  contents: write   # version-bump commit + push to main
+  pages: write      # GitHub Pages deploy
+  id-token: write   # Pages deploy auth
+
+concurrency:
+  group: "pages"     # share the Pages lock with deploy.yml so they can't collide
+  cancel-in-progress: false
+
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Git identity (for the version-bump commit)
+        run: |
+          git config user.name  "DD Mau Ship Bot"
+          git config user.email "noreply@ddmaustl.com"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # deploy.sh: npm version patch → build → commit + push main → Capgo OTA →
+      # health check. Identical to a local `npm run deploy`. SENTRY_* mirror
+      # deploy.yml so source maps still upload. CAPGO_TOKEN drives the OTA half;
+      # if it's unset deploy.sh ships web and skips OTA (graceful).
+      - name: Version bump + build + push (web) + OTA (phones)
+        env:
+          CAPGO_TOKEN: ${{ secrets.CAPGO_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+        run: npm run deploy
+
+      # The push above won't re-trigger deploy.yml (GITHUB_TOKEN can't start
+      # another workflow), so this run deploys the web bundle itself from the
+      # dist/ that deploy.sh just built.
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      # Only when the fix actually touched server code. Skipped (non-fatal) if
+      # no FIREBASE_TOKEN is configured — web + phones already shipped above.
+      - name: Deploy Cloud Functions (optional)
+        if: ${{ github.event.inputs.deploy_functions == 'true' || github.event.client_payload.deploy_functions == true }}
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "${FIREBASE_TOKEN:-}" ]; then
+            echo "::warning::No FIREBASE_TOKEN secret — skipping Cloud Functions deploy (web + phones still shipped)."
+            exit 0
+          fi
+          ( cd functions && npm ci )
+          npx firebase-tools@latest deploy --only functions \
+            --project dd-mau-staff-app --token "$FIREBASE_TOKEN" --non-interactive

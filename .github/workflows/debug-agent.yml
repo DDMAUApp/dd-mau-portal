@@ -102,13 +102,28 @@ jobs:
             - Be honest + specific: if nothing's wrong, say what you checked and why it's fine. Never end on a bare "on it".
 
             ALWAYS leave the thread with a conclusion when you picked up a request — nothing should dangle to the next run.
-            HARD RULES: NEVER merge a PR, NEVER push to `main`, NEVER `git add` firebase-service-account.json. PRs only. Cap ~3 PRs/run. Extra caution (ask, don't auto-edit) on payroll / auth / PIN / schedule-transaction / cents-math / Firestore-rules. If the chat has NO unanswered request AND the queue is clear, do nothing and exit.
+            SHIP COMMAND (the ONE time you may merge + deploy): if Andrew's latest message is an explicit ship instruction — "ship it", "ship PR #N", "deploy the <x> fix", "make it live", "push it live" — then and ONLY then:
+              1. Identify the PR: a number if he named one; else the most-recent OPEN `autofix/*` PR (`gh pr list --state open --head 'autofix/' --json number,title,headRefName`). If there are several open and he didn't say which, ASK which one — do NOT guess.
+              2. Re-verify it's safe: `gh pr view <n>` is OPEN + mergeable; if it has CI checks, `gh pr checks <n>` must be green; (you already ran build+tests when you opened it). If it touches a caution zone (payroll/auth/PIN/schedule-transaction/cents-math/Firestore-rules) and he didn't clearly acknowledge that, confirm once before shipping.
+              3. Detect server changes: `gh pr diff <n> --name-only | grep -q '^functions/'` → deploy_functions = true, else false.
+              4. Merge: `gh pr merge <n> --merge --delete-branch` (uses GH_TOKEN).
+              5. Deploy: fire the Ship Live workflow with the SHIP_PAT env var (a GITHUB_TOKEN dispatch can't start a workflow, so you MUST use SHIP_PAT):
+                 `GH_TOKEN="$SHIP_PAT" gh api "repos/$GITHUB_REPOSITORY/dispatches" --method POST -f event_type=ship-live -F "client_payload[deploy_functions]=<true|false>"`
+                 (If SHIP_PAT is empty, do NOT merge silently — post `⚠️ Merged-ready but SHIP_PAT isn't set, so I can't deploy from here. Merge PR #<n> in the GitHub app, then Actions → "Ship Live" → Run workflow.` and stop.)
+              6. Post: `✅ Shipping PR #<n> (<title>) — web + phones<+ functions> live in ~2-3 min. Watch: https://github.com/$GITHUB_REPOSITORY/actions/workflows/ship-live.yml`.
+            HARD RULES: NEVER merge or push to `main` EXCEPT the explicit SHIP COMMAND above (an unambiguous "ship it" from Andrew for a specific reviewed PR). For normal bug work it is PRs only — never auto-merge your own fix. NEVER `git add` firebase-service-account.json. Cap ~3 PRs/run. Extra caution (ask, don't auto-edit) on payroll / auth / PIN / schedule-transaction / cents-math / Firestore-rules. If the chat has NO unanswered request AND the queue is clear, do nothing and exit.
           claude_args: |
             --model claude-opus-4-8
             --max-turns 80
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
         env:
           GH_TOKEN: ${{ github.token }}
+          # PAT (fine-grained, Contents+Actions write on this repo) used ONLY to
+          # fire the Ship Live workflow on an explicit "ship it". A GITHUB_TOKEN
+          # dispatch can't start another workflow, so a PAT is required. The
+          # agent merges with GH_TOKEN; it touches SHIP_PAT only to dispatch.
+          # Andrew can reuse the existing dispatch PAT value here.
+          SHIP_PAT: ${{ secrets.SHIP_PAT }}
 
       # GUARANTEE a chat reply. Runs even if the agent step errored/timed-out.
       # ensure-reply posts a fallback ONLY when the newest thread message isn't
