@@ -386,8 +386,10 @@ function ChatThreadInner({
     const scrollRef = useRef(null);
     const innerRef = useRef(null);
     const atBottomRef = useRef(true);
+    const scrollRafRef = useRef(0);
     const [atBottom, setAtBottom] = useState(true);
     useLayoutEffect(() => { atBottomRef.current = atBottom; }, [atBottom]);
+    useEffect(() => () => { if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current); }, []);
     useLayoutEffect(() => {
         if (!atBottom) return;
         const el = scrollRef.current;
@@ -434,10 +436,23 @@ function ChatThreadInner({
         return () => ro.disconnect();
     }, []);
     function handleScroll() {
-        const el = scrollRef.current;
-        if (!el) return;
-        const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-        setAtBottom(gap < 100);
+        // 2026-06-25 perf — the scroll-freeze fix. Previously this read
+        // scrollHeight (forces layout) and called setAtBottom on EVERY scroll
+        // tick; on a long thread that re-rendered the whole ChatThread mid-
+        // gesture (re-running groupByDate + the per-bubble comparator) and the
+        // list locked under the finger. Now: measure at most once per frame,
+        // and only setState when the boolean actually flips.
+        if (scrollRafRef.current) return;
+        scrollRafRef.current = requestAnimationFrame(() => {
+            scrollRafRef.current = 0;
+            const el = scrollRef.current;
+            if (!el) return;
+            const next = (el.scrollHeight - el.scrollTop - el.clientHeight) < 100;
+            if (next !== atBottomRef.current) {
+                atBottomRef.current = next;
+                setAtBottom(next);
+            }
+        });
     }
     // 2026-05-24 audit fix: iOS soft keyboard opens → viewport shrinks
     // by ~270px → the still-running scroll handler reads "gap > 100"
@@ -2757,6 +2772,12 @@ function MessageBubbleInner({
 // bound to the OLD msg, but msg.id is what every handler ultimately
 // uses to identify the target, and msg.id is stable for a given
 // bubble. Safe in this codebase.
+// Cheap deep-equal for optional message payloads: when both sides are
+// nullish (most messages have no reactions/poll/attachments/etc.) treat
+// them equal without serializing; only JSON.stringify when at least one
+// side has a value. Keeps the hot comparator off the stringify path for the
+// typical bubble. 2026-06-25 perf.
+const jsonEq = (x, y) => (x == null && y == null) || JSON.stringify(x || null) === JSON.stringify(y || null);
 function msgFieldsEqual(a, b) {
     if (a === b) return true;
     if (!a || !b) return false;
@@ -2770,13 +2791,15 @@ function msgFieldsEqual(a, b) {
     if ((a.resolvedAt || null) !== (b.resolvedAt || null)) return false;
     // Reactions, mentions, poll, eightySixData are objects/arrays —
     // a JSON compare catches value changes without false positives
-    // from Firestore ref churn. The strings are short.
-    if (JSON.stringify(a.reactions || null) !== JSON.stringify(b.reactions || null)) return false;
-    if (JSON.stringify(a.mentions || null) !== JSON.stringify(b.mentions || null)) return false;
-    if (JSON.stringify(a.poll || null) !== JSON.stringify(b.poll || null)) return false;
-    if (JSON.stringify(a.eightySixData || null) !== JSON.stringify(b.eightySixData || null)) return false;
-    if (JSON.stringify(a.attachments || null) !== JSON.stringify(b.attachments || null)) return false;
-    if (JSON.stringify(a.replyTo || null) !== JSON.stringify(b.replyTo || null)) return false;
+    // from Firestore ref churn. jsonEq short-circuits when BOTH sides are
+    // nullish (the common case — most messages carry none of these), so the
+    // hot comparator skips the stringify entirely on the typical bubble.
+    if (!jsonEq(a.reactions, b.reactions)) return false;
+    if (!jsonEq(a.mentions, b.mentions)) return false;
+    if (!jsonEq(a.poll, b.poll)) return false;
+    if (!jsonEq(a.eightySixData, b.eightySixData)) return false;
+    if (!jsonEq(a.attachments, b.attachments)) return false;
+    if (!jsonEq(a.replyTo, b.replyTo)) return false;
     // createdAt only changes when the bubble first lands (server
     // resolves the timestamp), then never again.
     const amMs = a.createdAt?.toMillis?.() ?? a.createdAt?.seconds ?? 0;

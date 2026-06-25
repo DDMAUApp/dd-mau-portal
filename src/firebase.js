@@ -92,8 +92,19 @@ try {
     console.warn('[firestore] persistent cache unavailable — using memory cache:', e?.message);
     _localCache = undefined;
 }
+// 2026-06-25 — Android login latency. experimentalAutoDetectLongPolling
+// makes the SDK try WebChannel first, DETECT the stall, THEN fall back to
+// long-polling — that detect round-trip delays the first /config/staff
+// snapshot that gates the keypad (the Android-only "login is slow/glitchy"
+// complaint). The Android System WebView never sustains WebChannel anyway
+// (see the 2026-06-05 note above), so on Android we FORCE long-polling and
+// skip the probe entirely. Web + iOS WKWebView keep auto-detect (WebChannel
+// works there and is faster steady-state) — they are UNAFFECTED.
+const _isAndroid = typeof window !== 'undefined' && window.Capacitor?.getPlatform?.() === 'android';
 export const db = initializeFirestore(app, {
-    experimentalAutoDetectLongPolling: true,
+    ...(_isAndroid
+        ? { experimentalForceLongPolling: true }
+        : { experimentalAutoDetectLongPolling: true }),
     ...(_localCache ? { localCache: _localCache } : {}),
 });
 export const storage = getStorage(app);

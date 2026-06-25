@@ -621,17 +621,29 @@ function normalizeName(s) {
 // Returns:
 //   { recipe, ingredients: [{ nameEn, nameEs }] }  on match
 //   null                                            on no match
+// Precomputed at module load: normalize each recipe title ONCE instead of
+// re-normalizing all ~39 recipes for every sticker row on every render
+// (~5,800 NFD-normalize+regex ops at first paint → an O(1) Map lookup +
+// a small substring fallback). 2026-06-25 perf.
+const _RECIPE_NORMS = MASTER_RECIPES
+    .map(r => ({ r, norm: normalizeName(r.titleEn) }))
+    .filter(x => x.norm);
+const _RECIPE_BY_NORM = (() => {
+    const m = new Map();
+    for (const { r, norm } of _RECIPE_NORMS) if (!m.has(norm)) m.set(norm, r);
+    return m;
+})();
+
 export function findSubRecipe(componentNameEn) {
     if (!componentNameEn) return null;
     const target = normalizeName(componentNameEn);
     if (!target) return null;
-    let best = null;
-    for (const r of MASTER_RECIPES) {
-        const rname = normalizeName(r.titleEn);
-        if (!rname) continue;
-        if (rname === target) { best = r; break; }
-        if (!best && (rname.includes(target) || target.includes(rname))) {
-            best = r;
+    // Exact title wins (O(1) Map); else first substring match either
+    // direction — same result the old linear scan produced, far less work.
+    let best = _RECIPE_BY_NORM.get(target) || null;
+    if (!best) {
+        for (const { r, norm } of _RECIPE_NORMS) {
+            if (norm.includes(target) || target.includes(norm)) { best = r; break; }
         }
     }
     if (!best) return null;
