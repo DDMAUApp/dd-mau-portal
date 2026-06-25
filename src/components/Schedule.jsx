@@ -35,7 +35,7 @@ import {
 import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
-import { auditAvailabilityChange, auditPtoChange, auditShiftChange } from '../data/audit';
+import { auditAvailabilityChange, auditPtoChange, auditShiftChange, auditScheduleConfig } from '../data/audit';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, aggregateSplh, scheduledHoursByDayPart, variance } from '../data/splh';
 // 2026-05-27 — Andrew: forecast bar redesigned to a weather-channel-
@@ -2432,6 +2432,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             // Notify both staff (best-effort, outside the transaction).
             const detail = `${request.fromShiftSnapshot?.date || ''} ↔ ${request.toShiftSnapshot?.date || ''}`;
+            // Audit log — Andrew 2026-06-25.
+            auditShiftChange({ shiftId: request.id, staffName: request.fromStaff, action: 'swap_approved',
+                after: { swappedWith: request.toStaff, dates: detail } }).catch(() => {});
             for (const recipient of [request.fromStaff, request.toStaff]) {
                 const counterparty = recipient === request.fromStaff ? request.toStaff : request.fromStaff;
                 notifyStaff({
@@ -2477,6 +2480,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 deniedBy: staffName,
                 deniedAt: serverTimestamp(),
             });
+            // Audit log — Andrew 2026-06-25.
+            auditShiftChange({ shiftId: request.id, staffName: request.fromStaff, action: 'swap_denied',
+                after: { swapWith: request.toStaff } }).catch(() => {});
             notifyStaff({
                 forStaff: request.fromStaff,
                 type: 'swap_denied',
@@ -2635,6 +2641,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 claimedAt: null,
                 updatedAt: serverTimestamp(),
             });
+            // Audit log — Andrew 2026-06-25.
+            auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'cover_requested',
+                after: { offerStatus: 'open', coverNeeded: true } }).catch(() => {});
 
             // Fan-out push. Build the qualified list, then notify each in
             // parallel (Promise.all). notify() already handles per-staff
@@ -2739,6 +2748,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         pruneNeedAfterShiftDelete(sh).catch(e => console.warn('prune failed for', sh.id, e))
                     ));
                 } catch (e) { console.warn('bulk-delete batch failed:', e); }
+                // Audit log (roll-up) — Andrew 2026-06-25.
+                auditShiftChange({ action: 'bulk_deleted', staffName: null,
+                    after: { count: snapshot.length, ids: snapshot.slice(0, 25).map(s => s.id) } }).catch(() => {});
                 // Per-staff push: one rolled-up notification per affected
                 // staffer listing how many of THEIR shifts got cut. Only
                 // counts published shifts (drafts hadn't been released).
@@ -2827,6 +2839,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
             await batch.commit();
             okCount = candidates.length;
+            // Audit log (roll-up) — Andrew 2026-06-25.
+            auditShiftChange({ action: 'bulk_offered', staffName: null,
+                after: { count: candidates.length, ids: candidates.slice(0, 25).map(s => s.id) } }).catch(() => {});
         } catch (e) {
             console.warn('bulk-offer batch failed:', e);
             failCount = candidates.length;
@@ -2851,6 +2866,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 claimedAt: null,
                 updatedAt: serverTimestamp(),
             });
+            // Audit log — Andrew 2026-06-25.
+            auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'offer_cancelled',
+                before: { offerStatus: shift.offerStatus || 'open' }, after: { offerStatus: null } }).catch(() => {});
         } catch (e) {
             console.error('Cancel offer failed:', e);
         }
@@ -3078,6 +3096,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     });
                 }
             });
+            // Audit log — Andrew 2026-06-25.
+            auditShiftChange({ shiftId: shift.id, staffName: newOwner, action: 'approved',
+                before: { staffName: oldOwner }, after: { staffName: newOwner, split: !!leftoverDetail } }).catch(() => {});
             // Notifications outside the transaction — they hit a different
             // collection and shouldn't roll back the swap if push fails.
             if (leftoverDetail) {
@@ -3114,6 +3135,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 claimedAt: null,
                 updatedAt: serverTimestamp(),
             });
+            // Audit log — Andrew 2026-06-25.
+            auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'claim_denied',
+                after: { claimBy: shift.pendingClaimBy, offerStatus: 'open' } }).catch(() => {});
             const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
             await notify(shift.pendingClaimBy, 'swap_denied',
                 { en: 'Swap denied', es: 'Cambio negado' },
@@ -3225,6 +3249,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
             });
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'need_created', targetType: 'staffing_need', targetId: docRef.id,
+                targetName: `${need.date || ''} ${need.side || ''} need`, after: { date: need.date, count: need.count, side: need.side } }).catch(() => {});
             setShowNeedModal(false);
             // Fan out the broadcast notification AFTER the doc is
             // committed. We don't await here because the notification
@@ -3244,6 +3271,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!confirm(tx('Remove this staffing need? Shifts already filled will NOT be deleted.', '¿Quitar esta necesidad? Los turnos ya asignados NO se eliminarán.'))) return;
         try {
             await deleteDoc(doc(db, 'staffing_needs', needId));
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'need_removed', targetType: 'staffing_need', targetId: needId,
+                targetName: need ? `${need.date || ''} ${need.side || ''} need` : 'need' }).catch(() => {});
         } catch (e) {
             console.error('Remove need failed:', e);
         }
@@ -3271,6 +3301,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             });
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'need_edited', targetType: 'staffing_need', targetId: id,
+                targetName: `${data.date || ''} ${data.side || ''} need`,
+                before: prev ? { count: prev.count, openToAllStaff: wasOpen } : null,
+                after: { count: data.count, openToAllStaff: isOpenNow } }).catch(() => {});
             setEditingNeed(null);
             if (!wasOpen && isOpenNow) {
                 broadcastUpForGrabs({ id, ...data }).catch(() => {});
@@ -3363,6 +3398,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 filledStaff: arrayUnion(staffMember.name),
                 filledShiftIds: arrayUnion(shiftRef.id),
             });
+            // Audit log — Andrew 2026-06-25 (shift created by filling an open slot).
+            auditShiftChange({ shiftId: shiftRef.id, staffName: staffMember.name, action: 'created',
+                after: { date: need.date, side: need.side }, reason: 'filled open slot' }).catch(() => {});
             // 2026-05-24 audit fix: these were referenced below as
             // undefined symbols — the function would always throw
             // ReferenceError after a successful fill, causing managers
@@ -3568,6 +3606,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 });
                 savedTpl = { ...tpl, id: newRef.id };
             }
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: tpl.id ? 'template_edited' : 'template_created', targetType: 'template',
+                targetId: savedTpl.id || null, targetName: tpl.name || 'template' }).catch(() => {});
             setShowTemplateEditor(false);
             setEditingTemplate(null);
             // Now apply (after-save) so the template + the staffing
@@ -3589,6 +3630,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!confirm(tx('Delete this template? Already-applied needs will NOT be removed.', '¿Eliminar esta plantilla? Las necesidades ya aplicadas NO se quitarán.'))) return;
         try {
             await deleteDoc(doc(db, 'schedule_templates', id));
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'template_deleted', targetType: 'template', targetId: id,
+                targetName: tpl?.name || 'template' }).catch(() => {});
         } catch (e) {
             console.error('Delete template failed:', e);
         }
@@ -3650,6 +3694,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 }
             }
             setShowApplyTemplate(false);
+            // Audit log (roll-up) — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'template_applied', targetType: 'template', targetId: tpl.id || null,
+                targetName: tpl.name || 'template', after: { days: successes.length, failed: failures.length } }).catch(() => {});
             if (failures.length === 0) {
                 const label = dateStrs.length === 1 ? dateStrs[0] : `${dateStrs.length} ${tx('days', 'días')}`;
                 toast(tx(`✅ Applied "${tpl.name}" to ${label}.`, `✅ "${tpl.name}" aplicada a ${label}.`));
@@ -3686,6 +3733,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             } else {
                 await addDoc(collection(db, 'recurring_shifts'), { ...rule, createdAt: serverTimestamp(), createdBy: staffName });
             }
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: rule.id ? 'recurring_edited' : 'recurring_created', targetType: 'recurring_rule',
+                targetId: rule.id || null, targetName: rule.staffName ? `${rule.staffName} recurring` : 'recurring rule',
+                after: { staffName: rule.staffName, startTime: rule.startTime, endTime: rule.endTime } }).catch(() => {});
         } catch (e) {
             console.error('Save recurring failed:', e);
             toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
@@ -3702,6 +3753,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!confirm(tx('Delete this recurring rule? Already-generated shifts stay.', '¿Eliminar esta regla? Los turnos ya generados se quedan.'))) return;
         try {
             await deleteDoc(doc(db, 'recurring_shifts', id));
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'recurring_deleted', targetType: 'recurring_rule', targetId: id,
+                targetName: rule?.staffName ? `${rule.staffName} recurring` : 'recurring rule' }).catch(() => {});
         } catch (e) {
             console.error('Delete recurring failed:', e);
         }
@@ -3804,6 +3858,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 await batch.commit();
             }
         } catch (e) { console.error('Recurring shift batch failed:', e); }
+        // Audit log (roll-up) — Andrew 2026-06-25.
+        if (created.length > 0) auditScheduleConfig({ action: 'recurring_generated', targetType: 'shift',
+            targetName: 'recurring → shifts', after: { generated: created.length, skipped: skipped.length } }).catch(() => {});
         if (created.length === 0) {
             toast(tx(`No shifts generated.${skipped.length ? '\n\nSkipped:\n' + skipped.slice(0, 8).join('\n') : ''}`,
                 `No se generaron turnos.${skipped.length ? '\n\nOmitidos:\n' + skipped.slice(0, 8).join('\n') : ''}`));
@@ -3831,6 +3888,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
             })));
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: list.length > 1 ? 'blackout_added_bulk' : 'blackout_added', targetType: 'date_block',
+                targetName: list.length > 1 ? `${list.length} days` : (list[0]?.date || 'blackout'),
+                after: { days: list.length, type: list[0]?.type || 'closed', dates: list.slice(0, 25).map(b => b.date) } }).catch(() => {});
             setShowBlockModal(false);
             if (list.length > 1) {
                 toast(tx(`✅ Added ${list.length} blackout days.`, `✅ Se agregaron ${list.length} días de cierre.`));
@@ -3846,6 +3907,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!confirm(tx('Remove this date block?', '¿Quitar este bloqueo?'))) return;
         try {
             await deleteDoc(doc(db, 'date_blocks', blockId));
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'blackout_removed', targetType: 'date_block', targetId: blockId }).catch(() => {});
         } catch (e) {
             console.error('Remove block failed:', e);
         }
@@ -3869,11 +3932,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 // Was overridden open → remove override, falls back to
                 // recurring-closed (or fully open if no recurring rule).
                 await deleteDoc(doc(db, 'date_blocks', existingOverride.id));
+                auditScheduleConfig({ action: 'date_toggled', targetType: 'date', targetName: dateStr, reason: 'removed open-override (back to closed)' }).catch(() => {});
                 return;
             }
             if (existingClosedBlock) {
                 // One-off closure → just delete the block.
                 await deleteDoc(doc(db, 'date_blocks', existingClosedBlock.id));
+                auditScheduleConfig({ action: 'date_toggled', targetType: 'date', targetName: dateStr, reason: 'removed closure (opened)' }).catch(() => {});
                 return;
             }
             if (dateClosedByRecurring(dateStr)) {
@@ -3886,6 +3951,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     createdBy: staffName,
                     createdAt: serverTimestamp(),
                 });
+                auditScheduleConfig({ action: 'date_toggled', targetType: 'date', targetName: dateStr, reason: 'added open-override (one-off open)' }).catch(() => {});
                 return;
             }
             // Already open normally — nothing to do.
@@ -3935,6 +4001,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             }, { merge: true });
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'weekly_closure_toggled', targetType: 'config',
+                targetName: `${loc} ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek] || dayOfWeek}`,
+                before: { closedDays: cur }, after: { closedDays: next } }).catch(() => {});
         } catch (e) {
             console.error('Toggle weekly closure failed:', e);
             toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
@@ -3960,6 +4030,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             }, { merge: true });
+            // Audit log — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'presets_saved', targetType: 'config', targetName: 'shift hour presets' }).catch(() => {});
             setShowPresetEditor(false);
             toast(tx('✓ Shift hours saved', '✓ Horas guardadas'), { kind: 'success' });
         } catch (e) {
@@ -5113,6 +5185,9 @@ ${dayBlocks}
                 }
                 await batch.commit();
             }
+            // Audit log (roll-up) — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'copied_week', targetType: 'shift', targetName: 'copy last week',
+                after: { count: toCreate.length } }).catch(() => {});
             toast(tx(`✅ Copied ${toCreate.length} shifts as drafts.`, `✅ Se copiaron ${toCreate.length} turnos como borradores.`));
         } catch (e) {
             console.error('Copy week failed:', e);
@@ -5250,6 +5325,9 @@ ${dayBlocks}
                 }
                 await batch.commit();
             }
+            // Audit log (roll-up) — Andrew 2026-06-25.
+            auditScheduleConfig({ action: 'auto_filled', targetType: 'shift', targetName: 'auto-fill engine',
+                after: { generated: created.length, skipped: skipped.length } }).catch(() => {});
             toast(tx(`✅ Auto-filled ${created.length} draft shifts.${skipped.length ? `\n\nSkipped:\n${skipped.slice(0,5).join('\n')}` : ''}`,
                 `✅ Se auto-rellenaron ${created.length} turnos borrador.${skipped.length ? `\n\nOmitidos:\n${skipped.slice(0,5).join('\n')}` : ''}`));
         } catch (e) {

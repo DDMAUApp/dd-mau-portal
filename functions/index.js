@@ -2229,6 +2229,10 @@ exports.pruneAuditLogs = onSchedule(
             { coll: "sms_delivery_logs",         field: "createdAt" },
             { coll: "sms_inbound_events",        field: "receivedAt" },
             { coll: "sms_opt_in_events",         field: "at"        },
+            // 2026-06-25 — the rich /audit collection (recordRichAudit: shift,
+            // pto, availability, schedule_config, inventory, 86, role, print…)
+            // was growing unbounded. 2-year retention (RETENTION_DAYS default).
+            { coll: "audit",                     field: "createdAt" },
             // 2026-05-24 audit fix: notifications collection grew
             // unbounded. After a year of daily chat pings × 30 staff
             // each it's tens of thousands of docs and inflates the

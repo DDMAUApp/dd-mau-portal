@@ -222,6 +222,23 @@ export async function auditScheduleChange({ shiftId, staffName, field, before, a
     });
 }
 
+// Schedule CONFIG changes — the writes that aren't a single shift/PTO/
+// availability row: staffing needs, templates, recurring rules, date
+// blocks/closures, shift presets, and bulk operations (copy week, auto-fill,
+// bulk delete/give-up). Andrew 2026-06-25 "everything in the schedule page".
+export async function auditScheduleConfig({ action, targetType, targetId, targetName, before, after, reason } = {}) {
+    return recordRichAudit({
+        feature: 'schedule_config',
+        action,
+        targetType: targetType || 'schedule_config',
+        targetId: targetId ?? null,
+        targetName: targetName || null,
+        before: before ?? null,
+        after: after ?? null,
+        reason,
+    });
+}
+
 export async function auditWaste({ itemId, name, qty, unit, reason } = {}) {
     return recordRichAudit({
         feature: 'waste',
