@@ -24,8 +24,12 @@ name: DD Mau debug agent (24/7)
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # every 15 min (UTC; GitHub may delay under load)
+    - cron: '*/15 * * * *'   # every 15 min (UTC; GitHub may delay under load) — SAFETY-NET backstop
   workflow_dispatch: {}        # manual "Run workflow" button
+  repository_dispatch:         # INSTANT wake from a Cloud Function (functions/index.js
+    types:                     # wakeDebugAgent): chat command or critical error → runs in seconds,
+      - chat-command           # instead of waiting on the unreliable cron above.
+      - critical-error
 
 permissions:
   contents: write

@@ -67,6 +67,11 @@ const GMAIL_OAUTH_REFRESH_TOKEN = defineSecret("GMAIL_OAUTH_REFRESH_TOKEN");
 // and individual functions that use it will pick it up on their next
 // cold start once the secret is attached to their config).
 const SENTRY_DSN = defineSecret("SENTRY_DSN");
+// 2026-06-24 — GitHub fine-grained PAT (Contents: read+write on
+// DDMAUApp/dd-mau-portal) used ONLY to fire a repository_dispatch that wakes
+// the 24/7 debug agent instantly (GitHub's */15 cron is unreliable/delayed).
+// No-ops safely if unset. Set with: firebase functions:secrets:set GH_DISPATCH_TOKEN
+const GH_DISPATCH_TOKEN = defineSecret("GH_DISPATCH_TOKEN");
 
 // APNs Auth Key + identifiers for direct iOS push (v1.1 Step 3+4).
 //   APNS_AUTH_KEY  — full PEM contents of the .p8 file (paste the
@@ -4854,8 +4859,41 @@ async function notifyOwnerOfBug(feature, errorName) {
     });
 }
 
+// ── wakeDebugAgent — poke the 24/7 GitHub Actions agent to run NOW ──────────
+// GitHub's `*/15` schedule is unreliable (it drops/delays high-frequency crons
+// under load — observed 50+ min gaps), so a chat command or a critical error
+// could sit unprocessed. Firing a repository_dispatch makes the agent start in
+// seconds. The cron stays as a safety-net backstop. Hoisted (function decl) so
+// callers above/below can use it. No-ops cleanly if GH_DISPATCH_TOKEN is unset.
+const GH_DISPATCH_REPO = "DDMAUApp/dd-mau-portal";
+async function wakeDebugAgent(eventType, clientPayload = {}) {
+    let token = "";
+    try { token = GH_DISPATCH_TOKEN.value() || ""; } catch { token = ""; }
+    if (!token) { logger.info(`wakeDebugAgent: GH_DISPATCH_TOKEN unset — skip '${eventType}'`); return false; }
+    try {
+        const res = await fetch(`https://api.github.com/repos/${GH_DISPATCH_REPO}/dispatches`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "Content-Type": "application/json",
+                "User-Agent": "dd-mau-debug-waker",
+            },
+            body: JSON.stringify({ event_type: eventType, client_payload: clientPayload }),
+        });
+        if (res.status === 204) { logger.info(`wakeDebugAgent: dispatched '${eventType}' → agent waking`); return true; }
+        const body = await res.text().catch(() => "");
+        logger.warn(`wakeDebugAgent: '${eventType}' failed ${res.status}: ${String(body).slice(0, 180)}`);
+        return false;
+    } catch (e) {
+        logger.warn(`wakeDebugAgent: '${eventType}' threw:`, e?.message || e);
+        return false;
+    }
+}
+
 exports.onCriticalError = onDocumentCreated(
-    { document: "error_logs/{id}", region: "us-central1", secrets: [SENTRY_DSN] },
+    { document: "error_logs/{id}", region: "us-central1", secrets: [SENTRY_DSN, GH_DISPATCH_TOKEN] },
     async (event) => {
         const snap = event.data;
         if (!snap) return;
@@ -4912,8 +4950,47 @@ exports.onCriticalError = onDocumentCreated(
         if (shouldPush) {
             try { await notifyOwnerOfBug(data.feature, data.errorName); }
             catch (e) { logger.warn(`onCriticalError: owner ping failed for sig=${sig}:`, e?.message || e); }
+            // Wake the cloud agent immediately to triage/fix — don't wait for
+            // the next (possibly 50-min-late) cron run. Cooldown-gated by the
+            // same shouldPush check, so an error storm = one wake.
+            try { await wakeDebugAgent("critical-error", { sig: sig.slice(0, 120), errorLogId: event.params.id, feature: data.feature || null }); }
+            catch (e) { logger.warn(`onCriticalError: wake dispatch failed for sig=${sig}:`, e?.message || e); }
         }
         logger.info(`onCriticalError: recorded sig="${sig}" ref=${event.params.id.slice(0, 8)} push=${shouldPush}`);
+    },
+);
+
+// ── wakeAgentOnChatCommand — instant agent wake on a Debug-Agent chat post ──
+// When Andrew posts in the "🐛 Debug Agent" thread (chats/debug_agent), fire a
+// repository_dispatch so the agent runs in SECONDS instead of waiting on the
+// flaky cron. Ignores the agent's OWN posts (would loop) + debounces a burst
+// of messages into one wake (45s window). No-ops if GH_DISPATCH_TOKEN unset.
+exports.wakeAgentOnChatCommand = onDocumentCreated(
+    { document: "chats/debug_agent/messages/{id}", region: "us-central1", secrets: [GH_DISPATCH_TOKEN] },
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return;
+        const data = snap.data() || {};
+        // Only humans issue commands; never wake on the agent's own replies.
+        if (!data.senderName || data.senderName === "Debug Agent") return;
+        // Debounce: collapse a rapid burst of messages into a single wake.
+        const debounceRef = db.doc("system/debug_agent_wake_debounce");
+        let fire = false;
+        try {
+            await db.runTransaction(async (txn) => {
+                const cur = await txn.get(debounceRef);
+                const last = cur.exists ? (cur.data() || {}).lastMs || 0 : 0;
+                const nowMs = Date.now();
+                fire = nowMs - last > 45 * 1000;
+                if (fire) txn.set(debounceRef, { lastMs: nowMs }, { merge: true });
+            });
+        } catch (e) { fire = true; /* on a txn hiccup, prefer to wake */ }
+        if (!fire) { logger.info("wakeAgentOnChatCommand: debounced (recent wake)"); return; }
+        await wakeDebugAgent("chat-command", {
+            reason: "owner chat command",
+            from: data.senderName,
+            preview: String(data.text || "").slice(0, 80),
+        });
     },
 );
 
