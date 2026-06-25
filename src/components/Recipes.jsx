@@ -1240,9 +1240,23 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                             }}
                                             disabled={printingIngredientsId === recipe.id}
                                             className="text-xs bg-purple-600 text-white px-3 py-1 rounded-full font-bold hover:bg-purple-700 active:scale-95 transition disabled:opacity-50 flex items-center gap-1">
+                                            {/* 2026-06-25 — NotFoundError "Failed to execute 'removeChild'
+                                                on 'Node'" crash fix (Recipes tab, userRole BOH). BOH staff
+                                                routinely run their phone browser in Google Translate
+                                                (auto-translate to Spanish). Translate swaps React's text
+                                                nodes for its own <font> wrappers; when this button's
+                                                children toggled between a BARE STRING ("Printing…") and a
+                                                MULTI-NODE FRAGMENT ("🖨 Print 2x") on print-tap, React's
+                                                reconciler called removeChild on a text node Translate had
+                                                already moved → it threw and the whole Recipes tab crashed
+                                                via the ErrorBoundary. Wrapping BOTH branches in a single
+                                                stable <span> means React only ever swaps one element for
+                                                another (it never touches the inner text nodes Translate
+                                                mutates), so reconciliation can't fail. Keep the wrappers —
+                                                do NOT collapse back to a bare string / fragment. */}
                                             {printingIngredientsId === recipe.id
-                                                ? (language === 'es' ? 'Imprimiendo…' : 'Printing…')
-                                                : <>🖨 {language === 'es' ? 'Imprimir' : 'Print'}{(recipeMultipliers[recipe.id] || 1) !== 1 ? ` ${recipeMultipliers[recipe.id]}x` : ''}</>}
+                                                ? <span>{language === 'es' ? 'Imprimiendo…' : 'Printing…'}</span>
+                                                : <span>🖨 {language === 'es' ? 'Imprimir' : 'Print'}{(recipeMultipliers[recipe.id] || 1) !== 1 ? ` ${recipeMultipliers[recipe.id]}x` : ''}</span>}
                                         </button>
                                     </div>
                                     <ul className="space-y-1">
