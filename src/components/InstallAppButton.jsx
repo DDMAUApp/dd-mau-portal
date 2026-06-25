@@ -4,17 +4,16 @@ import { openExternalUrl } from '../capacitor-bridge';
 
 // Native-app store links.
 //   • iOS — the unlisted App Store build (only reachable via this direct link).
-//   • Android — CLOSED testing with an EMAIL-LIST tester audience. A manager
-//     adds the staffer's Google email in Play Console → Closed testing →
-//     Testers; the staffer then opens this Play opt-in link, taps "Become a
-//     tester," and installs. No Google Group / self-join step. Andrew
-//     2026-06-24 — switched off the group flow after staff hit "you don't have
-//     permission to add email" on the group's join page.
-//     NOTE: the opt-in only resolves once the closed test is live (sent to
-//     Google for review) AND the staffer's email is on the tester list; until
-//     then Play shows "not available".
+//   • Android — INTERNAL testing track. A manager adds the staffer's Google
+//     email in Play Console → Internal testing → Testers; the staffer then
+//     opens this internal-test opt-in link, taps "Become a tester," and
+//     installs. Andrew 2026-06-25 — this is the correct opt-in URL (the old
+//     /apps/testing/<package> closed-test link showed "not available"; the
+//     internal track uses the /apps/internaltest/<id> form below).
+//     NOTE: the opt-in only resolves once the staffer's email is on the
+//     internal tester list; until then Play shows "not available".
 const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
-const ANDROID_APP_URL = 'https://play.google.com/apps/testing/com.ddmau.staff';
+const ANDROID_APP_URL = 'https://play.google.com/apps/internaltest/4701656348790704265';
 
 export default function InstallAppButton({ language, compact = false }) {
     const isEs = language === 'es';
