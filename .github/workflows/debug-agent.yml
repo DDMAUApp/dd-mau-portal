@@ -104,6 +104,7 @@ jobs:
             ALWAYS leave the thread with a conclusion when you picked up a request — nothing should dangle to the next run.
             HARD RULES: NEVER merge a PR, NEVER push to `main`, NEVER `git add` firebase-service-account.json. PRs only. Cap ~3 PRs/run. Extra caution (ask, don't auto-edit) on payroll / auth / PIN / schedule-transaction / cents-math / Firestore-rules. If the chat has NO unanswered request AND the queue is clear, do nothing and exit.
           claude_args: |
+            --model claude-opus-4-8
             --max-turns 80
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
         env:

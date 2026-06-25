@@ -3534,10 +3534,14 @@ exports.parseReceipt = onCall(
                     "content-type": "application/json",
                 },
                 body: JSON.stringify({
-                    // Vision-capable Haiku-class. If this 404s, swap to the
-                    // current haiku/sonnet model name (one-line change).
-                    model: "claude-haiku-4-5",
-                    max_tokens: 4096,
+                    // Sonnet (not Haiku) — receipts are often faint, handwritten,
+                    // or photographed at an angle, and Sonnet reads messy invoices
+                    // noticeably more accurately. Cost is pennies per scan (one
+                    // small image). If this 404s, swap to the current sonnet/haiku
+                    // model name (one-line change). 8192 tokens so a long 50-100
+                    // line invoice can't truncate mid-list.
+                    model: "claude-sonnet-4-6",
+                    max_tokens: 8192,
                     system,
                     messages: [{
                         role: "user",
