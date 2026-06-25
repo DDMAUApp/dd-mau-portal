@@ -177,7 +177,17 @@ function buildCommonContext() {
 //     2026-05-28 — six "Script error." entries in 3 minutes on the
 //     lock screen surfaced this gap when Andrew asked to "check the
 //     errors."
-const NOISE_PATTERN_LOG = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module|^Script error\.?$/i;
+//   • IndexedDB browser-internal failures surfaced through Firestore's
+//     persistentLocalCache (firebase.js). Safari/Firefox/WebViews throw
+//     these routinely under storage eviction, low disk, private mode, tab
+//     contention, or a cursor whose transaction the browser auto-closed.
+//     They arrive HANDLED (unhandledrejection); Firestore retries and falls
+//     back to the network on its own, so no write is lost — nothing
+//     actionable in app code. Already dropped at the Sentry level
+//     (sentryClient.js ignoreErrors); mirrored here so they don't create
+//     /error_logs rows that surface in the debug queue.
+//     2026-06-25 — "Attempt to iterate a cursor that doesn't exist" (Andrew).
+const NOISE_PATTERN_LOG = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module|^Script error\.?$|internal error was encountered in the Indexed Database server|Attempt to iterate a cursor that doesn't exist/i;
 
 export async function logError({ error, severity = 'error', feature, meta } = {}) {
     const errObj = error instanceof Error ? error : new Error(String(error ?? 'unknown error'));
