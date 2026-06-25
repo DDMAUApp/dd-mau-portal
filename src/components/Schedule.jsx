@@ -1898,6 +1898,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
             });
+            // Audit log — Andrew 2026-06-25. Best-effort, never blocks the write.
+            auditShiftChange({ shiftId: docRef.id, staffName: shiftData.staffName, action: 'created',
+                after: { date: shiftData.date, startTime: shiftData.startTime, endTime: shiftData.endTime, side: shiftData.side || null } }).catch(() => {});
             setShowAddModal(false);
             setAddPrefill(null);
             // Partial off-window overlap warning — they're schedulable, but
@@ -2549,6 +2552,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 }),
                 updatedAt: serverTimestamp(),
             });
+            // Audit log — Andrew 2026-06-25.
+            auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'offered',
+                after: { offerStatus: 'open', urgent: !!urgent }, reason: note || undefined }).catch(() => {});
             // FCM fan-out when the offer is urgent. Mirrors the qualified-
             // staff filter from handleRequestCover (active, not the offerer,
             // same side, same location, not on PTO). Failures swallowed
@@ -2905,6 +2911,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     updatedAt: serverTimestamp(),
                 });
             });
+            // Audit log — Andrew 2026-06-25.
+            auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'claimed',
+                after: { pendingClaimBy: staffName, partial: partial && partial.startTime ? `${partial.startTime}-${partial.endTime}` : null } }).catch(() => {});
             // Tell management a claim is waiting — without this a pending
             // takeover sits undiscovered until a manager happens to open the
             // schedule. Reuse the existing 'swap_request' type so it routes +
@@ -4948,6 +4957,9 @@ ${dayBlocks}
                 });
             }
             await batch.commit();
+            // Audit log (one roll-up row for the publish) — Andrew 2026-06-25.
+            auditShiftChange({ action: 'published', staffName: null,
+                after: { count: safeDrafts.length, skipped: ptoConflicts.length || 0 } }).catch(() => {});
             setPublishPreview(null);
             // Non-blocking heads-up: published shifts that land in a PARTIAL
             // off window (those aren't skipped — they stay scheduled — but the

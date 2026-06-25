@@ -29,6 +29,7 @@ import StaffTodosAdmin from './StaffTodosAdmin';
 // page. i want to know which staff has used the app?" Self-contained
 // read-only card; reads staffList in-place, no new Firestore writes.
 import StaffUsageAudit from './StaffUsageAudit';
+import ScheduleAuditLog from './ScheduleAuditLog';
 import { toast } from '../toast';
 import { enableFcmPush } from '../messaging';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
@@ -2380,6 +2381,14 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         currentManagerId={(staffList || []).find(s => s.name === staffName)?.id ?? null}
                         onSetPhone={setPhoneForStaff}
                     />
+
+                    {/* ── SCHEDULE AUDIT LOG ── Andrew 2026-06-25: "every shift
+                        move, every time-off request, everything in the schedule
+                        page so we can see what's happening." Reads the
+                        append-only /audit collection (schedule features). */}
+                    <div className="mt-4 p-4 rounded-2xl bg-white border border-dd-line shadow-card">
+                        <ScheduleAuditLog language={language} />
+                    </div>
 
                     {/* ── ONBOARDING LAUNCHER ──
                         Onboarding lives behind the admin page (not in the main
