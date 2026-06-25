@@ -456,7 +456,22 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                     record. Locked hires see only the celebration banner.
                     */}
                 {allDone && !isLocked && (
-                    <FinalCertification hire={hire} hireId={hireId} isEs={isEs} />
+                    <FinalCertification
+                        hire={hire}
+                        hireId={hireId}
+                        isEs={isEs}
+                        // Bubble the signed certification up so the parent's
+                        // `hire` state reflects it immediately. The portal
+                        // reads the hire with a one-shot getDoc (no snapshot
+                        // listener), so without this the hire would sign the
+                        // final certification and see NOTHING change — the
+                        // CompletedExitCard (which hides their PII) only
+                        // rendered after a manual page reload. Setting
+                        // finalCertification here flips `allDone &&
+                        // hire.finalCertification.signedAt` true on the next
+                        // render and shows the Done/exit screen right away.
+                        onCertified={(cert) => setHire(h => ({ ...h, finalCertification: cert }))}
+                    />
                 )}
                 {allDone && isLocked && (
                     <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-4 text-center">
@@ -1107,7 +1122,7 @@ function IdDocUpload({ doc, hireId, isEs, isLocked, currentLabel, onUploaded, on
 // agent, ip-hash), and the hire record gets `finalCertification` so the
 // admin's Move-to-Complete button has positive confirmation that the
 // hire reviewed their full submission.
-function FinalCertification({ hire, hireId, isEs }) {
+function FinalCertification({ hire, hireId, isEs, onCertified }) {
     const tx = (en, es) => (isEs ? es : en);
     const [agree1, setAgree1] = useState(false);
     const [agree2, setAgree2] = useState(false);
@@ -1137,14 +1152,20 @@ function FinalCertification({ hire, hireId, isEs }) {
                 ipHash = Array.from(new Uint8Array(buf))
                     .map(b => b.toString(16).padStart(2, '0')).join('');
             } catch {}
+            const certPayload = {
+                typedSignature: typedSignature.trim(),
+                signedAt: new Date().toISOString(),
+                userAgent: (navigator.userAgent || '').slice(0, 200),
+                ipHash,
+            };
             await updateDoc(doc(db, 'onboarding_hires', hireId), {
-                finalCertification: {
-                    typedSignature: typedSignature.trim(),
-                    signedAt: new Date().toISOString(),
-                    userAgent: (navigator.userAgent || '').slice(0, 200),
-                    ipHash,
-                },
+                finalCertification: certPayload,
             });
+            // Tell the portal the hire just certified so it can render the
+            // CompletedExitCard immediately (one-shot getDoc means there's
+            // no snapshot to pick this up otherwise). See the onCertified
+            // prop comment at the FinalCertification call site.
+            onCertified?.(certPayload);
             // Tell admins the hire is ready for final review + lock.
             // Stable tag = exactly one notification per hire even on
             // re-certification (which the hire probably can't trigger
