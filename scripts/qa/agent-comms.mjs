@@ -91,6 +91,24 @@ async function read(limit) {
     }
 }
 
+// ensure-reply: post a fallback ONLY if the newest message isn't from the agent
+// (i.e., the owner is still waiting because the run ended without a reply). This
+// is a PURE Firestore write — it works even when the agent/Claude errored, timed
+// out, or the API key is out of credit, so the owner is NEVER left hanging.
+// One-shot: once it posts, the newest message is the agent's, so the next run
+// won't double-post.
+async function ensureReply(text) {
+    const ref = db.doc(`chats/${CHAT_ID}`);
+    const snap = await ref.collection("messages").orderBy("createdAt", "desc").limit(1).get();
+    const last = snap.docs[0] && snap.docs[0].data();
+    if (last && last.senderName === AGENT_NAME) {
+        console.log("ensure-reply: agent already replied — no fallback needed");
+        return;
+    }
+    await post(text || "⚠️ I saw your message but this run didn't finish a reply. Re-send once it's sorted and I'll pick it right back up.", false);
+    console.log("ensure-reply: owner was waiting — posted fallback");
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 const urgent = rest.includes("--urgent");
 const limIdx = rest.indexOf("--limit");
@@ -99,5 +117,6 @@ const textArg = rest.filter((a) => !a.startsWith("--")).join(" ");
 
 if (cmd === "post") { await post(textArg, urgent); }
 else if (cmd === "read") { await read(limit); }
-else { console.log('usage: agent-comms.mjs post "message" [--urgent]  |  read [--limit N]'); }
+else if (cmd === "ensure-reply") { await ensureReply(textArg); }
+else { console.log('usage: agent-comms.mjs post "message" [--urgent]  |  read [--limit N]  |  ensure-reply "fallback"'); }
 process.exit(0);

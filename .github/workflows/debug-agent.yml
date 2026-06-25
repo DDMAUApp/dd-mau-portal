@@ -102,6 +102,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      # GUARANTEE a chat reply. Runs even if the agent step errored/timed-out.
+      # ensure-reply posts a fallback ONLY when the newest thread message isn't
+      # from the agent (owner still waiting) — a pure Firestore write, so it works
+      # even when the agent couldn't run (out of API credit, error, timeout). The
+      # owner is never left hanging. Must run BEFORE the credential scrub below.
+      - name: Guarantee a chat reply (fallback if the agent went silent)
+        if: always()
+        run: |
+          node scripts/qa/agent-comms.mjs ensure-reply "⚠️ I saw your message but this run couldn't post a full answer — it likely errored, timed out, or the shared Anthropic API key is out of credit. Re-send once it's sorted and I'll pick it right back up. (Check the Actions log + Anthropic credit balance.)" || true
+
       - name: Scrub credentials (always)
         if: always()
         run: rm -f firebase-service-account.json
