@@ -336,6 +336,11 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
         };
         const historyEntry = {
             oldPrice: prevEntry?.price ?? null, newPrice: entry.price,
+            // Andrew 2026-06-25 — store the INVOICE date + per-unit on each
+            // purchase row so the item price-history view can place each price
+            // at the date it was actually bought (not when it was scanned).
+            purchasedDate: purchasedDate || null,
+            pack: pack || null, unit: entry.unit, perUnit: entry.perUnit,
             source: PRICE_SOURCE.INVOICE, vendor: vKey, qty: qn, by: by || null,
             at: new Date().toISOString(), reason: reason || 'receipt import',
         };

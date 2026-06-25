@@ -20,6 +20,7 @@ import { subscribeReceiptScans, deleteReceiptScan, buildUnmatchedQueue } from '.
 import { subscribeItemAliases, learnAliases } from '../data/itemAliases';
 import { recordPurchase } from '../data/itemPricing';
 import { buildPricingCsv, pricingCsvFilename } from '../data/pricingExport';
+import ItemPriceHistory from './ItemPriceHistory';
 import { downloadFile } from '../capacitor-bridge';
 import { toast } from '../toast';
 
@@ -206,6 +207,12 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
                 >
                     <Download size={15} /> {exporting ? tx('Exporting…', 'Exportando…') : tx('Export CSV', 'Exportar CSV')}
                 </button>
+            </div>
+
+            {/* Item price history — every item bought on an invoice + its price
+                history (date + vendor). Andrew 2026-06-25. */}
+            <div className="rounded-2xl border border-dd-line bg-white p-4">
+                <ItemPriceHistory language={language} masterCategories={masterCategories} itemPrices={itemPrices} />
             </div>
 
             {/* Recent scans — re-openable + editable */}
