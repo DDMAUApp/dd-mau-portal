@@ -7,10 +7,10 @@
 # ── ONE-TIME ACTIVATION (Andrew) ─────────────────────────────────────────────
 # Settings → Secrets and variables → Actions:
 #   Secrets:
-#     • CLAUDE_CODE_OAUTH_TOKEN  — from `claude setup-token` (runs on your Claude
-#                                  subscription; no separate API billing). To use a
-#                                  metered API key instead, add ANTHROPIC_API_KEY and
-#                                  swap the `with:` line near the bottom of this file.
+#     • ANTHROPIC_API_KEY        — a pay-per-use API key from console.anthropic.com
+#                                  (needs a credit balance). Reliable for CI automation.
+#                                  (To use a Claude subscription token instead, add
+#                                  CLAUDE_CODE_OAUTH_TOKEN and swap the `with:` line below.)
 #     • FIREBASE_SERVICE_ACCOUNT — paste the FULL contents of firebase-service-account.json
 #   Variables:
 #     • DEBUG_AGENT_ENABLED = true   ← the on-switch. Until this is "true" the job
@@ -70,11 +70,12 @@ jobs:
       - name: Run the debug agent
         uses: anthropics/claude-code-action@v1
         with:
-          # Auth via your Claude SUBSCRIPTION (token from `claude setup-token`), so the
-          # agent runs on your existing plan, not pay-per-use API billing. To switch to
-          # a metered API key: replace the line below with
-          #   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Auth via a pay-per-use Anthropic API key (reliable for headless CI
+          # automation; subscription OAuth tokens were rejected on the first call).
+          # Needs the ANTHROPIC_API_KEY secret + a credit balance at console.anthropic.com.
+          # To switch back to a subscription token: replace the line below with
+          #   claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             You are the DD Mau self-healing debug agent, running in GitHub Actions (CI).
 
