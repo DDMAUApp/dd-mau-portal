@@ -144,9 +144,19 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                 const until = Date.now() + tier.durationMs;
                 writeLockUntil(until);
                 setLockedUntil(until);
+                // 2026-06-25 — fix the lockout-message duration. The old
+                // `Math.round(ms/60000) || Math.round(ms/1000)+'s'` showed the
+                // 30s tier as "Locked for 1" (Math.round(0.5)===1, truthy) and
+                // dropped the unit on the minute tiers ("Locked for 5"). Format
+                // with an explicit unit instead. (The live countdown badge was
+                // always correct; this is the one-shot flash message.)
+                const secs = Math.round(tier.durationMs / 1000);
+                const lockLabel = secs >= 60
+                    ? `${Math.round(secs / 60)} ${isEs ? 'min' : 'min'}`
+                    : `${secs}s`;
                 setError(isEs
-                    ? `Demasiados intentos. Bloqueado por ${Math.round(tier.durationMs / 60000) || Math.round(tier.durationMs / 1000) + 's'}.`
-                    : `Too many attempts. Locked for ${Math.round(tier.durationMs / 60000) || Math.round(tier.durationMs / 1000) + 's'}.`);
+                    ? `Demasiados intentos. Bloqueado por ${lockLabel}.`
+                    : `Too many attempts. Locked for ${lockLabel}.`);
             } else {
                 const remaining = (LOCK_TIERS[LOCK_TIERS.length - 1].fails) - newAttempts;
                 setError(isEs
