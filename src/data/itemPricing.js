@@ -313,7 +313,7 @@ export async function setManualPrice(location, itemId, fields, byName) {
 // vendor's entry as source='invoice' with lastPurchased + lastQty, + history.
 // `qty` = how much was ordered (receipt line quantity) — drives the cart's
 // "last ordered / average ordered" reorder hint via orderQtyStats.
-export async function recordPurchase(location, itemId, { vendor, price, pack, unit, qty, by, purchasedDate, reason }) {
+export async function recordPurchase(location, itemId, { vendor, price, pack, unit, qty, by, purchasedDate, reason, code, brand }) {
     const ref = doc(db, itemPricesCollPath(location), String(itemId));
     const pu = perUnitPrice(price, pack);
     const qn = (qty != null && isFinite(Number(qty)) && Number(qty) >= 0) ? Number(qty) : null;
@@ -332,6 +332,9 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
             source: PRICE_SOURCE.INVOICE,
             lastPurchased: purchasedDate || new Date().toISOString().slice(0, 10),
             lastQty: qn,
+            // Vendor SKU / item # + brand from the invoice — kept on the latest
+            // per-vendor entry so the same product is recognizable next time.
+            code: code || prevEntry?.code || null, brand: brand || prevEntry?.brand || null,
             by: by || null, at: serverTimestamp(),
         };
         const historyEntry = {
@@ -341,6 +344,7 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
             // at the date it was actually bought (not when it was scanned).
             purchasedDate: purchasedDate || null,
             pack: pack || null, unit: entry.unit, perUnit: entry.perUnit,
+            code: code || null, brand: brand || null,
             source: PRICE_SOURCE.INVOICE, vendor: vKey, qty: qn, by: by || null,
             at: new Date().toISOString(), reason: reason || 'receipt import',
         };

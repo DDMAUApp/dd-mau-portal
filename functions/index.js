@@ -3511,12 +3511,12 @@ exports.parseReceipt = onCall(
             "List concrete problems (e.g. 'bottom of receipt cut off', 'price column has glare', 'too blurry to read item lines').",
             "",
             "STEP 2 — if readable, extract the vendor, the receipt date if shown, and EVERY product line item.",
-            "For each line item give: name (as printed), qty (number, default 1), price (the UNIT price = the cost of ONE unit/pack as printed, a number, no $ sign; if only an extended/total line price is shown, divide it by the qty to get the unit price), pack (pack/size text if shown e.g. '4/2.5LB', else null).",
+            "For each line item give: name (as printed), qty (number, default 1), price (the UNIT price = the cost of ONE unit/pack as printed, a number, no $ sign; if only an extended/total line price is shown, divide it by the qty to get the unit price), pack (pack/size text if shown e.g. '4/2.5LB', else null), code (the vendor's item number / SKU / product code for that line if printed — usually a short number or alphanumeric code in its own column, else null), brand (the brand or manufacturer name if printed, else null).",
             "Do NOT include subtotals, tax, totals, fees, tips, or delivery lines as items.",
-            "If a price is unreadable for one specific line, set that line's price to null (don't guess it) but still list the item.",
+            "If a price is unreadable for one specific line, set that line's price to null (don't guess it) but still list the item. Likewise set code/brand to null when not shown — never invent a code or brand.",
             "",
             "Respond with ONLY this JSON (no prose, no markdown fences):",
-            '{"readable": true, "problems": [], "vendor": "Sysco", "date": "2026-06-14", "lineItems": [{"name":"21/25 Shrimp Tail Off","qty":2,"price":52.00,"pack":"4/2.5LB"}]}',
+            '{"readable": true, "problems": [], "vendor": "Sysco", "date": "2026-06-14", "lineItems": [{"name":"21/25 Shrimp Tail Off","qty":2,"price":52.00,"pack":"4/2.5LB","code":"1234567","brand":"Portico"}]}',
             'If not readable: {"readable": false, "problems": ["..."], "vendor": null, "date": null, "lineItems": []}',
         ].join("\n");
 
@@ -3591,7 +3591,9 @@ exports.parseReceipt = onCall(
             let price = li?.price == null ? null : Number(li.price);
             if (price != null && (!isFinite(price) || price < 0)) price = null;
             const pack = li?.pack ? String(li.pack).slice(0, 40) : null;
-            return { name, qty, price, pack };
+            const code = li?.code ? String(li.code).slice(0, 40).trim() || null : null;
+            const brand = li?.brand ? String(li.brand).slice(0, 60).trim() || null : null;
+            return { name, qty, price, pack, code, brand };
         }).filter((li) => li.name);
 
         return { readable, problems, vendor, date, lineItems, count: lineItems.length };

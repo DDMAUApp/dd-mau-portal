@@ -66,6 +66,8 @@ export default function ReceiptScanModal({ location, staffName, language, master
             qty: li.qty ?? 1,
             price: li.price != null ? String(li.price) : '',
             pack: li.pack || '',
+            code: li.code || '',     // vendor SKU / item # (from the invoice)
+            brand: li.brand || '',   // brand / manufacturer (from the invoice)
             masterId,
             confidence,
             learned,
@@ -162,6 +164,8 @@ export default function ReceiptScanModal({ location, staffName, language, master
             qty: (isFinite(qn) && qn >= 0 && qn < 100000) ? qn : null,
             price: isFinite(price) ? price : null,
             pack: r.pack || null,
+            code: r.code || null,
+            brand: r.brand || null,
             masterId: r.masterId || null,
             masterName: master?.name || null,
             confidence: r.confidence || null,
@@ -182,6 +186,8 @@ export default function ReceiptScanModal({ location, staffName, language, master
                     vendor: vendor || 'Other',
                     price,
                     pack: r.pack || null,
+                    code: r.code || null,
+                    brand: r.brand || null,
                     qty: isFinite(Number(r.qty)) ? Number(r.qty) : null,
                     by: staffName,
                     purchasedDate: date,

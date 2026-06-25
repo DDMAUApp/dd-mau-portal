@@ -25,6 +25,8 @@ function rowsFromDoc(priceDoc) {
             pack: h.pack || null,
             vendor: h.vendor || 'Other',
             qty: h.qty != null ? Number(h.qty) : null,
+            code: h.code || null,
+            brand: h.brand || null,
             source: h.source || 'invoice',
         }))
         .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -82,7 +84,7 @@ function HistoryModal({ item, rows, language, onClose }) {
                                                     {r.perUnit != null && <span className="ml-1 text-[11px] font-bold text-dd-green-700">({money(r.perUnit)}/{r.unit || 'unit'})</span>}
                                                 </div>
                                                 <div className="text-[11px] text-dd-text-2">
-                                                    {r.vendor}{r.qty != null ? ` · ${tx('qty', 'cant')} ${r.qty}` : ''}{r.source && r.source !== 'invoice' ? ` · ${r.source}` : ''}
+                                                    {r.vendor}{r.brand ? ` · ${r.brand}` : ''}{r.code ? ` · #${r.code}` : ''}{r.qty != null ? ` · ${tx('qty', 'cant')} ${r.qty}` : ''}{r.source && r.source !== 'invoice' ? ` · ${r.source}` : ''}
                                                 </div>
                                             </div>
                                             <div className="text-[11px] font-bold text-dd-text-2 shrink-0 text-right">{fmtDate(r.date, isEn)}</div>
