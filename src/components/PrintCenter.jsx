@@ -281,8 +281,7 @@ export default function PrintCenter({
                                     'Type anything — multiple lines OK. Try a template above to start.',
                                     'Escribe lo que quieras — varias líneas. Prueba una plantilla arriba.',
                                 )}
-                                autoFocus
-                                className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm font-mono leading-tight focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                                className="w-full px-3 py-2 rounded-lg border border-dd-line text-base font-mono leading-tight focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
                             />
                             <div className="text-[10px] text-dd-text-2/70 mt-0.5 text-right">
                                 {text.length} / 2000
