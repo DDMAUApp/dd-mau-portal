@@ -59,9 +59,15 @@ export default function InstallAppButton({ language, compact = false }) {
                             </div>
                         </button>
                     </div>
+                    {/* Android tester onboarding — Andrew 2026-06-25: closed-test
+                        opt-in only resolves once the staffer's Google email is on
+                        the tester list, so route them straight to Andrew. Tell
+                        Android users to TEXT Andrew their Google email and he adds
+                        them as a tester (replaces the generic "ask a manager"
+                        copy). iPhone path is unaffected. */}
                     <p className="text-[11px] text-dd-text-2 mt-3 leading-tight">
-                        {tx('Android: if Google Play says “not available,” ask a manager to add your Google email as a tester first.',
-                            'Android: si Google Play dice “no disponible”, pide a un gerente que agregue tu correo de Google como probador primero.')}
+                        {tx('Android: if Google Play says “not available,” text Andrew your Google email and he’ll add you as a tester.',
+                            'Android: si Google Play dice “no disponible”, envíale a Andrew un mensaje de texto con tu correo de Google y él te agregará como probador.')}
                     </p>
                 </div>
             </div>
