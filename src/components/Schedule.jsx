@@ -747,6 +747,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //                   pendingClaimBy + optional proposedSplit.
     const [confirmDialog, setConfirmDialog] = useState(null);
     const [offerTarget, setOfferTarget] = useState(null);
+    // Andrew 2026-06-25 — shift interaction rebuild. Double-click a cube opens
+    // the EDIT modal (editingShift); its "Move to" button arms move mode
+    // (movingShift) where the next person-day tapped becomes the destination.
+    const [editingShift, setEditingShift] = useState(null);
+    const [movingShift, setMovingShift] = useState(null);
     const [takeTarget, setTakeTarget] = useState(null);
     // Publish preview modal — opened by the "Publish drafts" button. Holds
     // the precomputed list of drafts + audit warnings so the manager can
@@ -2009,6 +2014,25 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!canEditSide(sh.side)) return;
         const wasPublished = sh.published !== false;
         const detail = `${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`;
+        // Andrew 2026-06-25 — EVERY delete must confirm first. The cube trash
+        // button, the context menu, the Open-Slots panel and bulk delete all
+        // funnel through handleDeleteShift, so gating here guarantees none of
+        // them can remove a shift without an explicit "are you sure?" popup.
+        // opts.confirmed is set by the dialog's own onConfirm so it doesn't loop.
+        // Deleting the schedule is meant to be deliberate, not a one-tap slip.
+        if (!opts.confirmed) {
+            setConfirmDialog({
+                title: tx('Delete this shift?', '¿Eliminar este turno?'),
+                body: tx(
+                    `You are deleting ${sh.staffName || 'an unassigned'} shift on ${detail}. This can't be undone — are you sure?`,
+                    `Estás eliminando el turno de ${sh.staffName || 'sin asignar'} el ${detail}. No se puede deshacer — ¿estás seguro?`
+                ),
+                confirmLabel: tx('Delete shift', 'Eliminar turno'),
+                tone: 'danger',
+                onConfirm: () => handleDeleteShift(shiftId, { ...opts, confirmed: true }),
+            });
+            return;
+        }
         // Two delete paths:
         //   - opts.immediate (per-cube inline confirm flow): the user has
         //     already tapped "yes" on a 1-click inline confirm right next
@@ -5613,6 +5637,17 @@ ${dayBlocks}
     const onDayHeaderClickCb = useStableCallback((dStr) => setAvailableForDate(dStr));
     const onToggleShiftSelectionCb = useStableCallback(toggleShiftSelection);
     const onDeleteShiftCb = useStableCallback(handleDeleteShift);
+    // Double-click a cube → open the edit modal (clears any pending move).
+    const requestEditShift = (shift) => { setMovingShift(null); setEditingShift(shift); };
+    // Move mode: after the user picks a destination person-day, reuse the
+    // proven askDropShift confirm ("Move X's shift to (name)?") + handleDropShift.
+    const handleMoveToCell = (targetStaffName, dateStr) => {
+        const sh = movingShift;
+        setMovingShift(null);
+        if (sh) askDropShift(sh.id, targetStaffName, dateStr);
+    };
+    const onEditShiftCb = useStableCallback(requestEditShift);
+    const onMoveToCellCb = useStableCallback(handleMoveToCell);
     const onOfferShiftCb = useStableCallback(handleOfferShift);
     const onTakeShiftCb = useStableCallback(handleTakeShift);
     const onCancelOfferCb = useStableCallback(askCancelOffer);
@@ -6519,6 +6554,9 @@ ${dayBlocks}
                                 onEditPresets={onEditPresetsCb}
                                 weekNeeds={memoWeekNeeds}
                                 onDeleteShift={onDeleteShiftCb}
+                                onEditShift={onEditShiftCb}
+                                movingShiftId={movingShift?.id || null}
+                                onMoveToCell={onMoveToCellCb}
                                 onStaffClick={onStaffClickCb}
                                 onOfferShift={onOfferShiftCb}
                                 onTakeShift={onTakeShiftCb}
@@ -7066,6 +7104,38 @@ ${dayBlocks}
                     onSubmit={(payload) => commitOfferShift(offerTarget, payload)}
                     language={language}
                 />
+            )}
+            {/* Andrew 2026-06-25 — the shift EDIT modal (double-click a cube).
+                Bundles time edit + Move to + Up for grabs + Delete; closes on
+                outside click via ModalPortal. Up-for-grabs opens the existing
+                OfferShiftModal; delete + move both route through their confirms. */}
+            {editingShift && (
+                <ShiftEditModal
+                    shift={editingShift}
+                    isEn={isEn}
+                    locationLabel={LOCATION_LABELS[editingShift.location] || editingShift.location}
+                    onClose={() => setEditingShift(null)}
+                    onSaveTimes={(start, end) => { handleUpdateShiftTimes(editingShift.id, start, end); setEditingShift(null); }}
+                    onMove={() => { setMovingShift(editingShift); setEditingShift(null); }}
+                    onOffer={() => { const s = editingShift; setEditingShift(null); handleOfferShift(s); }}
+                    onDelete={() => { const s = editingShift; setEditingShift(null); handleDeleteShift(s.id, { immediate: true }); }}
+                />
+            )}
+            {/* Move mode — tap any person's day to drop the picked shift there. */}
+            {movingShift && (
+                <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[60] print:hidden px-3 w-full max-w-md">
+                    <div className="flex items-center justify-center gap-3 px-4 py-2.5 rounded-full bg-dd-green text-white shadow-2xl border border-white/20">
+                        <span className="text-sm font-bold text-center">
+                            📍 {isEn
+                                ? `Moving ${movingShift.staffName || 'shift'} — tap a person's day`
+                                : `Moviendo ${movingShift.staffName || 'turno'} — toca el día`}
+                        </span>
+                        <button onClick={() => setMovingShift(null)}
+                            className="px-2.5 py-1 rounded-full bg-white/20 hover:bg-white/30 text-xs font-bold whitespace-nowrap shrink-0">
+                            {isEn ? 'Cancel' : 'Cancelar'}
+                        </button>
+                    </div>
+                </div>
             )}
             {takeTarget && (
                 <TakeShiftModal
@@ -8027,7 +8097,7 @@ function QuickAddSlot({ dateStr, isEn, onAddSlot }) {
 // every unrelated parent tick (notifications, clock, modals). Inner name
 // kept as WeeklyGrid for clean React DevTools display, same pattern as
 // ShiftCube below.
-const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, shiftPresets, onEditPresets, onUpdateShiftTimes, onPtoChipClick,
+const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onEditShift, movingShiftId, onMoveToCell, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, shiftPresets, onEditPresets, onUpdateShiftTimes, onPtoChipClick,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
@@ -8670,6 +8740,11 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
                                     <td key={i}
                                         onClick={() => {
                                             if (!canEdit || closed) return;
+                                            // Move mode (Andrew 2026-06-25): a shift is armed via the
+                                            // edit modal's "Move to" — tapping ANY person's day here
+                                            // moves it (with the askDropShift confirm). Takes priority
+                                            // over quick-add and works on cells that already have shifts.
+                                            if (movingShiftId) { onMoveToCell?.(s.name, dStr); return; }
                                             // Empty cell → trigger quick-add chip strip (parent
                                             // decides whether to also fall through to slot
                                             // chooser or full modal). Cell with shifts → no-op.
@@ -8688,7 +8763,7 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
                                             const shiftId = e.dataTransfer.getData('text/shift-id');
                                             if (shiftId && onDropShift) onDropShift(shiftId, s.name, dStr);
                                         }}
-                                        className={`relative border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
+                                        className={`relative border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''} ${movingShiftId && canEdit && !closed ? 'cursor-pointer ring-1 ring-inset ring-dd-green/50 hover:bg-dd-green-50' : ''}`}>
                                         {/* 2026-05-16 — closed-day watermark.
                                             Translucent reason text centered on
                                             the cell. Stacked vertically across
@@ -8770,7 +8845,7 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
                                                 );
                                             })()}
                                             {cellShifts.map(sh => (
-                                                <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} isShiftLead={s.shiftLead} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
+                                                <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} isShiftLead={s.shiftLead} canEdit={canEdit} onDelete={onDeleteShift} onEditShift={onEditShift} isEn={isEn} compact
                                                     currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer} onRequestCover={onRequestCover}
                                                     draggable={canEdit}
                                                     isDoubleDay={cellShifts.length >= 2}
@@ -8907,7 +8982,7 @@ function shiftFieldsEqual(a, b) {
     if ((a.role || '') !== (b.role || '')) return false;
     return true;
 }
-const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, onRequestCover, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
+const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, onEditShift, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, onRequestCover, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
     // Multi-select: shift+click toggles. Parent owns the Set of selected ids.
     isSelected = false, onToggleSelection,
 }) {
@@ -8916,12 +8991,10 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
     // pointer-drag on a scrolling table cell is finicky; this gives the
     // same outcome (quick shift extend/shorten) without the math.
     const [resizePickerOpen, setResizePickerOpen] = useState(false);
-    // Inline delete-confirm. Click the X → flips to a tiny "Sure?
-    // ✓ ✗" pill in the same corner. ✓ deletes immediately (no undo
-    // toast — the confirm IS the safety net). ✗ or outside-tap reverts.
-    // Faster than the old "X → 5-second bottom toast" flow which felt
-    // laggy because the confirmation lived far from the cube.
-    const [confirmingDelete, setConfirmingDelete] = useState(false);
+    // Delete now routes through the parent's central confirm dialog
+    // (handleDeleteShift shows an "are you sure?" popup for EVERY delete
+    // path). The cube's trash button just calls onDelete; no inline pill.
+    // Andrew 2026-06-25.
     const nudgeEnd = async (deltaMin) => {
         if (!onUpdateShiftTimes) return;
         const [eh, em] = (shift.endTime || '00:00').split(':').map(Number);
@@ -9030,13 +9103,14 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
                 }
             }}
             onDoubleClick={(e) => {
-                // Manager/admin quick "put up for grabs": double-click any
-                // shift you can edit to open the offer composer. Works on ANY
-                // owner's shift (the inline offer button is own-shift only).
-                // Andrew 2026-06-23. Touch users get the same via long-press.
+                // Andrew 2026-06-25 — double-click opens the SHIFT EDIT modal
+                // (time edit + Move to + Up for grabs + Delete all live inside).
+                // Up-for-grabs is now a button in that modal, not the whole
+                // window. Single click stays inert so a stray tap can't edit.
+                // Touch users get the same modal via long-press → (context menu).
                 if (!canEdit) return;
                 e.preventDefault();
-                onOfferShift?.(shift);
+                onEditShift?.(shift);
             }}
             onContextMenu={(e) => { if (!canEdit) return; e.preventDefault(); setMenuOpen(true); }}
             onTouchStart={beginLongPress}
@@ -9093,11 +9167,12 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
                     </div>
                 </div>
             ) : (
-                <button type="button" onClick={beginTimeEdit}
-                    title={canEdit && onUpdateShiftTimes ? (isEn ? 'Tap to edit times' : 'Toca para editar horas') : undefined}
-                    className={`block w-full text-left font-black tabular-nums tracking-tight ${canEdit && onUpdateShiftTimes ? 'hover:underline decoration-dotted underline-offset-2 cursor-text' : ''}`}>
+                // Display-only (Andrew 2026-06-25): the single-tap-to-edit time
+                // was an easy mis-tap. Editing times is now in the double-click
+                // edit modal + the long-press context menu ("Edit times").
+                <div className="block w-full text-left font-black tabular-nums tracking-tight">
                     {formatTime12h(shift.startTime)}–{formatTime12h(shift.endTime)}
-                </button>
+                </div>
             )}
             <div className="opacity-75 font-semibold tabular-nums flex items-center gap-1 flex-wrap">
                 {formatHours(hours)}
@@ -9165,40 +9240,12 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
                     </button>
                 </div>
             )}
-            {canEdit && !confirmingDelete && (
-                <button onClick={(e) => { e.stopPropagation(); setConfirmingDelete(true); }}
-                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[11px] leading-none hover:bg-red-600 print:hidden shadow-md opacity-0 group-hover/cube:opacity-100 transition"
+            {canEdit && (
+                <button onClick={(e) => { e.stopPropagation(); onDelete(shift.id, { immediate: true }); }}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] leading-none hover:bg-red-600 print:hidden shadow-md opacity-0 group-hover/cube:opacity-100 transition flex items-center justify-center"
                     title={isEn ? 'Delete shift' : 'Eliminar turno'}>
-                    ×
+                    🗑
                 </button>
-            )}
-            {canEdit && confirmingDelete && (
-                <>
-                    {/* Outside-tap dismiss layer — clicking anywhere else
-                        cancels the confirm. z-30 sits below the confirm pill. */}
-                    <div className="fixed inset-0 z-30"
-                        onClick={(e) => { e.stopPropagation(); setConfirmingDelete(false); }} />
-                    <div onClick={(e) => e.stopPropagation()}
-                        className="absolute -top-3 -right-2 z-40 flex items-center gap-1 px-1.5 py-1 rounded-full bg-white border-2 border-red-400 shadow-card-hov print:hidden">
-                        <span className="text-[9px] font-bold text-red-700 mr-1">
-                            {isEn ? 'Sure?' : '¿Seguro?'}
-                        </span>
-                        <button onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmingDelete(false);
-                            onDelete(shift.id, { immediate: true });
-                        }}
-                            className="w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-black leading-none hover:bg-red-700 active:scale-90"
-                            title={isEn ? 'Yes, delete' : 'Sí, eliminar'}>
-                            ✓
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); setConfirmingDelete(false); }}
-                            className="w-5 h-5 rounded-full bg-gray-200 text-gray-700 text-[10px] font-black leading-none hover:bg-gray-300 active:scale-90"
-                            title={isEn ? 'Cancel' : 'Cancelar'}>
-                            ✗
-                        </button>
-                    </div>
-                </>
             )}
 
             {/* RIGHT-EDGE RESIZE HANDLE — desktop only. Opens an inline
@@ -9278,7 +9325,7 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
                                 <span>↔</span>{isEn ? 'Extend / shorten' : 'Extender / acortar'}
                             </button>
                         )}
-                        <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setConfirmingDelete(true); }}
+                        <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(shift.id, { immediate: true }); }}
                             className="w-full px-3 py-2 text-left text-xs font-semibold text-red-700 hover:bg-red-50 flex items-center gap-2 border-t border-dd-line">
                             <span>🗑</span>{isEn ? 'Delete shift' : 'Eliminar turno'}
                         </button>
@@ -10027,6 +10074,81 @@ function ShiftPresetsEditor({ presets, onSave, onClose, isEn }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
+    );
+}
+
+// ── Shift edit modal (Andrew 2026-06-25) ──────────────────────────────────
+// Opened by DOUBLE-CLICK on a shift cube (single click is intentionally inert
+// so a stray tap can't edit). One place for every per-shift action managers
+// asked for: edit start/end times, "Move to" (arms tap-to-move), "Up for
+// grabs" (opens the existing offer composer), and Delete (routes to the
+// central are-you-sure confirm). Closes on backdrop click / ✕ / Android back
+// via ModalPortal.
+function ShiftEditModal({ shift, isEn, locationLabel, onClose, onSaveTimes, onMove, onOffer, onDelete }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const [start, setStart] = useState(shift.startTime || '');
+    const [end, setEnd] = useState(shift.endTime || '');
+    const timesChanged = start !== (shift.startTime || '') || end !== (shift.endTime || '');
+    const isOffered = shift.offerStatus === 'open';
+    return (
+        <ModalPortal onBackPress={onClose}>
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
+                onClick={onClose} role="dialog" aria-modal="true">
+                <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-dd-line overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}>
+                    <div className="px-4 py-3 bg-dd-green-50 border-b border-dd-line flex items-start justify-between gap-2">
+                        <div>
+                            <div className="text-base font-black text-dd-text">{shift.staffName || tx('Unassigned', 'Sin asignar')}</div>
+                            <div className="text-xs text-dd-text-2 mt-0.5">{shift.date}{locationLabel ? ` • ${locationLabel}` : ''}</div>
+                        </div>
+                        <button onClick={onClose} aria-label={tx('Close', 'Cerrar')}
+                            className="w-8 h-8 rounded-lg bg-white/70 text-dd-text-2 hover:bg-white text-lg leading-none shrink-0">✕</button>
+                    </div>
+                    <div className="px-4 py-3 space-y-2 border-b border-dd-line">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Shift time', 'Hora del turno')}</div>
+                        <div className="flex items-center gap-2">
+                            <input type="time" value={start} onChange={(e) => setStart(e.target.value)}
+                                className="flex-1 px-2 py-2 text-base border border-dd-line rounded-lg focus:border-dd-green focus:ring-1 focus:ring-dd-green-50 outline-none" />
+                            <span className="text-dd-text-2">–</span>
+                            <input type="time" value={end} onChange={(e) => setEnd(e.target.value)}
+                                className="flex-1 px-2 py-2 text-base border border-dd-line rounded-lg focus:border-dd-green focus:ring-1 focus:ring-dd-green-50 outline-none" />
+                        </div>
+                        {timesChanged && (
+                            <button onClick={() => onSaveTimes(start, end)}
+                                className="w-full py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition">
+                                ✓ {tx('Save time', 'Guardar hora')}
+                            </button>
+                        )}
+                    </div>
+                    <div className="px-4 py-3 space-y-2">
+                        <button onClick={onMove}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white border border-dd-line hover:bg-dd-bg active:scale-95 transition text-left">
+                            <span className="text-xl">📍</span>
+                            <div className="flex-1">
+                                <div className="text-sm font-bold text-dd-text">{tx('Move to…', 'Mover a…')}</div>
+                                <div className="text-[11px] text-dd-text-2">{tx("Then tap the person's day to move it there", 'Luego toca el día de la persona')}</div>
+                            </div>
+                        </button>
+                        <button onClick={onOffer}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white border border-blue-200 hover:bg-blue-50 active:scale-95 transition text-left">
+                            <span className="text-xl">📣</span>
+                            <div className="flex-1">
+                                <div className="text-sm font-bold text-blue-700">{isOffered ? tx('Already up for grabs', 'Ya disponible') : tx('Up for grabs', 'Disponible para tomar')}</div>
+                                <div className="text-[11px] text-dd-text-2">{tx('Offer this shift to other staff', 'Ofrecer este turno al personal')}</div>
+                            </div>
+                        </button>
+                        <button onClick={onDelete}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white border border-red-200 hover:bg-red-50 active:scale-95 transition text-left">
+                            <span className="text-xl">🗑</span>
+                            <div className="flex-1">
+                                <div className="text-sm font-bold text-red-700">{tx('Delete shift', 'Eliminar turno')}</div>
+                                <div className="text-[11px] text-dd-text-2">{tx('Asks you to confirm first', 'Te pedirá confirmar primero')}</div>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+            </div>
         </ModalPortal>
     );
 }
