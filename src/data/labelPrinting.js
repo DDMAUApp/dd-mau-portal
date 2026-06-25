@@ -1497,19 +1497,27 @@ function renderFreeTextBody(freePayload) {
     const rawText = String(freePayload.text || '');
     const textLines = rawText.split(/\r?\n/).map(l => l.slice(0, 80));
 
-    // Clamp magnification so the LONGEST line fits the roll width
-    // instead of wrapping mid-word ("cut off"). On 80 mm this almost
-    // never bites; on a 40 mm roll it shrinks 'huge'/'large' to fit.
+    // Andrew 2026-06-25 — "the custom sticker font size isn't working." The old
+    // code SHRANK the magnification until the longest whole LINE fit on one
+    // line, so huge/large/normal all collapsed to the same fitted size for any
+    // multi-word text — the size picker looked broken. Now we HONOR the chosen
+    // size and WORD-WRAP long lines instead, only shrinking when a single WORD
+    // is too wide to fit at that size (otherwise it would overflow / get cut).
     const cols = paperColumns(freePayload.paperWidthMm);
-    const longest = textLines.reduce((m, l) => Math.max(m, l.length), 1);
+    const longestWord = textLines.reduce(
+        (m, l) => Math.max(m, l.split(/\s+/).reduce((w, t) => Math.max(w, t.length), 0)), 1);
     let width = dim.width;
-    while (width > 1 && longest * width > cols) width--;
+    while (width > 1 && longestWord * width > cols) width--;
     const height = Math.min(dim.height, width);
+    // Max characters that fit on one line at the (possibly word-clamped) size,
+    // then wrap each user line to that width so the font stays the chosen size.
+    const maxChars = Math.max(1, Math.floor(cols / width));
+    const wrapped = textLines.flatMap(l => (l ? wrapWords(l, maxChars) : ['']));
 
     lines.push(`<text align="${align}"/>`);
     lines.push(`<text width="${width}" height="${height}"/>`);
     if (freePayload.bold) lines.push(`<text em="true"/>`);
-    for (const t of textLines) {
+    for (const t of wrapped) {
         // Empty lines become a small feed so vertical spacing is
         // preserved without a blank `<text>` (which the printer
         // sometimes collapses).
