@@ -31,7 +31,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
     Users, Clock, Coffee, AlertTriangle, ChevronRight, ChevronDown,
-    X, RefreshCw, Calendar, UserX,
+    X, RefreshCw, Calendar, UserX, LogOut,
 } from 'lucide-react';
 import {
     subscribeClockedIn, getClockedInStatus,
@@ -184,7 +184,7 @@ function useClockedIn(location) {
             combined: {
                 hasData: w.hasData || m.hasData,
                 entries: mergedEntries,
-                count:   mergedEntries.length,
+                count:   mergedEntries.filter(e => !e.clockedOut).length,  // on the clock now
                 updatedAt,
                 minutesAgo,
                 isStale: (w.isStale || m.isStale),
@@ -206,18 +206,22 @@ function StaleBadge({ minutesAgo, language }) {
     );
 }
 
-function InitialsAvatar({ name, onBreak, overtimeRisk, isNoShow }) {
+function InitialsAvatar({ name, onBreak, overtimeRisk, isNoShow, isOut }) {
     const initials = (name || '??').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
     const ring = isNoShow
         ? 'ring-2 ring-red-500 ring-offset-1'
-        : onBreak
-            ? 'ring-2 ring-amber-400 ring-offset-1'
-            : overtimeRisk
-                ? 'ring-2 ring-red-400 ring-offset-1'
-                : '';
+        : isOut
+            ? ''
+            : onBreak
+                ? 'ring-2 ring-amber-400 ring-offset-1'
+                : overtimeRisk
+                    ? 'ring-2 ring-red-400 ring-offset-1'
+                    : '';
     const tone = isNoShow
         ? 'bg-red-50 text-red-700'
-        : 'bg-dd-green-50 text-dd-green-700';
+        : isOut
+            ? 'bg-dd-bg text-dd-text-2'
+            : 'bg-dd-green-50 text-dd-green-700';
     return (
         <div className={`w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-xs font-black ${tone} ${ring}`}>
             {initials}
@@ -240,16 +244,19 @@ function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
     const ot     = !!entry.overtimeRisk;
     const locBadge = showLocation && entry._loc ? LOC_BADGE[entry._loc] : null;
     const isNoShow = !!entry.isNoShow;
+    // Clocked in today but now clocked out (done, or on a clock-out break) —
+    // kept on the list, shown muted at the bottom with their clock-out time.
+    const isOut = !isNoShow && !!entry.clockedOut;
 
-    // Punctuality only computed for ACTUAL clock-ins (no-shows render
-    // their own red strike treatment, which IS the punctuality message).
+    // Punctuality still computed for clocked-out people (their arrival was
+    // still on-time/late). No-shows render their own red strike treatment.
     const punct = isNoShow ? null : getPunctuality(entry.clockedInAt, entry.scheduledShift, isEs);
 
     const sched = entry.scheduledShift;
     const hasBreaks = Array.isArray(entry.breaksToday) && entry.breaksToday.length > 0;
 
     return (
-        <li className={`border-b border-dd-line/60 last:border-0 ${isNoShow ? 'bg-red-50/40' : ''}`}>
+        <li className={`border-b border-dd-line/60 last:border-0 ${isNoShow ? 'bg-red-50/40' : isOut ? 'bg-dd-bg/40' : ''}`}>
             <button
                 type="button"
                 onClick={onToggle}
@@ -257,12 +264,18 @@ function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
                 aria-expanded={isExpanded}
                 aria-label={tx(`Toggle details for ${entry.employeeName}`, `Mostrar/ocultar detalles de ${entry.employeeName}`)}
             >
-                <InitialsAvatar name={entry.employeeName} onBreak={onBreak} overtimeRisk={ot} isNoShow={isNoShow} />
+                <InitialsAvatar name={entry.employeeName} onBreak={onBreak} overtimeRisk={ot} isNoShow={isNoShow} isOut={isOut} />
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`text-sm font-bold truncate ${isNoShow ? 'text-red-700 line-through decoration-red-600 decoration-[1.5px]' : 'text-dd-text'}`}>
+                        <span className={`text-sm font-bold truncate ${isNoShow ? 'text-red-700 line-through decoration-red-600 decoration-[1.5px]' : isOut ? 'text-dd-text-2 line-through decoration-dd-text-2/40 decoration-[1.5px]' : 'text-dd-text'}`}>
                             {entry.employeeName}
                         </span>
+                        {isOut && (
+                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-1.5 py-0.5 rounded-full border bg-dd-bg text-dd-text-2 border-dd-line">
+                                <LogOut size={10} strokeWidth={2.5} />
+                                {tx('OUT', 'SALIÓ')}
+                            </span>
+                        )}
                         {locBadge && (
                             <span className={`shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded-full border ${locBadge.tone}`}>
                                 {locBadge.label}
@@ -283,7 +296,12 @@ function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
                     {!isNoShow && (
                         <div className="text-[11px] text-dd-text-2 flex items-center gap-1.5 mt-0.5">
                             <Clock size={11} strokeWidth={2.25} className="shrink-0" />
-                            <span>{tx('In at', 'Entró a las')} {fmtClockTime(entry.clockedInAt)}</span>
+                            <span>
+                                {tx('In at', 'Entró a las')} {fmtClockTime(entry.clockedInAt)}
+                                {isOut && entry.clockedOutAt && (
+                                    <span className="text-dd-text-2"> · {tx('out', 'salió')} {fmtClockTime(entry.clockedOutAt)}</span>
+                                )}
+                            </span>
                             {entry.jobName && entry.jobName !== '—' && (
                                 <>
                                     <span className="text-dd-text-2/50">·</span>
@@ -528,8 +546,12 @@ export default function ClockedInPanel({
     // For mobile (strip variant modal), sort no-shows first (urgency)
     // then by weekly-hours desc so OT-risk staff bubble up.
     const fedSortedForModal = useMemo(() => {
+        // Group order: no-shows (0, urgent) → on the clock (1) → clocked out (2).
+        const rank = (e) => (e.isNoShow ? 0 : e.clockedOut ? 2 : 1);
         return [...fedEntries].sort((a, b) => {
-            if (a.isNoShow !== b.isNoShow) return a.isNoShow ? -1 : 1;
+            const ra = rank(a), rb = rank(b);
+            if (ra !== rb) return ra - rb;
+            if (a.clockedOut && b.clockedOut) return (b.clockedOutAt || '').localeCompare(a.clockedOutAt || '');
             const aw = Number(a.hoursThisWeek) || 0;
             const bw = Number(b.hoursThisWeek) || 0;
             return bw - aw;
@@ -540,8 +562,11 @@ export default function ClockedInPanel({
     // start, then by clock-in time. Surfacing no-shows at the top
     // matches the user intent ("hey, this person hasn't shown up").
     const fedSortedForCard = useMemo(() => {
+        const rank = (e) => (e.isNoShow ? 0 : e.clockedOut ? 2 : 1);
         return [...fedEntries].sort((a, b) => {
-            if (a.isNoShow !== b.isNoShow) return a.isNoShow ? -1 : 1;
+            const ra = rank(a), rb = rank(b);
+            if (ra !== rb) return ra - rb;
+            if (a.clockedOut && b.clockedOut) return (b.clockedOutAt || '').localeCompare(a.clockedOutAt || '');
             const aStart = a.scheduledShift?.startTime || '';
             const bStart = b.scheduledShift?.startTime || '';
             if (aStart !== bStart) return aStart.localeCompare(bStart);
@@ -551,7 +576,8 @@ export default function ClockedInPanel({
 
     const toggleRow = (id) => setExpandedRowId(prev => prev === id ? null : id);
 
-    const cardCount   = fedEntries.filter(e => !e.isNoShow).length;
+    const cardCount   = fedEntries.filter(e => !e.isNoShow && !e.clockedOut).length;  // on the clock now
+    const outCount    = fedEntries.filter(e => e.clockedOut).length;                  // clocked out today
     const noShowCount = fedEntries.filter(e => e.isNoShow).length;
 
     // ── CARD variant (desktop HomeV2 replacement for upcoming-shifts) ──
@@ -585,6 +611,11 @@ export default function ClockedInPanel({
                         <span className="text-xs font-black text-dd-green-700 bg-dd-green-50 px-2.5 py-1 rounded-full border border-dd-green/30">
                             {cardCount} {tx('on now', 'ahora')}
                         </span>
+                        {outCount > 0 && (
+                            <span className="text-xs font-black text-dd-text-2 bg-dd-bg px-2.5 py-1 rounded-full border border-dd-line">
+                                {outCount} {tx('out', 'salió')}
+                            </span>
+                        )}
                     </div>
                 </div>
 
@@ -635,6 +666,9 @@ export default function ClockedInPanel({
                         {noShowCount > 0 && (
                             <span className="ml-1 text-red-700">· ⚠ {noShowCount}</span>
                         )}
+                        {outCount > 0 && (
+                            <span className="ml-1 text-dd-text-2 font-bold">· {outCount} {tx('out', 'salió')}</span>
+                        )}
                     </div>
                 </div>
                 {combined.isStale && <StaleBadge minutesAgo={combined.minutesAgo} language={language} />}
@@ -645,7 +679,9 @@ export default function ClockedInPanel({
                              className={`w-7 h-7 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-black ${
                                  e.isNoShow
                                      ? 'bg-red-50 text-red-700 ring-1 ring-red-400'
-                                     : 'bg-dd-green-50 text-dd-green-700'
+                                     : e.clockedOut
+                                         ? 'bg-dd-bg text-dd-text-2'
+                                         : 'bg-dd-green-50 text-dd-green-700'
                              }`}>
                             {(e.employeeName || '??').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase()}
                         </div>
