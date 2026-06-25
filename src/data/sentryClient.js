@@ -250,6 +250,15 @@ export async function initSentry() {
             // retries and falls back to the memory cache on its own, so no
             // write is lost. Nothing actionable in app code; pure noise.
             /An internal error was encountered in the Indexed Database server/i,
+            // 2026-06-25 — same source, different browser wording. Firefox /
+            // some WebViews throw "Attempt to iterate a cursor that doesn't
+            // exist" when Firestore's persistentLocalCache is mid-iteration
+            // over an IndexedDB cursor and the browser auto-closes the
+            // transaction (tab backgrounded, GC, storage pressure, a second
+            // connection). Arrives handled via unhandledrejection; Firestore
+            // re-runs the read against the network. We never drive IDB cursors
+            // ourselves — pure browser/SDK noise, not an app bug.
+            /Attempt to iterate a cursor that doesn't exist/i,
         ],
         // Run every event through our redactor before send.
         beforeSend: scrubSentryEvent,
