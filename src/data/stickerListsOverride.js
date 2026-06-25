@@ -119,6 +119,17 @@ export const STICKER_SECTIONS = Object.freeze([
         titleEs: '🧋 Bebidas',
         defaults: BUILD_SHEET_DRINKS,
     },
+    {
+        // Catch-all category — Andrew 2026-06-25: "always have an add rows".
+        // Starts empty; the editor always shows a "+ Add row" at the section
+        // bottom (even when empty), so staff/admin can add any one-off sticker
+        // item here anytime without touching the other lists.
+        key: 'other',
+        kind: 'other',
+        titleEn: '📦 Other',
+        titleEs: '📦 Otros',
+        defaults: [],
+    },
 ]);
 
 const STICKER_LISTS_DOC_REF = () => doc(db, 'config', 'sticker_lists');

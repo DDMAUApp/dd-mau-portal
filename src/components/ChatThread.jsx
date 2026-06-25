@@ -4287,12 +4287,14 @@ function MessageActionMenu({
         // scroll to the items." A portaled, viewport-centered panel with its own
         // max-height + scroll is always fully visible + reachable.
         <ModalPortal onBackPress={onClose}>
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20" onClick={onClose}>
+            <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={onClose}>
                 <div
-                    className="w-full max-w-[300px] bg-white rounded-2xl shadow-2xl border border-dd-line overflow-y-auto overscroll-contain"
-                    style={{ maxHeight: '80vh' }}
+                    className="w-full max-w-md bg-white rounded-t-3xl shadow-2xl border-t border-dd-line overflow-y-auto overscroll-contain animate-fade-in-up"
+                    style={{ maxHeight: '75vh', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
                     onClick={(e) => e.stopPropagation()}
                 >
+                    {/* grab handle — reads as a bottom sheet */}
+                    <div className="flex justify-center pt-2 pb-1"><div className="w-10 h-1 rounded-full bg-dd-line" /></div>
                 {/* Reaction row */}
                 <div className="flex justify-around px-2 py-2 border-b border-dd-line/60 bg-dd-bg/30">
                     {QUICK_REACTIONS.map(e => (
