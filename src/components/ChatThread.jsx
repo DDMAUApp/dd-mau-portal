@@ -1742,6 +1742,15 @@ function ChatThreadInner({
 
     // Group messages by date for date separators ("Today", "Yesterday", date)
     const grouped = useMemo(() => groupByDate(messages, isEs), [messages, isEs]);
+    // 2026-06-25 — chat scroll perf. The MessageBubble comparator used to
+    // JSON.stringify chat.lastReadByName + chat.members PER BUBBLE on every
+    // re-render — and a re-render fires every time anyone's "seen" timestamp
+    // updates, which happens constantly while you scroll an active thread. On a
+    // long thread (e.g. the Debug Agent chat) that's dozens of large stringifies
+    // per frame → the scroll freezes. Stringify them ONCE here; the comparator
+    // then does a cheap string compare per bubble.
+    const lastReadSig = useMemo(() => JSON.stringify(chat?.lastReadByName || null), [chat?.lastReadByName]);
+    const membersSig = useMemo(() => JSON.stringify(chat?.members || null), [chat?.members]);
 
     return (
         <div className="flex flex-col h-full bg-dd-bg">
@@ -1911,10 +1920,12 @@ function ChatThreadInner({
                                 // visible bubble. Switching to `MessageBubble`
                                 // re-engages the comparator and limits re-renders
                                 // to the bubbles whose data actually changed.
+                                <div key={msg.id} className="ddmau-msg-cv">
                                 <MessageBubble
-                                    key={msg.id}
                                     message={msg}
                                     chat={chat}
+                                    lastReadSig={lastReadSig}
+                                    membersSig={membersSig}
                                     isMine={msg.senderName === staffName}
                                     showSender={!sameSender && chat.type !== 'dm'}
                                     showAvatar={!sameSender}
@@ -1959,6 +1970,7 @@ function ChatThreadInner({
                                         }, 60);
                                     }}
                                 />
+                                </div>
                             );
                         })}
                     </div>
@@ -2796,11 +2808,13 @@ const MessageBubble = memo(MessageBubbleInner, (prev, next) => {
         const prevAcked = !!prev.myAcks?.has?.(prev.message?.id);
         const nextAcked = !!next.myAcks?.has?.(next.message?.id);
         if (prevAcked !== nextAcked) return false;
-        // chat.lastReadByName drives the seen-by render. Hash it. (Tiny
-        // map of staffName → ms-since-epoch ints.)
-        if (JSON.stringify(prev.chat?.lastReadByName || null) !== JSON.stringify(next.chat?.lastReadByName || null)) return false;
-        // chat.members affects mentions + seen-by gating. Stable usually.
-        if (JSON.stringify(prev.chat?.members || null) !== JSON.stringify(next.chat?.members || null)) return false;
+        // chat.lastReadByName drives the seen-by render; chat.members affects
+        // mentions + seen-by gating. Both are CHAT-level (identical across every
+        // bubble), so the parent stringifies them ONCE into lastReadSig/
+        // membersSig and we just compare those strings here — no per-bubble
+        // JSON.stringify (the old scroll-freeze cause). 2026-06-25.
+        if (prev.lastReadSig !== next.lastReadSig) return false;
+        if (prev.membersSig !== next.membersSig) return false;
         if (!msgFieldsEqual(prev.message, next.message)) return false;
         // Function refs intentionally not compared — see comment block.
         return true;

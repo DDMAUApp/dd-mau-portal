@@ -1459,6 +1459,21 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
    action-puck, .ddmau-composer-btn, .ddmau-chat-divider,
    .ddmau-chat-search-pill) all kept their names so we don't have
    to re-edit ChatThread.jsx — they just got light fills now. */
+
+/* 2026-06-25 — chat scroll perf. The thread isn't virtualized (every message
+   bubble stays mounted), so a long thread (e.g. the Debug Agent chat) repaints
+   ALL bubbles on every scroll frame → freezes, especially on iOS WKWebView.
+   content-visibility:auto tells the browser to skip layout/paint for bubbles
+   that are off-screen, so scrolling only ever paints the few visible ones.
+   `contain-intrinsic-size: auto 64px` gives off-screen bubbles a placeholder
+   height and REMEMBERS each one's real height once painted, so the scrollbar
+   doesn't jump. Progressive enhancement — engines without content-visibility
+   (older Safari/WebView) simply ignore it and render as before. */
+.ddmau-msg-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 64px;
+}
+
 @media (max-width: 767px) {
     /* Other-person message bubble — light card with hairline border.
        (Mentioned messages keep their amber tint via the JSX
