@@ -120,6 +120,20 @@ export function subscribeMoneyCounts(cb, max = 300) {
     );
 }
 
+// Live listener for ONE day's counts (the "Today" panel) — a single-field
+// `where date == d` query, so it streams only the handful of docs counted today
+// (both stores) instead of holding the whole 300-doc history open on the hot
+// Count screen. Re-subscribe when the date rolls (the caller keys it on `today`).
+export function subscribeTodayCounts(date, cb) {
+    const d = date || centralDate();
+    const q = query(collection(db, COLL), where('date', '==', d));
+    return onSnapshot(
+        q,
+        (snap) => cb(snap.docs.map((x) => ({ id: x.id, ...x.data() }))),
+        (err) => { console.warn('today money_counts subscribe failed:', err); cb([]); },
+    );
+}
+
 // ── Cash tips — a SEPARATE daily total, saved on its own (not part of the
 // drawer count). EXACTLY ONE total per (location, date): the doc id is
 // deterministic (`${loc}_${date}`), so re-entering ANY day — today or a past
@@ -155,7 +169,9 @@ export async function saveCashTips({ date, amountCents, staffName, staffId, loca
 // All cash-tip entries between two 'YYYY-MM-DD' dates (inclusive). Single-field
 // date-range query → no composite index; caller filters location client-side.
 export async function getCashTipsRange({ from, to }) {
-    const q = query(collection(db, TIPS_COLL), where('date', '>=', from), where('date', '<=', to));
+    // Bounded so a wide (or fat-fingered) range can't pull the whole collection
+    // in one read. At ≤2 docs/day that's still ~3 years across both stores.
+    const q = query(collection(db, TIPS_COLL), where('date', '>=', from), where('date', '<=', to), limit(2000));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }

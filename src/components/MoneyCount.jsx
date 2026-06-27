@@ -5,11 +5,11 @@
 // timestamp + who counted it. Manager-gated (canCountMoney). All math in
 // integer cents (src/data/moneyCount.js) so a drawer of pennies never drifts.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import { Coins, Banknote, History, Save, Eraser, ChevronDown, Wallet, HandCoins, CalendarRange } from 'lucide-react';
 import { toast } from '../toast';
 import {
-    COIN_DENOMS, BILL_DENOMS, totalCents, fmtMoney, saveMoneyCount, subscribeMoneyCounts,
+    COIN_DENOMS, BILL_DENOMS, totalCents, fmtMoney, saveMoneyCount, subscribeMoneyCounts, subscribeTodayCounts,
     centralDate, dollarsToCents, saveCashTips, getCashTipsRange, editCashTips, missingTipDays,
 } from '../data/moneyCount';
 import { LOCATION_LABELS } from '../data/staff';
@@ -24,8 +24,10 @@ function fmtWhen(ms, isEn) {
     } catch { return '—'; }
 }
 
-// One denomination row: label · count input · row subtotal.
-function DenomRow({ denom, value, onChange, isEn }) {
+// One denomination row: label · count input · row subtotal. Memoized + given a
+// STABLE setCount, so typing in one row re-renders only that row — the other
+// denominations bail out (their value is unchanged), keeping input snappy.
+const DenomRow = memo(function DenomRow({ denom, value, setCount, isEn }) {
     const n = Math.max(0, Math.floor(Number(value) || 0));
     return (
         <div className="py-1.5">
@@ -34,7 +36,7 @@ function DenomRow({ denom, value, onChange, isEn }) {
                 <input
                     type="number" inputMode="numeric" min="0" step="1"
                     value={value}
-                    onChange={(e) => onChange(e.target.value)}
+                    onChange={(e) => setCount(denom.cents, e.target.value)}
                     onFocus={(e) => e.target.select()}
                     placeholder="0"
                     aria-label={`${denom.label} ${isEn ? 'count' : 'cantidad'}`}
@@ -46,7 +48,7 @@ function DenomRow({ denom, value, onChange, isEn }) {
             )}
         </div>
     );
-}
+});
 
 function Column({ title, Icon, denoms, counts, setCount, isEn }) {
     return (
@@ -57,7 +59,7 @@ function Column({ title, Icon, denoms, counts, setCount, isEn }) {
             </div>
             <div className="divide-y divide-dd-line/50">
                 {denoms.map((d) => (
-                    <DenomRow key={d.cents} denom={d} value={counts[d.cents] ?? ''} onChange={(v) => setCount(d.cents, v)} isEn={isEn} />
+                    <DenomRow key={d.cents} denom={d} value={counts[d.cents] ?? ''} setCount={setCount} isEn={isEn} />
                 ))}
             </div>
         </div>
@@ -86,6 +88,12 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const [loadedRange, setLoadedRange] = useState(null);   // the range tipRows was loaded for
     const [editTipId, setEditTipId] = useState(null);       // which tip row is being edited
     const [editTipVal, setEditTipVal] = useState('');
+    const [savingEdit, setSavingEdit] = useState(false);    // in-flight guard for a tip edit
+    const [todayRaw, setTodayRaw] = useState([]);           // live, today-only counts (both stores)
+    // Guards setState-after-await: the page is conditionally rendered, so a tab
+    // switch can unmount it mid-save.
+    const mountedRef = useRef(true);
+    useEffect(() => () => { mountedRef.current = false; }, []);
     // The store being counted. A single-store manager (or an admin with a
     // concrete active location) is locked to it; a 'both'/unknown manager must
     // PICK — never let 'both' reach a save (it isn't a real store and would be
@@ -112,26 +120,32 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     ), [counts]);
     const hasEntries = total > 0;
 
+    // History list (past days) — the heavier 300-doc listener. Held open ONLY
+    // while the History view is showing, so the hot Count screen stays light.
     useEffect(() => {
+        if (view !== 'history') return undefined;
         const unsub = subscribeMoneyCounts(setHistory);
         return () => unsub();
-    }, []);
+    }, [view]);
 
-    // Today's drawer counts at THIS store (morning → night), oldest first. They
-    // roll into History automatically after midnight Central (the `date` field
-    // changes, so they drop out of this filter on their own — no cron needed).
-    const todayCounts = useMemo(() => {
-        const list = Array.isArray(history) ? history : [];
-        return list
-            .filter((h) => h.date === today && h.location === loc)
-            .sort((a, b) => (a.createdMs || 0) - (b.createdMs || 0));
-    }, [history, today, loc]);
+    // Today's counts stream on their own tiny `date == today` listener (both
+    // stores), re-keyed when the date rolls past midnight. Filtered to THIS store
+    // for the panel; past days fall out of this query on their own → History.
+    useEffect(() => {
+        const unsub = subscribeTodayCounts(today, setTodayRaw);
+        return () => unsub();
+    }, [today]);
+    const todayCounts = useMemo(() => (
+        (Array.isArray(todayRaw) ? todayRaw : [])
+            .filter((h) => h.location === loc)
+            .sort((a, b) => (a.createdMs || 0) - (b.createdMs || 0))
+    ), [todayRaw, loc]);
 
-    const setCount = (cents, v) => {
-        // keep digits only, allow empty
-        const clean = String(v).replace(/[^\d]/g, '');
+    // Stable identity so memoized DenomRows don't re-render on every keystroke.
+    const setCount = useCallback((cents, v) => {
+        const clean = String(v).replace(/[^\d]/g, '');   // digits only, allow empty
         setCounts((c) => ({ ...c, [cents]: clean }));
-    };
+    }, []);
 
     const clearAll = () => { setCounts({}); setOpenId(null); };
 
@@ -141,12 +155,12 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         try {
             await saveMoneyCount({ counts, staffName, staffId: myId, location: loc });
             toast(tx(`Saved · ${fmtMoney(total)}`, `Guardado · ${fmtMoney(total)}`), { kind: 'success' });
-            clearAll();
+            if (mountedRef.current) clearAll();
         } catch (e) {
             console.warn('money count save failed:', e);
             toast(tx('Could not save — try again.', 'No se pudo guardar — inténtalo de nuevo.'), { kind: 'error' });
         } finally {
-            setSaving(false);
+            if (mountedRef.current) setSaving(false);
         }
     };
 
@@ -158,12 +172,12 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         try {
             await saveCashTips({ date: tipDate, amountCents: tipCents, staffName, staffId: myId, location: loc });
             toast(tx(`Tips saved · ${fmtMoney(tipCents)}`, `Propinas guardadas · ${fmtMoney(tipCents)}`), { kind: 'success' });
-            setTipAmount('');
+            if (mountedRef.current) setTipAmount('');
         } catch (e) {
             console.warn('cash tips save failed:', e);
             toast(tx('Could not save tips — try again.', 'No se pudieron guardar — inténtalo de nuevo.'), { kind: 'error' });
         } finally {
-            setSavingTip(false);
+            if (mountedRef.current) setSavingTip(false);
         }
     };
     const loadTipRange = async () => {
@@ -172,28 +186,36 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         try {
             const lo = tipFrom <= tipTo ? tipFrom : tipTo;
             const hi = tipFrom <= tipTo ? tipTo : tipFrom;
-            setTipRows(await getCashTipsRange({ from: lo, to: hi }));
+            const rows = await getCashTipsRange({ from: lo, to: hi });
+            if (!mountedRef.current) return;
+            setTipRows(rows);
             setLoadedRange({ from: lo, to: hi });
         } catch (e) {
             console.warn('cash tips range failed:', e);
-            toast(tx('Could not load tips.', 'No se pudieron cargar las propinas.'), { kind: 'error' });
-            setTipRows([]);
+            if (mountedRef.current) {
+                toast(tx('Could not load tips.', 'No se pudieron cargar las propinas.'), { kind: 'error' });
+                setTipRows([]);
+            }
         } finally {
-            setLoadingTips(false);
+            if (mountedRef.current) setLoadingTips(false);
         }
     };
     // Edit a saved tip (corrections) — logged on the doc (`edits[]`), then reload.
     const doEditTip = async (r) => {
+        if (savingEdit) return;   // no double-tap → no duplicate edit-log entry
         const newCents = dollarsToCents(editTipVal);
         if (newCents === (Number(r.amountCents) || 0)) { setEditTipId(null); return; }
+        setSavingEdit(true);
         try {
             await editCashTips({ location: r.location, date: r.date, newAmountCents: newCents, by: staffName });
             toast(tx(`Tip updated · ${fmtMoney(newCents)}`, `Propina actualizada · ${fmtMoney(newCents)}`), { kind: 'success' });
-            setEditTipId(null);
+            if (mountedRef.current) setEditTipId(null);
             await loadTipRange();
         } catch (e) {
             console.warn('cash tip edit failed:', e);
-            toast(tx('Could not update — try again.', 'No se pudo actualizar — inténtalo de nuevo.'), { kind: 'error' });
+            if (mountedRef.current) toast(tx('Could not update — try again.', 'No se pudo actualizar — inténtalo de nuevo.'), { kind: 'error' });
+        } finally {
+            if (mountedRef.current) setSavingEdit(false);
         }
     };
     const tipFiltered = useMemo(() => {
@@ -215,11 +237,14 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         }
         return Object.entries(m).sort((a, b) => b[1] - a[1]);
     }, [tipFiltered]);
+    // Distinct days that have a tip (built once, reused for the count label + the
+    // missing-day check instead of rebuilding a Set inline in JSX each render).
+    const daysWithTips = useMemo(() => new Set(tipFiltered.map((r) => r.date)), [tipFiltered]);
     // Days in the loaded range with no tip entry (Sundays excluded — closed).
     const missingDays = useMemo(() => {
         if (tipRows === null || !loadedRange) return [];
-        return missingTipDays(loadedRange.from, loadedRange.to, new Set(tipFiltered.map((r) => r.date)));
-    }, [tipRows, loadedRange, tipFiltered]);
+        return missingTipDays(loadedRange.from, loadedRange.to, daysWithTips);
+    }, [tipRows, loadedRange, daysWithTips]);
 
     const filtered = useMemo(() => {
         if (!Array.isArray(history)) return [];
@@ -396,7 +421,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
                                         <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">{tx('Total tips', 'Total de propinas')}</div>
                                         <div className="text-3xl font-black text-amber-700 tabular-nums leading-none mt-0.5">{fmtMoney(tipRangeTotal)}</div>
-                                        <div className="text-[11px] text-dd-text-2 mt-1">{loadedRange?.from} → {loadedRange?.to} · {new Set(tipFiltered.map((r) => r.date)).size} {tx('days with tips', 'días con propinas')}</div>
+                                        <div className="text-[11px] text-dd-text-2 mt-1">{loadedRange?.from} → {loadedRange?.to} · {daysWithTips.size} {tx('days with tips', 'días con propinas')}</div>
                                         {locFilter === 'all' && tipByLocation.length > 1 && (
                                             <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-amber-200/70">
                                                 {tipByLocation.map(([k, cents]) => (
@@ -451,8 +476,8 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                                                             onChange={(e) => setEditTipVal(e.target.value.replace(/[^0-9.]/g, ''))}
                                                                             className="w-full pl-6 pr-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text tabular-nums focus:border-dd-green outline-none" />
                                                                     </div>
-                                                                    <button onClick={() => doEditTip(r)}
-                                                                        className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-black text-white bg-dd-green active:scale-95">
+                                                                    <button onClick={() => doEditTip(r)} disabled={savingEdit}
+                                                                        className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-black text-white bg-dd-green active:scale-95 disabled:opacity-50">
                                                                         <Save size={14} strokeWidth={2.5} /> {tx('Save', 'Guardar')}
                                                                     </button>
                                                                 </div>
