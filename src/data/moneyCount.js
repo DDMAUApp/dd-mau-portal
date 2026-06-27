@@ -94,8 +94,9 @@ export async function saveMoneyCount({ counts, staffName, staffId, location }) {
 }
 
 // Newest-first history (single-field orderBy → no composite index). Caller
-// filters by location client-side; volume is tiny so 60 is plenty.
-export function subscribeMoneyCounts(cb, max = 60) {
+// filters by location client-side. 300 ≈ ~7 weeks across both stores at a
+// few counts/day, so "look back" reaches well past a couple of weeks.
+export function subscribeMoneyCounts(cb, max = 300) {
     const q = query(collection(db, COLL), orderBy('createdMs', 'desc'), limit(max));
     return onSnapshot(
         q,
@@ -113,11 +114,22 @@ export async function saveCashTips({ date, amountCents, staffName, staffId, loca
     const loc = location || 'webster';
     const d = date || centralDate();
     const cents = Math.max(0, Math.round(Number(amountCents) || 0));
-    await setDoc(doc(db, TIPS_COLL, `${loc}_${d}`), {
+    const ref = doc(db, TIPS_COLL, `${loc}_${d}`);
+    // Re-saving a day overwrites its total — log every value CHANGE to the
+    // on-doc edits[] (cash-audit safety), so a re-count from the Count view is
+    // recorded the same as a History edit. The first entry of a day isn't logged.
+    const snap = await getDoc(ref);
+    const existed = snap.exists();
+    const oldCents = existed ? (Number(snap.data()?.amountCents) || 0) : 0;
+    const payload = {
         date: d, amountCents: cents, location: loc,
         staffName: staffName || 'Unknown', staffId: staffId ?? null,
         updatedAt: serverTimestamp(), updatedMs: Date.now(),
-    }, { merge: true });
+    };
+    if (existed && oldCents !== cents) {
+        payload.edits = arrayUnion({ oldCents, newCents: cents, by: staffName || 'Unknown', at: new Date().toISOString() });
+    }
+    await setDoc(ref, payload, { merge: true });
     return `${loc}_${d}`;
 }
 

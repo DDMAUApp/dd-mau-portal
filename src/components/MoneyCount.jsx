@@ -86,7 +86,23 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const [loadedRange, setLoadedRange] = useState(null);   // the range tipRows was loaded for
     const [editTipId, setEditTipId] = useState(null);       // which tip row is being edited
     const [editTipVal, setEditTipVal] = useState('');
-    const today = centralDate();
+    // The store being counted. A single-store manager (or an admin with a
+    // concrete active location) is locked to it; a 'both'/unknown manager must
+    // PICK — never let 'both' reach a save (it isn't a real store and would be
+    // invisible under the webster/maryland filters).
+    const fixedStore = (storeLocation === 'webster' || storeLocation === 'maryland') ? storeLocation : null;
+    const [pickedStore, setPickedStore] = useState('webster');
+    const loc = fixedStore || pickedStore;
+    // `today` (Central) in state + a 1-min timer + visibility re-check, so a
+    // screen left open on a shared iPad rolls past midnight without waiting for
+    // an incidental render (Today panel ↔ History split stays correct).
+    const [today, setToday] = useState(() => centralDate());
+    useEffect(() => {
+        const tick = () => setToday((t) => { const n = centralDate(); return n === t ? t : n; });
+        const id = setInterval(tick, 60_000);
+        document.addEventListener('visibilitychange', tick);
+        return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
+    }, []);
 
     // Resolve the counter's id (App may or may not pass it).
     const myId = staffId ?? (staffList || []).find((s) => s?.name === staffName)?.id ?? null;
@@ -107,9 +123,9 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const todayCounts = useMemo(() => {
         const list = Array.isArray(history) ? history : [];
         return list
-            .filter((h) => h.date === today && h.location === storeLocation)
+            .filter((h) => h.date === today && h.location === loc)
             .sort((a, b) => (a.createdMs || 0) - (b.createdMs || 0));
-    }, [history, today, storeLocation]);
+    }, [history, today, loc]);
 
     const setCount = (cents, v) => {
         // keep digits only, allow empty
@@ -123,7 +139,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         if (saving || !hasEntries) return;
         setSaving(true);
         try {
-            await saveMoneyCount({ counts, staffName, staffId: myId, location: storeLocation });
+            await saveMoneyCount({ counts, staffName, staffId: myId, location: loc });
             toast(tx(`Saved · ${fmtMoney(total)}`, `Guardado · ${fmtMoney(total)}`), { kind: 'success' });
             clearAll();
         } catch (e) {
@@ -140,7 +156,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         if (savingTip || tipCents <= 0 || !tipDate) return;
         setSavingTip(true);
         try {
-            await saveCashTips({ date: tipDate, amountCents: tipCents, staffName, staffId: myId, location: storeLocation });
+            await saveCashTips({ date: tipDate, amountCents: tipCents, staffName, staffId: myId, location: loc });
             toast(tx(`Tips saved · ${fmtMoney(tipCents)}`, `Propinas guardadas · ${fmtMoney(tipCents)}`), { kind: 'success' });
             setTipAmount('');
         } catch (e) {
@@ -202,7 +218,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         return history.filter((h) => h.date !== today && (locFilter === 'all' || h.location === locFilter));
     }, [history, locFilter, today]);
 
-    const locLabel = LOCATION_LABELS[storeLocation] || storeLocation;
+    const locLabel = LOCATION_LABELS[loc] || loc;
 
     return (
         <div className="max-w-3xl mx-auto px-3 pb-28 pt-3 space-y-3">
@@ -227,6 +243,19 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                         ))}
                     </div>
                 </div>
+                {/* Store picker — only when the manager isn't locked to one store
+                    (e.g. covers "both"). Forces a real store before any save. */}
+                {!fixedStore && (
+                    <div className="mt-3 flex items-center gap-2">
+                        <span className="text-[11px] font-bold text-dd-text-2">{tx('Counting at:', 'Contando en:')}</span>
+                        {['webster', 'maryland'].map((s) => (
+                            <button key={s} onClick={() => setPickedStore(s)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${loc === s ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                                {LOCATION_LABELS[s]}
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {view === 'count' ? (
@@ -283,7 +312,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                         <div className="flex items-end gap-2 flex-wrap">
                             <label className="flex flex-col gap-0.5">
                                 <span className="text-[10px] font-bold text-dd-text-2">{tx('Date', 'Fecha')}</span>
-                                <input type="date" value={tipDate} onChange={(e) => setTipDate(e.target.value)}
+                                <input type="date" value={tipDate} max={today} onChange={(e) => setTipDate(e.target.value)}
                                     className="px-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text focus:border-amber-400 focus:ring-1 focus:ring-amber-200 outline-none" />
                             </label>
                             <label className="flex flex-col gap-0.5 flex-1 min-w-[8rem]">
@@ -335,12 +364,12 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                 <div className="flex items-end gap-2 flex-wrap">
                                     <label className="flex flex-col gap-0.5">
                                         <span className="text-[10px] font-bold text-dd-text-2">{tx('From', 'Desde')}</span>
-                                        <input type="date" value={tipFrom} onChange={(e) => setTipFrom(e.target.value)}
+                                        <input type="date" value={tipFrom} max={today} onChange={(e) => setTipFrom(e.target.value)}
                                             className="px-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text focus:border-amber-400 outline-none" />
                                     </label>
                                     <label className="flex flex-col gap-0.5">
                                         <span className="text-[10px] font-bold text-dd-text-2">{tx('To', 'Hasta')}</span>
-                                        <input type="date" value={tipTo} onChange={(e) => setTipTo(e.target.value)}
+                                        <input type="date" value={tipTo} max={today} onChange={(e) => setTipTo(e.target.value)}
                                             className="px-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text focus:border-amber-400 outline-none" />
                                     </label>
                                     <button onClick={loadTipRange} disabled={loadingTips}
@@ -357,7 +386,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
                                         <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">{tx('Total tips', 'Total de propinas')}</div>
                                         <div className="text-3xl font-black text-amber-700 tabular-nums leading-none mt-0.5">{fmtMoney(tipRangeTotal)}</div>
-                                        <div className="text-[11px] text-dd-text-2 mt-1">{loadedRange?.from} → {loadedRange?.to} · {tipFiltered.length} {tx('days with tips', 'días con propinas')}</div>
+                                        <div className="text-[11px] text-dd-text-2 mt-1">{loadedRange?.from} → {loadedRange?.to} · {new Set(tipFiltered.map((r) => r.date)).size} {tx('days with tips', 'días con propinas')}</div>
                                     </div>
                                     {missingDays.length > 0 && (
                                         <div className="rounded-xl border border-red-200 bg-red-50 p-3">
