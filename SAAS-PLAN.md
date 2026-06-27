@@ -385,3 +385,206 @@ for one restaurant to ever see another's schedules, payroll, or sales.
 Part 2 (auth + isolation) is Phases 3–5 of Part 1's roadmap, and it is the **first real build
 work** when you start: real authentication + tenant-scoped rules proven by A≠B tests, in a new
 Firebase project, with the live business untouched until a rehearsed cutover.
+
+---
+
+# PART 3 — Current-app technical audit (grounded in the real code, 2026-06-25)
+
+| Layer | How it works today | Single-tenant assumption to fix |
+|---|---|---|
+| **Backend** | Firebase **Cloud Functions** (us-central1) + **Firestore**; **no app server**. Plus a **Railway** Python scraper that pulls Toast/Sysco/US Foods and writes Firestore via a service account. | Functions + scraper assume ONE business's creds (global secrets/env). |
+| **Frontend** | React 18 + Vite SPA, **Capacitor** iOS/Android (`appId com.ddmau.staff`), Capgo OTA. ~60 feature modules in `src/data/*`. | UI gates by name/id, not by a tenant-scoped session. |
+| **DB schema** | Flat Firestore collections, **no `tenantId`**. `location` field = `webster`/`maryland`. `config/staff` holds the staff list. | Every collection needs `tenantId`. |
+| **User / staff** | **No user table, no Auth.** Staff live in the staff list; **`staffName` is the cross-app join key**. | Need real `tenant_users` (Auth uid) + `staff.linkedUserId`. |
+| **Roles / permissions** | Client-side `isAdmin(name, staffList)` **and** owner hardcoded as **`s.id === 40 || s.id === 41` in 7+ places in `functions/index.js`** (lines ~1790, 2443, 2688, 2884, 3698, 4720, 4818). Per-feature flags (`canViewOnboarding`, etc.) on the staff record. | **The `40/41` hardcode is the #1 landmine** — becomes a `role:owner` claim, tenant-scoped. |
+| **Store/location** | Hardcoded `LOCATIONS` (webster/maryland); Toast GUIDs per location come from **env vars**. | Locations become rows under a tenant; GUIDs move to the tenant's encrypted vault. |
+| **Scheduling / time clock / availability** | `shifts`, `time_off`, `date_blocks`, `attendance`; `ops/clocked_in_*` written by the Toast scraper. | Add `tenantId` (+ `locationId`) to all. |
+| **Notifications** | `dispatchNotification` CF → FCM (web/Android) + APNs (iOS, node-apn); `fcmTokens` on staff. | Tokens + topics scope per tenant. |
+| **Integrations / API keys (today, ALL global)** | **Cloud Functions secrets** (`defineSecret`): `TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER`, `ANTHROPIC_API_KEY`, `GMAIL_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN`, `APNS_AUTH_KEY/KEY_ID/TEAM_ID`, `SENTRY_DSN`, `GH_DISPATCH_TOKEN`. **Railway env**: `TOAST_CLIENT_ID/SECRET/API_HOST/EMAIL/PASSWORD`, `TOAST_RESTAURANT_GUID_WEBSTER/MARYLAND`, `SYSCO_STORAGE_STATE` (+user/pass), `USFOODS_*`, `FIREBASE_SA_JSON`. | **This is the core of Part 4** — per-tenant creds can't be global env vars. They move to an encrypted, tenant-scoped vault. |
+| **Env vars / Railway** | One scraper service, one tenant's env. | Scraper becomes a multi-tenant orchestrator reading each tenant's vault. |
+| **Auth / login flow** | **None.** 4-digit PIN keypad checked client-side vs the staff list. | The PIN gets demoted (Part 2). |
+| **4-digit PIN** | Client-checked; **`pin_audits` stores plaintext PINs** (QA-flagged). | Hash + server-verify + tenant-scope. |
+| **Admin / manager / employee access** | All client-gated; owner = hardcoded ids. | Role claims, tenant-scoped, server-enforced. |
+| **Hardcoded business-specific logic** | Owner ids `40/41`; `LOCATIONS` webster/maryland; `"DD Mau"` strings + `com.ddmau.staff`; apply phone `(314) 689-4025`; menu/recipe/allergen seed data; per-location Toast GUIDs. | All of this becomes **tenant config**, not constants. |
+
+**Audit verdict:** the product layer is reusable; the blockers are (1) no auth, (2) catch-all
+rules, (3) no `tenantId`, (4) **owner hardcoded as ids 40/41**, and (5) **global, single-set
+integration credentials**. Items 4 and 5 are what make "just add another restaurant" impossible
+today and are the heart of the integrations work below.
+
+---
+
+# PART 4 — Tenant Integrations page + credential auto-wiring ⭐ (the new centerpiece)
+
+**Your ask:** a page in the admin where a new tenant enters all their keys/GUIDs/API
+keys/passwords, and the app "automatically gets those into the right place" so their app just
+works like yours.
+
+**The right pattern (a gentle correction to "webhooks that auto-enter keys"):** you don't copy
+keys into env vars or fire a webhook to "place" them. Instead, every key is entered **once** into
+an encrypted, tenant-scoped **credential vault**, and **every part of the system reads from the
+vault by `tenant_id` at runtime** — the scraper, the SMS sender, the receipt AI. That *is* the
+automatic wiring: enter once → everything that needs it pulls it, with no per-tenant redeploys
+and no secrets ever touching the frontend. ("Webhooks" still matter, but for **inbound** events —
+Twilio SMS and Stripe billing — see the webhook router below.)
+
+### 4.1 The four pieces
+
+**(a) Integration Registry** — a declarative catalog (one entry per provider) so the page renders
+itself and adding a provider = adding one entry:
+```
+integrations_registry (config, code-side):
+  toast:    { fields:[clientId,clientSecret,apiHost,locations:[{name,restaurantGuid}]],
+              validator: testToast(), consumedBy:[scraper, attendance], scope: per-location }
+  sysco:    { fields:[storageStateJson | username+password],            validator: testSysco(),    consumedBy:[scraper] }
+  usfoods:  { fields:[username, gmail, gmailAppPassword],               validator: testUsFoods(),  consumedBy:[scraper] }
+  twilio:   { fields:[accountSid, authToken, fromNumber],               validator: testTwilio(),   consumedBy:[sms, applyToText], inbound:webhook }
+  anthropic:{ fields:[apiKey] (OR platform-provided, billed to you),    validator: testAnthropic(),consumedBy:[receiptAI, aiSearch] }
+  gmail:    { fields:[oauthClientId, oauthClientSecret, refreshToken],  validator: testGmail(),    consumedBy:[pollGmail] }
+```
+
+**(b) Encrypted per-tenant vault** — `integration_secrets/{tenantId}/{provider}` (Firestore,
+**server-only**: rules `allow read,write: if false`; only Cloud Functions via the admin SDK touch
+it), OR Google **Secret Manager** (one secret per `tenant/provider`). Values are **envelope-
+encrypted with a KMS key** before storing. The frontend **never** receives a secret back — the
+page shows only **status** (`Connected ✓ · last verified 2h ago` / `Not connected`).
+
+**(c) Validate-on-save** — when a tenant submits Toast creds, a Cloud Function does a **real test
+call** (e.g. fetch their restaurant list) before saving: `✓ Connected — found 2 locations`. This
+is what makes it feel automatic: enter → verify → green check → data flows. No silent
+misconfiguration.
+
+**(d) Tenant-aware consumers** — the Railway scraper becomes a **multi-tenant orchestrator**: it
+lists active tenants, reads each tenant's vault creds (via a CF or a deploy service account), and
+runs that tenant's integrations on their own schedule, **isolated** (one tenant's Toast failure
+never affects another). Cloud Functions that send SMS / run receipt AI read the **calling
+tenant's** vault entry, not a global secret.
+
+### 4.2 Inbound webhook router (where "webhooks" genuinely apply)
+
+A **single** public endpoint per inbound provider that **resolves the tenant from the payload**:
+- **Twilio inbound SMS** (apply-to-text): the `To` number → look up which tenant owns that number
+  → route. Each tenant brings their own Twilio number (or you provision one per tenant).
+- **Stripe billing**: webhook `customer`/`subscription` → `tenants.stripeCustomerId` → set that
+  tenant's plan/status. (Part 1 §1.5.)
+
+### 4.3 The Integrations admin page (UX)
+
+A tab in the tenant admin: one **card per provider** → `Not connected` → **Connect** → a form
+(fields from the registry) → **Verify & Save** → `✓ Connected · last checked` + a **Re-test** and
+**Disconnect**. Owner/admin role only; every change writes an audit entry (`integration_changed`,
+secret value redacted). Cookie-cutter: a new restaurant fills these in once and their scraper,
+SMS, and receipt-AI light up — "works like mine."
+
+### 4.4 Security rules for the vault (non-negotiable)
+- Secrets entered over HTTPS → **callable CF only** (never written from the client directly).
+- **Envelope-encrypted (KMS)** at rest; or Secret Manager (which encrypts + access-controls).
+- **Never returned to any frontend** — status-only reads.
+- Rules: `match /integration_secrets/{t}/{p=**} { allow read, write: if false; }`.
+- Per-secret audit; rotation supported (re-enter → re-validate → new version, old revoked).
+- App Check on the callable so only your real apps can submit creds.
+
+---
+
+# PART 5 — Detailed 10-phase execution plan
+
+> The 5 architecture options map to Part 1's comparison: **#1 = B (in-place), #2 = C (copy),
+> #3 = separate-DB-per-tenant (strongest isolation, heaviest ops — viable as the *transitional*
+> business-vs-SaaS split), #4 = B's end-state (one backend, tenant isolation), #5 = D (hybrid).**
+> **Recommendation stands: #5 (hybrid) reaching #4 — one tenant-aware codebase, business migrated
+> last as tenant zero.** Each phase below: Goal · Files · DB · API · Frontend · Security risk ·
+> Testing · Rollback.
+
+**Phase 1 — Audit & freeze baseline.**
+Goal: lock current state, enable backups. Files: none (docs). DB: turn on daily Firestore export.
+API: none. FE: none. Security risk: none. Testing: confirm export lands in GCS; tag prod baseline.
+Rollback: n/a (read-only).
+
+**Phase 2 — Add `tenantId` safely (data-tagging, behavior unchanged).**
+Goal: every collection carries `tenantId`; backfill business = `ddmau`. Files: `src/firebase.js`,
+a new `src/data/tenantContext.js` (data-access layer that injects `tenantId`), all `src/data/*`
+writers (gradually). DB: add `tenantId` field everywhere; backfill script. API: writers default
+`tenantId='ddmau'`. FE: none visible. Security risk: a missed writer = an untagged doc → fix:
+default-on-write + an audit sweep for null `tenantId`. Testing: assert every new doc has
+`tenantId`; backfill count matches. Rollback: field is additive — ignore it; nothing breaks.
+
+**Phase 3 — Tenant-aware auth & permissions (in a NEW Firebase project).**
+Goal: real Firebase Auth + claims `{tenant_id, role, staff_id}`; **kill the `40/41` hardcode** →
+`role:owner`. Files: new `src/auth/*`, `functions/auth.js` (`setUserClaims`, `acceptInvite`),
+refactor the 7 `id===40||41` sites → `hasRole('owner')`. DB: `tenant_users`, `roles`. API:
+claims-issuing CFs. FE: login screens (email/pw + magic link), MFA for admin/owner. Security risk:
+claim spoofing → claims set **only** server-side; never trust client role. Testing: claim-issuance
+tests; owner-gate tests now pass via role not id. Rollback: new project — live app untouched.
+
+**Phase 4 — Device registration + staff invite login.**
+Goal: shared-iPad device accounts + personal-phone invite/verify; PIN demoted. Files:
+`src/auth/deviceMode.jsx`, `functions/devices.js` (`registerDevice`, `revokeDevice`,
+`verifyStaffPin`), `src/data/devicePairing.js` (exists — evolve it). DB: `devices`,
+`device_sessions`; `staff.pinHash/pinSalt`. API: device register/verify, PIN verify (server,
+hashed, rate-limited, logged). FE: first-screen router (Part 2 §2.3), staff-mode keypad backed by
+`verifyStaffPin`. Security risk: lost iPad → `revokeDevice` kills the session; PIN brute-force →
+lockout + audit. Testing: A-tenant PIN can't act in B; revoked device truly dies; lockout works.
+Rollback: opt-in — old keypad path remains until cutover.
+
+**Phase 5 — Encrypted tenant integrations (Part 4).**
+Goal: the Integrations page + vault + validators + multi-tenant scraper. Files: new
+`src/components/admin/IntegrationsTab.jsx`, `src/data/integrations.js`,
+`functions/integrations.js` (save/validate/rotate), `functions/webhookRouter.js`, **scraper.py
+refactor** → multi-tenant loop. DB: `integration_secrets/{tenant}/{provider}` (server-only) or
+Secret Manager. API: `saveIntegration`, `testIntegration`, inbound webhook router. FE: provider
+cards + verify UX. Security risk: secret leakage → server-only vault, KMS, status-only reads, App
+Check; **never** return values. Testing: tenant A can't read B's secrets; validators catch bad
+creds; scraper isolates per-tenant failures. Rollback: your business keeps using its existing
+Railway env vars until its vault entry is verified, then flip.
+
+**Phase 6 — Subscription / billing tables.**
+Goal: Stripe per tenant. Files: `functions/stripeWebhook.js`, `src/data/billing.js`,
+`src/components/admin/BillingTab.jsx`. DB: `plans`, `tenants.subscription/status/entitlements`,
+`billing_events`. API: checkout session, `stripeWebhook` → set plan/entitlements; dunning. FE:
+plan picker + billing status. Security risk: webhook spoofing → verify Stripe signature; entitle-
+ments are server-set. Testing: webhook state-machine (trial→active→past_due→suspended); `isInternal`
+tenants skipped. Rollback: test mode; no real charges until flipped live.
+
+**Phase 7 — SaaS super-admin dashboard.**
+Goal: operate the platform. Files: `src/components/superadmin/*`, `functions/superAdmin.js`. DB:
+`super_admins` (claim `isSuperAdmin`). API: list/suspend/comp tenants; **audited read-only
+impersonation**. FE: tenant list, MRR, usage. Security risk: cross-tenant power → MFA-required,
+every access audited, separate sign-in surface. Testing: a normal admin token can NEVER reach
+another tenant; impersonation is logged. Rollback: feature-flagged off.
+
+**Phase 8 — Migrate the business into a protected internal tenant.**
+Goal: DD Mau becomes `tenant:ddmau` (`isInternal`, comped). Files: a one-time ETL script
+(local/gitignored). DB: export → transform (`tenantId='ddmau'`, `location`→`locationId`,
+hash PINs) → import to `saas-prod`. API: none new. FE: business app build re-points to the SaaS
+project (config flag). Security risk: data mixup → full export first; parity + isolation
+validated before flip. Testing: row counts + spot-checks match; A≠B isolation holds with real
+data. Rollback: **old project stays live as a hot rollback** for N weeks; flip the config back in
+minutes.
+
+**Phase 9 — Beta tenant.**
+Goal: prove isolation on a real second restaurant. Files: onboarding wizard
+(`src/components/onboarding/TenantSetup.jsx`). DB: a real second `tenants/{id}` + locations +
+staff + their vault. API: self-serve signup → tenant → owner → location → invite staff. FE:
+business setup wizard, location setup, staff invite flow. Security risk: cross-tenant bleed →
+the §2.12 checklist must pass before any real customer data. Testing: beta tenant cannot see
+DD Mau; DD Mau cannot see beta; their integrations run isolated. Rollback: suspend/delete the
+beta tenant cleanly; no impact on others.
+
+**Phase 10 — Launch SaaS.**
+Goal: public availability + scale. Files: marketing/signup surface, store-listing rename to the
+product name (per the app-name notes; per-tenant branding stays *inside* the app). DB: usage
+metering. API: rate limits, App Check enforced. FE: pricing/signup. Security risk: scale-driven
+rule gaps → load test cross-tenant queries; index/cost tuning. Testing: full §2.12 security pass +
+pen-test the rules; load test. Rollback: feature-flag new signups off; existing tenants unaffected.
+
+---
+
+## Bottom line for this part
+Two findings make the integrations work the real heart of the SaaS effort: **owner is hardcoded
+as ids 40/41 across the Cloud Functions**, and **every integration credential is a single global
+env var/secret.** Both must become **tenant-scoped** — owner→a role claim, and every key→an
+**encrypted per-tenant vault that the scraper, SMS, and AI read at runtime.** Get the vault +
+validate-on-save right (Phase 5) and onboarding a new restaurant becomes: *sign up → enter your
+keys on the Integrations page → green checks → your app works exactly like DD Mau's* — with
+isolation enforced in Firestore rules on every request, and your live business untouched until
+its rehearsed cutover in Phase 8.
