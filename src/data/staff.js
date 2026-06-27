@@ -185,6 +185,18 @@ export function canViewLabor(staff) {
   return false;
 }
 
+// Money-count tab access (Andrew 2026-06-25). A manager-facing cash-drawer
+// counter. Default ON for owners + manager-titled staff + shift leads; the
+// per-record `canCountMoney` toggle (Admin Panel) overrides either way — so an
+// admin can grant a trusted staffer or revoke a specific manager. Mirrors the
+// canViewLabor / canViewClockedIn tri-state pattern. Returns true/false.
+export function canCountMoney(staff) {
+  if (!staff) return false;
+  if (staff.canCountMoney === true) return true;
+  if (staff.canCountMoney === false) return false;
+  return isAdminId(staff.id) || isManagerRoleTitle(staff.role) || staff.shiftLead === true;
+}
+
 export const LOCATION_LABELS = {
   webster: "Webster",
   maryland: "Maryland Heights",

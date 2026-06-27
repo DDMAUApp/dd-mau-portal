@@ -38,6 +38,7 @@ import {
     Bell,
     Mail,
     ShoppingCart,
+    Wallet,
 } from 'lucide-react';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
@@ -90,6 +91,7 @@ const NAV_GROUPS = [
             { tab: 'recipes', Icon: BookOpen,         en: 'Recipes',  es: 'Recetas',   requires: 'recipesAccess' },
             { tab: 'menu',    Icon: UtensilsCrossed,  en: 'Menu',     es: 'Menú' },
             { tab: 'eighty6', Icon: Ban,              en: '86 Board', es: 'Tablero 86' },
+            { tab: 'moneycount', Icon: Wallet,        en: 'Money Count', es: 'Conteo de Dinero', requires: 'money' },
             // 2026-06-01 — Needs Board. Admin + manager only board for
             // one-off supply requests outside the inventory system
             // (brooms, pans, stickers, anything not on a par level).
@@ -145,6 +147,7 @@ export default function Sidebar({
     // sidebar still renders if the parent forgets to pass them.
     isAdmin = false,
     isManager = false,
+    canMoney = false,
     hasOpsAccess = true,
     hasRecipesAccess = true,
     hasOnboardingAccess = false,
@@ -162,6 +165,7 @@ export default function Sidebar({
         if (!req) return true;
         if (req === 'admin') return isAdmin;
         if (req === 'manager') return isManager;
+        if (req === 'money') return canMoney;
         if (req === 'opsAccess') return hasOpsAccess;
         if (req === 'recipesAccess') return hasRecipesAccess;
         if (req === 'onboardingAccess') return hasOnboardingAccess;

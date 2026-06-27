@@ -1121,6 +1121,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editOpsAccess, setEditOpsAccess] = useState(false);
             const [editRecipesAccess, setEditRecipesAccess] = useState(false);
             const [editViewLabor, setEditViewLabor] = useState(false);
+            const [editCanCountMoney, setEditCanCountMoney] = useState(false);
             const [editShiftLead, setEditShiftLead] = useState(false);
             const [editIsMinor, setEditIsMinor] = useState(false);
             // 2026-05-16 — owners / silent admins who exist in the staff
@@ -2051,6 +2052,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 setEditOpsAccess(false);
                 setEditRecipesAccess(false);
                 setEditViewLabor(false);
+                setEditCanCountMoney(false);
                 setEditShiftLead(false);
                 setEditIsMinor(false);
                 setEditHideFromSchedule(false);
@@ -2091,7 +2093,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
                             ? editBirthday
                             : (editBirthday === '' ? '' : (s.birthday || ''));
-                        return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
+                        return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
                     });
                     return latest;
                 });
@@ -2866,6 +2868,18 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editViewLabor ? "translate-x-7" : "translate-x-1"}`} />
                                                         </button>
                                                     </div>
+                                                    {/* Money Count — manager cash-drawer counter. Default ON for
+                                                        managers/shift-leads/owners; admin can grant/revoke per person. */}
+                                                    <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                                                        <div>
+                                                            <p className="text-sm font-bold text-gray-700">{language === "es" ? "Conteo de Dinero" : "Money Count"}</p>
+                                                            <p className="text-xs text-gray-500">{language === "es" ? "Usar el contador de caja en Inicio" : "Use the cash-drawer counter on Home"}</p>
+                                                        </div>
+                                                        <button onClick={() => setEditCanCountMoney(!editCanCountMoney)}
+                                                            className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${editCanCountMoney ? "bg-green-600" : "bg-gray-300"}`}>
+                                                            <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editCanCountMoney ? "translate-x-7" : "translate-x-1"}`} />
+                                                        </button>
+                                                    </div>
                                                     <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
                                                         <div>
                                                             <p className="text-sm font-bold text-gray-700">{language === "es" ? "Líder de Turno" : "Shift Lead"}</p>
@@ -3116,7 +3130,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditCanCountMoney(person.canCountMoney === true || (person.canCountMoney !== false && (/manager|owner/i.test(person.role || '') || person.shiftLead === true || person.id === 40 || person.id === 41))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>

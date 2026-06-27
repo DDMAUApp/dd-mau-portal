@@ -3,7 +3,7 @@ import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
-import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle } from './data/staff';
+import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney } from './data/staff';
 import { toast } from './toast';
 import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate } from './messaging';
 import { playKitchenBell } from './data/bell';
@@ -53,6 +53,7 @@ const Schedule = lazy(() => import('./components/Schedule').then(m => ({ default
 const Recipes = lazy(() => import('./components/Recipes').then(m => ({ default: memo(m.default) })));
 const LaborDashboard = lazy(() => import('./components/LaborDashboard').then(m => ({ default: memo(m.default) })));
 const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard').then(m => ({ default: memo(m.default) })));
+const MoneyCount = lazy(() => import('./components/MoneyCount').then(m => ({ default: memo(m.default) })));
 // 2026-06-01 — Needs Board. Admin/manager-only board for one-off
 // supply requests that don't belong in inventory (brooms, pans,
 // stickers, etc.). Each entry has urgency + timestamp + staff name.
@@ -1277,6 +1278,12 @@ export default function App() {
         () => staffIsAdmin || (currentStaffRecord && isManagerRoleTitle(currentStaffRecord.role)),
         [staffIsAdmin, currentStaffRecord],
     );
+    // Money-count tab access — admins + manager titles + shift leads by default,
+    // overridable per-record via the Admin Panel toggle (canCountMoney).
+    const canMoney = useMemo(
+        () => canCountMoney(currentStaffRecord),
+        [currentStaffRecord],
+    );
     // Onboarding access — tighter than isAdmin. Holds PII (SSN, W4, DL).
     // Defaults true for owners (id 40/41); everyone else needs the
     // explicit canViewOnboarding=true flag.
@@ -1306,6 +1313,10 @@ export default function App() {
         if ((activeTab === "admin" || activeTab === "labor" || activeTab === "menuscreens" || activeTab === "health" || activeTab === "errorreport" || activeTab === "labels") && !staffIsAdmin) {
             setActiveTab("home");
         }
+        // money count is manager/shift-lead/admin (canCountMoney) — bounce others.
+        if (activeTab === "moneycount" && !canMoney) {
+            setActiveTab("home");
+        }
         // tardies + handoff are manager-or-admin only — same defensive bounce.
         if ((activeTab === "tardies" || activeTab === "handoff") && !isManager) {
             setActiveTab("home");
@@ -1317,7 +1328,7 @@ export default function App() {
         if (activeTab === "recipes" && !hasRecipesAccess) setActiveTab("home");
         // Onboarding holds PII — same defensive bounce if access removed.
         if (activeTab === "onboarding" && !hasOnboardingAccess) setActiveTab("home");
-    }, [staffName, staffIsAdmin, isManager, hasOpsAccess, hasRecipesAccess, hasOnboardingAccess, activeTab]);
+    }, [staffName, staffIsAdmin, isManager, canMoney, hasOpsAccess, hasRecipesAccess, hasOnboardingAccess, activeTab]);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
     const handleSelectStaff = (name) => {
         setStaffName(name);
@@ -1782,6 +1793,7 @@ export default function App() {
                         hasOnboardingAccess={hasOnboardingAccess}
                         isAdmin={staffIsAdmin}
                         isManager={isManager}
+                        canMoney={canMoney}
                         hiddenPages={hiddenPages}
                     />
                 ) : (
@@ -1808,6 +1820,7 @@ export default function App() {
             if (activeTab === 'recipes' && hasRecipesAccess) return <PageErrorBoundary tabName="Recipes" language={language}><Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} geoRetry={geoRetry} geoPermState={geoPermState} /></PageErrorBoundary>;
             if (activeTab === 'labor' && staffIsAdmin) return <PageErrorBoundary tabName="Labor" language={language}><LaborDashboard language={language} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'eighty6' && canSeePage(currentStaffRecord, 'eighty6')) return <PageErrorBoundary tabName="86 Board" language={language}><Eighty6Dashboard language={language} storeLocation={effectiveLocation} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} /></PageErrorBoundary>;
+            if (activeTab === 'moneycount' && canMoney) return <PageErrorBoundary tabName="Money Count" language={language}><MoneyCount language={language} storeLocation={effectiveLocation} staffName={staffName} staffList={staffList} staffId={currentStaffRecord?.id} /></PageErrorBoundary>;
             // 2026-06-01 — Needs Board. Admin + manager only. Same pool that
             // sees Operations + AdminPanel — staff cannot reach this tab.
             if (activeTab === 'needs' && (staffIsAdmin || isManager)) return <PageErrorBoundary tabName="Needs Board" language={language}><NeedsBoard language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
@@ -1886,6 +1899,7 @@ export default function App() {
                     hasOnboardingAccess={hasOnboardingAccess}
                     isAdmin={staffIsAdmin}
                     isManager={isManager}
+                    canMoney={canMoney}
                     hiddenPages={(currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages)) ? currentStaffRecord.hiddenPages : []}
                     // Passed through to Header → EnableNotificationsHeaderButton
                     // so the header-bell-adjacent fix pill can write the

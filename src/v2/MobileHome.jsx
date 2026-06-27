@@ -62,6 +62,7 @@ import {
     FileText,
     Settings as SettingsIcon,
     ChevronRight,
+    Wallet,
 } from 'lucide-react';
 // 2026-05-20 — Print Center tile on the home screen. Andrew: "lets
 // make a printer button on the home screen and also has all the
@@ -102,6 +103,7 @@ export default function MobileHome({
     hasOnboardingAccess = false,
     isAdmin = false,
     isManager = false,
+    canMoney = false,
     staffList = [],
     setStaffList,
     hiddenPages = [],
@@ -299,6 +301,7 @@ export default function MobileHome({
         { tab: 'menu',       Icon: UtensilsCrossed, en: 'Menu',         es: 'Menú' },
         { tab: 'training',   Icon: GraduationCap,   en: 'Training',     es: 'Capacitación' },
         { tab: 'catering',   Icon: ChefHat,         en: 'Orders',       es: 'Pedidos' },
+        ...(canMoney  ? [{ tab: 'moneycount', Icon: Wallet, en: 'Money Count', es: 'Conteo de Dinero', primary: true }] : []),
         ...(isManager ? [{ tab: 'tardies', Icon: Clock,     en: 'Tardies', es: 'Tardanzas' }] : []),
         ...(isManager ? [{ tab: 'handoff', Icon: Handshake, en: 'Handoff', es: 'Entrega' }] : []),
         ...(isAdmin   ? [{ tab: 'labor',   Icon: BarChart3, en: 'Labor',   es: 'Mano Obra' }] : []),

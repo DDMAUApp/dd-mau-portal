@@ -36,6 +36,7 @@ export default function AppShellV2({
     hasOnboardingAccess = false,
     isAdmin = false,
     isManager = false,
+    canMoney = false,
     hiddenPages = [],
     staffList = [],
     setStaffList,
@@ -87,6 +88,7 @@ export default function AppShellV2({
                 onToggleCollapse={() => setCollapsed(c => !c)}
                 isAdmin={isAdmin}
                 isManager={isManager}
+                canMoney={canMoney}
                 hasOpsAccess={hasOpsAccess}
                 hasRecipesAccess={hasRecipesAccess}
                 hasOnboardingAccess={hasOnboardingAccess}
