@@ -83,13 +83,24 @@ printing.
 ## When something breaks
 
 ### "Brother unreachable" in healthz response
-1. `ping 192.168.1.34` from the Pi — if no ping, the Brother is off or moved to a new IP.
-2. Check your router admin page → find the Brother in DHCP clients → confirm its current IP.
-3. If the IP changed, edit `/etc/print_bridge/config.json` (`brother_ip`) and:
-   ```
-   sudo systemctl restart print_server
-   ```
-4. To prevent this in future: set a **DHCP reservation** for the Brother in your router so its IP never drifts.
+**Self-heals automatically (since 2026-06-27):** if the configured `brother_ip`
+is down, the server rediscovers the Brother by mDNS (`BRW*.local` advertising
+`_pdl-datastream._tcp`), adopts the new IP in-memory, and remembers it in
+`/var/lib/print_bridge/brother_ip` (survives restart). A DHCP drift fixes itself
+within one `/healthz` probe. Watch it: `sudo journalctl -u print_server | grep -i "DHCP drift"`.
+
+If STILL unreachable (printer off / different subnet / mDNS blocked):
+1. `avahi-browse -rpt _pdl-datastream._tcp` on the Pi — look for a `BRW*` host. None → the Brother is off, asleep, or off this Wi-Fi.
+2. Confirm raster port: `python3 -c "import socket; socket.create_connection(('<ip>',9100),2)"`.
+3. Manually pin: edit `/etc/print_bridge/config.json` (`brother_ip`) + `sudo systemctl restart print_server`.
+4. Best long-term fix: a **DHCP reservation** for the Brother (MAC `F4:28:9D:8D:BE:88`) so its IP never drifts.
+
+### App prints on a computer but the iPad/phone falls back to AirPrint
+The native apps' WebView origin is `capacitor://localhost` (iOS) / `https://localhost`
+(Android). These MUST be in `ALLOWED_ORIGINS` in `print_server.py`, or the app's
+`fetch()` to the bridge is CORS-blocked and it silently uses the AirPrint share
+sheet even when the bridge is healthy. (Added 2026-06-27.) Verify:
+`curl -D - -o /dev/null -H "Origin: capacitor://localhost" https://<host>.ts.net/healthz | grep -i access-control-allow-origin`
 
 ### Service won't start (`systemctl status print_server` shows failed)
 1. `sudo journalctl -u print_server -n 50` — read the last 50 log lines.

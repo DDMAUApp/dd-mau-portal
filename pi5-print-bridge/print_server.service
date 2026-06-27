@@ -46,6 +46,10 @@ PrivateTmp=true
 # /etc/print_bridge is read-only for the service (config + api_key)
 # Allow reading /etc/print_bridge but nothing else writable in /etc.
 ReadOnlyPaths=/etc/print_bridge
+# One writable spot (/var/lib/print_bridge, created + owned by the service user)
+# for self-heal state — the last IP we discovered the Brother at. systemd also
+# exports $STATE_DIRECTORY pointing here.
+StateDirectory=print_bridge
 
 [Install]
 WantedBy=multi-user.target

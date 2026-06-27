@@ -88,6 +88,7 @@ import json
 import socket
 import logging
 import datetime
+import subprocess
 from pathlib import Path
 
 from flask import Flask, request, jsonify
@@ -118,6 +119,12 @@ DEFAULT_DPI = 300                    # Brother QL-820 supports 300 DPI native
 
 CONFIG_PATH = Path("/etc/print_bridge/config.json")
 API_KEY_PATH = Path("/etc/print_bridge/api_key")
+# The service runs hardened (ProtectSystem=strict → /etc is read-only to it), so
+# the self-heal can't write back to config.json. systemd's StateDirectory gives
+# us one writable spot (/var/lib/print_bridge) to remember the last IP we
+# actually reached the Brother at, so a restart starts from the learned address.
+STATE_DIR = Path(os.environ.get("STATE_DIRECTORY", "/var/lib/print_bridge"))
+LEARNED_IP_PATH = STATE_DIR / "brother_ip"
 
 # Conversion factor for 300 DPI: 1 mm = 11.811 px. Brother QL series
 # accepts specific pixel widths for each tape — for 62mm continuous,
@@ -144,6 +151,15 @@ def load_config():
                 cfg.update(json.load(f))
         except Exception as e:
             logging.warning(f"Failed to read {CONFIG_PATH}: {e} — using defaults")
+    # A previously-learned IP (from an mDNS self-heal) wins over the static
+    # config — it's the most recently confirmed-reachable address for the Brother.
+    try:
+        if LEARNED_IP_PATH.exists():
+            learned = LEARNED_IP_PATH.read_text().strip()
+            if learned.count(".") == 3:
+                cfg["brother_ip"] = learned
+    except Exception:
+        pass
     return cfg
 
 
@@ -195,23 +211,78 @@ def require_api_key():
 # Brother health
 # ──────────────────────────────────────────────────────────────────────
 
-def check_brother_reachable():
-    """Quick TCP connect test to the Brother on port 9100 (raster). 500ms
-    timeout — we don't want healthz to block the web app's connection
-    check. Returns True/False."""
+def _tcp_open(ip, port=9100, timeout=0.5):
+    """True if we can open a TCP connection to ip:port within `timeout`s."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(0.5)
+    sock.settimeout(timeout)
     try:
-        sock.connect((CFG["brother_ip"], 9100))
+        sock.connect((ip, port))
         return True
-    except (socket.timeout, OSError) as e:
-        log.debug(f"Brother unreachable: {e}")
+    except (socket.timeout, OSError):
         return False
     finally:
         try:
             sock.close()
         except Exception:
             pass
+
+
+def discover_brother_ip(timeout=2.0):
+    """Find the Brother on the LAN via mDNS (avahi). The QL-820NWB advertises
+    _pdl-datastream._tcp with a hostname like BRWxxxxxxxxxxxx.local. Returns the
+    first reachable BRW* host's IPv4, or None. Bounded so /healthz stays snappy.
+
+    This is the self-heal for DHCP drift: if the router hands the printer a new
+    IP, we find it by name instead of staying pinned to a stale address."""
+    try:
+        out = subprocess.run(
+            ["avahi-browse", "-rpt", "_pdl-datastream._tcp"],
+            capture_output=True, text=True, timeout=timeout,
+        ).stdout
+    except Exception as e:
+        log.warning(f"mDNS discovery unavailable: {e}")
+        return None
+    # Resolved parseable lines: =;iface;IPv4;name;type;domain;HOST.local;ADDR;PORT;txt
+    for line in out.splitlines():
+        if not line.startswith("="):
+            continue
+        parts = line.split(";")
+        if len(parts) < 8 or parts[2] != "IPv4":
+            continue
+        host, ip = parts[6], parts[7]
+        # Only adopt a Brother (BRW prefix) — never some other network printer.
+        if host.upper().startswith("BRW") and ip.count(".") == 3:
+            return ip
+    return None
+
+
+def persist_brother_ip(ip):
+    """Remember a rediscovered IP in the writable state dir so it survives a
+    restart. Best-effort — if the dir isn't writable, in-memory adoption still
+    works (the next /healthz probe re-discovers)."""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        LEARNED_IP_PATH.write_text(ip + "\n")
+        log.info(f"Remembered Brother IP {ip}")
+    except Exception as e:
+        log.debug(f"Could not remember Brother IP (in-memory only): {e}")
+
+
+def check_brother_reachable():
+    """Quick TCP connect test to the Brother on port 9100 (raster). If the
+    configured IP is down, SELF-HEAL: rediscover the printer by mDNS (it likely
+    moved via DHCP) and adopt the new IP in-memory + persist it. Returns
+    True/False. Normal case (configured IP up) is a single 500ms check — the
+    mDNS path only runs when the static IP fails."""
+    if _tcp_open(CFG["brother_ip"]):
+        return True
+    found = discover_brother_ip()
+    if found and found != CFG["brother_ip"] and _tcp_open(found):
+        log.warning(f"Brother moved {CFG['brother_ip']} -> {found} (DHCP drift) — adopting")
+        CFG["brother_ip"] = found
+        persist_brother_ip(found)
+        return True
+    return False
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -367,8 +438,16 @@ app = Flask(__name__)
 
 ALLOWED_ORIGINS = {
     "https://app.ddmaustl.com",
-    "http://localhost:5173",   # vite dev
+    "http://localhost:5173",    # vite dev
     "https://localhost:5173",
+    # Native app WebView origins (Capacitor). The iOS app serves the local
+    # bundle from capacitor://localhost; Android (androidScheme:'https') from
+    # https://localhost. WITHOUT these, the iPad/phone app's fetch() to the
+    # bridge is CORS-blocked and it silently falls back to the AirPrint share
+    # sheet — even when the bridge + printer are perfectly healthy.
+    "capacitor://localhost",
+    "https://localhost",
+    "ionic://localhost",        # older Capacitor/Ionic builds
 }
 
 
@@ -403,6 +482,9 @@ def handle_unexpected(e):
 
 @app.route("/healthz", methods=["GET"])
 def healthz():
+    # Run the check FIRST — it may self-heal CFG['brother_ip'] via mDNS — so the
+    # reported ip reflects the address we actually reached (not the stale one).
+    reachable = check_brother_reachable()
     return jsonify({
         "ok": True,
         "version": VERSION,
@@ -410,7 +492,7 @@ def healthz():
             "ip": CFG["brother_ip"],
             "model": CFG["brother_model"],
             "label_type": CFG["label_type"],
-            "reachable": check_brother_reachable(),
+            "reachable": reachable,
             "checkedAt": datetime.datetime.utcnow().isoformat() + "Z",
         },
         "auth_configured": bool(API_KEY),
