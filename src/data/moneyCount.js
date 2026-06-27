@@ -10,6 +10,20 @@
 import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, setDoc, doc, where, getDocs, getDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../firebase';
 
+// The ONLY real stores. Cash is NEVER merged across locations: every count /
+// tip is stamped with exactly one of these, and a tip's doc id embeds it, so a
+// Webster tip can never land under Maryland. `normalizeLocation` is the single
+// choke point every write goes through — anything else (missing, 'both', typo)
+// throws instead of silently creating a phantom-location record.
+export const VALID_LOCATIONS = ['webster', 'maryland'];
+export function normalizeLocation(location) {
+    const v = String(location || '').toLowerCase().trim();
+    if (v !== 'webster' && v !== 'maryland') {
+        throw new Error(`Invalid cash location "${location}" — must be webster or maryland (cash is never merged across locations).`);
+    }
+    return v;
+}
+
 // Central (America/Chicago) 'YYYY-MM-DD' for a Date (default now).
 export function centralDate(d = new Date()) {
     return new Intl.DateTimeFormat('en-CA', {
@@ -71,6 +85,7 @@ const COLL = 'money_counts';
 // Persist a count. Sanitizes every denomination to a non-negative int and
 // recomputes the total server-side-of-truth (we never trust a passed total).
 export async function saveMoneyCount({ counts, staffName, staffId, location }) {
+    const loc = normalizeLocation(location);   // throws on a phantom/missing store
     const cleaned = {};
     for (const d of ALL_DENOMS) {
         const n = Math.floor(Number(counts?.[d.cents]) || 0);
@@ -83,7 +98,7 @@ export async function saveMoneyCount({ counts, staffName, staffId, location }) {
         totalCents: total,
         staffName: staffName || 'Unknown',
         staffId: staffId ?? null,
-        location: location || 'webster',
+        location: loc,
         date,
         createdAt: serverTimestamp(),
         // Stable ordering key — serverTimestamp is null on the optimistic local
@@ -106,12 +121,16 @@ export function subscribeMoneyCounts(cb, max = 300) {
 }
 
 // ── Cash tips — a SEPARATE daily total, saved on its own (not part of the
-// drawer count). One total per (location, date): the doc id is deterministic,
-// so re-entering a day OVERWRITES (corrects) it instead of double-counting. ──
+// drawer count). EXACTLY ONE total per (location, date): the doc id is
+// deterministic (`${loc}_${date}`), so re-entering ANY day — today or a past
+// day we forgot — OVERWRITES that day's total in place instead of ever creating
+// a second row. The location is baked into the id, so a tip can never drift to
+// another store. Nothing here (or in any Cloud Function) deletes these docs —
+// the day-by-day history is permanent. ──
 const TIPS_COLL = 'cash_tips';
 
 export async function saveCashTips({ date, amountCents, staffName, staffId, location }) {
-    const loc = location || 'webster';
+    const loc = normalizeLocation(location);   // throws on a phantom/missing store — never merges locations
     const d = date || centralDate();
     const cents = Math.max(0, Math.round(Number(amountCents) || 0));
     const ref = doc(db, TIPS_COLL, `${loc}_${d}`);
@@ -169,7 +188,10 @@ export function missingTipDays(from, to, presentDates) {
 // mistake can be fixed without losing what it was before. Returns true if it
 // changed, false if the value was the same (no-op, no log entry).
 export async function editCashTips({ location, date, newAmountCents, by }) {
-    const loc = location || 'webster';
+    // Edits target the EXISTING doc (same id = same location + date) and never
+    // rewrite the location field, so a correction can change only the amount —
+    // it can never move a tip to a different store.
+    const loc = normalizeLocation(location);
     const ref = doc(db, TIPS_COLL, `${loc}_${date}`);
     const snap = await getDoc(ref);
     const oldCents = snap.exists() ? (Number(snap.data()?.amountCents) || 0) : 0;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { totalCents, fmtMoney, ALL_DENOMS, dollarsToCents, missingTipDays } from './moneyCount';
+import { totalCents, fmtMoney, ALL_DENOMS, dollarsToCents, missingTipDays, normalizeLocation, VALID_LOCATIONS } from './moneyCount';
 
 describe('moneyCount cents math', () => {
     it("Andrew's example: 34×1¢ + 14×$10 = $140.34", () => {
@@ -59,5 +59,25 @@ describe('moneyCount cents math', () => {
     });
     it('missingTipDays: a lone Sunday range is empty', () => {
         expect(missingTipDays('2026-05-10', '2026-05-10', new Set())).toEqual([]);
+    });
+});
+
+describe('cash location is never merged', () => {
+    it('only webster and maryland are valid stores', () => {
+        expect(VALID_LOCATIONS).toEqual(['webster', 'maryland']);
+    });
+    it('accepts the two real stores (case/space-insensitive)', () => {
+        expect(normalizeLocation('webster')).toBe('webster');
+        expect(normalizeLocation('Maryland')).toBe('maryland');
+        expect(normalizeLocation('  WEBSTER ')).toBe('webster');
+    });
+    it('REJECTS a phantom / merged / missing location so a tip can never drift stores', () => {
+        // 'both' was the old poisoning value — it must never reach a save.
+        expect(() => normalizeLocation('both')).toThrow();
+        expect(() => normalizeLocation('')).toThrow();
+        expect(() => normalizeLocation(null)).toThrow();
+        expect(() => normalizeLocation(undefined)).toThrow();
+        expect(() => normalizeLocation('webster,maryland')).toThrow();
+        expect(() => normalizeLocation('dorsett')).toThrow();
     });
 });

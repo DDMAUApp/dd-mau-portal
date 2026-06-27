@@ -205,6 +205,16 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         () => tipFiltered.reduce((s, r) => s + (Number(r.amountCents) || 0), 0),
         [tipFiltered],
     );
+    // Per-location subtotals — so the "All" view never reads as one merged blob;
+    // each store's tips stay visibly separate.
+    const tipByLocation = useMemo(() => {
+        const m = {};
+        for (const r of tipFiltered) {
+            const k = r.location || 'unknown';
+            m[k] = (m[k] || 0) + (Number(r.amountCents) || 0);
+        }
+        return Object.entries(m).sort((a, b) => b[1] - a[1]);
+    }, [tipFiltered]);
     // Days in the loaded range with no tip entry (Sundays excluded — closed).
     const missingDays = useMemo(() => {
         if (tipRows === null || !loadedRange) return [];
@@ -387,6 +397,16 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                         <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">{tx('Total tips', 'Total de propinas')}</div>
                                         <div className="text-3xl font-black text-amber-700 tabular-nums leading-none mt-0.5">{fmtMoney(tipRangeTotal)}</div>
                                         <div className="text-[11px] text-dd-text-2 mt-1">{loadedRange?.from} → {loadedRange?.to} · {new Set(tipFiltered.map((r) => r.date)).size} {tx('days with tips', 'días con propinas')}</div>
+                                        {locFilter === 'all' && tipByLocation.length > 1 && (
+                                            <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-amber-200/70">
+                                                {tipByLocation.map(([k, cents]) => (
+                                                    <div key={k} className="text-center">
+                                                        <div className="text-[9px] font-bold uppercase tracking-wider text-amber-800/80">{LOCATION_LABELS[k] || k}</div>
+                                                        <div className="text-sm font-black text-amber-700 tabular-nums">{fmtMoney(cents)}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                     {missingDays.length > 0 && (
                                         <div className="rounded-xl border border-red-200 bg-red-50 p-3">
