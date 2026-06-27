@@ -305,7 +305,10 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                     <div className="rounded-2xl border border-dd-line bg-white shadow-card p-3 flex items-center gap-3">
                         <div className="min-w-0 flex-1">
                             <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Drawer total', 'Total de caja')}</div>
-                            <div className="text-2xl font-black text-dd-green-700 tabular-nums leading-tight py-0.5">{fmtMoney(total)}</div>
+                            {/* key changes with the value so iOS WKWebView is forced to repaint
+                                this node — without it the total renders garbled/clipped while the
+                                soft keyboard is open (it only repaints on keyboard dismiss). */}
+                            <div key={total} className="text-2xl font-black text-dd-green-700 tabular-nums leading-tight py-0.5">{fmtMoney(total)}</div>
                         </div>
                         <button onClick={clearAll} disabled={!hasEntries}
                             className="inline-flex items-center gap-1 px-3 py-2.5 rounded-xl text-sm font-bold text-dd-text-2 bg-dd-bg border border-dd-line disabled:opacity-40 active:scale-95">
