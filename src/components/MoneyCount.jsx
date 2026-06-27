@@ -305,7 +305,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                     <div className="rounded-2xl border border-dd-line bg-white shadow-card p-3 flex items-center gap-3">
                         <div className="min-w-0 flex-1">
                             <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Drawer total', 'Total de caja')}</div>
-                            <div className="text-2xl font-black text-dd-green-700 tabular-nums leading-none">{fmtMoney(total)}</div>
+                            <div className="text-2xl font-black text-dd-green-700 tabular-nums leading-tight py-0.5">{fmtMoney(total)}</div>
                         </div>
                         <button onClick={clearAll} disabled={!hasEntries}
                             className="inline-flex items-center gap-1 px-3 py-2.5 rounded-xl text-sm font-bold text-dd-text-2 bg-dd-bg border border-dd-line disabled:opacity-40 active:scale-95">
@@ -420,7 +420,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                 <>
                                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
                                         <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">{tx('Total tips', 'Total de propinas')}</div>
-                                        <div className="text-3xl font-black text-amber-700 tabular-nums leading-none mt-0.5">{fmtMoney(tipRangeTotal)}</div>
+                                        <div className="text-3xl font-black text-amber-700 tabular-nums leading-tight py-0.5">{fmtMoney(tipRangeTotal)}</div>
                                         <div className="text-[11px] text-dd-text-2 mt-1">{loadedRange?.from} → {loadedRange?.to} · {daysWithTips.size} {tx('days with tips', 'días con propinas')}</div>
                                         {locFilter === 'all' && tipByLocation.length > 1 && (
                                             <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-amber-200/70">
