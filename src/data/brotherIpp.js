@@ -28,6 +28,7 @@ export const BROTHER_IMAGEABLE_W = 664;
 export const BROTHER_MARGIN_HMM = 303;      // hundredths-mm (3.03mm) all sides
 export const BROTHER_TAPE_W_HMM = 6200;     // 62.00mm tape width
 const MM_PER_PX = 25.4 / BROTHER_DPI;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Apple Raster (URF) encoder ───────────────────────────────────────────
 // Modified-PackBits, whole-pixel, validated against Apple's raster-stream.c
@@ -184,9 +185,12 @@ async function postIpp(ip, ippBytes) {
 // within the page width by shrinking any line that would overflow. `rightShift`
 // nudges all content right (Andrew: "center it to the right a little bit").
 export function renderLabelCanvas(lines, { width = BROTHER_IMAGEABLE_W, rightShift = 16, footer = 'DD Mau' } = {}) {
-    const PAD = 16;
-    const GAP = 10;
-    const BASE = 30;                               // base font px (scale=1)
+    const PAD = 22;
+    const GAP = 14;
+    // Base font px (scale=1). 62mm tape (664px imageable) is wide — go big so
+    // the label reads from across the kitchen. Lines auto-shrink only if a
+    // single line would overflow the width.
+    const BASE = 52;
     const innerW = width - PAD * 2 - rightShift;
     const cv = document.createElement('canvas');
     const ctx = cv.getContext('2d');
@@ -236,12 +240,19 @@ export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightS
     const { rgba, width, height } = renderLabelCanvas(lines, { footer, rightShift });
     const urf = imageDataToUrf(rgba, width, height);
     const n = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
+    // The QL-820NWB DROPS a second job that lands while it's still printing the
+    // first (Copies=F → no IPP copies attr, so each copy is its own job). Wait
+    // for one label to physically finish + cut before sending the next, scaled
+    // to the label length so longer labels get more time.
+    const gapMs = Math.max(2500, Math.round(height * 6));
     let last = { ok: false, status: 0 };
     for (let i = 0; i < n; i++) {
         const ipp = buildIppPrintJob({ host: ip, urf, heightPx: height, jobName: jobName || 'DD Mau Label', requestId: i + 1 });
         // eslint-disable-next-line no-await-in-loop
         last = await postIpp(ip, ipp);
         if (!last.ok) return { ok: false, status: last.status, error: 'printer_rejected', copyFailed: i + 1 };
+        // eslint-disable-next-line no-await-in-loop
+        if (i < n - 1) await sleep(gapMs);
     }
     return { ok: true, status: last.status, via: 'brother_ipp', copies: n };
 }
