@@ -588,3 +588,116 @@ validate-on-save right (Phase 5) and onboarding a new restaurant becomes: *sign 
 keys on the Integrations page → green checks → your app works exactly like DD Mau's* — with
 isolation enforced in Firestore rules on every request, and your live business untouched until
 its rehearsed cutover in Phase 8.
+
+---
+
+# PART 6 — End-to-end security lifecycle (first download → daily use → offboarding)
+
+The whole journey, with the **control**, the **risk**, and the **open decision** at each stage.
+
+**Stage 0 — App identity.** Rename the store app **DD Mau → "Staff App"** (a generic product
+name; native change → **store rebuild, can't OTA** — see the app-name notes). Per-tenant branding
+(restaurant name/logo) shows **inside** the app from tenant config, never in the binary. *Control:*
+no tenant data is ever baked into the app — one generic app serves all tenants.
+
+**Stage 1 — New owner: first download → "Create a workplace."** Owner enters email + **strong
+password** (real Firebase Auth account) + **legal company info** (legal entity name, business
+ID/EIN, address, owner contact) + accepts ToS/Privacy → **email verification required** before the
+tenant activates. The app offers the **full current feature set** to every new tenant (plan-gating
+comes later). *Control:* owner becomes `role:owner` with a fresh `tenant_id`; email verified;
+password policy; signups rate-limited. Legal info lives under the tenant doc, readable only by that
+tenant's owner/admin. *Risk:* fake/free-trial abuse → email verify + rate limit (± card-to-start).
+*Open:* how much legal info up front; trial length.
+
+**Stage 2 — Card on file (subscription).** A "Start subscription" button → **Stripe-hosted**
+Checkout/Payment Element → Stripe returns a customer + subscription; you store only
+`stripeCustomerId`/`subscriptionId`. ⚠️ **Critical control: the card number never touches your
+servers or the app — it goes straight to Stripe.** This keeps you in the lightest PCI scope
+(SAQ-A); store **zero** card data. (Same reason the assistant never handles card entry — the
+tenant types it into Stripe's own UI.) `tenants.status` (trial/active/past_due/suspended) gates
+access, webhook-driven. *Open:* free trial vs card-required-to-start; tiers.
+
+**Stage 3 — "Send the app login link" / continue in.** The owner is already authenticated from
+Stage 1, so they just continue. Any emailed link must be a **single-use, expiring magic link tied
+to the verified email** — never a permanent secret in a URL.
+
+**Stage 4 — Setup via the Integrations page (Part 4 vault).** Owner/admin enters Toast/Sysco/etc.
+keys → encrypted vault → the system **pulls staff names, pay, positions, menus, onboarding,
+schedule** into the tenant's scoped collections. *Control:* secrets encrypted at rest, server-only,
+validate-on-save, every change audited. **Imported pay + onboarding data is sensitive PII** → lands
+tenant-scoped + role-locked (owner/admin only; never a device account; never another tenant).
+*Risk:* a bad/over-broad import → preview before committing.
+
+**Stage 5 — Staff onboarding (QR + invite code → first-time staff login).** Each tenant gets a
+**QR code + staff invite code**. The sign-in screen has a **"New / first-time staff"** link at the
+bottom → staff **scan the QR or enter the code** → routed to *their* restaurant → create/verify
+account (email+password; username optional) → **admin matches + enables** the staff record.
+*Control options (pick the strength):* (a) **tenant QR for discovery + admin-approval gate** —
+anyone with the code can *request*, but no access until an admin enables the matching staff record;
+(b) **per-staff single-use, expiring invite links** texted/emailed by the manager (strongest);
+(c) **phone or email verification** before any access. *Baseline:* (a)+(c); add (b) for tight
+control. *Risk:* leaked QR → contained by the admin-approval gate + verification + rotatable code.
+*Open:* **email (recommended — enables self-service password reset + magic-link recovery) vs
+username** (username-only means a manager resets every forgotten password).
+
+**Stage 6 — Staying signed in, logout, biometrics (personal phones).** Staff **stay signed in**
+(long-lived refresh token in **Keychain/Keystore**, never plaintext); they re-auth only on logout.
+*Session-end triggers:* (1) staff logs out; (2) **admin/manager revokes access** → **server-side
+`revokeRefreshTokens(uid)` + archive** → session dies on next refresh (⚠️ **frontend logout alone
+is NOT enough — revocation must be server-side**); (3) **security events:** password change, tenant
+suspended (past_due), device reported lost, optional idle-timeout, refresh max-age. **Biometrics
+(Face/Touch ID) = an app-lock that locally re-unlocks an *already-authenticated* session, NOT a
+replacement for login:** the refresh token sits behind the secure enclave; opening the app (or
+after idle) requires Face/Touch ID; N failures → fall back to full email/password. So "lock the app
+for staff" = fast biometric re-entry without re-typing. *Risk:* treating biometric as auth — it
+only unlocks a session the **server still controls and can revoke**. *Open:* idle-lock timeout;
+biometric required vs optional per tenant.
+
+**Stage 7 — Shared restaurant iPad ("staff device" profile).** Admin **creates a "staff iPad"
+device** — a distinct **device profile, not a person's staff profile**. It registers as a
+tenant+location-scoped **device account**, shows a **different UI** (the staff roster + **4-digit
+PIN pad**, current behavior), and has **narrower permissions** (clock-in / 86 / quick actions; **no
+payroll/PII**). *Control:* device credential in the iPad's Keychain; **admin can revoke the device**
+(lost/stolen); the staff **PIN is hashed + tenant-scoped + server-verified + rate-limited + every
+attempt logged**, identifying *who* is acting on an already-authenticated device — never a tenant
+boundary. (This is the formal version of "designate a 'staff' iPad that looks different than a
+regular staff profile" — it's a **device**, not a person.)
+
+**Stage 8 — Offboarding / end-of-life.** Archive staff → revoke tokens + disable PIN + drop from
+rosters (history retained for audit, not deleted). Revoke a device → kill its session. Suspend a
+tenant (non-payment) → block access, retain for a grace window, then export/delete per policy.
+Delete a tenant → full export + scheduled deletion (GDPR/CCPA right-to-deletion).
+
+## Data classification (what gets the strictest locks)
+
+| Class | Examples | Rule |
+|---|---|---|
+| **Card data** | payment card | **never stored** — Stripe-hosted only |
+| **Integration secrets** | Toast/Sysco/Twilio keys | encrypted vault, server-only, never to frontend |
+| **Payroll / pay rates** | wages, hours, tips | owner/admin only; never device accounts; never cross-tenant |
+| **Onboarding PII** | SSN, I-9, IDs | owner/admin only; encrypted; tightest retention |
+| **Staff PII** | name, phone, email | tenant-scoped; managers within tenant |
+| **PINs** | 4-digit | hashed + salted; server-verified only |
+| **Operational** | schedules, 86, inventory | tenant + (often) location scoped |
+
+## What keeps tenants separate (isolation recap)
+`tenant_id` on every record · **claim-based Firestore rules** replacing the catch-all · **device
+accounts further limited to their location + no PII** · secrets server-only · **App Check** (only
+your apps call the backend) · **server-side session revocation** · **append-only audit logs**
+(logins, failed logins, PIN attempts, device setup, permission/role changes, integration changes,
+schedule + availability changes) · **super-admin separate + MFA + audited**. **Frontend filtering
+is never the boundary — the rules are.**
+
+## Open decisions to settle before building
+1. Trial length / card-required-to-start.  2. Invite strength: tenant-QR + admin-approval (baseline)
+vs per-staff single-use links.  3. Primary credential: **email (recommended)** vs username.
+4. MFA: required for owner/admin? optional for managers?  5. Idle-lock timeout + biometric
+required vs optional.  6. Data-retention windows on suspend/delete.
+
+**Closing note:** the security model has three tiers — **(1) the tenant boundary** (real auth +
+claims + Firestore rules, enforced server-side on every request), **(2) the person** (email/password
+on personal phones, biometric only as a fast local re-unlock, sessions the server can revoke), and
+**(3) the shared device** (a registered, location-scoped iPad "staff device" where the hashed PIN
+just picks who's acting). Card data stays with Stripe, integration keys stay in the encrypted vault,
+pay/PII stay owner/admin-only — and none of it is ever the *only* line of defense, because the
+Firestore rules enforce the tenant wall underneath all of it.
