@@ -1709,6 +1709,8 @@ export async function printFreeText({
     stampDate = false, stampSignature = false, signature, footer,
     byName,
     presetId = DEFAULT_LABEL_SIZE_PRESET,
+    // Per-print Brother toggle (same as printPrepLabel). Default off → Epson.
+    useBrother = false,
 }) {
     try {
         const printer = await getPrinterConfigFast(location, slot);
@@ -1743,7 +1745,23 @@ export async function printFreeText({
 
         let res;
         let transport = null;
-        if (type === PRINTER_TYPES.BROTHER_QL) {
+        // Per-print Brother override — prints THIS custom sticker straight to the
+        // Brother over Wi-Fi (direct IPP/Apple-Raster), independent of the slot
+        // type. Epson + legacy-Brother branches below are unchanged.
+        if (useBrother && printer.brotherIp) {
+            const sizeScale = ({ small: 0.85, medium: 1.0, large: 1.5 }[size]) || (Number(size) > 0 ? Number(size) : 1.0);
+            const lines = trimmed.split(/\r?\n/).map((t) => ({ text: t, scale: sizeScale, bold: !!bold }));
+            const r = await printBrotherDirect({
+                ip: printer.brotherIp,
+                lines,
+                footer,
+                copies: c,
+                rightShift: printer.brotherRightShift,
+                jobName: 'DD Mau Label',
+            });
+            res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error };
+            transport = 'brother_ipp_direct';
+        } else if (type === PRINTER_TYPES.BROTHER_QL) {
             // 1. Try the Pi print bridge first. Free-text goes through
             //    its own bridge endpoint (POST /print/free-text) so the
             //    Pi can render it tighter than the prep-label layout.

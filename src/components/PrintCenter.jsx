@@ -81,6 +81,9 @@ export default function PrintCenter({
     const [stampDate, setStampDate] = useState(false);
     const [stampSignature, setStampSignature] = useState(false);
     const [printing, setPrinting] = useState(false);
+    // Per-print "Brother (permanent)" toggle. Default OFF → Epson. Only shown
+    // when a Brother direct IP is configured.
+    const [printOnBrother, setPrintOnBrother] = useState(false);
     const [recents, setRecents] = useState([]);
     // Label-size preset — Andrew 2026-05-20 "3 tabs for the labels".
     // Shared localStorage key with PrintLabelModal so the choice
@@ -156,6 +159,7 @@ export default function PrintCenter({
             stampDate, stampSignature, signature: staffName,
             byName: staffName,
             presetId,
+            useBrother: printOnBrother && !!printer?.brotherIp,
         });
         setPrinting(false);
         if (res.ok) {
@@ -516,6 +520,26 @@ export default function PrintCenter({
                         </div>
                     </div>
                 </div>
+
+                {/* Per-print Brother toggle — only when a Brother direct IP is set. */}
+                {printer?.brotherIp && (
+                    <div className="border-t border-dd-line px-3 pt-2.5 flex-shrink-0">
+                        <button type="button" onClick={() => setPrintOnBrother((v) => !v)}
+                            className="w-full flex items-center justify-between gap-3 py-1.5 text-left">
+                            <span className="flex flex-col">
+                                <span className="text-sm font-bold text-dd-text">{tx('Permanent sticker (Brother)', 'Pegatina permanente (Brother)')}</span>
+                                <span className="text-[11px] text-dd-text-2">
+                                    {printOnBrother
+                                        ? tx('This print goes to the Brother', 'Esta impresión va a la Brother')
+                                        : tx('Off → default Epson self-stick', 'Apagado → Epson (autoadhesiva)')}
+                                </span>
+                            </span>
+                            <span className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${printOnBrother ? 'bg-dd-green' : 'bg-dd-line'}`}>
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${printOnBrother ? 'translate-x-5' : ''}`} />
+                            </span>
+                        </button>
+                    </div>
+                )}
 
                 {/* Footer — sticky Print button */}
                 <div className="border-t border-dd-line p-3 flex gap-2 flex-shrink-0 safe-bottom">
