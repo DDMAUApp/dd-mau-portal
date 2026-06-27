@@ -68,7 +68,8 @@ import { getLabelFormat, getLabelFormatFast } from './labelFormat';
 // bridge is disabled, unreachable, or the Brother is offline, we fall
 // through to the existing PDF + Web Share Sheet path so date stickers
 // still work. See src/data/printBridge.js + /pi5-print-bridge/.
-import { tryPrintViaBridge } from './printBridge';
+import { tryPrintViaBridge, payloadToBridgeFormat } from './printBridge';
+import { printBrotherDirect } from './brotherIpp';
 
 // ── Public types ──────────────────────────────────────────────
 // PrinterConfig shape — see header. Defaults applied at print time
@@ -450,6 +451,10 @@ export async function savePrinterConfig({
     name, ip, port, deviceId, model, enabled, byName,
     type = DEFAULT_PRINTER_TYPE,
     labelWidthMm, labelHeightMm, paperWidthMm, leftOffsetMm,
+    // Per-print Brother direct-Wi-Fi target (the toggle). A SEPARATE field on the
+    // same doc — NOT a type switch — so Epson stays the default printer and is
+    // never disabled by configuring a Brother. Empty = no Brother → no toggle.
+    brotherIp, brotherRightShift,
 }) {
     if (!location) throw new Error('location required');
     const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
@@ -474,6 +479,15 @@ export async function savePrinterConfig({
         updatedAt: serverTimestamp(),
         updatedBy: byName || null,
     };
+    // Brother direct-Wi-Fi override (per-print toggle target). Lives alongside
+    // the Epson config; only used when a print explicitly opts in (useBrother).
+    const trimmedBrotherIp = String(brotherIp || '').trim();
+    if (trimmedBrotherIp && !/^[0-9a-zA-Z.\-:]+$/.test(trimmedBrotherIp)) {
+        throw new Error('brother ip looks malformed');
+    }
+    payload.brotherIp = trimmedBrotherIp;
+    const bShift = Number(brotherRightShift);
+    payload.brotherRightShift = Number.isFinite(bShift) ? Math.max(0, Math.min(120, bShift)) : 16;
     // Brother needs DK roll dimensions so the @page CSS matches the
     // physical label. Epson reads these too (default), but the field
     // is only meaningful for the browser-print path.
@@ -1998,6 +2012,12 @@ export async function printPrepLabel({
     // wire nothing can recall them, but everything before that point
     // now respects Cancel.
     shouldAbort = null,
+    // Andrew 2026-06-27: per-print "Brother (permanent)" toggle. Default Epson;
+    // when this is true (and a Brother IP is configured) THIS one label prints
+    // straight to the Brother over Wi-Fi via direct IPP/URF — no Pi, no AirPrint
+    // dialog — then the next print reverts to Epson. Leaves the Epson path
+    // completely unchanged when off.
+    useBrother = false,
 }) {
     try {
         // Cached + parallel (was 2 sequential network reads per print).
@@ -2052,7 +2072,23 @@ export async function printPrepLabel({
         // Tracks how the label got printed for the audit log — useful
         // when debugging "did it go via the bridge or fall back?"
         let transport = null;
-        if (type === PRINTER_TYPES.BROTHER_QL) {
+        // Per-print Brother override (the toggle). Prints THIS label directly to
+        // the Brother over Wi-Fi (IPP + Apple-Raster), independent of the slot's
+        // configured type, so Epson stays the default and is never disabled. The
+        // Epson + legacy-Brother branches below are untouched.
+        if (useBrother && printer.brotherIp) {
+            const bf = payloadToBridgeFormat(payload, { copies: c });
+            const r = await printBrotherDirect({
+                ip: printer.brotherIp,
+                lines: bf.lines,
+                footer: bf.footer,
+                copies: c,
+                rightShift: printer.brotherRightShift,
+                jobName: recipe?.titleEn || 'DD Mau Label',
+            });
+            res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error };
+            transport = 'brother_ipp_direct';
+        } else if (type === PRINTER_TYPES.BROTHER_QL) {
             // 1. Try the Pi print bridge first (Andrew 2026-05-22).
             //    Fully automatic, prints to Brother in ~2s, correct
             //    label dimensions every time. The bridge probes /healthz

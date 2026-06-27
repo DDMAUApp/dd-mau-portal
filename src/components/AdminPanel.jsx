@@ -338,6 +338,10 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
     // Left-margin nudge (mm) — shifts the whole label right for a printer
     // that prints too far to the left. Epson only; 0 = no shift.
     const [leftOffsetMm, setLeftOffsetMm] = useState(0);
+    // Per-print Brother direct-Wi-Fi target. Setting this enables a "Permanent
+    // sticker (Brother)" toggle in the print modal; Epson stays the default.
+    const [brotherIpDraft, setBrotherIpDraft] = useState('');
+    const [brotherShiftDraft, setBrotherShiftDraft] = useState(16);
     const [showEpsonGuide, setShowEpsonGuide] = useState(false);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
@@ -392,6 +396,8 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                 setDeviceIdDraft(got?.deviceId || 'local_printer');
                 setPaperWidthMm(Number(got?.paperWidthMm) || 80);
                 setLeftOffsetMm(Number(got?.leftOffsetMm) || 0);
+                setBrotherIpDraft(got?.brotherIp || '');
+                setBrotherShiftDraft(Number.isFinite(Number(got?.brotherRightShift)) ? Number(got.brotherRightShift) : 16);
             } catch (e) {
                 console.warn('printer config load failed:', e);
             } finally {
@@ -418,6 +424,8 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                 leftOffsetMm,
                 labelWidthMm: labelWMm,
                 labelHeightMm: labelHMm,
+                brotherIp: brotherIpDraft,
+                brotherRightShift: Number(brotherShiftDraft),
                 enabled,
                 byName,
             });
@@ -430,6 +438,7 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
             setDeviceIdDraft(fresh?.deviceId || 'local_printer');
             setPaperWidthMm(Number(fresh?.paperWidthMm) || 80);
             setLeftOffsetMm(Number(fresh?.leftOffsetMm) || 0);
+            setBrotherIpDraft(fresh?.brotherIp || '');
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
         } catch (e) {
             console.warn('save printer config failed:', e);
@@ -664,6 +673,29 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                                     {tx('Increase if it prints too far left', 'Súbelo si imprime muy a la izquierda')}
                                 </span>
                             </label>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-purple-200/60">
+                            <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-1">
+                                {tx('Brother (permanent stickers) — optional', 'Brother (etiquetas permanentes) — opcional')}
+                            </span>
+                            <div className="grid grid-cols-2 gap-2">
+                                <label className="block">
+                                    <span className="block text-[9px] font-bold uppercase tracking-wide text-purple-700 mb-0.5">{tx('Brother Wi-Fi IP', 'IP Wi-Fi Brother')}</span>
+                                    <input type="text" inputMode="decimal" value={brotherIpDraft} placeholder="192.168.1.157"
+                                        onChange={(e) => setBrotherIpDraft(e.target.value)}
+                                        className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
+                                </label>
+                                <label className="block">
+                                    <span className="block text-[9px] font-bold uppercase tracking-wide text-purple-700 mb-0.5">{tx('Shift right (px)', 'Mover der. (px)')}</span>
+                                    <input type="number" min="0" max="120" step="2" value={brotherShiftDraft}
+                                        onChange={(e) => setBrotherShiftDraft(Math.max(0, Math.min(120, Number(e.target.value) || 0)))}
+                                        className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
+                                </label>
+                            </div>
+                            <span className="block text-[9px] text-purple-700/70 mt-0.5">
+                                {tx('Enter the Brother’s Wi-Fi IP to enable a per-print “Permanent (Brother)” toggle on the print screen. Epson stays the default; leave blank to keep Brother off. Prints directly over Wi-Fi — no AirPrint dialog.',
+                                    'Pon la IP Wi-Fi de la Brother para activar un interruptor “Permanente (Brother)” por impresión. La Epson sigue por defecto; déjalo vacío para desactivar. Imprime directo por Wi-Fi, sin diálogo de AirPrint.')}
+                            </span>
                         </div>
                         <p className="text-[10px] text-purple-700/80 leading-snug -mt-1">
                             {tx(
