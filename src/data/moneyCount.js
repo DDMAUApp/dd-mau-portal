@@ -7,8 +7,26 @@
 // and when. The catch-all Firestore rule already covers the new collection —
 // no rules/index deploy (history uses a single-field orderBy, no composite).
 
-import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, setDoc, doc, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
+
+// Central (America/Chicago) 'YYYY-MM-DD' for a Date (default now).
+export function centralDate(d = new Date()) {
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d);
+}
+
+// "123.45" / "$1,234" / "5." → integer cents (penny-exact, no float). Caps at 2 decimals.
+export function dollarsToCents(str) {
+    const s = String(str ?? '').replace(/[^0-9.]/g, '');
+    if (!s) return 0;
+    const dot = s.indexOf('.');
+    const dollars = parseInt((dot === -1 ? s : s.slice(0, dot)) || '0', 10) || 0;
+    const frac = dot === -1 ? '' : s.slice(dot + 1).replace(/\./g, '');
+    const cents = parseInt((frac + '00').slice(0, 2), 10) || 0;
+    return dollars * 100 + cents;
+}
 
 // US denominations, value in CENTS. Coins fill the LEFT column, bills the RIGHT
 // (Andrew: "cents on the left and the bills on the right").
@@ -59,9 +77,7 @@ export async function saveMoneyCount({ counts, staffName, staffId, location }) {
         cleaned[d.cents] = n > 0 ? n : 0;
     }
     const total = totalCents(cleaned);
-    const date = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date());
+    const date = centralDate();
     const ref = await addDoc(collection(db, COLL), {
         counts: cleaned,
         totalCents: total,
@@ -86,4 +102,29 @@ export function subscribeMoneyCounts(cb, max = 60) {
         (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
         (err) => { console.warn('money_counts subscribe failed:', err); cb([]); },
     );
+}
+
+// ── Cash tips — a SEPARATE daily total, saved on its own (not part of the
+// drawer count). One total per (location, date): the doc id is deterministic,
+// so re-entering a day OVERWRITES (corrects) it instead of double-counting. ──
+const TIPS_COLL = 'cash_tips';
+
+export async function saveCashTips({ date, amountCents, staffName, staffId, location }) {
+    const loc = location || 'webster';
+    const d = date || centralDate();
+    const cents = Math.max(0, Math.round(Number(amountCents) || 0));
+    await setDoc(doc(db, TIPS_COLL, `${loc}_${d}`), {
+        date: d, amountCents: cents, location: loc,
+        staffName: staffName || 'Unknown', staffId: staffId ?? null,
+        updatedAt: serverTimestamp(), updatedMs: Date.now(),
+    }, { merge: true });
+    return `${loc}_${d}`;
+}
+
+// All cash-tip entries between two 'YYYY-MM-DD' dates (inclusive). Single-field
+// date-range query → no composite index; caller filters location client-side.
+export async function getCashTipsRange({ from, to }) {
+    const q = query(collection(db, TIPS_COLL), where('date', '>=', from), where('date', '<=', to));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }

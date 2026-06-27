@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { totalCents, fmtMoney, ALL_DENOMS } from './moneyCount';
+import { totalCents, fmtMoney, ALL_DENOMS, dollarsToCents } from './moneyCount';
 
 describe('moneyCount cents math', () => {
     it("Andrew's example: 34×1¢ + 14×$10 = $140.34", () => {
@@ -32,5 +32,17 @@ describe('moneyCount cents math', () => {
         expect(fmtMoney(5)).toBe('$0.05');
         expect(fmtMoney(123456)).toBe('$1,234.56');
         expect(fmtMoney(10000)).toBe('$100.00');
+    });
+
+    it('dollarsToCents parses tip input penny-exact', () => {
+        expect(dollarsToCents('123.45')).toBe(12345);
+        expect(dollarsToCents('$1,234')).toBe(123400);
+        expect(dollarsToCents('5')).toBe(500);
+        expect(dollarsToCents('5.')).toBe(500);
+        expect(dollarsToCents('.5')).toBe(50);
+        expect(dollarsToCents('0.09')).toBe(9);
+        expect(dollarsToCents('12.999')).toBe(1299);   // caps at 2 decimals
+        expect(dollarsToCents('')).toBe(0);
+        expect(dollarsToCents(null)).toBe(0);
     });
 });

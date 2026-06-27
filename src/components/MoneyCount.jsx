@@ -6,10 +6,11 @@
 // integer cents (src/data/moneyCount.js) so a drawer of pennies never drifts.
 
 import { useState, useEffect, useMemo } from 'react';
-import { Coins, Banknote, History, Save, Eraser, ChevronDown, Wallet } from 'lucide-react';
+import { Coins, Banknote, History, Save, Eraser, ChevronDown, Wallet, HandCoins, CalendarRange } from 'lucide-react';
 import { toast } from '../toast';
 import {
     COIN_DENOMS, BILL_DENOMS, totalCents, fmtMoney, saveMoneyCount, subscribeMoneyCounts,
+    centralDate, dollarsToCents, saveCashTips, getCashTipsRange,
 } from '../data/moneyCount';
 import { LOCATION_LABELS } from '../data/staff';
 
@@ -70,6 +71,16 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const [history, setHistory] = useState(null);   // null = loading
     const [openId, setOpenId] = useState(null);
     const [locFilter, setLocFilter] = useState('all');
+    // Cash tips — separate daily total.
+    const [tipDate, setTipDate] = useState(() => centralDate());
+    const [tipAmount, setTipAmount] = useState('');
+    const [savingTip, setSavingTip] = useState(false);
+    // History sub-mode + tip date-range lookup.
+    const [histMode, setHistMode] = useState('counts');   // 'counts' | 'tips'
+    const [tipFrom, setTipFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 13); return centralDate(d); });
+    const [tipTo, setTipTo] = useState(() => centralDate());
+    const [tipRows, setTipRows] = useState(null);   // null = not run yet
+    const [loadingTips, setLoadingTips] = useState(false);
 
     // Resolve the counter's id (App may or may not pass it).
     const myId = staffId ?? (staffList || []).find((s) => s?.name === staffName)?.id ?? null;
@@ -107,6 +118,47 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
             setSaving(false);
         }
     };
+
+    // ── Cash tips ──
+    const tipCents = dollarsToCents(tipAmount);
+    const saveTip = async () => {
+        if (savingTip || tipCents <= 0 || !tipDate) return;
+        setSavingTip(true);
+        try {
+            await saveCashTips({ date: tipDate, amountCents: tipCents, staffName, staffId: myId, location: storeLocation });
+            toast(tx(`Tips saved · ${fmtMoney(tipCents)}`, `Propinas guardadas · ${fmtMoney(tipCents)}`), { kind: 'success' });
+            setTipAmount('');
+        } catch (e) {
+            console.warn('cash tips save failed:', e);
+            toast(tx('Could not save tips — try again.', 'No se pudieron guardar — inténtalo de nuevo.'), { kind: 'error' });
+        } finally {
+            setSavingTip(false);
+        }
+    };
+    const loadTipRange = async () => {
+        if (loadingTips || !tipFrom || !tipTo) return;
+        setLoadingTips(true);
+        try {
+            const lo = tipFrom <= tipTo ? tipFrom : tipTo;
+            const hi = tipFrom <= tipTo ? tipTo : tipFrom;
+            setTipRows(await getCashTipsRange({ from: lo, to: hi }));
+        } catch (e) {
+            console.warn('cash tips range failed:', e);
+            toast(tx('Could not load tips.', 'No se pudieron cargar las propinas.'), { kind: 'error' });
+            setTipRows([]);
+        } finally {
+            setLoadingTips(false);
+        }
+    };
+    const tipFiltered = useMemo(() => {
+        if (!Array.isArray(tipRows)) return [];
+        const rows = locFilter === 'all' ? tipRows : tipRows.filter((r) => r.location === locFilter);
+        return [...rows].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    }, [tipRows, locFilter]);
+    const tipRangeTotal = useMemo(
+        () => tipFiltered.reduce((s, r) => s + (Number(r.amountCents) || 0), 0),
+        [tipFiltered],
+    );
 
     const filtered = useMemo(() => {
         if (!Array.isArray(history)) return [];
@@ -148,27 +200,64 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                         <Column title={tx('Bills', 'Billetes')} Icon={Banknote} denoms={BILL_DENOMS} counts={counts} setCount={setCount} isEn={isEn} />
                     </div>
 
-                    {/* Sticky total + actions */}
-                    <div className="sticky bottom-3 z-10">
-                        <div className="rounded-2xl border border-dd-line bg-white shadow-card p-3 flex items-center gap-3">
-                            <div className="min-w-0 flex-1">
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Total', 'Total')}</div>
-                                <div className="text-2xl font-black text-dd-green-700 tabular-nums leading-none">{fmtMoney(total)}</div>
-                            </div>
-                            <button onClick={clearAll} disabled={!hasEntries}
-                                className="inline-flex items-center gap-1 px-3 py-2.5 rounded-xl text-sm font-bold text-dd-text-2 bg-dd-bg border border-dd-line disabled:opacity-40 active:scale-95">
-                                <Eraser size={15} /> {tx('Clear', 'Borrar')}
-                            </button>
-                            <button onClick={save} disabled={saving || !hasEntries}
-                                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-black text-white bg-dd-green disabled:opacity-40 active:scale-95 shadow-sm">
-                                <Save size={15} strokeWidth={2.5} /> {saving ? tx('Saving…', 'Guardando…') : tx('Save count', 'Guardar')}
+                    {/* Drawer total + actions */}
+                    <div className="rounded-2xl border border-dd-line bg-white shadow-card p-3 flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{tx('Drawer total', 'Total de caja')}</div>
+                            <div className="text-2xl font-black text-dd-green-700 tabular-nums leading-none">{fmtMoney(total)}</div>
+                        </div>
+                        <button onClick={clearAll} disabled={!hasEntries}
+                            className="inline-flex items-center gap-1 px-3 py-2.5 rounded-xl text-sm font-bold text-dd-text-2 bg-dd-bg border border-dd-line disabled:opacity-40 active:scale-95">
+                            <Eraser size={15} /> {tx('Clear', 'Borrar')}
+                        </button>
+                        <button onClick={save} disabled={saving || !hasEntries}
+                            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-black text-white bg-dd-green disabled:opacity-40 active:scale-95 shadow-sm">
+                            <Save size={15} strokeWidth={2.5} /> {saving ? tx('Saving…', 'Guardando…') : tx('Save count', 'Guardar')}
+                        </button>
+                    </div>
+
+                    {/* ── Cash tips — a SEPARATE daily total, saved on its own ── */}
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+                        <div className="flex items-center gap-1.5 mb-2 text-[11px] font-black uppercase tracking-wider text-amber-800">
+                            <HandCoins size={14} strokeWidth={2.5} />
+                            {tx("Cash tips", 'Propinas en efectivo')}
+                        </div>
+                        <p className="text-[11px] text-dd-text-2 mb-2">{tx("The day's cash tips — saved separately from the drawer count. Re-saving a day updates that day's total.", 'Las propinas del día — guardadas aparte del conteo de caja. Volver a guardar un día actualiza su total.')}</p>
+                        <div className="flex items-end gap-2 flex-wrap">
+                            <label className="flex flex-col gap-0.5">
+                                <span className="text-[10px] font-bold text-dd-text-2">{tx('Date', 'Fecha')}</span>
+                                <input type="date" value={tipDate} onChange={(e) => setTipDate(e.target.value)}
+                                    className="px-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text focus:border-amber-400 focus:ring-1 focus:ring-amber-200 outline-none" />
+                            </label>
+                            <label className="flex flex-col gap-0.5 flex-1 min-w-[8rem]">
+                                <span className="text-[10px] font-bold text-dd-text-2">{tx('Amount', 'Monto')}</span>
+                                <div className="relative">
+                                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dd-text-2 text-sm">$</span>
+                                    <input type="text" inputMode="decimal" value={tipAmount}
+                                        onChange={(e) => setTipAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                                        placeholder="0.00"
+                                        className="w-full pl-6 pr-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text tabular-nums focus:border-amber-400 focus:ring-1 focus:ring-amber-200 outline-none" />
+                                </div>
+                            </label>
+                            <button onClick={saveTip} disabled={savingTip || tipCents <= 0}
+                                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-black text-white bg-amber-600 disabled:opacity-40 active:scale-95 shadow-sm">
+                                <Save size={15} strokeWidth={2.5} /> {savingTip ? tx('Saving…', 'Guardando…') : tx('Save tips', 'Guardar')}
                             </button>
                         </div>
                     </div>
                 </>
             ) : (
                 <div className="space-y-2">
-                    {/* Location filter */}
+                    {/* Counts | Tips sub-toggle */}
+                    <div className="inline-flex rounded-xl bg-dd-bg p-0.5">
+                        {[['counts', tx('Cash counts', 'Conteos')], ['tips', tx('Tips', 'Propinas')]].map(([k, label]) => (
+                            <button key={k} onClick={() => setHistMode(k)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${histMode === k ? 'bg-white text-dd-text shadow-sm' : 'text-dd-text-2'}`}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    {/* Location filter (applies to both) */}
                     <div className="flex items-center gap-1.5">
                         {[['all', tx('All', 'Todas')], ['webster', LOCATION_LABELS.webster], ['maryland', LOCATION_LABELS.maryland]].map(([k, label]) => (
                             <button key={k} onClick={() => setLocFilter(k)}
@@ -178,7 +267,60 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                         ))}
                     </div>
 
-                    {history === null ? (
+                    {histMode === 'tips' ? (
+                        <div className="space-y-2">
+                            {/* Date range → total */}
+                            <div className="rounded-2xl border border-dd-line bg-white p-3">
+                                <div className="flex items-center gap-1.5 mb-2 text-[11px] font-black uppercase tracking-wider text-dd-text-2">
+                                    <CalendarRange size={13} strokeWidth={2.5} className="text-amber-700" />
+                                    {tx('Tip total for a date range', 'Total de propinas por rango de fechas')}
+                                </div>
+                                <div className="flex items-end gap-2 flex-wrap">
+                                    <label className="flex flex-col gap-0.5">
+                                        <span className="text-[10px] font-bold text-dd-text-2">{tx('From', 'Desde')}</span>
+                                        <input type="date" value={tipFrom} onChange={(e) => setTipFrom(e.target.value)}
+                                            className="px-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text focus:border-amber-400 outline-none" />
+                                    </label>
+                                    <label className="flex flex-col gap-0.5">
+                                        <span className="text-[10px] font-bold text-dd-text-2">{tx('To', 'Hasta')}</span>
+                                        <input type="date" value={tipTo} onChange={(e) => setTipTo(e.target.value)}
+                                            className="px-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text focus:border-amber-400 outline-none" />
+                                    </label>
+                                    <button onClick={loadTipRange} disabled={loadingTips}
+                                        className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-black text-white bg-amber-600 disabled:opacity-50 active:scale-95 shadow-sm">
+                                        {loadingTips ? tx('Loading…', 'Cargando…') : tx('Get total', 'Ver total')}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {tipRows === null ? (
+                                <p className="text-center text-sm text-dd-text-2 py-6">{tx('Pick a date range and tap “Get total”.', 'Elige un rango y toca “Ver total”.')}</p>
+                            ) : (
+                                <>
+                                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">{tx('Total tips', 'Total de propinas')}</div>
+                                        <div className="text-3xl font-black text-amber-700 tabular-nums leading-none mt-0.5">{fmtMoney(tipRangeTotal)}</div>
+                                        <div className="text-[11px] text-dd-text-2 mt-1">{tipFrom} → {tipTo} · {tipFiltered.length} {tx('days', 'días')}</div>
+                                    </div>
+                                    {tipFiltered.length === 0 ? (
+                                        <p className="text-center text-sm text-dd-text-2 py-4">{tx('No tips entered in this range.', 'No hay propinas en este rango.')}</p>
+                                    ) : (
+                                        <ul className="space-y-1">
+                                            {tipFiltered.map((r) => (
+                                                <li key={r.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-dd-line bg-white">
+                                                    <div className="min-w-0">
+                                                        <span className="text-sm font-bold text-dd-text tabular-nums">{fmtMoney(r.amountCents)}</span>
+                                                        <span className="ml-2 text-[11px] text-dd-text-2">{r.date} · {r.staffName || '—'}</span>
+                                                    </div>
+                                                    <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-dd-bg border border-dd-line text-[9px] font-bold text-dd-text-2">{LOCATION_LABELS[r.location] || r.location}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    ) : history === null ? (
                         <p className="text-center text-sm text-dd-text-2 py-8">{tx('Loading…', 'Cargando…')}</p>
                     ) : filtered.length === 0 ? (
                         <div className="rounded-2xl border border-dd-line bg-white p-8 text-center">
