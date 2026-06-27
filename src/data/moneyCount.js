@@ -7,7 +7,7 @@
 // and when. The catch-all Firestore rule already covers the new collection —
 // no rules/index deploy (history uses a single-field orderBy, no composite).
 
-import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, setDoc, doc, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, setDoc, doc, where, getDocs, getDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../firebase';
 
 // Central (America/Chicago) 'YYYY-MM-DD' for a Date (default now).
@@ -127,4 +127,46 @@ export async function getCashTipsRange({ from, to }) {
     const q = query(collection(db, TIPS_COLL), where('date', '>=', from), where('date', '<=', to));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// Days in [from,to] (inclusive, 'YYYY-MM-DD') with NO tip entry — EXCLUDING
+// **Sundays** (the restaurant is closed). `presentDates` = the dates that DO
+// have an entry (Set or array). Returns the missing dates oldest-first. A
+// calendar date is built at local noon so day-of-week is DST-safe and matches
+// the plain Y-M-D (no timezone shift). 0 = Sunday.
+export function missingTipDays(from, to, presentDates) {
+    if (!from || !to || from > to) return [];
+    const have = presentDates instanceof Set ? presentDates : new Set(presentDates || []);
+    const [fy, fm, fd] = from.split('-').map(Number);
+    const [ty, tm, td] = to.split('-').map(Number);
+    if ([fy, fm, fd, ty, tm, td].some(Number.isNaN)) return [];
+    const out = [];
+    const cur = new Date(fy, fm - 1, fd, 12);
+    const end = new Date(ty, tm - 1, td, 12);
+    let guard = 0;
+    while (cur <= end && guard++ < 1000) {
+        const iso = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+        if (cur.getDay() !== 0 && !have.has(iso)) out.push(iso);
+        cur.setDate(cur.getDate() + 1);
+    }
+    return out;
+}
+
+// Correct a saved tip total and APPEND the change to an on-doc `edits` log
+// ({oldCents,newCents,by,at}) so every correction is permanently visible — a
+// mistake can be fixed without losing what it was before. Returns true if it
+// changed, false if the value was the same (no-op, no log entry).
+export async function editCashTips({ location, date, newAmountCents, by }) {
+    const loc = location || 'webster';
+    const ref = doc(db, TIPS_COLL, `${loc}_${date}`);
+    const snap = await getDoc(ref);
+    const oldCents = snap.exists() ? (Number(snap.data()?.amountCents) || 0) : 0;
+    const cents = Math.max(0, Math.round(Number(newAmountCents) || 0));
+    if (cents === oldCents) return false;
+    await setDoc(ref, {
+        amountCents: cents,
+        updatedAt: serverTimestamp(), updatedMs: Date.now(),
+        edits: arrayUnion({ oldCents, newCents: cents, by: by || 'Unknown', at: new Date().toISOString() }),
+    }, { merge: true });
+    return true;
 }

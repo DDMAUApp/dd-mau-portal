@@ -10,7 +10,7 @@ import { Coins, Banknote, History, Save, Eraser, ChevronDown, Wallet, HandCoins,
 import { toast } from '../toast';
 import {
     COIN_DENOMS, BILL_DENOMS, totalCents, fmtMoney, saveMoneyCount, subscribeMoneyCounts,
-    centralDate, dollarsToCents, saveCashTips, getCashTipsRange,
+    centralDate, dollarsToCents, saveCashTips, getCashTipsRange, editCashTips, missingTipDays,
 } from '../data/moneyCount';
 import { LOCATION_LABELS } from '../data/staff';
 
@@ -28,20 +28,22 @@ function fmtWhen(ms, isEn) {
 function DenomRow({ denom, value, onChange, isEn }) {
     const n = Math.max(0, Math.floor(Number(value) || 0));
     return (
-        <div className="flex items-center gap-2 py-1.5">
-            <span className="w-12 shrink-0 text-sm font-black text-dd-text tabular-nums">{denom.label}</span>
-            <input
-                type="number" inputMode="numeric" min="0" step="1"
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                onFocus={(e) => e.target.select()}
-                placeholder="0"
-                aria-label={`${denom.label} ${isEn ? 'count' : 'cantidad'}`}
-                className="w-full min-w-0 px-2.5 py-2 text-base text-dd-text bg-white border border-dd-line rounded-lg text-center tabular-nums focus:border-dd-green focus:ring-1 focus:ring-dd-green-50 outline-none"
-            />
-            <span className="w-16 shrink-0 text-right text-[12px] font-bold text-dd-text-2 tabular-nums">
-                {n > 0 ? fmtMoney(denom.cents * n) : ''}
-            </span>
+        <div className="py-1.5">
+            <div className="flex items-center gap-2">
+                <span className="w-9 shrink-0 text-sm font-black text-dd-text tabular-nums">{denom.label}</span>
+                <input
+                    type="number" inputMode="numeric" min="0" step="1"
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    placeholder="0"
+                    aria-label={`${denom.label} ${isEn ? 'count' : 'cantidad'}`}
+                    className="flex-1 min-w-0 px-2 py-2.5 text-lg font-bold text-dd-text bg-white border border-dd-line rounded-lg text-center tabular-nums focus:border-dd-green focus:ring-1 focus:ring-dd-green-50 outline-none"
+                />
+            </div>
+            {n > 0 && (
+                <div className="text-right text-[11px] font-bold text-dd-text-2 tabular-nums mt-0.5 pr-1">= {fmtMoney(denom.cents * n)}</div>
+            )}
         </div>
     );
 }
@@ -81,6 +83,10 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const [tipTo, setTipTo] = useState(() => centralDate());
     const [tipRows, setTipRows] = useState(null);   // null = not run yet
     const [loadingTips, setLoadingTips] = useState(false);
+    const [loadedRange, setLoadedRange] = useState(null);   // the range tipRows was loaded for
+    const [editTipId, setEditTipId] = useState(null);       // which tip row is being edited
+    const [editTipVal, setEditTipVal] = useState('');
+    const today = centralDate();
 
     // Resolve the counter's id (App may or may not pass it).
     const myId = staffId ?? (staffList || []).find((s) => s?.name === staffName)?.id ?? null;
@@ -91,10 +97,19 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const hasEntries = total > 0;
 
     useEffect(() => {
-        if (view !== 'history') return;
         const unsub = subscribeMoneyCounts(setHistory);
         return () => unsub();
-    }, [view]);
+    }, []);
+
+    // Today's drawer counts at THIS store (morning → night), oldest first. They
+    // roll into History automatically after midnight Central (the `date` field
+    // changes, so they drop out of this filter on their own — no cron needed).
+    const todayCounts = useMemo(() => {
+        const list = Array.isArray(history) ? history : [];
+        return list
+            .filter((h) => h.date === today && h.location === storeLocation)
+            .sort((a, b) => (a.createdMs || 0) - (b.createdMs || 0));
+    }, [history, today, storeLocation]);
 
     const setCount = (cents, v) => {
         // keep digits only, allow empty
@@ -142,12 +157,27 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
             const lo = tipFrom <= tipTo ? tipFrom : tipTo;
             const hi = tipFrom <= tipTo ? tipTo : tipFrom;
             setTipRows(await getCashTipsRange({ from: lo, to: hi }));
+            setLoadedRange({ from: lo, to: hi });
         } catch (e) {
             console.warn('cash tips range failed:', e);
             toast(tx('Could not load tips.', 'No se pudieron cargar las propinas.'), { kind: 'error' });
             setTipRows([]);
         } finally {
             setLoadingTips(false);
+        }
+    };
+    // Edit a saved tip (corrections) — logged on the doc (`edits[]`), then reload.
+    const doEditTip = async (r) => {
+        const newCents = dollarsToCents(editTipVal);
+        if (newCents === (Number(r.amountCents) || 0)) { setEditTipId(null); return; }
+        try {
+            await editCashTips({ location: r.location, date: r.date, newAmountCents: newCents, by: staffName });
+            toast(tx(`Tip updated · ${fmtMoney(newCents)}`, `Propina actualizada · ${fmtMoney(newCents)}`), { kind: 'success' });
+            setEditTipId(null);
+            await loadTipRange();
+        } catch (e) {
+            console.warn('cash tip edit failed:', e);
+            toast(tx('Could not update — try again.', 'No se pudo actualizar — inténtalo de nuevo.'), { kind: 'error' });
         }
     };
     const tipFiltered = useMemo(() => {
@@ -159,11 +189,18 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         () => tipFiltered.reduce((s, r) => s + (Number(r.amountCents) || 0), 0),
         [tipFiltered],
     );
+    // Days in the loaded range with no tip entry (Sundays excluded — closed).
+    const missingDays = useMemo(() => {
+        if (tipRows === null || !loadedRange) return [];
+        return missingTipDays(loadedRange.from, loadedRange.to, new Set(tipFiltered.map((r) => r.date)));
+    }, [tipRows, loadedRange, tipFiltered]);
 
     const filtered = useMemo(() => {
         if (!Array.isArray(history)) return [];
-        return locFilter === 'all' ? history : history.filter((h) => h.location === locFilter);
-    }, [history, locFilter]);
+        // History = PAST days; today's counts live in the "Today" panel and roll
+        // in here automatically after midnight.
+        return history.filter((h) => h.date !== today && (locFilter === 'all' || h.location === locFilter));
+    }, [history, locFilter, today]);
 
     const locLabel = LOCATION_LABELS[storeLocation] || storeLocation;
 
@@ -215,6 +252,26 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                             <Save size={15} strokeWidth={2.5} /> {saving ? tx('Saving…', 'Guardando…') : tx('Save count', 'Guardar')}
                         </button>
                     </div>
+
+                    {/* Today's counts — morning, mid, night… saved through the day.
+                        Rolls into History automatically after midnight. */}
+                    {todayCounts.length > 0 && (
+                        <div className="rounded-2xl border border-dd-green/20 bg-dd-green-50/40 p-3">
+                            <div className="flex items-center justify-between mb-1.5">
+                                <span className="text-[11px] font-black uppercase tracking-wider text-dd-green-700">📋 {tx("Today's counts", 'Conteos de hoy')}</span>
+                                <span className="text-[11px] font-bold text-dd-text-2">{todayCounts.length} {tx('saved', 'guardados')}</span>
+                            </div>
+                            <ul className="space-y-1">
+                                {todayCounts.map((h, i) => (
+                                    <li key={h.id} className="flex items-center justify-between text-sm px-2.5 py-1.5 rounded-lg bg-white border border-dd-line">
+                                        <span className="font-bold text-dd-text tabular-nums">{fmtMoney(h.totalCents)}</span>
+                                        <span className="text-[11px] text-dd-text-2">{i === 0 ? `${tx('1st', '1°')} · ` : ''}{fmtWhen(h.createdMs, isEn)}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                            <p className="text-[10px] text-dd-text-2 mt-1.5">{tx('Saved counts for today — they move to History after midnight.', 'Conteos de hoy — pasan al Historial después de medianoche.')}</p>
+                        </div>
+                    )}
 
                     {/* ── Cash tips — a SEPARATE daily total, saved on its own ── */}
                     <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
@@ -300,21 +357,69 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
                                         <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">{tx('Total tips', 'Total de propinas')}</div>
                                         <div className="text-3xl font-black text-amber-700 tabular-nums leading-none mt-0.5">{fmtMoney(tipRangeTotal)}</div>
-                                        <div className="text-[11px] text-dd-text-2 mt-1">{tipFrom} → {tipTo} · {tipFiltered.length} {tx('days', 'días')}</div>
+                                        <div className="text-[11px] text-dd-text-2 mt-1">{loadedRange?.from} → {loadedRange?.to} · {tipFiltered.length} {tx('days with tips', 'días con propinas')}</div>
                                     </div>
+                                    {missingDays.length > 0 && (
+                                        <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+                                            <div className="text-[11px] font-black uppercase tracking-wider text-red-700 mb-1">⚠ {missingDays.length} {tx('day(s) with no tips entered', 'día(s) sin propinas')}</div>
+                                            <div className="flex flex-wrap gap-1">
+                                                {missingDays.map((d) => (
+                                                    <span key={d} className="px-1.5 py-0.5 rounded bg-white border border-red-200 text-[11px] font-bold text-red-700 tabular-nums">{d}</span>
+                                                ))}
+                                            </div>
+                                            <p className="text-[10px] text-red-700/70 mt-1">{tx('Sundays are excluded (closed).', 'Los domingos no cuentan (cerrado).')}</p>
+                                        </div>
+                                    )}
                                     {tipFiltered.length === 0 ? (
                                         <p className="text-center text-sm text-dd-text-2 py-4">{tx('No tips entered in this range.', 'No hay propinas en este rango.')}</p>
                                     ) : (
                                         <ul className="space-y-1">
-                                            {tipFiltered.map((r) => (
-                                                <li key={r.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-dd-line bg-white">
-                                                    <div className="min-w-0">
-                                                        <span className="text-sm font-bold text-dd-text tabular-nums">{fmtMoney(r.amountCents)}</span>
-                                                        <span className="ml-2 text-[11px] text-dd-text-2">{r.date} · {r.staffName || '—'}</span>
-                                                    </div>
-                                                    <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-dd-bg border border-dd-line text-[9px] font-bold text-dd-text-2">{LOCATION_LABELS[r.location] || r.location}</span>
-                                                </li>
-                                            ))}
+                                            {tipFiltered.map((r) => {
+                                                const editing = editTipId === r.id;
+                                                const edits = Array.isArray(r.edits) ? r.edits : [];
+                                                return (
+                                                    <li key={r.id} className="rounded-lg border border-dd-line bg-white overflow-hidden">
+                                                        <div className="flex items-center justify-between gap-2 px-3 py-2">
+                                                            <div className="min-w-0">
+                                                                <span className="text-sm font-bold text-dd-text tabular-nums">{fmtMoney(r.amountCents)}</span>
+                                                                <span className="ml-2 text-[11px] text-dd-text-2">{r.date} · {r.staffName || '—'}</span>
+                                                                {edits.length > 0 && <span className="ml-1 text-[10px] font-bold text-amber-700">✎{edits.length}</span>}
+                                                            </div>
+                                                            <div className="flex items-center gap-1 shrink-0">
+                                                                <span className="px-1.5 py-0.5 rounded-full bg-dd-bg border border-dd-line text-[9px] font-bold text-dd-text-2">{LOCATION_LABELS[r.location] || r.location}</span>
+                                                                <button onClick={() => { setEditTipId(editing ? null : r.id); setEditTipVal(((Number(r.amountCents) || 0) / 100).toFixed(2)); }}
+                                                                    className="text-[11px] font-bold text-dd-green-700 px-2 py-1 rounded-lg hover:bg-dd-bg active:scale-95">
+                                                                    {editing ? tx('Close', 'Cerrar') : tx('Edit', 'Editar')}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        {editing && (
+                                                            <div className="px-3 pb-3 pt-2 border-t border-dd-line/60 space-y-2 bg-dd-bg/30">
+                                                                <div className="flex items-end gap-2">
+                                                                    <div className="relative flex-1">
+                                                                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dd-text-2 text-sm">$</span>
+                                                                        <input type="text" inputMode="decimal" value={editTipVal} autoFocus
+                                                                            onChange={(e) => setEditTipVal(e.target.value.replace(/[^0-9.]/g, ''))}
+                                                                            className="w-full pl-6 pr-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text tabular-nums focus:border-dd-green outline-none" />
+                                                                    </div>
+                                                                    <button onClick={() => doEditTip(r)}
+                                                                        className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-black text-white bg-dd-green active:scale-95">
+                                                                        <Save size={14} strokeWidth={2.5} /> {tx('Save', 'Guardar')}
+                                                                    </button>
+                                                                </div>
+                                                                {edits.length > 0 && (
+                                                                    <div className="text-[11px] text-dd-text-2">
+                                                                        <div className="font-bold uppercase tracking-wider text-[10px] mb-0.5">{tx('Edit log', 'Registro de cambios')}</div>
+                                                                        {[...edits].reverse().map((e, i) => (
+                                                                            <div key={i} className="tabular-nums">{fmtMoney(e.oldCents)} → {fmtMoney(e.newCents)} · {e.by || '—'} · {fmtWhen(Date.parse(e.at), isEn)}</div>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </li>
+                                                );
+                                            })}
                                         </ul>
                                     )}
                                 </>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { totalCents, fmtMoney, ALL_DENOMS, dollarsToCents } from './moneyCount';
+import { totalCents, fmtMoney, ALL_DENOMS, dollarsToCents, missingTipDays } from './moneyCount';
 
 describe('moneyCount cents math', () => {
     it("Andrew's example: 34×1¢ + 14×$10 = $140.34", () => {
@@ -44,5 +44,20 @@ describe('moneyCount cents math', () => {
         expect(dollarsToCents('12.999')).toBe(1299);   // caps at 2 decimals
         expect(dollarsToCents('')).toBe(0);
         expect(dollarsToCents(null)).toBe(0);
+    });
+
+    it('missingTipDays flags gaps but skips Sundays (closed)', () => {
+        // Mon 2026-05-04 → Sun 2026-05-10. Present: 5/4, 5/6.
+        // 5/10 is a Sunday → never flagged. Missing non-Sundays: 5/5,5/7,5/8,5/9.
+        const present = new Set(['2026-05-04', '2026-05-06']);
+        expect(missingTipDays('2026-05-04', '2026-05-10', present))
+            .toEqual(['2026-05-05', '2026-05-07', '2026-05-08', '2026-05-09']);
+    });
+    it('missingTipDays: full coverage (minus Sunday) → none missing', () => {
+        const present = new Set(['2026-05-04', '2026-05-05', '2026-05-06', '2026-05-07', '2026-05-08', '2026-05-09']);
+        expect(missingTipDays('2026-05-04', '2026-05-10', present)).toEqual([]);
+    });
+    it('missingTipDays: a lone Sunday range is empty', () => {
+        expect(missingTipDays('2026-05-10', '2026-05-10', new Set())).toEqual([]);
     });
 });
