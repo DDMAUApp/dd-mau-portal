@@ -58,6 +58,7 @@ import { subscribeAllCustomItems } from '../data/customItems';
 
 const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 const BuildEditorModal = lazy(() => import('./BuildEditorModal'));
+const ShelfLifeMatrix = lazy(() => import('./ShelfLifeMatrix'));
 const PrintCenter = lazy(() => import('./PrintCenter'));
 
 // MM/DD/YY for the Today's Date quick sticker — ONE format for both
@@ -364,6 +365,8 @@ export default function DateStickerPrinter({
     // 2026-05-20: "add a custom print button so we can make custom
     // stickers on the spot".
     const [customPrintOpen, setCustomPrintOpen] = useState(false);
+    // 📅 Bulk shelf-life matrix (admin) — set the use-by days for every item at once.
+    const [shelfMatrixOpen, setShelfMatrixOpen] = useState(false);
 
     // Handler: take a component (from the build), synthesize a
     // recipe-shaped object, and hand to PrintLabelModal in editable
@@ -380,7 +383,7 @@ export default function DateStickerPrinter({
         const allergens = parseAllergenString(allergenStr);
         // Pull shelf-life from open build (custom items + overrides
         // already merge it onto the build object).
-        const shelfFromBuild = openBuildRef.current?.shelfLifeDays;
+        const shelfFromBuild = component.shelfLifeDays ?? openBuildRef.current?.shelfLifeDays;
         setPrintingComponent({
             titleEn: component.nameEn,
             titleEs: component.nameEs || component.nameEn,
@@ -490,6 +493,13 @@ export default function DateStickerPrinter({
                     <button onClick={() => setNewItemModal(true)}
                         className="w-full mb-2 py-2.5 rounded-lg bg-white border-2 border-purple-300 text-purple-700 text-sm font-bold hover:bg-purple-50 active:scale-95 transition shadow-sm">
                         ➕ {tx('Add a custom item (sauce, prep, drink…)', 'Agregar artículo personalizado')}
+                    </button>
+                )}
+                {adminUser && (
+                    <button onClick={() => setShelfMatrixOpen(true)}
+                        title={tx('Bulk-edit the use-by days for every item', 'Edita en bloque los días de caducidad de cada artículo')}
+                        className="w-full mb-2 py-2.5 rounded-lg bg-white border-2 border-dd-green/40 text-dd-green-700 text-sm font-bold hover:bg-dd-green-50 active:scale-95 transition shadow-sm">
+                        📅 {tx('Shelf life table (set use-by days)', 'Tabla de vida útil (días de caducidad)')}
                     </button>
                 )}
                 {editMode && (
@@ -736,6 +746,18 @@ export default function DateStickerPrinter({
                         language={language}
                         isAdmin={adminUser}
                         onClose={() => setCustomPrintOpen(false)}
+                    />
+                </Suspense>
+            )}
+
+            {/* 📅 Bulk shelf-life matrix — admin sets the use-by days for every
+                sticker item at once; the date sticker then auto-fills each. */}
+            {shelfMatrixOpen && (
+                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                    <ShelfLifeMatrix
+                        language={language}
+                        byName={staffName}
+                        onClose={() => setShelfMatrixOpen(false)}
                     />
                 </Suspense>
             )}
@@ -1227,6 +1249,9 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
         nameEs: s.nameEs || s.nameEn,
         descEn: s.descEn || '',
         descEs: s.descEs || '',
+        // Carry the per-item shelf life so the date sticker auto-fills the
+        // right use-by days (set in the Shelf life table).
+        ...(s.shelfLifeDays ? { shelfLifeDays: s.shelfLifeDays } : {}),
     }));
     if (components.length === 0) return null;
     return (

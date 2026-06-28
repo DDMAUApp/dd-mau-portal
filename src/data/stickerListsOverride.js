@@ -184,13 +184,21 @@ export async function saveStickerList(sectionKey, items, byName) {
     if (!STICKER_SECTIONS.find(s => s.key === sectionKey)) {
         throw new Error(`unknown sticker section: ${sectionKey}`);
     }
-    const clean = (Array.isArray(items) ? items : []).map((item, i) => ({
-        id:     String(item.id || makeStickerRowId(`${sectionKey}-${item.nameEn || 'row'}-${i}`)).slice(0, 60),
-        nameEn: String(item.nameEn || '').slice(0, 80).trim(),
-        nameEs: String(item.nameEs || '').slice(0, 80).trim(),
-        descEn: String(item.descEn || '').slice(0, 200).trim(),
-        descEs: String(item.descEs || '').slice(0, 200).trim(),
-    })).filter(r => r.nameEn || r.nameEs); // drop fully-empty rows
+    const clean = (Array.isArray(items) ? items : []).map((item, i) => {
+        const row = {
+            id:     String(item.id || makeStickerRowId(`${sectionKey}-${item.nameEn || 'row'}-${i}`)).slice(0, 60),
+            nameEn: String(item.nameEn || '').slice(0, 80).trim(),
+            nameEs: String(item.nameEs || '').slice(0, 80).trim(),
+            descEn: String(item.descEn || '').slice(0, 200).trim(),
+            descEs: String(item.descEs || '').slice(0, 200).trim(),
+        };
+        // Per-item shelf life (days) — feeds the date sticker's use-by date so
+        // each item gets the RIGHT default instead of one global number. Only
+        // written when set (1–60); omitted rows fall back to the category default.
+        const sd = Number(item.shelfLifeDays);
+        if (Number.isFinite(sd) && sd > 0) row.shelfLifeDays = Math.min(60, Math.max(1, Math.floor(sd)));
+        return row;
+    }).filter(r => r.nameEn || r.nameEs); // drop fully-empty rows
     await setDoc(STICKER_LISTS_DOC_REF(), {
         [sectionKey]: clean,
         updatedAt: serverTimestamp(),
