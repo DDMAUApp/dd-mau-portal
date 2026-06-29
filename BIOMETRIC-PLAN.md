@@ -100,6 +100,20 @@ A shared iPad/tablet has **multiple people's faces enrolled in the OS** → its 
 - **Manager mode on a shared device:** requires a **real manager login** (email/pw or magic link) OR the manager typing their **manager PIN** (distinct, higher-entropy, server-verified, rate-limited) — NOT the iPad's Face ID. Manager mode opens a short, auto-expiring elevated session that drops back to staff mode on timeout/idle.
 - The manager's **personal-phone** biometric is fine (it's their device, their face) — but it unlocks **their** session, never "staff mode" for everyone.
 
+### 9a. The shared staff iPad ("any staff uses it") — concrete
+
+This is DD Mau's real device: one iPad in the store that every employee touches all day (clock-in, labels, 86 board, schedule). **Biometrics is NOT the answer here** — a shared iPad has no single owner's face, so Face ID can't say *which* staffer is holding it. Trying to make "one face unlock everyone" is the wrong move. The design:
+
+- **The iPad is a DEVICE, not a person.** Register it once (admin) → it holds a long-lived, **revocable device credential** = `{ tenantId, locationId }` **only**, no user identity. That credential (not any user's token) is what lets it reach the backend, already scoped to the right tenant + location. **No personal refresh token or biometric secret ever lives on the shared iPad.**
+- **Default state = a neutral, tenant-bound staff kiosk.** Any staffer walks up and is identified *per action* by their **4-digit PIN** (now hashed + server-verified + rate-limited + tenant-scoped). PIN = lightweight identity for the LOW-RISK things a shared iPad does (clock in/out, print labels, view schedule/86). It is **not** a login to anything sensitive.
+- **Manager/admin actions on the iPad require the manager to re-auth as themselves** — a manager login (email/pw or magic link) or a distinct **manager PIN tied to their account** — which opens a SHORT, idle-auto-expiring **elevated session** that drops back to kiosk mode. **Never the iPad's Face ID** (can't prove identity on a shared device). Every elevation is audited (`manager_mode_unlocked` with the userId).
+- **Idle relock:** reuse the existing idle-relock infra so an abandoned manager session can't be hijacked — it falls back to neutral kiosk after a short timeout.
+- **Lost/stolen iPad:** admin revokes the **device credential** from the dashboard → the iPad can't reach the backend at all. No personal secrets to leak; staff PINs are server-side + rate-limited so they can't be brute-forced off a stolen device.
+- **Optional "open the store" gate:** a manager unlock at shift start puts the iPad into kiosk mode for the day and auto-locks it after hours / long idle, so an after-close stolen iPad is dead. Optional — many shops just keep it physically secured + always-kiosk.
+- **Biometrics for this iPad = none, by design.** Face ID lives on the **managers' personal phones** (their own face, their own session). The shared iPad stays **PIN-for-staff + login/PIN-for-manager**.
+
+> Net: the shared iPad barely changes for staff (still tap-name/PIN, faster than ever), but it goes from "open catch-all database" today to "a tenant-locked kiosk with per-action identity + revocable device credential + audited manager elevation." That's the whole security win — independent of biometrics.
+
 ## 10. Personal device rules
 
 - Owner/admin/manager/employee **personal phones**: after first secure login, may enable biometric unlock for **their own** account only.
