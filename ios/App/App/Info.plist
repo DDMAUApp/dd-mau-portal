@@ -10,6 +10,10 @@
 	     in src/data/labelPrinting.js. -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>DD Mau prints prep and date labels directly to the Epson label printer on your restaurant Wi-Fi.</string>
+	<!-- Face ID for faster staff sign-in (optional; PIN always works). Used by
+	     @capgo/capacitor-native-biometric via src/data/biometrics.js. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to sign in to DD Mau faster. Your PIN still works as a backup.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

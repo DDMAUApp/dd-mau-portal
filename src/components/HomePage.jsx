@@ -3,6 +3,10 @@ import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import InstallAppButton from './InstallAppButton';
+import {
+    isBiometricAvailable, getEnrolledStaff, wasBiometricDeclined,
+    enableBiometric, tryBiometricLogin, markBiometricDeclined,
+} from '../data/biometrics';
 
 // Rate-limit PIN attempts. Backs off exponentially:
 //   after 5 fails → 30s lockout
@@ -68,6 +72,14 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
     // confirm whether the email matched a hire (so a casual attacker
     // can't probe whether an address is on file).
     const [showRecover, setShowRecover] = useState(false);
+    // Biometric quick-login (inert unless the native plugin is present — see
+    // biometrics.js). `bio.available` is false on web + the current store binary,
+    // so every biometric branch below is a no-op until the new build ships.
+    const [bio, setBio] = useState({ available: false, type: 'Biometrics' });
+    const [enrolledFor, setEnrolledFor] = useState(null);   // staffName this device unlocks
+    const [bioDeclined, setBioDeclined] = useState(false);
+    const [enablePrompt, setEnablePrompt] = useState(null); // { name, pin } — "Enable Face ID?" after a PIN login
+    const [bioBusy, setBioBusy] = useState(false);
     const isEs = language === "es";
 
     // Tick once a second while locked so the countdown updates.
@@ -179,7 +191,7 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         writeAttempts(0);
         writeLockUntil(0);
         setError("");
-        onSelectStaff(matches[0].name);
+        completeLogin(matches[0].name, pin);
     };
 
     const handleCollisionPick = (staff) => {
@@ -200,13 +212,73 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                 at: serverTimestamp(),
             }).catch(() => {});
         } catch {}
-        onSelectStaff(staff.name);
+        completeLogin(staff.name, pin);
     };
 
     const handleClear = () => {
         setPin("");
         setError("");
     };
+
+    // ── Biometric quick-login ───────────────────────────────────────────
+    // Run a biometric unlock → log in as the enrolled staff. Any failure /
+    // cancel / unavailable is silent → the PIN keypad stays as the fallback.
+    const runBiometric = async () => {
+        if (bioBusy) return;
+        setBioBusy(true);
+        try {
+            const res = await tryBiometricLogin();
+            if (res?.staffName) {
+                // Guard: the enrolled person must still be on the staff list
+                // (could've been removed). If gone, forget biometrics + use PIN.
+                const stillThere = (staffList || []).some(s => s.name === res.staffName);
+                if (stillThere) { onSelectStaff(res.staffName); return; }
+            }
+        } catch { /* silent → PIN fallback */ }
+        finally { setBioBusy(false); }
+    };
+
+    // After a correct PIN, offer to enable biometrics (once) BEFORE finishing
+    // login — because logging in unmounts this screen. On the live binary
+    // bio.available is false, so this always just logs in (today's behavior).
+    const completeLogin = (name, pinValue) => {
+        if (bio.available && !enrolledFor && !bioDeclined && pinValue) {
+            setEnablePrompt({ name, pin: pinValue });
+        } else {
+            onSelectStaff(name);
+        }
+    };
+    const confirmEnableBio = async () => {
+        if (!enablePrompt) return;
+        const { name, pin: p } = enablePrompt;
+        setEnablePrompt(null);
+        await enableBiometric({ staffName: name, pin: p });
+        onSelectStaff(name);
+    };
+    const skipEnableBio = async () => {
+        const name = enablePrompt?.name;
+        setEnablePrompt(null);
+        await markBiometricDeclined();
+        if (name) onSelectStaff(name);
+    };
+
+    // On mount: detect biometrics, who this device is enrolled for, and if a
+    // returning user IS enrolled, offer the biometric prompt immediately.
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            const [avail, enrolled, declined] = await Promise.all([
+                isBiometricAvailable(), getEnrolledStaff(), wasBiometricDeclined(),
+            ]);
+            if (!alive) return;
+            setBio(avail);
+            setEnrolledFor(enrolled);
+            setBioDeclined(declined);
+            if (avail.available && enrolled) runBiometric();
+        })();
+        return () => { alive = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // 2026-06-24 — GEOMETRY-BASED keypress (the real fix for "tap 1, get 4").
     // iOS WKWebView can route a tap to the WRONG element: its hit-test layer
@@ -331,6 +403,33 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
             ) : (
                 <>
                     <p className="text-callout-md text-dd-text-2 mb-4">{isEs ? "Ingresa tu PIN" : "Enter your PIN"}</p>
+
+                    {/* Biometric quick-login button — only when this device is
+                        enrolled + biometrics available (never on web / current binary). */}
+                    {bio.available && enrolledFor && (
+                        <button onClick={runBiometric} disabled={bioBusy}
+                            className="mb-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-dd-green text-white font-bold text-sm shadow-sm active:scale-95 disabled:opacity-60">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M16 20h2a2 2 0 0 0 2-2v-2"/><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M9.5 14.5a3.5 3.5 0 0 0 5 0"/></svg>
+                            {bioBusy ? (isEs ? "Verificando…" : "Checking…") : (isEs ? `Usar ${bio.type}` : `Use ${bio.type}`)}
+                        </button>
+                    )}
+
+                    {/* "Enable Face ID?" prompt — shown once after a correct PIN. */}
+                    {enablePrompt && (
+                        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-5" role="dialog" aria-modal="true">
+                            <div className="bg-white rounded-2xl shadow-2xl max-w-xs w-full p-5 text-center">
+                                <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-dd-green-50 text-dd-green-700 flex items-center justify-center">
+                                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M16 20h2a2 2 0 0 0 2-2v-2"/><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M9.5 14.5a3.5 3.5 0 0 0 5 0"/></svg>
+                                </div>
+                                <h3 className="text-base font-black text-dd-text">{isEs ? `¿Activar ${bio.type}?` : `Enable ${bio.type}?`}</h3>
+                                <p className="text-[13px] text-dd-text-2 mt-1 mb-4">{isEs ? "Inicia sesión más rápido la próxima vez. Tu PIN sigue funcionando." : "Sign in faster next time. Your PIN still works as a backup."}</p>
+                                <div className="flex flex-col gap-2">
+                                    <button onClick={confirmEnableBio} className="w-full py-2.5 rounded-xl bg-dd-green text-white font-black active:scale-95">{isEs ? `Activar ${bio.type}` : `Enable ${bio.type}`}</button>
+                                    <button onClick={skipEnableBio} className="w-full py-2.5 rounded-xl bg-dd-bg text-dd-text-2 font-bold active:scale-95">{isEs ? "Ahora no" : "Not now"}</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {/* PIN dot display — filled green when entered, empty
                         glass circle when waiting. Matches the keypad's
                         circular glass aesthetic. */}
