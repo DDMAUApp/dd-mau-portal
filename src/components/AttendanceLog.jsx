@@ -189,10 +189,10 @@ function AttendanceDetailModal({ staffName, staffKey, language, onClose }) {
 }
 
 // ── Main: collapsible admin section ─────────────────────────────────────────
-export default function AttendanceLog({ language, staffList }) {
+export default function AttendanceLog({ language, staffList, startExpanded = false }) {
     const isEn = language !== 'es';
     const tx = (en, es) => (isEn ? en : es);
-    const [expanded, setExpanded] = useState(false);
+    const [expanded, setExpanded] = useState(startExpanded);
     const [loading, setLoading] = useState(false);
     const [records, setRecords] = useState([]);
     const [loaded, setLoaded] = useState(false);

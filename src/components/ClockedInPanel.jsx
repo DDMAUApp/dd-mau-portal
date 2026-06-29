@@ -28,16 +28,20 @@
 //     gated on canViewClockedIn(viewerStaffRecord). We don't gate
 //     here to keep the component simple.
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, lazy, Suspense } from 'react';
 import {
     Users, Clock, Coffee, AlertTriangle, ChevronRight, ChevronDown,
-    X, RefreshCw, Calendar, UserX, LogOut,
+    X, RefreshCw, Calendar, UserX, LogOut, History,
 } from 'lucide-react';
 import {
     subscribeClockedIn, getClockedInStatus,
     fmtClockTime, hoursWeekTone,
 } from '../data/clockedIn';
 import ModalPortal from './ModalPortal';
+
+// Lazy — the attendance/clock-in history (the same one in Admin) only loads
+// when an admin/manager taps the "History" button in this panel.
+const AttendanceLog = lazy(() => import('./AttendanceLog'));
 
 const LOC_BADGE = {
     webster:  { label: 'WBR', tone: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -470,6 +474,7 @@ export default function ClockedInPanel({
     variant = 'card', // 'card' | 'strip'
     onClose,            // optional — only used by strip's expand modal
     todaysShifts = [],  // Array of shift docs for today (filtered by location upstream)
+    staffList = [],     // for the history modal's name matching
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -478,6 +483,31 @@ export default function ClockedInPanel({
     // Single-row expansion state — only one row open at a time. Keyed by
     // toastEmployeeId (or synthetic noshow:{shiftId} for ghost rows).
     const [expandedRowId, setExpandedRowId] = useState(null);
+    // Clock-in history modal (same AttendanceLog as the admin page).
+    const [historyOpen, setHistoryOpen] = useState(false);
+
+    // Shared history modal — rendered in both card + strip variants.
+    const historyModal = historyOpen && (
+        <ModalPortal onBackPress={() => setHistoryOpen(false)}>
+            <div className="fixed inset-0 z-[70] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+                onClick={() => setHistoryOpen(false)} role="dialog" aria-modal="true">
+                <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
+                    onClick={(e) => e.stopPropagation()} style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                    <div className="flex items-center justify-between p-3 border-b border-dd-line bg-dd-green-50 flex-shrink-0 safe-top">
+                        <h2 className="text-base font-black text-dd-green-700 flex items-center gap-2">
+                            <History size={18} strokeWidth={2.25} /> {tx('Clock-in history', 'Historial de fichaje')}
+                        </h2>
+                        <button onClick={() => setHistoryOpen(false)} className="w-10 h-10 rounded-full hover:bg-white/60 flex items-center justify-center" aria-label={tx('Close', 'Cerrar')}><X size={18} /></button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-3" style={{ overscrollBehavior: 'contain' }}>
+                        <Suspense fallback={<LoadingState language={language} />}>
+                            <AttendanceLog language={language} staffList={staffList} startExpanded />
+                        </Suspense>
+                    </div>
+                </div>
+            </div>
+        </ModalPortal>
+    );
 
     const showLocation = location === 'both';
 
@@ -616,6 +646,10 @@ export default function ClockedInPanel({
                                 {outCount} {tx('out', 'salió')}
                             </span>
                         )}
+                        <button onClick={() => setHistoryOpen(true)}
+                            className="inline-flex items-center gap-1 text-xs font-bold text-dd-text-2 bg-dd-bg hover:bg-dd-line px-2.5 py-1 rounded-full border border-dd-line active:scale-95 transition">
+                            <History size={13} strokeWidth={2.5} /> {tx('History', 'Historial')}
+                        </button>
                     </div>
                 </div>
 
@@ -637,6 +671,7 @@ export default function ClockedInPanel({
                         ))}
                     </ul>
                 )}
+                {historyModal}
             </div>
         );
     }
@@ -720,13 +755,20 @@ export default function ClockedInPanel({
                                         {noShowCount > 0 && ' · ' + tx(`${noShowCount} no-show`, `${noShowCount} no llegó`)}
                                     </p>
                                 </div>
-                                <button
-                                    onClick={() => { setExpanded(false); onClose?.(); }}
-                                    className="w-11 h-11 rounded-full hover:bg-white/60 flex items-center justify-center"
-                                    aria-label={tx('Close', 'Cerrar')}
-                                >
-                                    <X size={18} />
-                                </button>
+                                <div className="flex items-center gap-1">
+                                    <button onClick={() => setHistoryOpen(true)}
+                                        className="inline-flex items-center gap-1 text-xs font-bold text-dd-green-700 bg-white/70 hover:bg-white px-2.5 py-1.5 rounded-full active:scale-95 transition"
+                                        aria-label={tx('Clock-in history', 'Historial de fichaje')}>
+                                        <History size={14} strokeWidth={2.5} /> {tx('History', 'Historial')}
+                                    </button>
+                                    <button
+                                        onClick={() => { setExpanded(false); onClose?.(); }}
+                                        className="w-11 h-11 rounded-full hover:bg-white/60 flex items-center justify-center"
+                                        aria-label={tx('Close', 'Cerrar')}
+                                    >
+                                        <X size={18} />
+                                    </button>
+                                </div>
                             </div>
                             <div className="flex-1 overflow-y-auto p-3" style={{ overscrollBehavior: 'contain' }}>
                                 {!combined.hasData ? (
@@ -752,6 +794,7 @@ export default function ClockedInPanel({
                     </div>
                 </ModalPortal>
             )}
+            {historyModal}
         </>
     );
 }

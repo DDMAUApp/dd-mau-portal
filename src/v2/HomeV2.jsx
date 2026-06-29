@@ -372,6 +372,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         <ClockedInPanel
                             location={storeLocation}
                             language={language}
+                            staffList={staffList}
                             todaysShifts={shifts.list.filter(s =>
                                 s.date === todayKey() &&
                                 (storeLocation === 'both' || s.location === storeLocation)
