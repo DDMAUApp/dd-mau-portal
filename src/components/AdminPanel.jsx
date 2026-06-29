@@ -3,7 +3,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
-import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES, canCountMoney } from '../data/staff';
+import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES, canCountMoney, canViewClockedIn } from '../data/staff';
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
 // Static (not dynamic) import on purpose: AdminPanel is already lazy-loaded,
 // so renameStaff rides in the admin chunk. A dynamic import() spun it into a
@@ -1159,6 +1159,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editRecipesAccess, setEditRecipesAccess] = useState(false);
             const [editViewLabor, setEditViewLabor] = useState(false);
             const [editCanCountMoney, setEditCanCountMoney] = useState(false);
+            const [editCanViewClockedIn, setEditCanViewClockedIn] = useState(false);
             const [editShiftLead, setEditShiftLead] = useState(false);
             const [editIsMinor, setEditIsMinor] = useState(false);
             // 2026-05-16 — owners / silent admins who exist in the staff
@@ -2090,6 +2091,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 setEditRecipesAccess(false);
                 setEditViewLabor(false);
                 setEditCanCountMoney(false);
+                setEditCanViewClockedIn(false);
                 setEditShiftLead(false);
                 setEditIsMinor(false);
                 setEditHideFromSchedule(false);
@@ -2130,7 +2132,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
                             ? editBirthday
                             : (editBirthday === '' ? '' : (s.birthday || ''));
-                        return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
+                        return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, canViewClockedIn: editCanViewClockedIn, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
                     });
                     return latest;
                 });
@@ -2917,6 +2919,18 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editCanCountMoney ? "translate-x-7" : "translate-x-1"}`} />
                                                         </button>
                                                     </div>
+                                                    {/* Who's clocked in — live clock-in list. Default OFF for staff
+                                                        (owners only); flip ON to grant a manager. */}
+                                                    <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                                                        <div>
+                                                            <p className="text-sm font-bold text-gray-700">{language === "es" ? "Quién está fichado" : "Who's clocked in"}</p>
+                                                            <p className="text-xs text-gray-500">{language === "es" ? "Ver la lista en vivo de quién está fichado" : "See the live list of who's on the clock"}</p>
+                                                        </div>
+                                                        <button onClick={() => setEditCanViewClockedIn(!editCanViewClockedIn)}
+                                                            className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${editCanViewClockedIn ? "bg-green-600" : "bg-gray-300"}`}>
+                                                            <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editCanViewClockedIn ? "translate-x-7" : "translate-x-1"}`} />
+                                                        </button>
+                                                    </div>
                                                     <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
                                                         <div>
                                                             <p className="text-sm font-bold text-gray-700">{language === "es" ? "Líder de Turno" : "Shift Lead"}</p>
@@ -3167,7 +3181,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditCanCountMoney(canCountMoney(person)); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditCanCountMoney(canCountMoney(person)); setEditCanViewClockedIn(canViewClockedIn(person)); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
