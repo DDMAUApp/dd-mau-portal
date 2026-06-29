@@ -106,6 +106,25 @@ function AttendanceDetailModal({ staffName, staffKey, language, onClose }) {
         return tally(inRange);
     }, [records, period]);
 
+    // Per-shift detail rows for the visible period (newest first) — the "more
+    // info" list under the calendar: exact clock-in vs scheduled time, late
+    // minutes, and location, per shift.
+    const periodRecords = useMemo(() =>
+        records
+            .filter(r => r.date >= period.startKey && r.date <= period.endKey)
+            .sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+        [records, period]);
+    // Format an ISO datetime OR an "HH:MM" string to a localized clock time.
+    const fmtHM = (v) => {
+        if (!v) return '';
+        const s = String(v);
+        let d = null;
+        if (s.includes('T')) { d = new Date(s); }
+        else { const m = s.match(/^(\d{1,2}):(\d{2})/); if (m) { d = new Date(); d.setHours(+m[1], +m[2], 0, 0); } }
+        if (!d || Number.isNaN(d.getTime())) return '';
+        return d.toLocaleTimeString(isEn ? 'en-US' : 'es-US', { hour: 'numeric', minute: '2-digit' });
+    };
+
     const goBack = () => setAnchor(a => (view === 'week' ? addDays(startOfWeek(a), -7) : addMonths(a, -1)));
     const goFwd = () => setAnchor(a => (view === 'week' ? addDays(startOfWeek(a), 7) : addMonths(a, 1)));
     const todayKey = ymd(new Date());
@@ -181,6 +200,33 @@ function AttendanceDetailModal({ staffName, staffKey, language, onClose }) {
                                 </span>
                             ))}
                         </div>
+
+                        {/* Per-shift detail — exact clock-in vs scheduled, lateness, location */}
+                        {!loading && periodRecords.length > 0 && (
+                            <div className="mt-3 border-t border-dd-line pt-2">
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                                    {view === 'week' ? tx('Shifts this week', 'Turnos esta semana') : tx('Shifts this month', 'Turnos este mes')}
+                                </div>
+                                <ul className="space-y-1">
+                                    {periodRecords.map(r => {
+                                        const st = STATUS[r.status];
+                                        const wd = new Date(`${r.date}T12:00:00`).toLocaleDateString(isEn ? 'en-US' : 'es-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                                        return (
+                                            <li key={r.id} className="flex items-center gap-2 text-[12px] bg-dd-bg/40 rounded-lg px-2.5 py-1.5">
+                                                <span className="w-[5.5rem] shrink-0 font-bold text-dd-text">{wd}</span>
+                                                <span className={`shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded-full ${st?.chip || 'bg-dd-bg text-dd-text-2'}`}>{st ? (isEn ? st.en : st.es) : r.status}</span>
+                                                <span className="flex-1 min-w-0 text-dd-text-2 truncate">
+                                                    {r.status !== 'no_show' && r.clockedInAt && <>{tx('in', 'entró')} {fmtHM(r.clockedInAt)}</>}
+                                                    {r.scheduledStart && <span className="text-dd-text-2/70"> · {tx('sched', 'prog')} {fmtHM(r.scheduledStart)}</span>}
+                                                    {Number(r.minutesLate) > 0 && <span className="text-amber-700 font-bold"> · +{r.minutesLate}m</span>}
+                                                </span>
+                                                {r.location && <span className="shrink-0 text-[9px] uppercase font-bold text-dd-text-2/70">{r.location}</span>}
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
