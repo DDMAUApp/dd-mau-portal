@@ -145,6 +145,7 @@ export default function OnboardingFillablePdf({
     const [submitting, setSubmitting] = useState(false);
     const [progressMsg, setProgressMsg] = useState('');
     const [err, setErr] = useState('');
+    const [reloadKey, setReloadKey] = useState(0);          // bump to retry a failed/timed-out template load
     const [sigField, setSigField] = useState(null);         // field currently in the signature pad modal
     // Submitted view — replaces the form with a "✓ Complete" success
     // state + an Edit button after the hire submits, instead of leaving
@@ -242,7 +243,7 @@ export default function OnboardingFillablePdf({
             }
         })();
         return () => { alive = false; };
-    }, [docDef.id, hire?.id]);
+    }, [docDef.id, hire?.id, reloadKey]);
 
     const renderPages = async (buf) => {
         const pdfjs = await loadPdfJs();
@@ -504,7 +505,18 @@ export default function OnboardingFillablePdf({
         );
     }
     if (!pageImages.length) {
-        return <p className="text-xs text-red-600 py-3">{tx('Failed to render template.', 'Falló la plantilla.')}</p>;
+        return (
+            <div className="space-y-2 py-2">
+                <p className="text-xs text-red-600">
+                    {err || tx('Couldn\'t load this form. Check your connection and try again.',
+                        'No se pudo cargar este formulario. Revisa tu conexión e intenta de nuevo.')}
+                </p>
+                <button onClick={() => { setErr(''); setReloadKey((k) => k + 1); }}
+                    className="px-3 py-2 rounded-lg bg-mint-700 text-white text-sm font-bold active:scale-95">
+                    ↻ {tx('Reload', 'Recargar')}
+                </button>
+            </div>
+        );
     }
 
     // "✓ Complete" view — shown right after a successful submit AND on
