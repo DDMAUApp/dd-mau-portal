@@ -26,6 +26,7 @@ import {
     loadPayrollMeta, setPayrollPassword, verifyPayrollPassword, nameAliasesFromMeta,
     loadRoster, saveRoster, saveRun, loadLatestRunSummary,
 } from '../../data/payroll/payrollStore.js';
+import { logError } from '../../data/logger.js';
 
 const LOCS = ['WG', 'MH'];
 const LOC_NAMES = { WG: 'Webster Groves', MH: 'Maryland Heights' };
@@ -343,13 +344,20 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     const generate = async () => {
         if (blocked) return;
         setBusy(true);
+        // Track which stage we're in so a failure tells us (and the owner) exactly
+        // where it broke instead of an opaque "Generate failed".
+        let stage = 'start';
         try {
             // Lock in the roster used for THIS payroll (incl. any master pay rates)
             // before cutting the run — so a rate you ran payroll at can never be lost
             // by next period, even if you skipped the "Save people" button. Tolerant:
             // a save hiccup shouldn't block handing the accountant their files.
             try { await saveRoster(roster); } catch (e) { console.warn('[payroll] roster save before generate failed:', e?.message); }
-            const prev = await loadLatestRunSummary(period);
+
+            stage = 'read history';
+            const prev = await loadLatestRunSummary(period); // internally tolerant → null on failure
+
+            stage = 'build documents';
             const { default: JSZip } = await import('jszip');
             const zip = new JSZip();
             const written = [];
@@ -369,12 +377,38 @@ export default function PayrollPanel({ language, staffName, staffList }) {
             // native (one share sheet instead of three).
             const zipBlob = await zip.generateAsync({ type: 'blob' });
             const zipName = `DD_Mau_Payroll_${period}.zip`;
+
+            stage = 'download';
             await downloadFile({ data: zipBlob, fileName: zipName, mimeType: 'application/zip' });
-            await saveRun(period, live.results, staffName);
-            setGenerated({ written, zipName, previous_period: prev ? prev.period : null });
-            toast('Payroll docs created.');
+
+            // Files are in the owner's hands now. Saving the run to history is a
+            // NICE-TO-HAVE (it powers next period's comparison) — if it fails, the
+            // payroll is NOT a failure: report success with a soft note, don't throw
+            // away the files the accountant needs.
+            stage = 'save history';
+            try {
+                await saveRun(period, live.results, staffName);
+                setGenerated({ written, zipName, previous_period: prev ? prev.period : null });
+                toast('Payroll docs created.');
+            } catch (e) {
+                console.warn('[payroll] saveRun failed:', e?.message);
+                logError({ error: e, severity: 'warning', feature: 'payroll', meta: { stage, period } }).catch(() => {});
+                setGenerated({ written, zipName, previous_period: prev ? prev.period : null, historyWarn: true });
+                toast('Payroll files downloaded ✓ — but run history didn\'t save (next period\'s comparison may be off).');
+            }
         } catch (e) {
-            toast('Generate failed: ' + (e?.message || e));
+            const msg = e?.message || String(e);
+            // A dynamic-import/chunk-load failure means the open tab is running an
+            // OLD app bundle whose lazy chunks (exceljs/jszip) were replaced by a
+            // newer deploy → a plain reload fixes it. Tell the owner that plainly
+            // instead of a scary generic error.
+            const isStaleBundle = /dynamically imported module|Importing a module script failed|Failed to fetch|ChunkLoadError|Loading chunk|error loading dynamically/i.test(msg);
+            logError({ error: e, severity: 'error', feature: 'payroll', meta: { stage, period } }).catch(() => {});
+            if (isStaleBundle) {
+                toast('The app updated in the background — please refresh the page (or pull down to reload) and press Create docs again.');
+            } else {
+                toast(`Create docs failed while it tried to ${stage}: ${msg}`);
+            }
         } finally { setBusy(false); }
     };
 
