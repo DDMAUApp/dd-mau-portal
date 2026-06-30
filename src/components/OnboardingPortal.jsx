@@ -22,7 +22,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { db, storage, functions } from '../firebase';
-import { doc, getDoc, updateDoc, increment, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, increment, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref as sref, uploadBytes, getDownloadURL, listAll, getBytes } from 'firebase/storage';
 import {
@@ -259,6 +259,20 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     useEffect(() => {
         if (!hireId) return;
         try { if (sessionStorage.getItem(portalUnlockKey(hireId)) === '1') setUnlocked(true); } catch { /* ignore */ }
+    }, [hireId]);
+
+    // Live-sync the lock-relevant fields so an admin "Move to Complete" / "Move
+    // back to active" (or an offer-letter edit) reflects instantly without the
+    // hire reloading. Scoped to a few fields so it can't clobber the optimistic
+    // checklist updates the child forms make.
+    useEffect(() => {
+        if (!hireId) return;
+        const unsub = onSnapshot(doc(db, 'onboarding_hires', hireId), (snap) => {
+            if (!snap.exists()) return;
+            const d = snap.data();
+            setHire((prev) => (prev ? { ...prev, status: d.status, offerLetterBody: d.offerLetterBody, portalAuth: d.portalAuth } : prev));
+        }, () => { /* permission/transient — ignore */ });
+        return () => unsub();
     }, [hireId]);
 
     // Bump a single doc's status. Called by child form/upload components.

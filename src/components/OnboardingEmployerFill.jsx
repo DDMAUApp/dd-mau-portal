@@ -21,7 +21,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL, getBytes, listAll, getMetadata } from 'firebase/storage';
 import { DOC_STATUS } from '../data/onboarding';
 
@@ -253,15 +253,47 @@ export default function OnboardingEmployerFill({
             }
 
             const outBytes = await pdfDoc.save({ updateFieldAppearances: false });
+
+            // Wave 2 — tamper-evidence + Certificate of Completion (employer signing).
+            let pdfHash = '';
+            let finalBytes = outBytes;
+            const sigCount = employerFields
+                .filter((f) => (f.type === 'signature' || f.type === 'initials') && values[f.id]).length;
+            try {
+                const cert = await import('../data/signingCertificate');
+                pdfHash = await cert.sha256HexBytes(outBytes);
+                await cert.appendCompletionCertificate(pdfDoc, pdfLib, {
+                    signerName: staffName + ' (employer)',
+                    docTitle: (docDef.en || docDef.id) + ' - Employer Section',
+                    signedAt: new Date(),
+                    contentHash: pdfHash,
+                    signatureCount: sigCount,
+                    platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
+                });
+                finalBytes = await pdfDoc.save({ updateFieldAppearances: false });
+            } catch (certErr) {
+                console.warn('completion certificate skipped:', certErr?.message || certErr);
+                finalBytes = outBytes;
+            }
+
             const ts = Date.now();
             const path = `onboarding/${hireId}/${docDef.id}/complete_${ts}.pdf`;
-            await uploadBytes(sref(storage, path), new Blob([outBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
+            await uploadBytes(sref(storage, path), new Blob([finalBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
+            try {
+                await addDoc(collection(db, 'onboarding_signature_events'), {
+                    hireId, hireName: hire?.name || '', signerRole: 'employer', signerName: staffName,
+                    docId: docDef.id, docTitle: docDef.en, docVersion: `complete_${ts}`,
+                    signatureCount: sigCount, pdfHash, pdfPath: path, signedAt: serverTimestamp(),
+                    platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
+                });
+            } catch (logErr) { console.warn('signature event log skipped:', logErr?.message || logErr); }
 
             // Flip the doc's checklist to approved + audit who completed it.
             await updateDoc(doc(db, 'onboarding_hires', hireId), {
                 [`checklist.${docDef.id}.status`]: DOC_STATUS.APPROVED,
                 [`checklist.${docDef.id}.employerCompletedBy`]: staffName,
                 [`checklist.${docDef.id}.employerCompletedAt`]: new Date().toISOString(),
+                ...(pdfHash ? { [`checklist.${docDef.id}.employerPdfHash`]: pdfHash } : {}),
             });
             if (typeof onWriteAudit === 'function') {
                 onWriteAudit('employer_section_completed', {

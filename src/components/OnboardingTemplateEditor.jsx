@@ -358,6 +358,30 @@ export default function OnboardingTemplateEditor({
             setError(tx('Upload a PDF first.', 'Sube un PDF primero.'));
             return;
         }
+        // Guardrail — a fillable form with no autofill bindings and/or no required
+        // signature is almost certainly broken (this is exactly how the federal W-4
+        // shipped as 20 empty boxes nobody filled). Warn before saving, allow override.
+        if (mode === 'fillable') {
+            const inputs = (fields || []).filter((f) => f.filledBy !== 'static' && f.filledBy !== 'employer');
+            const hasSig = (fields || []).some((f) => f.type === 'signature' || f.type === 'initials');
+            const warns = [];
+            if (inputs.length > 0 && !inputs.some((f) => f.autofill)) {
+                warns.push(tx(
+                    '• No fields auto-fill from the hire’s info — they’ll face blank boxes.',
+                    '• Ningún campo se autocompleta — el empleado verá casillas vacías.'));
+            }
+            if (hasSig && !(fields || []).some((f) => (f.type === 'signature' || f.type === 'initials') && f.required)) {
+                warns.push(tx(
+                    '• No signature is marked Required — the form can be submitted unsigned.',
+                    '• Ninguna firma está marcada como Requerida — se puede enviar sin firmar.'));
+            }
+            if (warns.length && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+                const ok = window.confirm(tx(
+                    'Heads up — this fillable form may not work well:\n\n' + warns.join('\n') + '\n\nSave anyway?',
+                    'Atención — este formulario podría no funcionar bien:\n\n' + warns.join('\n') + '\n\n¿Guardar de todos modos?'));
+                if (!ok) return;
+            }
+        }
         setSaving(true);
         setError('');
         try {
