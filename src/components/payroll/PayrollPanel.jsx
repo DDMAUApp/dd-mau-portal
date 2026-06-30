@@ -281,18 +281,26 @@ export default function PayrollPanel({ language, staffName, staffList }) {
         upsertPerson(roster, loc, key, { [field]: val });
         bump();
     };
-    // Editing the pay rate sets a per-person rate_override (which wins over Toast
-    // in the engine). Typing the natural Toast/last rate, or clearing the field,
-    // removes the override so pay falls back to Toast.
+    // Editing the pay rate PINS a per-person master rate (rate_override) that wins
+    // over Toast in the engine AND persists across every future period until it's
+    // changed again — that's the whole point: a rate you set stays put even if
+    // Toast later reports something different. Any number you type becomes the
+    // master (even one that happens to equal today's Toast rate, so you can lock a
+    // rate in place); only clearing the field reverts that person to the Toast rate.
     const editRate = (loc, p, val) => {
         const s = String(val).trim();
         if (s === '') { upsertPerson(roster, loc, p.key, { rate_override: '' }); bump(); return; }
         const n = Number(s);
-        if (!Number.isFinite(n)) { bump(); return; }
-        if (Math.abs(n - naturalRate(p)) < 0.0001) upsertPerson(roster, loc, p.key, { rate_override: '' });
-        else upsertPerson(roster, loc, p.key, { rate_override: n });
+        if (!Number.isFinite(n) || n < 0) { bump(); return; }
+        upsertPerson(roster, loc, p.key, { rate_override: n });
         bump();
     };
+    // Drop the master pin → this person falls back to the Toast rate again.
+    const resetRate = (loc, p) => { upsertPerson(roster, loc, p.key, { rate_override: '' }); bump(); persistRosterQuiet(); };
+    // Persist the roster in the background (no toast) so a pinned master rate is
+    // saved the moment the owner moves off the field — they shouldn't have to
+    // remember to press "Save" for a rate change to stick to the next period.
+    const persistRosterQuiet = () => { saveRoster(roster).catch((e) => console.warn('[payroll] roster autosave failed:', e?.message)); };
     const addSalary = (loc) => { roster[loc].salary.push({ first: '', last: '', amount: '', direct_deposit: true, no_tip: true, legal_name: '' }); bump(); };
     const editSalary = (loc, i, field, val) => { roster[loc].salary[i][field] = val; bump(); };
     const delSalary = (loc, i) => { roster[loc].salary.splice(i, 1); bump(); };
@@ -336,6 +344,11 @@ export default function PayrollPanel({ language, staffName, staffList }) {
         if (blocked) return;
         setBusy(true);
         try {
+            // Lock in the roster used for THIS payroll (incl. any master pay rates)
+            // before cutting the run — so a rate you ran payroll at can never be lost
+            // by next period, even if you skipped the "Save people" button. Tolerant:
+            // a save hiccup shouldn't block handing the accountant their files.
+            try { await saveRoster(roster); } catch (e) { console.warn('[payroll] roster save before generate failed:', e?.message); }
             const prev = await loadLatestRunSummary(period);
             const { default: JSZip } = await import('jszip');
             const zip = new JSZip();
@@ -446,7 +459,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                 <div className="rounded-xl border border-dd-line bg-white p-4 space-y-4">
                     <div>
                         <h4 className="font-bold text-dd-text mb-1">People & Direct Deposit</h4>
-                        <p className="text-xs text-dd-text-2">This list is live — what you set carries to every future payroll. Set anyone marked <span className="text-red-600 font-bold">NEW</span> (FOH/BOH + Direct Deposit). Hours come from Toast; the <b>pay rate</b> defaults to Toast but you can change it here — a changed rate overrides Toast and is listed at the bottom. Rows where the Pay Rate differs from the Toast Rate are highlighted <span className="text-red-600 font-bold">red</span>.</p>
+                        <p className="text-xs text-dd-text-2">This list is live — what you set carries to every future payroll. Set anyone marked <span className="text-red-600 font-bold">NEW</span> (FOH/BOH + Direct Deposit). Hours come from Toast; the <b>pay rate</b> defaults to Toast but you can change it here. <b>A rate you set becomes that person's master rate</b> — it stays at that price every period (even if Toast later reports something else) until you change it again or tap <b>↺</b> to go back to Toast. Rows where the master rate differs from the current Toast Rate are highlighted <span className="text-red-600 font-bold">red</span>.</p>
                     </div>
                     {LOCS.map((loc) => (
                         <div key={loc}>
@@ -470,8 +483,14 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                                                         <input type="number" step="0.01" min="0"
                                                             value={hasOverride(p) ? p.rate_override : naturalRate(p)}
                                                             onChange={(e) => editRate(loc, p, e.target.value)}
-                                                            title={hasOverride(p) ? `Overrides Toast ($${h2(naturalRate(p))})` : 'From Toast — edit to override'}
+                                                            onBlur={persistRosterQuiet}
+                                                            title={hasOverride(p) ? `Master rate — locked at $${h2(p.rate_override)} (Toast says $${h2(naturalRate(p))}). Stays until you change it.` : 'From Toast — type to set a master rate that sticks'}
                                                             className={`w-16 text-right rounded px-1 py-0.5 border ${hasOverride(p) ? 'border-dd-green bg-dd-green-50 font-bold text-dd-green-700' : 'border-dd-line'}`} />
+                                                        {hasOverride(p) && (
+                                                            <button type="button" onClick={() => resetRate(loc, p)}
+                                                                title={`Reset to Toast rate ($${h2(naturalRate(p))})`}
+                                                                className="text-dd-text-2 hover:text-red-600 leading-none px-0.5">↺</button>
+                                                        )}
                                                     </span>
                                                 </td>
                                                 <td className="px-1 text-right text-dd-text-2">{p.toast_rate != null ? '$' + h2(p.toast_rate) : '—'}</td>
@@ -510,12 +529,16 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                     ))}
                     {rateOverrides.length > 0 && (
                         <div className="rounded-lg border border-dd-green/40 bg-dd-green-50 p-2 text-[11px]">
-                            <div className="font-bold text-dd-green-700 mb-1">Pay rate changes — these override Toast ({rateOverrides.length})</div>
-                            {rateOverrides.map((r, i) => (
-                                <div key={i} className="text-dd-text">
-                                    {r.loc} · {r.name}: {r.from != null ? <span>${h2(r.from)} → </span> : ''}<b>${h2(r.to)}</b>
-                                </div>
-                            ))}
+                            <div className="font-bold text-dd-green-700 mb-1">Master pay rates — locked, carry to every period ({rateOverrides.length})</div>
+                            {rateOverrides.map((r, i) => {
+                                const differs = r.from != null && Math.abs(Number(r.to) - Number(r.from)) > 0.0001;
+                                return (
+                                    <div key={i} className="text-dd-text">
+                                        {r.loc} · {r.name}: <b>${h2(r.to)}</b>
+                                        {differs && <span className="text-dd-text-2"> (Toast says ${h2(r.from)})</span>}
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                     <button onClick={savePeople} disabled={busy} className="px-4 py-2 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50">Save people & Direct Deposit</button>
