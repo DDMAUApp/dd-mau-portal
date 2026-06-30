@@ -88,6 +88,14 @@ describe('extras validation', () => {
         expect(err).toBeNull();
         expect(x.amount_cents).toBe(3400);
     });
+    it('holiday uses base rate by default, or an override rate', () => {
+        const [base, e1] = validate({ type: 'holiday', key: MKEY, location: 'WG', hours: 8 }, MASTER_BY_KEY);
+        expect(e1).toBeNull();
+        expect(base.amount_cents).toBe(8 * 15 * 100);
+        const [ovr, e2] = validate({ type: 'holiday', key: MKEY, location: 'WG', hours: 8, rate: 22.5 }, MASTER_BY_KEY);
+        expect(e2).toBeNull();
+        expect(ovr.amount_cents).toBe(c(8 * 22.5));
+    });
     it('advance is negative and requires a note', () => {
         let [x, err] = validate({ type: 'advance', key: MKEY, location: 'WG', amount: 400 }, MASTER_BY_KEY);
         expect(x).toBeNull();

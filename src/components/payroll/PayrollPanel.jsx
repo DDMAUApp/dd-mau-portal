@@ -35,7 +35,20 @@ const UNLOCK_KEY = 'ddmau:payrollUnlocked';
 
 const money = (cents) => (cents < 0 ? '-' : '') + '$' + (Math.abs(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const h2 = (x) => (x == null ? '' : Number(x).toFixed(2));
-const numPos = (v) => Number(v) > 0;
+
+// Pay-add line-item types, in the order shown in the picker. `field` drives which
+// input(s) the row renders. Labels are plain-English for non-accountants.
+const ADJ_TYPES = [
+    { type: 'bonus', label: 'Bonus', field: 'amount', help: 'Flat $ added' },
+    { type: 'advance', label: 'Advance (deduct)', field: 'amount', help: 'Money already paid — DEDUCTED. Note required (check #).' },
+    { type: 'vacation', label: 'Vacation hours', field: 'hours', help: 'Hours paid at their base rate' },
+    { type: 'holiday', label: 'Holiday hours', field: 'hours+rate', help: 'Hours at base rate (or set a holiday rate)' },
+    { type: 'backpay', label: 'Back pay', field: 'hours+perhour', help: 'Hours × $/hour' },
+    { type: 'reg_hours', label: 'Add regular hours', field: 'hours', help: 'Missed regular hours @ base rate' },
+    { type: 'ot_hours', label: 'Add OT hours', field: 'hours', help: 'Missed OT hours @ base rate ×1.5' },
+    { type: 'other', label: 'Other $', field: 'amount', help: 'Any other flat add (note recommended)' },
+];
+const ADJ_BY_TYPE = Object.fromEntries(ADJ_TYPES.map((t) => [t.type, t]));
 
 function guessPeriod(names) {
     for (const n of names) {
@@ -160,6 +173,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     const [busy, setBusy] = useState(false);
     const [generated, setGenerated] = useState(null);
     const [rev, setRev] = useState(0);                 // bump to re-render on ref mutation
+    const [adjustments, setAdjustments] = useState([]); // pay-adds as discrete line items
     const bump = () => setRev((r) => r + 1);
 
     // STALE-ACK GUARD: the Review "I checked these numbers" acknowledgment unlocks
@@ -169,14 +183,14 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     // acknowledgment is stale and must be re-given, so a payroll can never ship
     // under an acknowledgment that referred to different figures. (Fails always
     // hard-block regardless of ack.)
-    const ackSig = `${rev}|${JSON.stringify(cash)}|${JSON.stringify(foh)}|${period}`;
+    const ackSig = `${rev}|${JSON.stringify(cash)}|${JSON.stringify(foh)}|${period}|${JSON.stringify(adjustments)}`;
     const ackSigRef = useRef(ackSig);
     useEffect(() => {
         if (ackSigRef.current !== ackSig) { ackSigRef.current = ackSig; setAck(false); }
     }, [ackSig]);
 
     const rosterRef = useRef(null);                    // cloud roster (mutated in place)
-    const gridRef = useRef(null);                      // pay-adds grid {loc:{key:{...}}}
+    const adjIdRef = useRef(0);                         // monotonic id for pay-add line items
 
     // Load roster + meta once unlocked.
     useEffect(() => {
@@ -204,25 +218,32 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     if (imported) {
         // (name aliases were already applied at parse time, in doImport)
         const inputs = loadInputs(parsed.exports, parsed.salesByLoc, parsed.salesConflicts, roster);
+        // Pay-adds are discrete line items now (one row = one adjustment for one
+        // person), not a sparse per-person grid. The engine (validateExtra) is
+        // unchanged — it still computes the signed cents and enforces all-or-nothing
+        // + the advance-needs-a-note rule. A row with no person picked yet is skipped
+        // until completed; a row missing its amount/hours surfaces a blocking error.
         const periodExtras = [];
         const extrasErrors = [];
-        const g = gridRef.current || {};
-        for (const loc of LOCS) {
-            const byKey = inputs.masters[loc].by_key;
-            const rows = g[loc] || {};
-            for (const key of Object.keys(rows)) {
-                const row = rows[key];
-                const add = (type, fields) => {
-                    const [x, err] = validateExtra({ type, location: loc, key, name: row.name, note: row.note, ...fields }, byKey);
-                    if (err) extrasErrors.push(err); else periodExtras.push(x);
-                };
-                if (numPos(row.reg_hours)) add('reg_hours', { hours: Number(row.reg_hours) });
-                if (numPos(row.ot_hours)) add('ot_hours', { hours: Number(row.ot_hours) });
-                if (numPos(row.vacation)) add('vacation', { hours: Number(row.vacation) });
-                if (numPos(row.bonus)) add('bonus', { amount: Number(row.bonus) });
-                if (numPos(row.advance)) add('advance', { amount: Number(row.advance) });
-                if (numPos(row.other)) add('other', { amount: Number(row.other) });
+        const adjResults = {}; // per-line preview: { [id]: { amount_cents, error } }
+        for (const adj of adjustments) {
+            if (!adj.key) continue; // person not chosen yet
+            const master = inputs.masters[adj.loc];
+            const byKey = master ? master.by_key : {};
+            const fields = {};
+            if (adj.type === 'bonus' || adj.type === 'advance' || adj.type === 'other') {
+                fields.amount = adj.amount;
+            } else if (adj.type === 'backpay') {
+                fields.hours = adj.hours; fields.per_hour = adj.perHour;
+            } else if (adj.type === 'holiday') {
+                fields.hours = adj.hours;
+                if (adj.rate !== '' && adj.rate != null) fields.rate = adj.rate;
+            } else { // vacation, reg_hours, ot_hours → hours at base rate
+                fields.hours = adj.hours;
             }
+            const [x, err] = validateExtra({ type: adj.type, location: adj.loc, key: adj.key, name: adj.name, note: adj.note, ...fields }, byKey);
+            if (err) { extrasErrors.push(err); adjResults[adj.id] = { error: err }; }
+            else { periodExtras.push(x); adjResults[adj.id] = { amount_cents: x.amount_cents }; }
         }
         const cashNum = { WG: Number(cash.WG) || 0, MH: Number(cash.MH) || 0 };
         // Only default FOH% to 50 when the field is truly blank/invalid — NOT when
@@ -234,7 +255,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
             ? 50 : Math.min(100, Math.max(0, Number(v)));
         const fohNum = { WG: fohPctVal(foh.WG), MH: fohPctVal(foh.MH) };
         const results = compute(inputs, period, cashNum, fohNum, periodExtras);
-        live = { inputs, results, extrasErrors };
+        live = { inputs, results, extrasErrors, adjResults };
     }
 
     const rosterView = imported ? buildRosterView(roster, parsed.exports.employees) : null;
@@ -294,7 +315,12 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                 syncWithToast(roster, loc, p.exports.employees[loc] || {}, per, defaults);
             }
             await saveRoster(roster);     // new names persist (section pre-filled or null)
-            gridRef.current = null;       // rebuild grid for the new period
+            setAdjustments([]);           // pay-adds are per-period — start clean each import
+            // Warm the heavy doc-generation chunks NOW, while THIS bundle is known
+            // good, so "Create docs" later resolves exceljs/jszip from cache and
+            // can't fail on a stale lazy import even if a deploy lands mid-session.
+            import('exceljs').catch(() => {});
+            import('jszip').catch(() => {});
             if (isNewPeriod) {
                 // Cash tips, FOH split, and the acknowledgment are PER-PERIOD — never
                 // carry them from the previous period into a new one (silent stale
@@ -353,29 +379,24 @@ export default function PayrollPanel({ language, staffName, staffList }) {
         finally { setBusy(false); }
     };
 
-    // ── pay-adds grid ──
-    // Reconcile (not build-once): make sure EVERY person who worked this period
-    // has a grid row, while preserving any values already typed. This way someone
-    // set up in the People step AFTER visiting Pay-adds still gets a row, and a
-    // person no longer on the export is dropped. Guards on rosterView so it's a
-    // no-op before import.
-    const ensureGrid = () => {
-        if (!rosterView) return;
-        if (!gridRef.current) gridRef.current = { WG: {}, MH: {} };
-        const g = gridRef.current;
-        for (const loc of LOCS) {
-            if (!g[loc]) g[loc] = {};
-            const present = new Set();
-            for (const p of (rosterView[loc].people || [])) {
-                if (!p.on_toast) continue;
-                present.add(p.key);
-                if (!g[loc][p.key]) g[loc][p.key] = { name: `${p.first} ${p.last}`, reg_hours: '', ot_hours: '', vacation: '', bonus: '', advance: '', other: '', note: '' };
-                else g[loc][p.key].name = `${p.first} ${p.last}`;
-            }
-            for (const k of Object.keys(g[loc])) if (!present.has(k)) delete g[loc][k];
-        }
+    // ── pay-adds (discrete line items) ──
+    // One adjustment = one pay add for one person. Far less error-prone than a
+    // sparse per-person grid, supports EVERY extra type (incl. holiday + back pay
+    // the grid couldn't), and can target anyone on the roster — even someone who
+    // didn't clock in this period (advance square-up / bonus / back pay).
+    const addAdjustment = (loc) => {
+        const id = `adj_${adjIdRef.current++}`;
+        setAdjustments((a) => [...a, { id, loc, key: '', name: '', type: 'bonus', amount: '', hours: '', perHour: '', rate: '', note: '' }]);
+        setAck(false);
     };
-    const editGrid = (loc, key, field, val) => { gridRef.current[loc][key][field] = val; bump(); };
+    const editAdjustment = (id, patch) => {
+        setAdjustments((a) => a.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+        setAck(false);
+    };
+    const removeAdjustment = (id) => {
+        setAdjustments((a) => a.filter((x) => x.id !== id));
+        setAck(false);
+    };
 
     // ── generate ──
     const fails = live ? LOCS.flatMap((l) => (live.results[l]?.checks || []).filter((k) => k.level === 'fail').map((k) => k.title)) : [];
@@ -453,7 +474,6 @@ export default function PayrollPanel({ language, staffName, staffList }) {
         } finally { setBusy(false); }
     };
 
-    if (step === 2) ensureGrid();
 
     // ───────────────────────── render ─────────────────────────
     const tx = (en, es) => (language === 'es' ? es : en);
@@ -624,43 +644,75 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                 <div className="rounded-xl border border-dd-line bg-white p-4 space-y-4">
                     <div>
                         <h4 className="font-bold text-dd-text mb-1">Pay adds</h4>
-                        <p className="text-xs text-dd-text-2">Fill only the boxes that apply. Added reg/OT hours are wages (not tips). <b>Advance</b> is money already paid, <b>deducted</b> this run (put the check # in the note). Cash tips go on the next step.</p>
+                        <p className="text-xs text-dd-text-2">Add one line per adjustment — pick the person, the type, and the amount. You can add one for <b>anyone on the roster</b>, even if they had no hours this period (e.g. a back-pay or advance square-up). <b>Advance</b> is money already paid and is <b>deducted</b> (note required — put the check #). Cash tips go on the next step.</p>
                     </div>
                     {LOCS.map((loc) => {
-                        const keys = Object.keys((gridRef.current && gridRef.current[loc]) || {});
-                        if (!keys.length) return null;
+                        const people = (rosterView[loc].people || [])
+                            .filter((p) => p.section === 'FOH' || p.section === 'BOH')
+                            .slice()
+                            .sort((a, b) => (`${a.last} ${a.first}`.toLowerCase() < `${b.last} ${b.first}`.toLowerCase() ? -1 : 1));
+                        const locAdjs = adjustments.filter((x) => x.loc === loc);
                         return (
                             <div key={loc}>
-                                <div className="font-bold text-dd-green mb-1">{LOC_NAMES[loc]}</div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-[11px]">
-                                        <thead><tr className="text-left text-dd-text-2">
-                                            <th className="py-1 pr-2">Person</th><th className="px-1">Reg hrs</th><th className="px-1">OT hrs</th><th className="px-1">Vac hrs</th><th className="px-1">Bonus $</th><th className="px-1">Advance $</th><th className="px-1">Other $</th><th className="px-1">Note</th>
-                                        </tr></thead>
-                                        <tbody>
-                                            {keys.map((k) => {
-                                                const g = gridRef.current[loc][k];
-                                                const num = (field, w = 'w-16') => (
-                                                    <input type="number" step="0.01" value={g[field]} onChange={(e) => editGrid(loc, k, field, e.target.value)} className={`border border-dd-line rounded px-1 py-0.5 ${w}`} />
-                                                );
-                                                return (
-                                                    <tr key={k}>
-                                                        <td className="py-1 pr-2">{g.name}</td>
-                                                        <td className="px-1">{num('reg_hours')}</td><td className="px-1">{num('ot_hours')}</td>
-                                                        <td className="px-1">{num('vacation')}</td><td className="px-1">{num('bonus')}</td>
-                                                        <td className="px-1">{num('advance')}</td><td className="px-1">{num('other')}</td>
-                                                        <td className="px-1"><input value={g.note} onChange={(e) => editGrid(loc, k, 'note', e.target.value)} className="border border-dd-line rounded px-1 py-0.5 w-40" /></td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
+                                <div className="flex items-center justify-between mb-1">
+                                    <div className="font-bold text-dd-green">{LOC_NAMES[loc]}</div>
+                                    <button onClick={() => addAdjustment(loc)} className="text-dd-green text-[12px] font-bold border border-dd-green/40 rounded px-2 py-0.5">+ Add pay adjustment</button>
+                                </div>
+                                {!locAdjs.length && <div className="text-[11px] text-dd-text-2 mb-1">No pay adjustments for this location.</div>}
+                                <div className="space-y-2">
+                                    {locAdjs.map((adj) => {
+                                        const meta = ADJ_BY_TYPE[adj.type] || ADJ_BY_TYPE.bonus;
+                                        const r = (live && live.adjResults && live.adjResults[adj.id]) || null;
+                                        const numInput = (field, ph, w = 'w-20') => (
+                                            <input type="number" step="0.01" min="0" value={adj[field]} onChange={(e) => editAdjustment(adj.id, { [field]: e.target.value })} placeholder={ph} className={`border border-dd-line rounded px-1 py-1 ${w} text-right text-[12px]`} />
+                                        );
+                                        return (
+                                            <div key={adj.id} className="rounded-lg border border-dd-line p-2 space-y-1">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <select value={adj.key} onChange={(e) => { const k = e.target.value; const p = people.find((x) => x.key === k); editAdjustment(adj.id, { key: k, name: p ? `${p.first} ${p.last}` : '' }); }}
+                                                        className="border border-dd-line rounded px-1 py-1 text-[12px] min-w-[10rem]">
+                                                        <option value="">— pick person —</option>
+                                                        {people.map((p) => <option key={p.key} value={p.key}>{p.first} {p.last}</option>)}
+                                                    </select>
+                                                    <select value={adj.type} onChange={(e) => editAdjustment(adj.id, { type: e.target.value })}
+                                                        className="border border-dd-line rounded px-1 py-1 text-[12px]">
+                                                        {ADJ_TYPES.map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
+                                                    </select>
+                                                    {meta.field === 'amount' && (
+                                                        <span className="inline-flex items-center gap-0.5"><span className="text-dd-text-2">$</span>{numInput('amount', '0.00', 'w-24')}</span>
+                                                    )}
+                                                    {meta.field === 'hours' && (
+                                                        <span className="inline-flex items-center gap-1">{numInput('hours', 'hrs')}<span className="text-dd-text-2 text-[11px]">hrs</span></span>
+                                                    )}
+                                                    {meta.field === 'hours+rate' && (<>
+                                                        <span className="inline-flex items-center gap-1">{numInput('hours', 'hrs')}<span className="text-dd-text-2 text-[11px]">hrs</span></span>
+                                                        <span className="inline-flex items-center gap-0.5"><span className="text-dd-text-2 text-[11px]">@ $</span>{numInput('rate', 'base')}<span className="text-dd-text-2 text-[11px]">/hr</span></span>
+                                                    </>)}
+                                                    {meta.field === 'hours+perhour' && (<>
+                                                        <span className="inline-flex items-center gap-1">{numInput('hours', 'hrs')}<span className="text-dd-text-2 text-[11px]">hrs</span></span>
+                                                        <span className="inline-flex items-center gap-0.5"><span className="text-dd-text-2 text-[11px]">@ $</span>{numInput('perHour', '0.00')}<span className="text-dd-text-2 text-[11px]">/hr</span></span>
+                                                    </>)}
+                                                    <input value={adj.note} onChange={(e) => editAdjustment(adj.id, { note: e.target.value })}
+                                                        placeholder={adj.type === 'advance' ? 'note — check # (required)' : 'note'}
+                                                        className={`border rounded px-1 py-1 text-[12px] flex-1 min-w-[8rem] ${adj.type === 'advance' && !String(adj.note).trim() ? 'border-red-400 bg-red-50' : 'border-dd-line'}`} />
+                                                    <button onClick={() => removeAdjustment(adj.id)} className="text-red-600 text-[13px] px-1" title="Remove">✕</button>
+                                                </div>
+                                                <div className="text-[11px] pl-1">
+                                                    {!adj.key ? <span className="text-dd-text-2">Pick a person to apply this.</span>
+                                                        : r && r.error ? <span className="text-red-700">{r.error}</span>
+                                                            : r && r.amount_cents != null
+                                                                ? <span className={r.amount_cents < 0 ? 'text-red-700 font-bold' : 'text-dd-green-700 font-bold'}>{r.amount_cents < 0 ? 'Deduct ' : 'Add '}{money(Math.abs(r.amount_cents))}</span>
+                                                                : <span className="text-dd-text-2">{meta.help}</span>}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         );
                     })}
                     {!!(live && live.extrasErrors.length) && (
-                        <div className="text-[11px] text-red-700 bg-red-50 rounded px-2 py-1">{live.extrasErrors.join('; ')}</div>
+                        <div className="text-[11px] text-red-700 bg-red-50 rounded px-2 py-1">Fix before generating: {live.extrasErrors.join('; ')}</div>
                     )}
                 </div>
             )}
