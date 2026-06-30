@@ -15,7 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL, getBytes } from 'firebase/storage';
 import { LOCATION_INFO } from '../data/onboarding';
 
@@ -422,10 +422,56 @@ export default function OnboardingFillablePdf({
             // updateFieldAppearances:false — there are no fields left to update
             // and it avoids pdf-lib re-touching anything on the way out.
             const outBytes = await pdfDoc.save({ updateFieldAppearances: false });
+
+            // Wave 2 — tamper-evidence + Certificate of Completion. Fingerprint
+            // the signed document, append a DocuSign-style certificate page, and
+            // record a signature event. All guarded so a hiccup never blocks the
+            // hire's submission (we just upload the plain signed PDF).
+            let pdfHash = '';
+            let finalBytes = outBytes;
+            const sigCount = (template.fields || [])
+                .filter((f) => (f.type === 'signature' || f.type === 'initials') && values[f.id]).length;
+            try {
+                const cert = await import('../data/signingCertificate');
+                pdfHash = await cert.sha256HexBytes(outBytes);
+                await cert.appendCompletionCertificate(pdfDoc, pdfLib, {
+                    signerName: hire?.personal?.legalName || hire?.name || '',
+                    docTitle: docDef.en,
+                    signedAt: new Date(),
+                    contentHash: pdfHash,
+                    signatureCount: sigCount,
+                    platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
+                });
+                finalBytes = await pdfDoc.save({ updateFieldAppearances: false });
+            } catch (certErr) {
+                console.warn('completion certificate skipped:', certErr?.message || certErr);
+                finalBytes = outBytes;
+            }
+
             setProgressMsg(tx('Uploading…', 'Subiendo…'));
             const ts = Date.now();
             const path = `onboarding/${hireId}/${docDef.id}/filled_${ts}.pdf`;
-            await uploadBytes(sref(storage, path), new Blob([outBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
+            await uploadBytes(sref(storage, path), new Blob([finalBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
+
+            // Tamper-evidence record + per-doc hash (best-effort, never blocks).
+            try {
+                await addDoc(collection(db, 'onboarding_signature_events'), {
+                    hireId, hireName: hire?.name || '',
+                    docId: docDef.id, docTitle: docDef.en, docVersion: `filled_${ts}`,
+                    signatureCount: sigCount, pdfHash, pdfPath: path,
+                    signedAt: serverTimestamp(),
+                    platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
+                    userAgent: (typeof navigator !== 'undefined' ? navigator.userAgent : '').slice(0, 200),
+                });
+                if (pdfHash) {
+                    await updateDoc(doc(db, 'onboarding_hires', hireId), {
+                        [`checklist.${docDef.id}.pdfHash`]: pdfHash,
+                        [`checklist.${docDef.id}.signedAt`]: new Date().toISOString(),
+                    });
+                }
+            } catch (logErr) {
+                console.warn('signature event log skipped:', logErr?.message || logErr);
+            }
             onSubmitted?.();
             // Swap to the "✓ Complete" view so the hire sees a clear
             // success state + an Edit button, instead of the same Submit
