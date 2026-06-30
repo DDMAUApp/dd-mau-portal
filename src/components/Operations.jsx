@@ -7345,13 +7345,24 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 const vendorOnlyQty = Object.values(vendorCounts).reduce((sum, v) => sum + (v > 0 ? v : 0), 0);
                                 const itemCount = masterCount + vendorOnlyCount;
                                 const totalQty = masterQty + vendorOnlyQty;
-                                if (itemCount === 0) return null;
+                                // Always render this bar — even with an EMPTY cart — so the first
+                                // counted item doesn't INSERT it and shove the whole list down a
+                                // row. That ~40px layout jump on the first tap read as "lag."
+                                // Andrew 2026-06-30. Empty state = a muted label of identical
+                                // height; the Low/Counted filter chips stay put either way.
+                                const cartEmpty = itemCount === 0;
                                 return (
                                     <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex items-center justify-between">
+                                        {cartEmpty ? (
+                                            <span className="text-sm font-bold text-mint-700/40 flex items-center gap-1 select-none">
+                                                {"\u{1F6D2}"} {language === "es" ? "Carrito vacío" : "Cart empty"}
+                                            </span>
+                                        ) : (
                                         <button onClick={() => setShowCart(true)} className="text-sm font-bold text-mint-700 flex items-center gap-1 hover:text-mint-900 transition">
                                             {"\u{1F6D2}"} {totalQty} {language === "es" ? "total" : "total"} ({itemCount} {language === "es" ? "artículos" : "items"})
                                             <span className="text-xs text-mint-500 ml-1">{language === "es" ? "ver ▸" : "view ▸"}</span>
                                         </button>
+                                        )}
                                         <div className="flex items-center gap-1.5">
                                             <button onClick={() => setInvShowOnlyLow(v => !v)}
                                                 className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyLow ? "bg-amber-600 text-white" : "bg-amber-100 text-amber-800 hover:bg-amber-200"}`}>
