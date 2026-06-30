@@ -132,7 +132,11 @@ function AttendanceDetailModal({ staffName, staffKey, language, onClose }) {
 
     return (
         <ModalPortal onBackPress={onClose}>
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/40" onClick={onClose} role="dialog" aria-modal="true">
+            {/* z-[80]: this per-staff detail opens FROM the Clock-in history modal,
+                which the Clocked-In panel renders at z-[70]. At the old z-50 the
+                detail rendered BEHIND the history popup (tapping a name looked like
+                nothing happened). Must sit above any modal it can be launched from. */}
+            <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 bg-black/40" onClick={onClose} role="dialog" aria-modal="true">
                 <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-dd-line overflow-hidden flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
                     {/* Header */}
                     <div className="px-4 py-3 bg-dd-green-50 border-b border-dd-line flex items-center justify-between gap-2">

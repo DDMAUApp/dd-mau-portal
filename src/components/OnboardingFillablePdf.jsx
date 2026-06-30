@@ -333,7 +333,19 @@ export default function OnboardingFillablePdf({
             const { PDFDocument, StandardFonts, rgb, PDFName } = pdfLib;
             const pdfDoc = await PDFDocument.load(pdfBytes);
             const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+            const helvBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
             const pages = pdfDoc.getPages();
+
+            // One signing moment + record ID for the whole submission. Stamped
+            // under each signature (DocuSign-style) AND reused on the Certificate
+            // of Completion page + the Firestore audit event so they all agree.
+            const signedAt = new Date();
+            const signerName = hire?.personal?.legalName || hire?.name || '';
+            const signId = 'DDM-' + signedAt.getTime().toString(36).toUpperCase()
+                + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+            const stampWhen = signedAt.toLocaleString('en-US', {
+                year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+            });
 
             for (const f of template.fields || []) {
                 const page = pages[f.page];
@@ -358,6 +370,25 @@ export default function OnboardingFillablePdf({
                     const pngBytes = Uint8Array.from(atob(val.split(',')[1]), c => c.charCodeAt(0));
                     const sigImg = await pdfDoc.embedPng(pngBytes);
                     page.drawImage(sigImg, { x, y: yPdf, width: w, height: h });
+                    // DocuSign-style inline stamp under the SIGNATURE (not the tiny
+                    // initials): "Electronically signed by <name>" + exact date/time
+                    // + a unique e-signature ID, so the signed line carries its own
+                    // audit caption. The full record also lives on the appended
+                    // Certificate of Completion page.
+                    if (f.type === 'signature') {
+                        const sz = 5.2;
+                        const blue = rgb(0.13, 0.32, 0.55);
+                        const grey = rgb(0.42, 0.45, 0.5);
+                        const line1 = winAnsiSafe(helvBold, `Electronically signed by ${signerName}`);
+                        const line2 = winAnsiSafe(helvetica, `${stampWhen}  -  ID ${signId}`);
+                        // Default just below the signature box; if it's too close to
+                        // the page bottom, stack it just above the box so it can never
+                        // fall off-page.
+                        let y1 = yPdf - 1.5 - sz;
+                        if (y1 - sz - 1 < 4) y1 = yPdf + h + 1.5 + 2 * sz + 1;
+                        page.drawText(line1, { x, y: y1, size: sz, font: helvBold, color: blue });
+                        page.drawText(line2, { x, y: y1 - sz - 1, size: sz, font: helvetica, color: grey });
+                    }
                 } else if (f.type === 'checkbox') {
                     if (val) {
                         page.drawText('X', {
@@ -450,9 +481,10 @@ export default function OnboardingFillablePdf({
                 const cert = await import('../data/signingCertificate');
                 pdfHash = await cert.sha256HexBytes(outBytes);
                 await cert.appendCompletionCertificate(pdfDoc, pdfLib, {
-                    signerName: hire?.personal?.legalName || hire?.name || '',
+                    signerName,
                     docTitle: docDef.en,
-                    signedAt: new Date(),
+                    signedAt,
+                    signId,
                     contentHash: pdfHash,
                     signatureCount: sigCount,
                     platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
@@ -473,7 +505,7 @@ export default function OnboardingFillablePdf({
                 await addDoc(collection(db, 'onboarding_signature_events'), {
                     hireId, hireName: hire?.name || '',
                     docId: docDef.id, docTitle: docDef.en, docVersion: `filled_${ts}`,
-                    signatureCount: sigCount, pdfHash, pdfPath: path,
+                    signatureCount: sigCount, pdfHash, pdfPath: path, signId,
                     signedAt: serverTimestamp(),
                     platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
                     userAgent: (typeof navigator !== 'undefined' ? navigator.userAgent : '').slice(0, 200),

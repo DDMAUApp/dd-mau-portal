@@ -56,6 +56,7 @@ export async function appendCompletionCertificate(pdfDoc, pdfLib, info) {
     row('Signed by', info.signerName);
     row('Signed at', when.toLocaleString());
     row('Signatures', String(info.signatureCount ?? 1));
+    if (info.signId) row('Record ID', info.signId);
     row('Platform', info.platform || 'web', { gap: 30 });
 
     page.drawText('Document fingerprint (SHA-256)', { x: M, y, size: 11, font: bold, color: ink });
