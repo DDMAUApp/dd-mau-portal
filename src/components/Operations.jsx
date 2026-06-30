@@ -261,13 +261,21 @@ function vendorColorFor(v) {
 const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit, language, className }) {
     const [local, setLocal] = useState(String(value || 0));
     const [editing, setEditing] = useState(false);
-    // Mirror the external value into the input when NOT editing, so a
-    // sync from Firestore (another phone bumped the count) updates
-    // our display. Skip during editing so we don't snap the user's
-    // half-typed digits back to the old number mid-keystroke.
+    // `dirty` = the user actually TYPED in this field (vs merely focused/tapped into
+    // it). 2026-06-30 data-loss fix: previously the field latched `editing` on FOCUS
+    // and only re-synced from `value` on blur. So if you tapped into the field, then
+    // tapped the +/- buttons (which bump `value`), the field kept showing the OLD
+    // number — and on blur it wrote that stale number back as an ABSOLUTE count,
+    // silently erasing every increment. Now: a bare focus is NOT dirty, so external
+    // +/- value changes still flow into the display, and blur only commits if the
+    // user actually typed. A focus-then-button-then-blur (no typing) is a no-op.
+    const [dirty, setDirty] = useState(false);
+    // Mirror the external value into the input unless the user is mid-TYPE (dirty),
+    // so a sync from Firestore / a +/- tap updates the display without snapping a
+    // half-typed entry back.
     useEffect(() => {
-        if (!editing) setLocal(String(value || 0));
-    }, [value, editing]);
+        if (!editing || !dirty) setLocal(String(value || 0));
+    }, [value, editing, dirty]);
     const commit = (raw) => {
         const n = parseInt(raw || '0', 10);
         const safe = Number.isFinite(n) && n >= 0 ? n : 0;
@@ -278,13 +286,13 @@ const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit,
     // 2026-06-20 (QA audit O6) — flush a half-typed count on unmount. The input
     // commits only on blur/Enter; on touch devices, navigating away (bottom-nav
     // tap, app background, idle relock) unmounts the field before a clean blur,
-    // silently losing a typed bulk entry like "48". Keep the latest editing
-    // state in a ref and commit it once on unmount (commit() no-ops if unchanged).
-    const flushRef = useRef({ editing: false, local: '', commit });
-    flushRef.current = { editing, local, commit };
+    // silently losing a typed bulk entry like "48". Only flush an ACTUALLY-TYPED
+    // (dirty) value so an un-typed focus can't clobber a +/- on unmount.
+    const flushRef = useRef({ dirty: false, local: '', commit });
+    flushRef.current = { dirty, local, commit };
     useEffect(() => () => {
         const f = flushRef.current;
-        if (f.editing) f.commit(f.local);
+        if (f.dirty) f.commit(f.local);
     }, []);
     const numericLocal = parseInt(local || '0', 10) || 0;
     return (
@@ -295,16 +303,18 @@ const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit,
             value={local}
             onChange={(e) => {
                 setEditing(true);
+                setDirty(true);
                 const raw = e.target.value.replace(/[^0-9]/g, '');
                 setLocal(raw);
             }}
             onFocus={(e) => {
-                setEditing(true);
+                setEditing(true);  // focused, but NOT dirty — a bare focus must never commit
                 e.target.select();
             }}
             onBlur={(e) => {
                 setEditing(false);
-                commit(e.target.value);
+                if (dirty) commit(e.target.value);
+                setDirty(false);
             }}
             onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -853,6 +863,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // (layered above it), letting a manager reference a past order while
             // building a new cart without losing the cart.
             const [orderHistoryOpen, setOrderHistoryOpen] = useState(false);
+            // Which order to auto-expand when the history popup opens (clicking a
+            // recent-order chip opens the popup focused on that order to VIEW it).
+            const [orderHistoryFocusId, setOrderHistoryFocusId] = useState(null);
+            const openOrderHistory = useCallback((focusId = null) => {
+                setOrderHistoryFocusId(focusId || null);
+                setOrderHistoryOpen(true);
+            }, []);
             // id → display name, for showing a past order's items by name in history.
             const itemNameById = useMemo(() => {
                 const m = {};
@@ -3537,7 +3554,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // from two devices both land. Falls back to absolute set for
                 // the text-input path.
                 const update = {
-                    [`counts.${itemId}`]: isDelta ? increment(delta) : count,
+                    // +1 uses atomic increment so two devices adding both land. But
+                    // DECREMENT uses a clamped ABSOLUTE write (nextCount, already >=0
+                    // because the prevCount<=0 guard blocked the step): Firestore's
+                    // increment() has NO floor, so a -1 on a (locally-lagged) value
+                    // could drive the server count to -1. Absolute-clamped can't.
+                    [`counts.${itemId}`]: !isDelta ? count
+                        : delta > 0 ? increment(delta)
+                            : Math.max(0, nextCount),
                     [`countMeta.${itemId}`]: nextCount === 0 ? deleteField() : { by: staffName, at: timeStr },
                     date: new Date().toISOString(),
                 };
@@ -7160,7 +7184,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 setInventory={setInventory}
                                 currentInventory={inventory}
                                 language={language}
-                                onOpenHistory={() => setOrderHistoryOpen(true)}
+                                onOpenHistory={openOrderHistory}
                             />
                             {/* Page-level Order-history modal (z-[80], above the cart
                                 modal) so it can be opened while building a cart. */}
@@ -7171,6 +7195,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     currentInventory={inventory}
                                     language={language}
                                     itemNameById={itemNameById}
+                                    initialExpandedId={orderHistoryFocusId}
                                     onClose={() => setOrderHistoryOpen(false)}
                                 />
                             )}
@@ -7400,7 +7425,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 <div className="flex items-center gap-2">
                                                     {/* Open order history WHILE the cart is open — layers above (z-[80]) so
                                                         you can reference a past order without losing your in-progress cart. */}
-                                                    <button onClick={() => setOrderHistoryOpen(true)}
+                                                    <button onClick={() => openOrderHistory()}
                                                         className="px-2.5 py-1 rounded-full bg-white/20 hover:bg-white/30 text-white text-xs font-bold transition flex items-center gap-1">
                                                         📋 {language === "es" ? "Historial" : "History"}
                                                     </button>
@@ -9901,11 +9926,11 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
                             return (
                                 <button
                                     key={h.id}
-                                    onClick={() => handleRestore(h)}
+                                    onClick={() => onOpenHistory(h.id)}
                                     disabled={isRestoring}
                                     title={isEs
-                                        ? `Reemplazar carrito con pedido del ${dateLabel} (${itemCount} items)`
-                                        : `Replace cart with ${dateLabel} order (${itemCount} items)`}
+                                        ? `Ver pedido del ${dateLabel} (${itemCount} items) — luego puedes enviarlo al carrito`
+                                        : `View ${dateLabel} order (${itemCount} items) — then you can send it to the cart`}
                                     className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-orange-50 border border-orange-200 hover:bg-orange-100 active:scale-95 text-[12px] font-bold text-orange-800 disabled:opacity-50 disabled:cursor-wait transition"
                                 >
                                     <span>{dateLabel}</span>
@@ -9933,7 +9958,7 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
 // needed). Each row has a "Send to cart" button that runs the same
 // shared restore helper as the bar. Click outside or X to close.
 // ─────────────────────────────────────────────────────────────────
-function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventory, language, onClose, itemNameById = {} }) {
+function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventory, language, onClose, itemNameById = {}, initialExpandedId = null }) {
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -9944,7 +9969,9 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
     // Which order's item list is expanded for read-only VIEWING. This is the key
     // to "look at history while building a cart": you can see exactly what was on a
     // past order without restoring it (restore is refused when the cart has items).
-    const [expandedId, setExpandedId] = useState(null);
+    // Seeded from initialExpandedId so clicking a recent-order chip opens the popup
+    // already showing that order's items.
+    const [expandedId, setExpandedId] = useState(initialExpandedId || null);
 
     // 2026-05-24 (round 2): same fix as RecentOrdersBar — switched
     // getDocs → onSnapshot for cache warmth, bumped timeout to 25s.
