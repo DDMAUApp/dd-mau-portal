@@ -43,6 +43,7 @@ async function loadPdfLib() {
 const WINANSI_SUBS = { '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...' };
 function winAnsiSafe(font, value) {
     const str = String(value == null ? '' : value);
+    if (!font || typeof font.encodeText !== 'function') return str;
     try { font.encodeText(str); return str; } catch { /* contains unencodable chars */ }
     let out = '';
     for (const ch of str) {
@@ -226,16 +227,24 @@ export default function OnboardingEmployerFill({
             // annotations) so the completed PDF is flat and renders the drawn
             // values identically in every viewer. See OnboardingFillablePdf for
             // the full rationale ("I only see his signature" blank-doc bug).
+            // Hardened so it can never throw + silently save an un-stripped PDF.
             try {
-                pdfDoc.catalog.delete(PDFName.of('AcroForm'));
+                if (pdfDoc.catalog.has(PDFName.of('AcroForm'))) {
+                    pdfDoc.catalog.delete(PDFName.of('AcroForm'));
+                }
                 for (const page of pdfDoc.getPages()) {
-                    const annots = page.node.Annots();
-                    if (!annots) continue;
+                    const annots = page.node && page.node.Annots && page.node.Annots();
+                    if (!annots || typeof annots.size !== 'function') continue;
                     const keep = [];
                     for (let i = 0; i < annots.size(); i++) {
-                        const a = annots.lookup(i);
-                        const sub = a && a.get(PDFName.of('Subtype'));
-                        if (!sub || sub.toString() !== '/Widget') keep.push(annots.get(i));
+                        const ref = annots.get(i);
+                        let isWidget = false;
+                        try {
+                            const a = annots.lookup(i);
+                            const sub = a && a.get && a.get(PDFName.of('Subtype'));
+                            isWidget = !!sub && sub.toString() === '/Widget';
+                        } catch { isWidget = false; }
+                        if (!isWidget) keep.push(ref);
                     }
                     page.node.set(PDFName.of('Annots'), pdfDoc.context.obj(keep));
                 }

@@ -117,6 +117,7 @@ function autofillValue(autofillId, hire) {
 const WINANSI_SUBS = { '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...' };
 function winAnsiSafe(font, value) {
     const str = String(value == null ? '' : value);
+    if (!font || typeof font.encodeText !== 'function') return str;
     try { font.encodeText(str); return str; } catch { /* contains unencodable chars */ }
     let out = '';
     for (const ch of str) {
@@ -199,7 +200,7 @@ export default function OnboardingFillablePdf({
                 (chosen.fields || []).forEach(f => {
                     if (f.filledBy === 'static') return;
                     if (f.autofill) initial[f.id] = autofillValue(f.autofill, hire);
-                    else if (storedSig && f.type === 'signature') initial[f.id] = storedSig;
+                    else if (storedSig && f.type === 'signature' && f.filledBy !== 'employer') initial[f.id] = storedSig;
                 });
                 setValues(initial);
                 // Render PDF background. getBytes() goes through the
@@ -390,16 +391,27 @@ export default function OnboardingFillablePdf({
             // are the only field content. Every viewer then renders it the same.
             // Guarded so any low-level hiccup falls back to the prior behavior,
             // and a no-op on non-fillable templates (offer letters, scans).
+            // Hardened so it can NEVER throw and silently save an un-stripped
+            // (blank-in-Acrobat) PDF: guard every pdf-lib call, and on any
+            // per-annotation uncertainty KEEP the annotation rather than risk
+            // dropping a real one. Only confirmed /Widget annotations are removed.
             try {
-                pdfDoc.catalog.delete(PDFName.of('AcroForm'));
+                if (pdfDoc.catalog.has(PDFName.of('AcroForm'))) {
+                    pdfDoc.catalog.delete(PDFName.of('AcroForm'));
+                }
                 for (const page of pdfDoc.getPages()) {
-                    const annots = page.node.Annots();
-                    if (!annots) continue;
+                    const annots = page.node && page.node.Annots && page.node.Annots();
+                    if (!annots || typeof annots.size !== 'function') continue;
                     const keep = [];
                     for (let i = 0; i < annots.size(); i++) {
-                        const a = annots.lookup(i);
-                        const sub = a && a.get(PDFName.of('Subtype'));
-                        if (!sub || sub.toString() !== '/Widget') keep.push(annots.get(i));
+                        const ref = annots.get(i);
+                        let isWidget = false;
+                        try {
+                            const a = annots.lookup(i);
+                            const sub = a && a.get && a.get(PDFName.of('Subtype'));
+                            isWidget = !!sub && sub.toString() === '/Widget';
+                        } catch { isWidget = false; }
+                        if (!isWidget) keep.push(ref);
                     }
                     page.node.set(PDFName.of('Annots'), pdfDoc.context.obj(keep));
                 }
