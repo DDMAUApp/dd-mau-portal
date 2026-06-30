@@ -668,7 +668,7 @@ function StaticOverlay({ field, isEs }) {
     const isSig = field.type === 'signature' || field.type === 'initials';
     const hasSig = isSig && typeof field.staticValue === 'string' && field.staticValue.startsWith('data:image');
     return (
-        <div className="absolute border-2 border-amber-400 bg-amber-50/70 rounded flex items-center justify-center overflow-hidden"
+        <div className="absolute border border-amber-400 bg-amber-50/70 rounded flex items-center justify-center overflow-hidden"
              style={style}
              title={tx('Pre-filled by management', 'Pre-llenado por gerencia')}>
             {hasSig ? (
@@ -720,7 +720,7 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
                 // when empty so the label shows. When signed the
                 // signature image already fills the field so /50 is
                 // fine — the image dominates anyway.
-                className={`absolute border-2 rounded text-[10px] font-bold flex items-center justify-center transition ${
+                className={`absolute border rounded text-[10px] font-bold flex items-center justify-center transition ${
                     signed ? 'border-green-500 bg-green-100/50' : 'border-amber-500 bg-amber-100/30 animate-pulse'
                 }`}
                 // Same UA-min-height defeat as the text input below — without
@@ -780,7 +780,7 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
             //     printed label underneath.
             // Border colour change (amber → green) is preserved as the
             // secondary fill-state cue.
-            className={`absolute border-2 rounded px-1 text-[11px] ${
+            className={`absolute border rounded px-1 text-[11px] ${
                 value
                     ? 'border-green-500 bg-yellow-50/70'
                     : 'border-amber-500 bg-yellow-50/15 placeholder-amber-700/60'

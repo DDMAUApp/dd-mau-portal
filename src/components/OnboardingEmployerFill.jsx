@@ -391,7 +391,7 @@ function EmployerFieldInput({ field, value, onChange, onOpenSig, isEs }) {
         const signed = value && typeof value === 'string' && value.startsWith('data:image');
         return (
             <button onClick={onOpenSig}
-                className={`absolute border-2 rounded text-[10px] font-bold flex items-center justify-center transition ${
+                className={`absolute border rounded text-[10px] font-bold flex items-center justify-center transition ${
                     signed ? 'border-green-500 bg-green-100/60'
                         : 'border-purple-500 bg-purple-100/60 animate-pulse'
                 }`}
@@ -417,7 +417,7 @@ function EmployerFieldInput({ field, value, onChange, onOpenSig, isEs }) {
             type={field.type === 'date' ? 'date' : 'text'}
             value={value || ''}
             onChange={e => onChange(e.target.value)}
-            className={`absolute border-2 rounded px-1 text-[11px] bg-purple-50/90 ${
+            className={`absolute border rounded px-1 text-[11px] bg-purple-50/90 ${
                 value ? 'border-green-500' : 'border-purple-500'
             }`}
             style={{ ...style, fontSize: (field.fontSize || 11) + 'px' }}
