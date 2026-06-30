@@ -38,9 +38,14 @@ function pluginReady() {
 }
 
 // Dynamic import so the plugin's JS is never even loaded on binaries without it.
+// IMPORTANT: return the MODULE, not `mod.NativeBiometric` directly. An async
+// function that resolves to a Capacitor plugin proxy makes the promise machinery
+// try to adopt the proxy as a thenable and call `.then()` on it — which the
+// native layer reports as "NativeBiometric.then() is not implemented on android"
+// and silently breaks biometric login. Destructure NativeBiometric at the call
+// site (a plain method call on the proxy is fine; awaiting the proxy itself is not).
 async function getPlugin() {
-    const mod = await import('@capgo/capacitor-native-biometric');
-    return mod.NativeBiometric;
+    return await import('@capgo/capacitor-native-biometric');
 }
 
 function typeLabel(biometryType) {
@@ -61,7 +66,7 @@ function typeLabel(biometryType) {
 export async function isBiometricAvailable() {
     if (!pluginReady()) return { available: false, type: 'Biometrics' };
     try {
-        const NativeBiometric = await getPlugin();
+        const { NativeBiometric } = await getPlugin();
         const res = await NativeBiometric.isAvailable({ useFallback: false });
         return { available: !!res?.isAvailable, type: typeLabel(res?.biometryType) };
     } catch (e) {
@@ -93,7 +98,7 @@ export async function markBiometricDeclined() {
 export async function enableBiometric({ staffName, pin }) {
     if (!pluginReady() || !staffName || !pin) return false;
     try {
-        const NativeBiometric = await getPlugin();
+        const { NativeBiometric } = await getPlugin();
         const avail = await NativeBiometric.isAvailable({ useFallback: false });
         if (!avail?.isAvailable) return false;
         // Prove a live face/finger before we store anything.
@@ -120,7 +125,7 @@ export async function tryBiometricLogin() {
     const enrolled = await getEnrolledStaff();
     if (!enrolled) return null;
     try {
-        const NativeBiometric = await getPlugin();
+        const { NativeBiometric } = await getPlugin();
         const avail = await NativeBiometric.isAvailable({ useFallback: false });
         if (!avail?.isAvailable) return null;
         await NativeBiometric.verifyIdentity({
@@ -143,7 +148,7 @@ export async function tryBiometricLogin() {
 export async function disableBiometric() {
     try {
         if (pluginReady()) {
-            const NativeBiometric = await getPlugin();
+            const { NativeBiometric } = await getPlugin();
             await NativeBiometric.deleteCredentials({ server: SERVER }).catch(() => {});
         }
         await Preferences.remove({ key: ENABLED_KEY });
