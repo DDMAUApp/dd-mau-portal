@@ -32,6 +32,7 @@ import {
     effectiveDaysFromHire,
 } from '../data/onboarding';
 import { notifyAdmins } from '../data/notify';
+import { hashPortalPassword, verifyPortalPassword, portalUnlockKey } from '../data/onboardingAuth';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const OnboardingFillablePdf = reactLazy(() => import('./OnboardingFillablePdf'));
 const OnboardingOfferLetter = reactLazy(() => import('./OnboardingOfferLetter'));
@@ -54,6 +55,10 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     const [errorMsg, setErrorMsg] = useState('');
     const [hire, setHire] = useState(null);
     const [hireId, setHireId] = useState(null);
+    // Password gate: portal stays locked until the hire creates (first visit)
+    // or enters their portal password. Session-scoped unlock so a reload in the
+    // same session doesn't re-prompt.
+    const [unlocked, setUnlocked] = useState(false);
     // Global doc-text overrides — admins can rewrite any ONBOARDING_DOCS
     // description from the "Doc text" admin tab. Map shape is
     // { [docId]: { en, es } }. Best-effort read; if the doc doesn't
@@ -250,6 +255,12 @@ export default function OnboardingPortal({ token, language = 'en' }) {
         return () => { alive = false; };
     }, [token]);
 
+    // Restore a same-session unlock so a reload doesn't re-prompt for the password.
+    useEffect(() => {
+        if (!hireId) return;
+        try { if (sessionStorage.getItem(portalUnlockKey(hireId)) === '1') setUnlocked(true); } catch { /* ignore */ }
+    }, [hireId]);
+
     // Bump a single doc's status. Called by child form/upload components.
     //
     // Fires an admin notification ONLY on the transition INTO SUBMITTED
@@ -337,6 +348,22 @@ export default function OnboardingPortal({ token, language = 'en' }) {
         </CenterCard>;
     }
     if (!hire) return null;
+    // Password gate — the invite link alone isn't enough. First visit: the hire
+    // creates a password; later visits require it. A forwarded/leaked link hits
+    // this prompt instead of someone's tax forms.
+    if (!unlocked) {
+        return (
+            <OnboardingPasswordGate
+                hire={hire}
+                hireId={hireId}
+                isEs={isEs}
+                onUnlock={() => {
+                    try { sessionStorage.setItem(portalUnlockKey(hireId), '1'); } catch { /* ignore */ }
+                    setUnlocked(true);
+                }}
+            />
+        );
+    }
     const docs = docsForHire(hire);
     const counts = hireProgressCounts(hire);
     const allDone = counts.total > 0 && counts.needed === 0 && counts.started === 0;
@@ -503,6 +530,93 @@ function CenterCard({ children }) {
                 {children}
             </div>
         </div>
+    );
+}
+
+// OnboardingPasswordGate — first visit: the hire creates a password; later
+// visits require it. Protects the portal from a forwarded/leaked invite link.
+// Stored as a salted SHA-256 hash on the hire doc (never plaintext). If the hire
+// forgets it, a manager resets it from the admin Onboarding tab.
+function OnboardingPasswordGate({ hire, hireId, isEs, onUnlock }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const mode = hire?.portalAuth?.hash ? 'enter' : 'create';
+    const [pw, setPw] = useState('');
+    const [pw2, setPw2] = useState('');
+    const [err, setErr] = useState('');
+    const [busy, setBusy] = useState(false);
+
+    const submit = async () => {
+        setErr('');
+        if (mode === 'create') {
+            if (pw.length < 6) { setErr(tx('Use at least 6 characters.', 'Usa al menos 6 caracteres.')); return; }
+            if (pw !== pw2) { setErr(tx('Passwords don\'t match.', 'Las contraseñas no coinciden.')); return; }
+            setBusy(true);
+            try {
+                const portalAuth = await hashPortalPassword(pw);
+                await updateDoc(doc(db, 'onboarding_hires', hireId), { portalAuth });
+                onUnlock();
+            } catch (e) {
+                setErr(tx('Could not save. Try again.', 'No se pudo guardar. Intenta de nuevo.'));
+                setBusy(false);
+            }
+        } else {
+            setBusy(true);
+            const ok = await verifyPortalPassword(pw, hire.portalAuth);
+            if (ok) { onUnlock(); }
+            else { setErr(tx('Wrong password.', 'Contraseña incorrecta.')); setBusy(false); }
+        }
+    };
+
+    return (
+        <CenterCard>
+            <div className="text-4xl mb-2">🔐</div>
+            <h2 className="font-black text-dd-text text-lg mb-1">
+                {mode === 'create'
+                    ? tx('Create a password', 'Crea una contraseña')
+                    : tx('Enter your password', 'Ingresa tu contraseña')}
+            </h2>
+            <p className="text-[12px] text-gray-500 mb-4">
+                {mode === 'create'
+                    ? tx('This protects your onboarding so only you can open it. You\'ll use it each time you come back.',
+                        'Esto protege tu proceso para que solo tú puedas abrirlo. La usarás cada vez que regreses.')
+                    : tx('Enter the password you created to continue.', 'Ingresa la contraseña que creaste para continuar.')}
+            </p>
+            <input
+                type="password"
+                value={pw}
+                onChange={(e) => setPw(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && mode === 'enter') submit(); }}
+                autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
+                placeholder={tx('Password', 'Contraseña')}
+                className="w-full text-base px-3 py-2.5 rounded-xl border-2 border-gray-200 focus:border-mint-500 outline-none mb-2"
+            />
+            {mode === 'create' && (
+                <input
+                    type="password"
+                    value={pw2}
+                    onChange={(e) => setPw2(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+                    autoComplete="new-password"
+                    placeholder={tx('Confirm password', 'Confirma la contraseña')}
+                    className="w-full text-base px-3 py-2.5 rounded-xl border-2 border-gray-200 focus:border-mint-500 outline-none mb-2"
+                />
+            )}
+            {err && <p className="text-xs text-red-600 mb-2">{err}</p>}
+            <button
+                onClick={submit}
+                disabled={busy || !pw}
+                className="w-full py-3 rounded-xl bg-mint-700 text-white font-bold text-sm active:scale-95 disabled:opacity-50">
+                {busy ? tx('Please wait…', 'Espera…')
+                    : mode === 'create' ? tx('Create & continue', 'Crear y continuar')
+                        : tx('Unlock', 'Desbloquear')}
+            </button>
+            {mode === 'enter' && (
+                <p className="text-[11px] text-gray-400 mt-3">
+                    {tx('Forgot it? Ask your manager to reset your onboarding password.',
+                        '¿La olvidaste? Pídele a tu gerente que reinicie tu contraseña.')}
+                </p>
+            )}
+        </CenterCard>
     );
 }
 

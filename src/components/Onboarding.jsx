@@ -516,6 +516,20 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                                 setConvertPrefill(selected);
                                 setAddOpen(true);
                             }}
+                            onResetPassword={async () => {
+                                // Clear the hire's portal password so they create
+                                // a fresh one the next time they open their link.
+                                try {
+                                    await updateDoc(doc(db, 'onboarding_hires', selected.id), { portalAuth: null });
+                                    writeAudit('onboarding_password_reset', { hireId: selected.id, hireName: selected.name });
+                                    toast(tx(
+                                        'Password reset — they\'ll set a new one next time they open their link.',
+                                        'Contraseña reiniciada — creará una nueva al abrir su enlace.',
+                                    ), { kind: 'success' });
+                                } catch (e) {
+                                    toast(tx('Could not reset password: ', 'No se pudo reiniciar: ') + (e?.message || e), { kind: 'error' });
+                                }
+                            }}
                         />
                     ) : (
                         <div className="bg-white border border-dd-line rounded-xl p-8 text-center">
@@ -720,7 +734,7 @@ function ProgressDonut({ counts, size = 64 }) {
 }
 
 // ── HireDetail ────────────────────────────────────────────────────────────
-function HireDetail({ hire, isEs, staffName, docOverrides, onWriteAudit, onArchive, onResend, onEdit, onMoveToComplete, onMoveBackToActive }) {
+function HireDetail({ hire, isEs, staffName, docOverrides, onWriteAudit, onArchive, onResend, onEdit, onResetPassword, onMoveToComplete, onMoveBackToActive }) {
     const tx = (en, es) => (isEs ? es : en);
     const docs = docsForHire(hire);
     const counts = hireProgressCounts(hire);
@@ -877,6 +891,13 @@ function HireDetail({ hire, isEs, staffName, docOverrides, onWriteAudit, onArchi
                         className="text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 font-bold hover:bg-blue-200">
                         ↻ {tx('Resend invite', 'Reenviar invitación')}
                     </button>
+                    {onResetPassword && (
+                        <button onClick={onResetPassword}
+                            title={tx('Clears their onboarding password so they set a new one', 'Borra su contraseña para que cree una nueva')}
+                            className="text-[11px] px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-800 font-bold hover:bg-amber-200">
+                            🔑 {tx('Reset password', 'Reiniciar contraseña')}
+                        </button>
+                    )}
                     <button onClick={exportZip} disabled={exporting}
                         className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-green text-white font-bold hover:bg-dd-green/90 disabled:opacity-60">
                         {exporting ? tx('Building zip…', 'Creando zip…') : tx('📦 Export zip', '📦 Exportar zip')}
