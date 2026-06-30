@@ -426,7 +426,7 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                 their natural 1.4x rasterized size (~856 px) with a
                 little gutter. PDFs stay scrollable inside their card,
                 so the page doesn't grow unmanageably tall. */}
-            <div className="max-w-lg md:max-w-4xl mx-auto p-3 sm:p-6 space-y-4">
+            <div className="max-w-lg md:max-w-4xl mx-auto p-3 sm:p-6 safe-top safe-bottom [--safe-top-base:0.75rem] [--safe-bottom-base:0.75rem] space-y-4">
                 {/* Header */}
                 <header className="text-center pt-4">
                     <p className="text-3xl mb-1">🍜</p>

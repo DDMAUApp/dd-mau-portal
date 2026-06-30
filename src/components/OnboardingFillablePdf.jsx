@@ -253,16 +253,11 @@ export default function OnboardingFillablePdf({
     const renderPages = async (buf) => {
         const pdfjs = await loadPdfJs();
         const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
+        const total = pdf.numPages;
         const imgs = [];
-        // 1.4x is the right render scale here. A US Letter page at 1.4x
-        // is ~856 × 1109 px, which fills the desktop portal's
-        // md:max-w-4xl card (~880 px inner width) at ~100% — already
-        // crisp. We tried 2x for desktop but rendering 3-4 PDFs
-        // concurrently at 2x was punishing CPU + memory with no visible
-        // improvement, so we held the line at 1.4x. The visual "make
-        // the docs bigger" win lives in the portal's responsive
-        // max-width bump, not in raster supersampling.
-        for (let p = 1; p <= pdf.numPages; p++) {
+        // 1.4x is the right render scale here. A US Letter page at 1.4x is
+        // ~856 × 1109 px — crisp on both the desktop card and a pinch-zoomed phone.
+        for (let p = 1; p <= total; p++) {
             const page = await pdf.getPage(p);
             const viewport = page.getViewport({ scale: 1.4 });
             const canvas = document.createElement('canvas');
@@ -270,9 +265,23 @@ export default function OnboardingFillablePdf({
             canvas.height = viewport.height;
             const ctx = canvas.getContext('2d');
             await page.render({ canvasContext: ctx, viewport }).promise;
-            imgs.push(canvas.toDataURL('image/png'));
+            // JPEG, NOT PNG. Government forms are white-background, so there's no
+            // transparency to preserve, and JPEG encodes ~5-10x faster and holds
+            // far less memory than a full-page PNG — the slow part on a multi-page
+            // form like the 5-page federal W-4. This image is PREVIEW-ONLY; the
+            // submitted PDF is rebuilt from the original bytes via pdf-lib at submit
+            // time, so this compression never touches the legal document.
+            imgs.push(canvas.toDataURL('image/jpeg', 0.85));
+            // Progressive: show each page the instant it's ready. The hire sees
+            // page 1 and can start filling while pages 2..N render in the
+            // background — perceived load time ≈ one page, not five.
+            setPageImages(imgs.slice());
+            if (p === 1) setLoading(false);
+            setProgressMsg(p < total
+                ? tx(`Loading page ${p + 1} of ${total}…`, `Cargando página ${p + 1} de ${total}…`)
+                : '');
         }
-        setPageImages(imgs);
+        setProgressMsg('');
     };
 
     const setValue = (fieldId, value) => {
@@ -600,7 +609,13 @@ export default function OnboardingFillablePdf({
                     'Llena los campos resaltados. Toca la caja de firma para firmar con tu dedo.',
                 )}
             </p>
-            <div className="space-y-2 bg-gray-100 p-2 rounded-lg max-h-[60vh] overflow-y-auto">
+            {/* Mobile: NO nested scroll box. A `max-h overflow-y-auto` wrapper on a
+                phone shrinks a Letter page to fit a 60vh window AND traps pinch-zoom
+                (the gesture gets eaten by the inner scroller), so hires couldn't
+                magnify the tiny printed labels. Letting the pages flow in the normal
+                page scroll gives one scroll context → pinch-zoom works. Desktop keeps
+                a contained scroll area (md:) where there's room. */}
+            <div className="space-y-2 bg-gray-100 p-2 rounded-lg md:max-h-[75vh] md:overflow-y-auto">
                 {pageImages.map((src, idx) => (
                     <div key={idx} className="relative bg-white shadow">
                         <img src={src} alt={`Page ${idx + 1}`} className="w-full h-auto block" draggable={false} />
@@ -764,6 +779,11 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
             spellCheck={sensitive ? false : undefined}
             value={value || ''}
             onChange={e => onChange(e.target.value)}
+            // Mobile: when the on-screen keyboard opens it often hides an overlay
+            // field in the lower half of the page. Scroll the focused field to the
+            // middle of the viewport (after the keyboard has animated in) so the
+            // hire can always see what they're typing.
+            onFocus={e => { const el = e.currentTarget; setTimeout(() => { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { /* ignore */ } }, 300); }}
             // 2026-06-01 — Andrew: "for the W4 missouri, when the text
             // bubble is over the doc anything under it cant be read.
             // if it asks for first name the text bubble is covering it up."
@@ -803,7 +823,13 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
                 minHeight: 0,
                 minWidth: 0,
                 lineHeight: 1,
-                fontSize: (field.fontSize || 11) + 'px',
+                // iOS Safari auto-zooms the whole page whenever a focused input's
+                // font is < 16px — and with our overlay it never zooms back, so a
+                // hire's view jumped/rescaled on EVERY field tap. Render the on-
+                // screen text at ≥16px to kill that zoom. This is the input's CSS
+                // only; the flattened PDF still draws at the field's own fontSize
+                // at submit time, so the printed document is unchanged.
+                fontSize: Math.max(16, field.fontSize || 11) + 'px',
             }}
             placeholder={field.label || ''} />
     );
@@ -842,6 +868,15 @@ function SignatureModal({ field, initial, isEs, onClose, onSave }) {
             img.src = initial;
         }
     }, [mode]);
+
+    // Lock the page behind the signature sheet while it's open — otherwise, on a
+    // phone, drawing near the canvas edge or resting a palm scrolls/rubber-bands
+    // the page under the finger and the stroke jumps.
+    useEffect(() => {
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => { document.body.style.overflow = prev; };
+    }, []);
 
     const pos = (e) => {
         const c = canvasRef.current;
@@ -919,7 +954,7 @@ function SignatureModal({ field, initial, isEs, onClose, onSave }) {
                             ref={canvasRef}
                             className="w-full h-44 bg-gray-50 border-2 border-dashed border-mint-300 rounded-lg touch-none"
                             onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
-                            onTouchStart={start} onTouchMove={move} onTouchEnd={end}
+                            onTouchStart={start} onTouchMove={move} onTouchEnd={end} onTouchCancel={end}
                         />
                     ) : (
                         <div>
