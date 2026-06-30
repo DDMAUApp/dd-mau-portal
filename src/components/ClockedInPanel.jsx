@@ -28,7 +28,7 @@
 //     gated on canViewClockedIn(viewerStaffRecord). We don't gate
 //     here to keep the component simple.
 
-import { useEffect, useState, useMemo, lazy, Suspense } from 'react';
+import { useEffect, useState, useMemo, useCallback, lazy, Suspense } from 'react';
 import {
     Users, Clock, Coffee, AlertTriangle, ChevronRight, ChevronDown,
     X, RefreshCw, Calendar, UserX, LogOut, History,
@@ -151,6 +151,25 @@ function getPunctuality(clockedInIso, scheduledShift, isEs) {
 function useClockedIn(location) {
     const [webster, setWebster]   = useState(null);
     const [maryland, setMaryland] = useState(null);
+    const [tick, setTick] = useState(0);
+    const refresh = useCallback(() => setTick(t => t + 1), []);
+
+    // Re-establish the realtime listener whenever the app returns to the
+    // foreground. On Android (and a backgrounded PWA/WebView) the Firestore
+    // onSnapshot stream goes idle while the app is suspended and can show a STALE
+    // roster on resume — the doc is fresh server-side but the client never got the
+    // update. Bumping `tick` tears the listener down and recreates it, forcing a
+    // fresh server snapshot so reopening the app always shows who's on the clock now.
+    useEffect(() => {
+        const bump = () => setTick(t => t + 1);
+        const onVis = () => { if (typeof document !== 'undefined' && document.visibilityState === 'visible') bump(); };
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis);
+        if (typeof window !== 'undefined') window.addEventListener('focus', bump);
+        return () => {
+            if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
+            if (typeof window !== 'undefined') window.removeEventListener('focus', bump);
+        };
+    }, []);
 
     useEffect(() => {
         if (location === 'webster') {
@@ -165,13 +184,13 @@ function useClockedIn(location) {
         const unsubW = subscribeClockedIn('webster',  setWebster);
         const unsubM = subscribeClockedIn('maryland', setMaryland);
         return () => { unsubW(); unsubM(); };
-    }, [location]);
+    }, [location, tick]);
 
     return useMemo(() => {
         const w = getClockedInStatus(webster);
         const m = getClockedInStatus(maryland);
-        if (location === 'webster')  return { combined: w, perLoc: { webster: w } };
-        if (location === 'maryland') return { combined: m, perLoc: { maryland: m } };
+        if (location === 'webster')  return { combined: w, perLoc: { webster: w }, refresh };
+        if (location === 'maryland') return { combined: m, perLoc: { maryland: m }, refresh };
         // both
         const mergedEntries = [
             ...w.entries.map(e => ({ ...e, _loc: 'webster' })),
@@ -194,8 +213,9 @@ function useClockedIn(location) {
                 isStale: (w.isStale || m.isStale),
             },
             perLoc: { webster: w, maryland: m },
+            refresh,
         };
-    }, [webster, maryland, location]);
+    }, [webster, maryland, location, refresh]);
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
@@ -478,7 +498,7 @@ export default function ClockedInPanel({
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
-    const { combined } = useClockedIn(location);
+    const { combined, refresh } = useClockedIn(location);
     const [expanded, setExpanded] = useState(false);
     // Single-row expansion state — only one row open at a time. Keyed by
     // toastEmployeeId (or synthetic noshow:{shiftId} for ghost rows).
@@ -646,6 +666,11 @@ export default function ClockedInPanel({
                                 {outCount} {tx('out', 'salió')}
                             </span>
                         )}
+                        <button onClick={refresh} title={tx('Refresh now', 'Actualizar ahora')}
+                            className="inline-flex items-center justify-center w-7 h-7 text-dd-text-2 bg-dd-bg hover:bg-dd-line rounded-full border border-dd-line active:scale-95 transition"
+                            aria-label={tx('Refresh', 'Actualizar')}>
+                            <RefreshCw size={13} strokeWidth={2.5} />
+                        </button>
                         <button onClick={() => setHistoryOpen(true)}
                             className="inline-flex items-center gap-1 text-xs font-bold text-dd-text-2 bg-dd-bg hover:bg-dd-line px-2.5 py-1 rounded-full border border-dd-line active:scale-95 transition">
                             <History size={13} strokeWidth={2.5} /> {tx('History', 'Historial')}
