@@ -2114,11 +2114,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // the heavy id-migration merge below when only counts
                 // changed (the common case on every +/- tap).
                 let lastCustomInvHash = '';
+                // True once we've applied at least one server-confirmed snapshot.
+                // Used to let the FIRST (cache) snapshot paint counts for a warm/
+                // offline cold-start, while skipping the LATER stale cache echoes
+                // that arrive mid-burst and would clobber optimistic counts.
+                let invServerSynced = false;
                 const unsubInventorySnapshot = onSnapshot(inventoryDocRef, { includeMetadataChanges: true }, (docSnap) => {
                     // Skip our own optimistic local writes — wait for the server-confirmed snapshot.
                     // This avoids the prior race where a remote write arriving in the same tick
                     // as our local write got swallowed as if it were our own echo.
                     if (docSnap.metadata.hasPendingWrites) return;
+                    // Skip stale cache-only echoes AFTER first sync (2026-06-30): during a rapid +1
+                    // burst, the SDK delivers an intermediate cached snapshot where hasPendingWrites
+                    // has already flipped false for the writes it knows about, but `data.counts` does
+                    // NOT yet reflect the still-in-flight increment() ops on the other tapped items.
+                    // With a Counted/Low filter active, setInventory(data.counts) on that stale map
+                    // drops those items out of the filter — their whole location bucket empties and
+                    // the rows vanish — until the authoritative server snapshot (~2-3s later) restores
+                    // them. We still allow the very FIRST cache snapshot through so a warm/offline
+                    // cold-start paints last-saved counts (this listener is the only counts loader).
+                    if (docSnap.metadata.fromCache && invServerSynced) return;
+                    if (!docSnap.metadata.fromCache) invServerSynced = true;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         setInventory(data.counts || {});
