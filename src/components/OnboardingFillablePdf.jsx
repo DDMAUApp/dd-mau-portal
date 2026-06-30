@@ -86,6 +86,13 @@ function autofillValue(autofillId, hire) {
         city: p.city || '',
         state: p.state || '',
         zip: p.zip || '',
+        // Combined "City, State ZIP" — the federal W-4 (and many forms) use a
+        // single box for all three, where MO/others split them. Lets one
+        // autofill binding populate that combined box.
+        cityStateZip: [
+            [p.city, p.state].filter(Boolean).join(', '),
+            p.zip || '',
+        ].filter(Boolean).join(' '),
         dob: p.dob || '',
         phone: p.phone || hire?.phone || '',
         email: p.email || hire?.email || '',
