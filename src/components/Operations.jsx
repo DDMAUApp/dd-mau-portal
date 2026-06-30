@@ -6,6 +6,7 @@ import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
+import { reconcileCounts } from '../data/inventoryReconcile';
 // Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
 // returns the priority-ranked price (manual > receipt > … > legacy scraped).
 import { subscribeItemPrices, resolveTrustedPrice, PRICE_SOURCE_LABEL, cheapestVendor as pickCheapestVendor, lastOrdered as pickLastOrdered, orderQtyStats as pickOrderQty } from '../data/itemPricing';
@@ -491,6 +492,32 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Nothing references these any more; commit history preserves them.
             const [inventory, setInventory] = useState({});
             const [invCountMeta, setInvCountMeta] = useState({}); // { itemId: { by, at } }
+            // ── Optimistic-count reconciliation (2026-06-30, the real fix for
+            // "tap +/- → count reverts/disappears then comes back a few seconds
+            // later") ──────────────────────────────────────────────────────────
+            // Two prior attempts tried to DETECT-and-SKIP the stale snapshot that
+            // clobbers a just-bumped count. That's brittle: it depends on guessing
+            // the exact Firestore SDK metadata timing during a rapid burst, and a
+            // single mis-guess re-introduces the visible revert. This instead makes
+            // the merge TOLERANT: for any item the user just changed, we remember
+            // the value we wrote and refuse to let an incoming snapshot lower/replace
+            // it until the server actually confirms that value (or 12s elapses as a
+            // safety valve so a genuinely failed/concurrent write can't stick forever).
+            // Shape: { [itemId]: { expected:number, ts:number, mode:'inc'|'abs' } }.
+            //   'inc'  (the + button, written via FieldValue.increment) — release as
+            //          soon as server >= expected (a concurrent device can only push
+            //          it higher, never below our own contribution).
+            //   'abs'  (text entry and the − button, written as a clamped absolute) —
+            //          release only on an exact server match.
+            // A ref (not state) so recording a pending bump never triggers a render.
+            const pendingCountsRef = useRef({});
+            // Reconcile a server counts map against still-in-flight optimistic bumps.
+            // Mutates pendingCountsRef (releasing confirmed/expired items) and returns
+            // the map to actually display.
+            const reconcileServerCounts = useCallback(
+                (serverCounts) => reconcileCounts(serverCounts, pendingCountsRef.current, Date.now()),
+                [],
+            );
             // "Last ordered" per item — computed from inventoryHistory_{loc}.
             // For each item, finds the most recent saved snapshot where the
             // item had a count > 0. That date + qty is the "last time you
@@ -2154,7 +2181,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (!docSnap.metadata.fromCache) invServerSynced = true;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
-                        setInventory(data.counts || {});
+                        // Reconcile instead of overwrite: if this snapshot is stale
+                        // for an item the user JUST bumped (e.g. a mid-burst server
+                        // read that hasn't applied all of our increments yet), hold
+                        // the optimistic value so the count never visibly reverts.
+                        setInventory(reconcileServerCounts(data.counts || {}));
                         setInvCountMeta(data.countMeta || {});
                         setVendorCounts(data.vendorCounts || {});
                         // If an admin-activated list is in play, IT owns the
@@ -3502,6 +3533,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 });
                 if (skipped) return;
 
+                // Remember the value we're about to write so a stale snapshot can't
+                // visibly undo it before the server confirms (see pendingCountsRef).
+                // +1 is written via atomic increment → 'inc' (release when server >=);
+                // text entry and −1 are written as a clamped absolute → 'abs' (exact).
+                pendingCountsRef.current[itemId] = {
+                    expected: nextCount,
+                    ts: Date.now(),
+                    mode: (isDelta && delta > 0) ? 'inc' : 'abs',
+                };
+
                 setInvCountMeta(prev => {
                     if (nextCount === 0) {
                         const next = { ...prev };
@@ -3802,6 +3843,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     customInventory.forEach(cat => {
                         cat.items.forEach(item => { resetCounts[item.id] = 0; });
                     });
+                    pendingCountsRef.current = {}; // drop in-flight bumps so reconcile can't resurrect a cleared count
                     setInventory(resetCounts);
                     setInvCountMeta({});
                     setVendorCounts({});
@@ -3851,6 +3893,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     ? `¿Limpiar todo el conteo (${total} artículos)? Esto no se puede deshacer. Guarda primero si quieres una copia.`
                     : `Clear all counts (${total} items)? This cannot be undone. Save first if you want a copy.`);
                 if (!ok) return;
+                pendingCountsRef.current = {}; // drop in-flight bumps so reconcile can't resurrect a cleared count
                 setInventory({});
                 setInvCountMeta({});
                 setVendorCounts({});
