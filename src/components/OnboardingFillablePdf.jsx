@@ -193,14 +193,19 @@ export default function OnboardingFillablePdf({
                 // not editable here, so we don't pre-populate the values map
                 // for them (PDF generation reads field.staticValue directly).
                 const initial = {};
-                // Sign once, reuse: if the hire already adopted a signature on an
-                // earlier doc this session, pre-fill signature fields with it so
-                // they don't re-draw on every form. Session-scoped (clears on close).
+                // Sign once, reuse: the hire's adopted signature persists in
+                // device localStorage so it pre-fills signature fields across docs
+                // AND across sessions (re-open keeps the signature too).
                 let storedSig = null;
-                try { storedSig = sessionStorage.getItem('dd:sig:' + hireId); } catch { /* ignore */ }
+                try { storedSig = localStorage.getItem('dd:sig:' + hireId); } catch { /* ignore */ }
+                // Their exact prior entries (everything they typed last submit,
+                // EXCEPT SSN which is never saved) so re-opening continues where
+                // they left off — overrides autofill so edited values stick.
+                const prior = (hire?.checklist && hire.checklist[docDef.id] && hire.checklist[docDef.id].savedFields) || {};
                 (chosen.fields || []).forEach(f => {
                     if (f.filledBy === 'static') return;
                     if (f.autofill) initial[f.id] = autofillValue(f.autofill, hire);
+                    if (Object.prototype.hasOwnProperty.call(prior, f.id)) initial[f.id] = prior[f.id];
                     else if (storedSig && f.type === 'signature' && f.filledBy !== 'employer') initial[f.id] = storedSig;
                 });
                 setValues(initial);
@@ -464,12 +469,24 @@ export default function OnboardingFillablePdf({
                     platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
                     userAgent: (typeof navigator !== 'undefined' ? navigator.userAgent : '').slice(0, 200),
                 });
-                if (pdfHash) {
-                    await updateDoc(doc(db, 'onboarding_hires', hireId), {
-                        [`checklist.${docDef.id}.pdfHash`]: pdfHash,
-                        [`checklist.${docDef.id}.signedAt`]: new Date().toISOString(),
-                    });
+                // Remember the hire's exact entries so re-opening continues where
+                // they left off (not just autofill). SSN + signatures are NEVER
+                // saved here — SSN stays PDF-only per IRS/PII rules; the adopted
+                // signature lives in device localStorage (sign-once).
+                const savedFields = {};
+                for (const f of template.fields || []) {
+                    if (f.filledBy === 'static' || f.filledBy === 'employer') continue;
+                    if (f.type === 'signature' || f.type === 'initials') continue;
+                    if (isSensitiveField(f)) continue;
+                    const v = values[f.id];
+                    if (v !== undefined && v !== '') savedFields[f.id] = v;
                 }
+                const patch = {
+                    [`checklist.${docDef.id}.savedFields`]: savedFields,
+                    [`checklist.${docDef.id}.signedAt`]: new Date().toISOString(),
+                };
+                if (pdfHash) patch[`checklist.${docDef.id}.pdfHash`] = pdfHash;
+                await updateDoc(doc(db, 'onboarding_hires', hireId), patch);
             } catch (logErr) {
                 console.warn('signature event log skipped:', logErr?.message || logErr);
             }
@@ -627,7 +644,7 @@ export default function OnboardingFillablePdf({
                         // this session pre-fill it (sign once, reuse). Signatures
                         // only — initials stay per-field.
                         if (sigField.type === 'signature') {
-                            try { sessionStorage.setItem('dd:sig:' + hireId, dataUrl); } catch { /* ignore */ }
+                            try { localStorage.setItem('dd:sig:' + hireId, dataUrl); } catch { /* ignore */ }
                         }
                         setValue(sigField.id, dataUrl);
                         setSigField(null);
