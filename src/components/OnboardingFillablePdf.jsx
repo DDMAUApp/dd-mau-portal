@@ -191,9 +191,15 @@ export default function OnboardingFillablePdf({
                 // not editable here, so we don't pre-populate the values map
                 // for them (PDF generation reads field.staticValue directly).
                 const initial = {};
+                // Sign once, reuse: if the hire already adopted a signature on an
+                // earlier doc this session, pre-fill signature fields with it so
+                // they don't re-draw on every form. Session-scoped (clears on close).
+                let storedSig = null;
+                try { storedSig = sessionStorage.getItem('dd:sig:' + hireId); } catch { /* ignore */ }
                 (chosen.fields || []).forEach(f => {
                     if (f.filledBy === 'static') return;
                     if (f.autofill) initial[f.id] = autofillValue(f.autofill, hire);
+                    else if (storedSig && f.type === 'signature') initial[f.id] = storedSig;
                 });
                 setValues(initial);
                 // Render PDF background. getBytes() goes through the
@@ -546,7 +552,16 @@ export default function OnboardingFillablePdf({
                     isEs={isEs}
                     initial={values[sigField.id] || null}
                     onClose={() => setSigField(null)}
-                    onSave={(dataUrl) => { setValue(sigField.id, dataUrl); setSigField(null); }} />
+                    onSave={(dataUrl) => {
+                        // Remember the adopted signature so the hire's other docs
+                        // this session pre-fill it (sign once, reuse). Signatures
+                        // only — initials stay per-field.
+                        if (sigField.type === 'signature') {
+                            try { sessionStorage.setItem('dd:sig:' + hireId, dataUrl); } catch { /* ignore */ }
+                        }
+                        setValue(sigField.id, dataUrl);
+                        setSigField(null);
+                    }} />
             )}
         </div>
     );
