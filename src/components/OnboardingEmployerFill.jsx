@@ -163,7 +163,7 @@ export default function OnboardingEmployerFill({
         setErr('');
         try {
             const pdfLib = await loadPdfLib();
-            const { PDFDocument, StandardFonts, rgb } = pdfLib;
+            const { PDFDocument, StandardFonts, rgb, PDFName } = pdfLib;
             const pdfDoc = await PDFDocument.load(pdfBytes);
             const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
             const pages = pdfDoc.getPages();
@@ -207,7 +207,28 @@ export default function OnboardingEmployerFill({
                 }
             }
 
-            const outBytes = await pdfDoc.save();
+            // Strip the interactive form layer (XFA + AcroForm + Widget
+            // annotations) so the completed PDF is flat and renders the drawn
+            // values identically in every viewer. See OnboardingFillablePdf for
+            // the full rationale ("I only see his signature" blank-doc bug).
+            try {
+                pdfDoc.catalog.delete(PDFName.of('AcroForm'));
+                for (const page of pdfDoc.getPages()) {
+                    const annots = page.node.Annots();
+                    if (!annots) continue;
+                    const keep = [];
+                    for (let i = 0; i < annots.size(); i++) {
+                        const a = annots.lookup(i);
+                        const sub = a && a.get(PDFName.of('Subtype'));
+                        if (!sub || sub.toString() !== '/Widget') keep.push(annots.get(i));
+                    }
+                    page.node.set(PDFName.of('Annots'), pdfDoc.context.obj(keep));
+                }
+            } catch (stripErr) {
+                console.warn('form-layer strip skipped:', stripErr?.message || stripErr);
+            }
+
+            const outBytes = await pdfDoc.save({ updateFieldAppearances: false });
             const ts = Date.now();
             const path = `onboarding/${hireId}/${docDef.id}/complete_${ts}.pdf`;
             await uploadBytes(sref(storage, path), new Blob([outBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });

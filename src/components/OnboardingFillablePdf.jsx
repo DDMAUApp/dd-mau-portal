@@ -6,7 +6,8 @@
 //   1. Use pdf-lib to write each field's value onto the corresponding
 //      page at the stored fractional coordinates
 //   2. Embed signature/initials canvas images as PNG
-//   3. Flatten + save as a new PDF
+//   3. Strip the interactive form layer (XFA + AcroForm + field widgets) so
+//      the output is a flat PDF that every viewer renders identically, then save
 //   4. Upload to onboarding/{hireId}/{docId}/filled_{ts}.pdf
 //
 // Falls back to plain file upload if no template exists yet (so the admin
@@ -281,7 +282,7 @@ export default function OnboardingFillablePdf({
         setProgressMsg(tx('Generating PDF…', 'Generando PDF…'));
         try {
             const pdfLib = await loadPdfLib();
-            const { PDFDocument, StandardFonts, rgb } = pdfLib;
+            const { PDFDocument, StandardFonts, rgb, PDFName } = pdfLib;
             const pdfDoc = await PDFDocument.load(pdfBytes);
             const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
             const pages = pdfDoc.getPages();
@@ -334,7 +335,47 @@ export default function OnboardingFillablePdf({
                 }
             }
 
-            const outBytes = await pdfDoc.save();
+            // CRITICAL — strip the interactive form layer before saving.
+            //
+            // The official tax/I-9 templates (IRS W-4, MO W-4, I-9) are
+            // fillable PDFs built on XFA + AcroForm. We render the hire's
+            // answers by DRAWING them onto the static page above — but the
+            // original interactive form layer is still inside pdfDoc, and it
+            // breaks the returned file in the viewers managers actually use
+            // (Preview / Quick Look / Acrobat), even though the in-app pdf.js
+            // preview looks fine:
+            //   • XFA — Adobe Acrobat renders the XFA layer and IGNORES our
+            //     drawn text (pdf-lib cannot edit XFA), so the PDF opens blank.
+            //   • Empty AcroForm field widgets paint their own (often opaque)
+            //     appearance ON TOP of our drawn text, hiding it. The signature
+            //     line has no covering widget, so it's the one thing that shows
+            //     through — the exact "I only see his signature" report.
+            // Removing the AcroForm (which also drops its /XFA) + every Widget
+            // annotation leaves a plain, flat PDF: the full form graphics live
+            // in the static page content, and the hire's drawn text/signature
+            // are the only field content. Every viewer then renders it the same.
+            // Guarded so any low-level hiccup falls back to the prior behavior,
+            // and a no-op on non-fillable templates (offer letters, scans).
+            try {
+                pdfDoc.catalog.delete(PDFName.of('AcroForm'));
+                for (const page of pdfDoc.getPages()) {
+                    const annots = page.node.Annots();
+                    if (!annots) continue;
+                    const keep = [];
+                    for (let i = 0; i < annots.size(); i++) {
+                        const a = annots.lookup(i);
+                        const sub = a && a.get(PDFName.of('Subtype'));
+                        if (!sub || sub.toString() !== '/Widget') keep.push(annots.get(i));
+                    }
+                    page.node.set(PDFName.of('Annots'), pdfDoc.context.obj(keep));
+                }
+            } catch (stripErr) {
+                console.warn('form-layer strip skipped:', stripErr?.message || stripErr);
+            }
+
+            // updateFieldAppearances:false — there are no fields left to update
+            // and it avoids pdf-lib re-touching anything on the way out.
+            const outBytes = await pdfDoc.save({ updateFieldAppearances: false });
             setProgressMsg(tx('Uploading…', 'Subiendo…'));
             const ts = Date.now();
             const path = `onboarding/${hireId}/${docDef.id}/filled_${ts}.pdf`;
