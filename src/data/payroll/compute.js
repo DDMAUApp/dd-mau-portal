@@ -62,5 +62,24 @@ export function compute(inputs, period, cashTips, fohPct, periodExtras) {
         }
         results[loc] = res;
     }
+
+    // Cross-location double-pay guard: the same match-key paid at BOTH locations
+    // is legitimate if a person truly works both stores (Toast reports per-store),
+    // but it's also exactly what a duplicated roster entry looks like. Surface it
+    // on both locations so the owner can confirm it isn't an accidental double pay.
+    const empWG = (inputs.exports.employees || {}).WG || {};
+    const empMH = (inputs.exports.employees || {}).MH || {};
+    const both = Object.keys(empWG).filter((k) => k in empMH);
+    if (both.length && results.WG && results.MH) {
+        const names = both.map((k) => (empWG[k] && empWG[k].toast_name) || k);
+        for (const loc of ['WG', 'MH']) {
+            if (!results[loc]) continue;
+            results[loc].checks.push({
+                id: 'crossloc', level: 'warn',
+                title: `${both.length} name(s) worked at BOTH locations — paid twice`,
+                detail: `${names.join(', ')} appear on both stores' exports and will receive a paycheck at EACH. Correct if they really split time between stores; if it's a duplicate, remove the extra and re-run.`,
+            });
+        }
+    }
     return results;
 }

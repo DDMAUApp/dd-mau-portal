@@ -142,11 +142,18 @@ export function asRateData(data, loc, toastEmps) {
         const t = toastEmps[key];
         const override = p.rate_override;
         let rate;
-        if (override !== null && override !== undefined && override !== '' && Number(override) !== 0) {
+        if (override !== null && override !== undefined && override !== ''
+            && Number.isFinite(Number(override)) && Number(override) !== 0) {
             rate = Number(override);
         } else {
-            rate = (t && t.toast_rate ? t.toast_rate : p.last_rate) || 0.0;
+            const fallback = (t && t.toast_rate) ? t.toast_rate : p.last_rate;
+            rate = Number(fallback);
         }
+        // A pay rate must ALWAYS be a finite number. A non-numeric last_rate/override
+        // (e.g. "oops" stored by some other path) would otherwise yield NaN cents and
+        // ship a blank/NaN paycheck on an all-green run. Coerce to 0 here; runLocation
+        // then hard-FAILS any worked person left at $0 so it can never pay wrong.
+        if (!Number.isFinite(rate)) rate = 0;
         const [lf, ll] = splitLegal(p.legal_name);
         const emp = {
             first: p.first, last: p.last, rate: Number(rate),

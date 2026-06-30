@@ -162,6 +162,19 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     const [rev, setRev] = useState(0);                 // bump to re-render on ref mutation
     const bump = () => setRev((r) => r + 1);
 
+    // STALE-ACK GUARD: the Review "I checked these numbers" acknowledgment unlocks
+    // generation past WARN-level checks. If ANY input that feeds the computed
+    // numbers changes after it's ticked (cash tips, FOH split, period, or any
+    // roster/pay-add edit — every such edit calls bump() → rev++), the prior
+    // acknowledgment is stale and must be re-given, so a payroll can never ship
+    // under an acknowledgment that referred to different figures. (Fails always
+    // hard-block regardless of ack.)
+    const ackSig = `${rev}|${JSON.stringify(cash)}|${JSON.stringify(foh)}|${period}`;
+    const ackSigRef = useRef(ackSig);
+    useEffect(() => {
+        if (ackSigRef.current !== ackSig) { ackSigRef.current = ackSig; setAck(false); }
+    }, [ackSig]);
+
     const rosterRef = useRef(null);                    // cloud roster (mutated in place)
     const gridRef = useRef(null);                      // pay-adds grid {loc:{key:{...}}}
 
@@ -215,7 +228,10 @@ export default function PayrollPanel({ language, staffName, staffList }) {
         // Only default FOH% to 50 when the field is truly blank/invalid — NOT when
         // it's a deliberate 0 (a BOH-only day). `Number('0') || 50` would wrongly
         // turn 0% into 50/50 and misallocate the whole pool.
-        const fohPctVal = (v) => (v === '' || v == null || Number.isNaN(Number(v))) ? 50 : Number(v);
+        // Blank/non-numeric → default 50; otherwise clamp to [0,100] so a stray 150
+        // or −20 can't misallocate the pool (the engine also clamps defensively).
+        const fohPctVal = (v) => (v === '' || v == null || Number.isNaN(Number(v)))
+            ? 50 : Math.min(100, Math.max(0, Number(v)));
         const fohNum = { WG: fohPctVal(foh.WG), MH: fohPctVal(foh.MH) };
         const results = compute(inputs, period, cashNum, fohNum, periodExtras);
         live = { inputs, results, extrasErrors };
@@ -226,7 +242,12 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     // Effective "natural" rate = this period's Toast rate, else the last known
     // rate. An override is anything the owner types that differs from it.
     const naturalRate = (p) => (p.toast_rate != null ? p.toast_rate : (p.last_rate != null ? p.last_rate : 0));
-    const hasOverride = (p) => p.rate_override !== '' && p.rate_override != null;
+    // A pinned master rate counts only if it's a real positive number. The ENGINE
+    // (asRateData) treats a 0 override as "no override" and pays the Toast rate, so
+    // the UI must NOT show 0 as a locked master — that would display $0 while paying
+    // something else. Mirror the engine: 0 / non-numeric ⇒ not an override.
+    const hasOverride = (p) => p.rate_override !== '' && p.rate_override != null
+        && Number.isFinite(Number(p.rate_override)) && Number(p.rate_override) !== 0;
     const payRate = (p) => (hasOverride(p) ? Number(p.rate_override) : naturalRate(p));
     // True when this period's Pay Rate doesn't match what Toast reported (i.e. an
     // override that differs from Toast) — used to flag the row red so a mismatch
@@ -262,12 +283,27 @@ export default function PayrollPanel({ language, staffName, staffList }) {
         try {
             const files = await Promise.all(pending.map(fileToBytes));
             const p = await parseToastFiles(files, nameAliasesFromMeta(meta));
+            // Re-derive the period from THIS import's filenames so a re-import of a
+            // DIFFERENT period can't inherit the previous period's label — and so we
+            // know whether to clear the previous period's per-period entries below.
+            const guessed = guessPeriod(pending.map((f) => f.name));
+            const isNewPeriod = !!guessed && guessed !== period;
+            const per = guessed || period;
             const defaults = staffDefaultsByKey(staffList);
             for (const loc of LOCS) {
-                syncWithToast(roster, loc, p.exports.employees[loc] || {}, period || '', defaults);
+                syncWithToast(roster, loc, p.exports.employees[loc] || {}, per, defaults);
             }
             await saveRoster(roster);     // new names persist (section pre-filled or null)
             gridRef.current = null;       // rebuild grid for the new period
+            if (isNewPeriod) {
+                // Cash tips, FOH split, and the acknowledgment are PER-PERIOD — never
+                // carry them from the previous period into a new one (silent stale
+                // tips would misallocate the pool). Re-entered fresh for this period.
+                setPeriod(guessed);
+                setCash({ WG: '', MH: '' });
+                setFoh({ WG: 50, MH: 50 });
+            }
+            setAck(false);                // a fresh import always needs re-acknowledgment
             setParsed(p);
             setGenerated(null);
             bump();
@@ -290,10 +326,15 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     // rate in place); only clearing the field reverts that person to the Toast rate.
     const editRate = (loc, p, val) => {
         const s = String(val).trim();
-        if (s === '') { upsertPerson(roster, loc, p.key, { rate_override: '' }); bump(); return; }
+        if (s === '') { upsertPerson(roster, loc, p.key, { rate_override: '' }); setAck(false); bump(); return; }
         const n = Number(s);
-        if (!Number.isFinite(n) || n < 0) { bump(); return; }
+        // Reject 0 and negatives: a pay rate must be positive, and pinning $0 would
+        // be a no-op the engine ignores (paying the Toast rate) while the UI showed
+        // it as a locked master — a display-vs-pay mismatch. Clearing the field is
+        // the way to remove a pin.
+        if (!Number.isFinite(n) || n <= 0) { bump(); return; }
         upsertPerson(roster, loc, p.key, { rate_override: n });
+        setAck(false);
         bump();
     };
     // Drop the master pin → this person falls back to the Toast rate again.

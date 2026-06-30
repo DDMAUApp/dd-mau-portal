@@ -15,9 +15,13 @@ import { describe } from './extras.js';
 
 const OT_MULT = 1.5;
 
-/** FOH/BOH pool split that always sums to the total. Mirrors split_pools. */
+/** FOH/BOH pool split that always sums to the total. Mirrors split_pools.
+ *  fohPct is clamped to [0,100] so a stray out-of-range % (e.g. a pasted 150)
+ *  can never make one pool exceed the tips or the other pool go negative — both
+ *  pools stay in [0,total] and always sum to total. */
 export function splitPools(totalCents, fohPct) {
-    const foh = cRound((totalCents * fohPct) / 100.0);
+    const pct = Math.min(100, Math.max(0, Number.isFinite(fohPct) ? fohPct : 50));
+    const foh = cRound((totalCents * pct) / 100.0);
     return [foh, totalCents - foh];
 }
 
@@ -32,8 +36,13 @@ export function allocatePool(poolCents, weights) {
     const total = weights.reduce((a, b) => a + b, 0);
     if (total <= 0 || poolCents === 0) return new Array(n).fill(0);
     const exact = weights.map((w) => (poolCents * w) / total);
-    const floors = exact.map((e) => Math.trunc(e));
-    const short = poolCents - floors.reduce((a, b) => a + b, 0);
+    // Math.floor (toward −∞), NOT trunc (toward 0): for a non-negative pool the
+    // two are identical (exact ≥ 0), so this is behavior-for-behavior the same on
+    // every real tip pool. For a NEGATIVE pool (possible if a refund makes Toast
+    // card tips negative), trunc rounded the "floor" the wrong way and left a cent
+    // unallocated; floor + a sign-aware remainder conserves to the penny either way.
+    const floors = exact.map((e) => Math.floor(e));
+    const short = poolCents - floors.reduce((a, b) => a + b, 0); // sign = pool sign, |short| = cents to spread
     const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => {
         const ra = exact[a] - floors[a];
         const rb = exact[b] - floors[b];
@@ -41,7 +50,8 @@ export function allocatePool(poolCents, weights) {
         if (weights[b] !== weights[a]) return weights[b] - weights[a]; // weight desc
         return a - b;                                        // -index desc == index asc
     });
-    for (let i = 0; i < short; i++) floors[order[i]] += 1;
+    const step = short >= 0 ? 1 : -1;
+    for (let i = 0; i < Math.abs(short); i++) floors[order[i]] += step;
     return floors;
 }
 
@@ -139,6 +149,10 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
             continue;
         }
         rowsByKey[key] = newRow(m, t);
+        if (t.name_conflict) {
+            checks.push(check(`namemerge:${key}`, 'fail', `Two different names merged into one paycheck`,
+                `Toast rows for ${(t.merged_names || []).join(' AND ')} collapsed to a single person (${m.first} ${m.last}) — usually a wrong alias or a name-spelling collision. Their hours/tips were SUMMED onto one check. If these are different people, fix the alias/spelling and re-run; if it's really one person, confirm before generating.`));
+        }
         if (t.multi_line) {
             const detail = t.lines
                 .map((ln) => `${ln.job || 'job'}: ${fmtG(ln.reg_hours)}h reg + ${fmtG(ln.ot_hours)}h OT @ $${fmtG(ln.rate)}`)
@@ -235,11 +249,25 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
     // ---- per-row money -----------------------------------------------------
     for (const sec of ['FOH', 'BOH']) {
         for (const r of sections[sec]) {
+            // A worked person must have a real, positive pay rate. A rate that is
+            // 0 or non-finite (missing Toast/last rate, a pinned $0 the engine
+            // dropped, a non-numeric value) would silently pay $0 of base wages on
+            // an otherwise-green run — so hard-FAIL it. This is the guard that makes
+            // "paid the wrong amount" impossible to ship rather than just unlikely.
+            if (r.total_hours > 0 && (!Number.isFinite(r.rate) || r.rate <= 0)) {
+                checks.push(check(`zerorate:${r.key}`, 'fail', `${r.first} ${r.last}: pay rate is $0 / missing`,
+                    `They worked ${fmtG(r.total_hours)} hours but their pay rate read as $${fmtG(Number.isFinite(r.rate) ? r.rate : 0)}/hr. Set their rate on the People step (digits only, no $ or commas) and re-run.`));
+            }
             r.reg_cents = c(r.rate * r.reg_hours);
             r.ot_cents = c(r.rate * OT_MULT * r.ot_hours);
             r.comp_cents = r.tip_cents + r.reg_cents + r.ot_cents + r.extra_cents + r.hol_cents + r.vac_cents;
             r.eff_rate = r.total_hours ? round2(r.comp_cents / 100.0 / r.total_hours) : null;
-            if (r.comp_cents < 0) {
+            // comp_cents must be a real number. NaN < 0 is false, so a NaN paycheck
+            // would slip past the negative-pay check below — guard it explicitly.
+            if (!Number.isFinite(r.comp_cents)) {
+                checks.push(check(`nancomp:${r.key}`, 'fail', `${r.first} ${r.last}: paycheck didn't compute`,
+                    'Their total pay came out as not-a-number — a rate or hours value is bad. Fix it on the People step and re-run.'));
+            } else if (r.comp_cents < 0) {
                 checks.push(check(`negcomp:${r.key}`, 'fail', `${r.first} ${r.last}: negative paycheck`,
                     `Total comp is $${money2(r.comp_cents / 100)}. An advance deduction is bigger than what they earned this period -- split it across periods.`));
             }
@@ -280,7 +308,9 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
     for (const sec of ['FOH', 'BOH']) for (const r of sections[sec]) outTotal += r.reg_hours + r.ot_hours;
     for (const r of review) outTotal += r.reg_hours + r.ot_hours;
     outTotal = round2(outTotal);
-    if (Math.abs(toastTotal - outTotal) > 0.005) {
+    if (!Number.isFinite(toastTotal) || !Number.isFinite(outTotal) || Math.abs(toastTotal - outTotal) > 0.005) {
+        // `NaN > 0.005` is false, which would otherwise let a NaN-hours run take the
+        // green "all accounted for" branch — force the finite check first.
         checks.push(check('hours', 'fail', 'Hours reconciliation FAILED',
             `Toast export has ${fmtG(toastTotal)} hours; output accounts for ${fmtG(outTotal)}.`));
     } else {

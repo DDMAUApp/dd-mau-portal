@@ -185,16 +185,23 @@ export async function readPayrollExports(files, aliases) {
             const line = { job: String(r['Job Title'] == null ? '' : r['Job Title']).trim(), reg_hours: reg, ot_hours: ot, rate: toFloat(r['Hourly Rate']) };
             const emp = byKey[key];
             if (!emp) {
-                byKey[key] = { toast_name: rawName, first, last, reg_hours: reg, ot_hours: ot, toast_rate: line.rate, lines: [line] };
+                byKey[key] = { toast_name: rawName, first, last, reg_hours: reg, ot_hours: ot, toast_rate: line.rate, lines: [line], names: new Set([rawName]) };
             } else {
                 emp.reg_hours += reg;
                 emp.ot_hours += ot;
                 emp.lines.push(line);
+                emp.names.add(rawName);
             }
         }
         for (const k of Object.keys(byKey)) {
             const emp = byKey[k];
             emp.multi_line = emp.lines.length > 1;
+            // Multi-JOB rows for one person carry the SAME Toast name; two DIFFERENT
+            // names collapsing to one key means an alias or normalization merged two
+            // distinct people into a single paycheck. Surface it so it can't pass silently.
+            emp.name_conflict = emp.names.size > 1;
+            emp.merged_names = [...emp.names];
+            delete emp.names; // keep the emp JSON-able
             emp.reg_hours = round2(emp.reg_hours);
             emp.ot_hours = round2(emp.ot_hours);
         }
@@ -221,7 +228,12 @@ export async function readSalesSummary(file) {
         const wb = new ExcelJS.Workbook();
         await wb.xlsx.load(toArrayBuffer(file.bytes));
         const ws = wb.worksheets[0];
-        const maxRow = Math.min(80, ws.rowCount || 80);
+        // Scan the WHOLE sheet (capped generously), not the first 80 rows. The
+        // card-'Tips' line lives in the Revenue block which can sit past row 80 on
+        // a longer summary (more payment types / multi-week); an 80-row cap would
+        // silently read $0 card tips. exceljs is already fully in memory, so the
+        // wider scan is free. The 5000 cap is just a runaway guard.
+        const maxRow = Math.min(5000, ws.rowCount || 0);
         for (let r = 1; r <= maxRow; r++) {
             const row = ws.getRow(r);
             cells.push([cellVal(row.getCell(1).value), cellVal(row.getCell(2).value)]);

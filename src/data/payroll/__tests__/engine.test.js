@@ -9,6 +9,7 @@ import { cRound, c, round2 } from '../cents';
 import { keyFromToast, keyFromMaster } from '../names';
 import { validate, describe as describeExtra } from '../extras';
 import { splitPools, allocatePool, runLocation } from '../runLocation';
+import { asRateData, normalizeRoster } from '../roster';
 
 // ───────────────────────────── cents / rounding ─────────────────────────────
 describe('cents rounding (CPython-faithful)', () => {
@@ -213,5 +214,74 @@ describe('runLocation invariants', () => {
         const alloc = ['FOH', 'BOH'].flatMap((s) => res.sections[s].rows).reduce((a, r) => a + r.tip_cents, 0);
         expect(alloc).toBe(res.tips.total_cents);
         expect(res.checks.filter((k) => k.level === 'fail').length).toBe(0);
+    });
+});
+
+// ───────────────────── audit hardening (2026-06-30) ─────────────────────
+// Locks in the fixes from the payroll correctness audit so they can't regress.
+describe('allocatePool conserves for ANY pool sign', () => {
+    it('positive pools are unchanged (floor === trunc when exact ≥ 0)', () => {
+        expect(allocatePool(500000, [33.33, 33.33, 33.34])).toEqual([166650, 166650, 166700]);
+        expect(allocatePool(100003, [1, 1, 1]).reduce((a, b) => a + b, 0)).toBe(100003);
+        expect(allocatePool(1, [1, 0, 0])).toEqual([1, 0, 0]);
+    });
+    it('negative pools (refunded tips) still sum EXACTLY to the pool', () => {
+        for (const pool of [-1, -7, -52749, -100000]) {
+            for (const w of [[1, 1, 1], [0, 0, 5.49, 67.12], [3, 1, 1]]) {
+                expect(allocatePool(pool, w).reduce((a, b) => a + b, 0)).toBe(pool);
+            }
+        }
+    });
+});
+
+describe('splitPools clamps FOH% to [0,100]', () => {
+    it('always returns two pools summing to the total, even out of range', () => {
+        for (const pct of [-20, 0, 50, 100, 150, NaN]) {
+            const [foh, boh] = splitPools(100000, pct);
+            expect(foh + boh).toBe(100000);
+            expect(foh).toBeGreaterThanOrEqual(0);
+            expect(boh).toBeGreaterThanOrEqual(0);
+        }
+    });
+});
+
+describe('asRateData always yields a finite rate (no NaN paychecks)', () => {
+    const mkRoster = (person) => normalizeRoster({ WG: { people: { k1: { key: 'k1', first: 'A', last: 'B', section: 'FOH', ...person } }, salary: [] }, MH: { people: {}, salary: [] } });
+    it('a non-numeric last_rate coerces to 0 (then runLocation will FAIL it), never NaN', () => {
+        const rd = asRateData(mkRoster({ last_rate: 'oops' }), 'WG', {});
+        expect(rd.employees[0].rate).toBe(0);
+        expect(Number.isFinite(rd.employees[0].rate)).toBe(true);
+    });
+    it('a rate_override of 0 is ignored — pays the Toast rate (display-vs-pay parity)', () => {
+        const rd = asRateData(mkRoster({ rate_override: 0, last_rate: 12 }), 'WG', { k1: { toast_rate: 15 } });
+        expect(rd.employees[0].rate).toBe(15);
+    });
+    it('a NaN rate_override does not produce a NaN paycheck', () => {
+        const rd = asRateData(mkRoster({ rate_override: NaN, last_rate: 14 }), 'WG', {});
+        expect(rd.employees[0].rate).toBe(14);
+    });
+    it('a real positive override wins over Toast', () => {
+        const rd = asRateData(mkRoster({ rate_override: 20, last_rate: 12 }), 'WG', { k1: { toast_rate: 15 } });
+        expect(rd.employees[0].rate).toBe(20);
+    });
+});
+
+describe('runLocation hard-FAILS a worked person with a $0 / missing rate', () => {
+    it('zero rate + hours worked → fail check, not a silent $0 paycheck', () => {
+        const e = { first: 'Z', last: 'ERO', rate: 0, section: 'FOH', no_tip: false, direct_deposit: false, legal_first: '', legal_last: '', legal_name: '', note: '', key: keyFromMaster('Z', 'ERO'), row: 0 };
+        const md = { employees: [e], salary: [], by_key: { [e.key]: e }, errors: [] };
+        const t = { [e.key]: { toast_name: 'ERO, Z', first: 'Z', last: 'ERO', toast_rate: 0, reg_hours: 30, ot_hours: 0, multi_line: false, lines: [] } };
+        const res = runLocation('WG', t, md, 0, 0, 50, []);
+        expect(res.checks.some((k) => k.id.startsWith('zerorate:') && k.level === 'fail')).toBe(true);
+    });
+});
+
+describe('runLocation FAILS when two different names merge into one key', () => {
+    it('name_conflict from a bad alias is a hard fail', () => {
+        const e = emp('AMY', 'FOH1', 15, 'FOH');
+        const md = { employees: [e], salary: [], by_key: { [e.key]: e }, errors: [] };
+        const t = { [e.key]: { toast_name: 'FOH1, AMY', first: 'AMY', last: 'FOH1', toast_rate: 15, reg_hours: 20, ot_hours: 0, multi_line: true, lines: [], name_conflict: true, merged_names: ['FOH1, AMY', 'OTHER, PERSON'] } };
+        const res = runLocation('WG', t, md, 0, 0, 50, []);
+        expect(res.checks.some((k) => k.id.startsWith('namemerge:') && k.level === 'fail')).toBe(true);
     });
 });
