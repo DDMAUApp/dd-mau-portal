@@ -788,8 +788,12 @@ function SignatureModal({ field, initial, isEs, onClose, onSave }) {
     const drawing = useRef(false);
     const lastPoint = useRef(null);
     const [empty, setEmpty] = useState(!initial);
+    const [mode, setMode] = useState('draw');   // 'draw' | 'type' — DocuSign-style "adopt your signature"
+    const [typed, setTyped] = useState('');
+    const isInitials = field.type === 'initials';
 
     useEffect(() => {
+        if (mode !== 'draw') return;
         const c = canvasRef.current;
         if (!c) return;
         // Match canvas backing pixel size to its display size for crisp lines.
@@ -808,7 +812,7 @@ function SignatureModal({ field, initial, isEs, onClose, onSave }) {
             img.onload = () => ctx.drawImage(img, 0, 0, r.width, r.height);
             img.src = initial;
         }
-    }, []);
+    }, [mode]);
 
     const pos = (e) => {
         const c = canvasRef.current;
@@ -839,12 +843,27 @@ function SignatureModal({ field, initial, isEs, onClose, onSave }) {
         c.getContext('2d').clearRect(0, 0, c.width, c.height);
         setEmpty(true);
     };
+    // Render a typed name in a script style to an offscreen canvas → PNG.
+    const renderTyped = () => {
+        const name = typed.trim();
+        if (!name) return null;
+        const oc = document.createElement('canvas');
+        oc.width = 620; oc.height = 170;
+        const ctx = oc.getContext('2d');
+        ctx.fillStyle = '#1f2937';
+        ctx.textBaseline = 'middle';
+        let fs = 72;
+        const setFont = () => { ctx.font = `italic ${fs}px "Brush Script MT","Snell Roundhand","Segoe Script","Apple Chancery",cursive`; };
+        setFont();
+        while (ctx.measureText(name).width > 580 && fs > 22) { fs -= 4; setFont(); }
+        ctx.fillText(name, 20, oc.height / 2);
+        return oc.toDataURL('image/png');
+    };
+    const canDone = mode === 'type' ? !!typed.trim() : !empty;
     const save = () => {
+        if (mode === 'type') { const url = renderTyped(); if (url) onSave(url); return; }
         if (empty) return;
-        // Export at modest resolution — the embedded PNG only needs to read
-        // clearly at field box dimensions; high-res is bandwidth waste.
-        const dataUrl = canvasRef.current.toDataURL('image/png');
-        onSave(dataUrl);
+        onSave(canvasRef.current.toDataURL('image/png'));
     };
 
     return (
@@ -852,28 +871,58 @@ function SignatureModal({ field, initial, isEs, onClose, onSave }) {
             <div className="bg-white w-full sm:max-w-md rounded-2xl">
                 <div className="p-3 border-b border-gray-200">
                     <h3 className="font-bold text-sm">
-                        ✍️ {field.type === 'initials' ? tx('Sign your initials', 'Firma con tus iniciales') : tx('Sign here', 'Firma aquí')}
+                        ✍️ {isInitials ? tx('Add your initials', 'Agrega tus iniciales') : tx('Adopt your signature', 'Adopta tu firma')}
                     </h3>
-                    <p className="text-[11px] text-gray-500">{tx('Use your finger or mouse.', 'Usa tu dedo o el mouse.')}</p>
+                    <div className="mt-2 inline-flex rounded-lg bg-gray-100 p-0.5 text-[12px] font-bold">
+                        <button onClick={() => setMode('draw')}
+                            className={`px-3 py-1 rounded-md ${mode === 'draw' ? 'bg-white shadow text-mint-700' : 'text-gray-500'}`}>
+                            {tx('Draw', 'Dibujar')}
+                        </button>
+                        <button onClick={() => setMode('type')}
+                            className={`px-3 py-1 rounded-md ${mode === 'type' ? 'bg-white shadow text-mint-700' : 'text-gray-500'}`}>
+                            {tx('Type', 'Escribir')}
+                        </button>
+                    </div>
                 </div>
                 <div className="p-3">
-                    <canvas
-                        ref={canvasRef}
-                        className="w-full h-44 bg-gray-50 border-2 border-dashed border-mint-300 rounded-lg touch-none"
-                        onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
-                        onTouchStart={start} onTouchMove={move} onTouchEnd={end}
-                    />
+                    {mode === 'draw' ? (
+                        <canvas
+                            ref={canvasRef}
+                            className="w-full h-44 bg-gray-50 border-2 border-dashed border-mint-300 rounded-lg touch-none"
+                            onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+                            onTouchStart={start} onTouchMove={move} onTouchEnd={end}
+                        />
+                    ) : (
+                        <div>
+                            <input type="text" value={typed} onChange={(e) => setTyped(e.target.value)}
+                                placeholder={isInitials ? tx('Your initials', 'Tus iniciales') : tx('Type your full name', 'Escribe tu nombre completo')}
+                                className="w-full text-base px-3 py-2.5 rounded-xl border-2 border-gray-200 focus:border-mint-500 outline-none" />
+                            <div className="mt-2 h-28 bg-gray-50 border-2 border-dashed border-mint-300 rounded-lg flex items-center justify-center overflow-hidden px-2">
+                                <span style={{ fontFamily: '"Brush Script MT","Snell Roundhand","Segoe Script","Apple Chancery",cursive', fontStyle: 'italic', fontSize: '38px', color: typed.trim() ? '#1f2937' : '#9ca3af' }}>
+                                    {typed.trim() || tx('Preview', 'Vista previa')}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                    <p className="text-[10px] text-gray-400 mt-2 leading-tight">
+                        {tx(
+                            'By tapping Done, you agree this is your legal electronic signature (ESIGN Act / UETA).',
+                            'Al tocar Listo, aceptas que esta es tu firma electrónica legal (ESIGN Act / UETA).',
+                        )}
+                    </p>
                 </div>
                 <div className="p-3 border-t border-gray-200 flex gap-2">
-                    <button onClick={clear}
-                        className="flex-1 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold">
-                        {tx('Clear', 'Borrar')}
-                    </button>
+                    {mode === 'draw' && (
+                        <button onClick={clear}
+                            className="flex-1 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold">
+                            {tx('Clear', 'Borrar')}
+                        </button>
+                    )}
                     <button onClick={onClose}
                         className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 text-sm font-bold">
                         {tx('Cancel', 'Cancelar')}
                     </button>
-                    <button onClick={save} disabled={empty}
+                    <button onClick={save} disabled={!canDone}
                         className="flex-1 py-2 rounded-lg bg-mint-700 text-white text-sm font-bold disabled:opacity-50">
                         {tx('Done', 'Listo')}
                     </button>
