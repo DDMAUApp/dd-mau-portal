@@ -37,6 +37,21 @@ async function loadPdfLib() {
     return await import('pdf-lib');
 }
 
+// Keep drawText from throwing on emoji / non-Latin glyphs (WinAnsi can't encode
+// them), which would abort the whole finalize. See OnboardingFillablePdf for the
+// full rationale.
+const WINANSI_SUBS = { '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...' };
+function winAnsiSafe(font, value) {
+    const str = String(value == null ? '' : value);
+    try { font.encodeText(str); return str; } catch { /* contains unencodable chars */ }
+    let out = '';
+    for (const ch of str) {
+        try { font.encodeText(ch); out += ch; }
+        catch { out += (WINANSI_SUBS[ch] ?? ''); }
+    }
+    return out;
+}
+
 export default function OnboardingEmployerFill({
     docDef,
     hire,
@@ -194,7 +209,7 @@ export default function OnboardingEmployerFill({
                         });
                     }
                 } else {
-                    const text = String(val || '');
+                    const text = winAnsiSafe(helvetica, val);
                     const fontSize = f.fontSize || Math.max(8, Math.min(h * 0.7, 12));
                     page.drawText(text, {
                         x: x + 1,

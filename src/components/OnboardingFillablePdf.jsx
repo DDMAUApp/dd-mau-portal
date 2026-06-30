@@ -100,6 +100,25 @@ function autofillValue(autofillId, hire) {
     return map[autofillId] || '';
 }
 
+// Helvetica (the only font we embed) uses WinAnsi/CP1252 encoding. That covers
+// English + Spanish fine — accents, ñ, curly quotes and dashes all encode — but
+// a stray emoji or non-Latin character (pasted in, or from a non-Latin keyboard)
+// makes pdf-lib's drawText THROW "WinAnsi cannot encode", which aborts the ENTIRE
+// submit and leaves the hire unable to finish. This keeps every encodable
+// character and drops/normalizes only the few it can't, so one exotic glyph can
+// never break submission.
+const WINANSI_SUBS = { '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...' };
+function winAnsiSafe(font, value) {
+    const str = String(value == null ? '' : value);
+    try { font.encodeText(str); return str; } catch { /* contains unencodable chars */ }
+    let out = '';
+    for (const ch of str) {
+        try { font.encodeText(ch); out += ch; }
+        catch { out += (WINANSI_SUBS[ch] ?? ''); }
+    }
+    return out;
+}
+
 export default function OnboardingFillablePdf({
     docDef,        // ONBOARDING_DOCS entry (kind: 'template')
     hire,
@@ -321,8 +340,10 @@ export default function OnboardingFillablePdf({
                         });
                     }
                 } else {
-                    // text, date, etc — render as plain text aligned top-left
-                    const text = String(val || '');
+                    // text, date, etc — render as plain text aligned top-left.
+                    // winAnsiSafe so an emoji / non-Latin glyph can't throw and
+                    // abort the whole submit (see helper above).
+                    const text = winAnsiSafe(helvetica, val);
                     const fontSize = f.fontSize || Math.max(8, Math.min(h * 0.7 * 72 / 96, 12));
                     page.drawText(text, {
                         x: x + 1,
