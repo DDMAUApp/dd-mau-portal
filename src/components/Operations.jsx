@@ -848,6 +848,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
+            // Order-history modal — lifted to PAGE level (2026-06-30) so it can be
+            // opened from BOTH the recent-orders bar AND from inside the cart modal
+            // (layered above it), letting a manager reference a past order while
+            // building a new cart without losing the cart.
+            const [orderHistoryOpen, setOrderHistoryOpen] = useState(false);
+            // id → display name, for showing a past order's items by name in history.
+            const itemNameById = useMemo(() => {
+                const m = {};
+                for (const cat of (customInventory || [])) {
+                    for (const it of (cat.items || [])) {
+                        if (it && it.id) m[it.id] = (language === 'es' && it.nameEs) ? it.nameEs : (it.name || it.id);
+                    }
+                }
+                return m;
+            }, [customInventory, language]);
             // Cart vendor-assignment state — Andrew 2026-05-22.
             // Live override of each item's vendor for the current cart
             // session. Default: each item uses its item.preferredVendor.
@@ -7129,7 +7144,20 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 setInventory={setInventory}
                                 currentInventory={inventory}
                                 language={language}
+                                onOpenHistory={() => setOrderHistoryOpen(true)}
                             />
+                            {/* Page-level Order-history modal (z-[80], above the cart
+                                modal) so it can be opened while building a cart. */}
+                            {orderHistoryOpen && (
+                                <RecentOrdersHistoryModal
+                                    storeLocation={storeLocation}
+                                    setInventory={setInventory}
+                                    currentInventory={inventory}
+                                    language={language}
+                                    itemNameById={itemNameById}
+                                    onClose={() => setOrderHistoryOpen(false)}
+                                />
+                            )}
 
                             {/* Move-mode banner — sticky strip that surfaces
                                 the in-progress item + a Cancel. Subcategory
@@ -7353,7 +7381,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             {/* Header */}
                                             <div className="bg-mint-700 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
                                                 <h3 className="font-bold text-base sm:text-lg">{"\u{1F6D2}"} {language === "es" ? "Carrito" : "Cart"} — {totalItems} {language === "es" ? "artículos" : "items"} · {totalQty} {language === "es" ? "total" : "total"}</h3>
-                                                <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-bold hover:bg-white/30 transition">{"\u{2715}"}</button>
+                                                <div className="flex items-center gap-2">
+                                                    {/* Open order history WHILE the cart is open — layers above (z-[80]) so
+                                                        you can reference a past order without losing your in-progress cart. */}
+                                                    <button onClick={() => setOrderHistoryOpen(true)}
+                                                        className="px-2.5 py-1 rounded-full bg-white/20 hover:bg-white/30 text-white text-xs font-bold transition flex items-center gap-1">
+                                                        📋 {language === "es" ? "Historial" : "History"}
+                                                    </button>
+                                                    <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-bold hover:bg-white/30 transition">{"\u{2715}"}</button>
+                                                </div>
                                             </div>
                                             {/* Old in-cart "Assign to" pill bar removed
                                                 2026-05-26. The same mechanic now lives in a
@@ -9653,13 +9689,12 @@ async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, cur
     return true;
 }
 
-function RecentOrdersBar({ storeLocation, setInventory, currentInventory, language }) {
+function RecentOrdersBar({ storeLocation, setInventory, currentInventory, language, onOpenHistory }) {
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState(null);
     const [restoringId, setRestoringId] = useState(null);
-    const [showHistoryModal, setShowHistoryModal] = useState(false);
     // Bumped to force a reload from the Retry button (changes the effect dep).
     const [retryNonce, setRetryNonce] = useState(0);
 
@@ -9864,21 +9899,12 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
                             );
                         })}
                     </div>
-                    <button onClick={() => setShowHistoryModal(true)}
+                    <button onClick={onOpenHistory}
                         className="shrink-0 text-[10px] font-bold text-orange-700 hover:text-orange-900 underline px-1">
                         {isEs ? 'Todos →' : 'All →'}
                     </button>
                 </div>
             </div>
-            {showHistoryModal && (
-                <RecentOrdersHistoryModal
-                    storeLocation={storeLocation}
-                    setInventory={setInventory}
-                    currentInventory={currentInventory}
-                    language={language}
-                    onClose={() => setShowHistoryModal(false)}
-                />
-            )}
         </>
     );
 }
@@ -9891,7 +9917,7 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
 // needed). Each row has a "Send to cart" button that runs the same
 // shared restore helper as the bar. Click outside or X to close.
 // ─────────────────────────────────────────────────────────────────
-function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventory, language, onClose }) {
+function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventory, language, onClose, itemNameById = {} }) {
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -9899,6 +9925,10 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
     const [restoringId, setRestoringId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [retryNonce, setRetryNonce] = useState(0);
+    // Which order's item list is expanded for read-only VIEWING. This is the key
+    // to "look at history while building a cart": you can see exactly what was on a
+    // past order without restoring it (restore is refused when the cart has items).
+    const [expandedId, setExpandedId] = useState(null);
 
     // 2026-05-24 (round 2): same fix as RecentOrdersBar — switched
     // getDocs → onSnapshot for cache warmth, bumped timeout to 25s.
@@ -9994,8 +10024,10 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
         }), [history, searchTerm, isEs]);
 
     return (
-        <ModalPortal>
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center"
+        <ModalPortal onBackPress={onClose}>
+        {/* z-[80]: above the cart modal (z-50) so it can be opened from inside the
+            cart and you can reference a past order while building a new one. */}
+        <div className="fixed inset-0 z-[80] bg-black/50 flex items-end md:items-center justify-center"
             onClick={onClose}>
             <div className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl"
                 onClick={(e) => e.stopPropagation()}
@@ -10010,8 +10042,8 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
                         </h2>
                         <p className="text-[11px] text-orange-800">
                             {isEs
-                                ? 'Toca un pedido para enviarlo al carrito.'
-                                : 'Tap any order to send it back to the cart.'}
+                                ? 'Toca un pedido para ver sus items · ↩ para enviarlo al carrito.'
+                                : 'Tap an order to view its items · ↩ to send it to the cart.'}
                         </p>
                     </div>
                     <button onClick={onClose}
@@ -10067,24 +10099,47 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
                                 { weekday: 'short', month: 'short', day: 'numeric', year: '2-digit' })
                             : (h.id || '—');
                         const isRestoring = restoringId === h.id;
+                        const isOpen = expandedId === h.id;
                         return (
                             <div key={h.id}
-                                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200">
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-[13px] font-black text-gray-900 truncate">
-                                        {dateLabel}
-                                    </div>
-                                    <div className="text-[11px] text-gray-600 truncate">
-                                        {itemCount} {isEs ? 'items' : 'items'} · {isEs ? 'cantidad' : 'qty'} {totalQty}
-                                    </div>
+                                className="rounded-lg bg-gray-50 border border-gray-200 overflow-hidden">
+                                <div className="flex items-center gap-2 px-3 py-2">
+                                    {/* Tap the date area to VIEW this order's items (read-only) —
+                                        works even while the cart has items. */}
+                                    <button onClick={() => setExpandedId(isOpen ? null : h.id)}
+                                        className="min-w-0 flex-1 text-left active:scale-[0.99] transition">
+                                        <div className="text-[13px] font-black text-gray-900 truncate flex items-center gap-1">
+                                            <span className="text-gray-400">{isOpen ? '▾' : '▸'}</span>
+                                            {dateLabel}
+                                        </div>
+                                        <div className="text-[11px] text-gray-600 truncate">
+                                            {itemCount} {isEs ? 'items' : 'items'} · {isEs ? 'cantidad' : 'qty'} {totalQty}
+                                            <span className="text-gray-400"> · {isOpen ? (isEs ? 'ocultar' : 'hide') : (isEs ? 'toca para ver' : 'tap to view')}</span>
+                                        </div>
+                                    </button>
+                                    <button onClick={() => handleRestoreInModal(h)}
+                                        disabled={isRestoring}
+                                        className="px-3 py-1.5 rounded-md bg-orange-600 text-white text-[12px] font-bold hover:bg-orange-700 shrink-0 disabled:opacity-50 disabled:cursor-wait">
+                                        {isRestoring
+                                            ? (isEs ? '…' : '…')
+                                            : (isEs ? '↩ Al carrito' : '↩ Send to cart')}
+                                    </button>
                                 </div>
-                                <button onClick={() => handleRestoreInModal(h)}
-                                    disabled={isRestoring}
-                                    className="px-3 py-1.5 rounded-md bg-orange-600 text-white text-[12px] font-bold hover:bg-orange-700 shrink-0 disabled:opacity-50 disabled:cursor-wait">
-                                    {isRestoring
-                                        ? (isEs ? '…' : '…')
-                                        : (isEs ? '↩ Al carrito' : '↩ Send to cart')}
-                                </button>
+                                {isOpen && (
+                                    <div className="px-3 pb-2 pt-1 border-t border-gray-200 bg-white">
+                                        <ul className="text-[12px] text-gray-700">
+                                            {Object.entries(h.counts || {})
+                                                .filter(([, q]) => Number(q) > 0)
+                                                .sort((a, b) => (itemNameById[a[0]] || a[0]).localeCompare(itemNameById[b[0]] || b[0]))
+                                                .map(([id, q]) => (
+                                                    <li key={id} className="flex items-center justify-between gap-2 py-1 border-b border-gray-100 last:border-0">
+                                                        <span className="truncate">{itemNameById[id] || id}</span>
+                                                        <span className="font-bold tabular-nums shrink-0">×{Number(q)}</span>
+                                                    </li>
+                                                ))}
+                                        </ul>
+                                    </div>
+                                )}
                             </div>
                         );
                     })}
