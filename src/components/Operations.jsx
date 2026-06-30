@@ -2162,7 +2162,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         newId = `${masterIdx}-${n}`;
                                         idMigration[si.id] = newId;
                                     }
-                                    if (seenIds.has(newId)) return;
+                                    // NEVER silently drop a user's item on an id collision — that
+                                    // is how an added item could "erase" a previous one. Re-id the
+                                    // collider so BOTH survive (a genuine accidental dup then shows
+                                    // twice — visible + deletable — instead of vanishing).
+                                    if (seenIds.has(newId)) {
+                                        let n = mergedItems.length;
+                                        while (seenIds.has(`${masterIdx}-${n}`) || masterIds.has(`${masterIdx}-${n}`)) n++;
+                                        const reId = `${masterIdx}-${n}`;
+                                        idMigration[si.id] = reId;
+                                        seenIds.add(reId);
+                                        mergedItems.push({ ...si, id: reId });
+                                        return;
+                                    }
                                     seenIds.add(newId);
                                     // If a master twin exists, layer master fields under saved
                                     // (saved wins on every non-empty field).
@@ -3931,18 +3943,30 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     return;
                 }
                 const translated = autoTranslateItem(input);
+                const targetName = customInventory[targetCatIdx]?.name;
                 setWriteInValues(prev => ({ ...prev, [sourceCatIdx]: "" }));
                 setWriteInDest(prev => ({ ...prev, [sourceCatIdx]: { catIdx: sourceCatIdx, location: '' } }));
                 await mutateInventory((live) => {
-                    const liveCat = live[targetCatIdx];
-                    if (!liveCat) return live;
+                    // Locate the category in the LIVE doc by NAME, not by index: the saved
+                    // array can be shorter / a different order than the rendered (merged)
+                    // list, so live[targetCatIdx] could hit the wrong category — or none
+                    // (e.g. a store whose saved doc has fewer categories), silently dropping
+                    // the add. Create the category if the saved doc doesn't have it yet.
+                    let idx = live.findIndex(c => c && c.name === targetName);
+                    let working = live;
+                    if (idx === -1) {
+                        if (!targetName) return live;
+                        working = [...live, { name: targetName, items: [] }];
+                        idx = working.length - 1;
+                    }
+                    const liveCat = working[idx];
                     const newItem = {
-                        id: nextItemId(liveCat, targetCatIdx),
+                        id: nextItemId(liveCat, idx),
                         name: translated.name, nameEs: translated.nameEs,
                         vendor: "", supplier: "", orderDay: "", pack: "", price: null,
                         location,
                     };
-                    return live.map((cat, idx) => idx === targetCatIdx ? { ...cat, items: [...cat.items, newItem] } : cat);
+                    return working.map((cat, i) => i === idx ? { ...cat, items: [...cat.items, newItem] } : cat);
                 });
             };
 
@@ -3952,16 +3976,26 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     name: invNewName.trim(), nameEs: invNewNameEs.trim(),
                     supplier: invNewSupplier.trim(), orderDay: invNewOrderDay,
                 };
+                const targetName = customInventory[catIdx]?.name;
                 await mutateInventory((live) => {
-                    const liveCat = live[catIdx];
-                    if (!liveCat) return live;
+                    // Find the category in the LIVE doc by NAME (saved order/length can
+                    // differ from the rendered list) so the add never lands on the wrong
+                    // category or silently no-ops. Create it if the saved doc lacks it.
+                    let idx = live.findIndex(c => c && c.name === targetName);
+                    let working = live;
+                    if (idx === -1) {
+                        if (!targetName) return live;
+                        working = [...live, { name: targetName, items: [] }];
+                        idx = working.length - 1;
+                    }
+                    const liveCat = working[idx];
                     const newItem = {
-                        id: nextItemId(liveCat, catIdx),
+                        id: nextItemId(liveCat, idx),
                         name: captured.name, nameEs: captured.nameEs,
                         vendor: captured.supplier, supplier: captured.supplier,
                         orderDay: captured.orderDay, pack: "", price: null, subcat: "",
                     };
-                    return live.map((cat, idx) => idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat);
+                    return working.map((cat, i) => i === idx ? { ...cat, items: [...cat.items, newItem] } : cat);
                 });
                 setInvNewName(""); setInvNewNameEs(""); setInvNewSupplier(""); setInvNewOrderDay("Fri"); setInvShowAddForm(null);
             };
@@ -6704,26 +6738,37 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             if (!trimmed) return;
                             setNewMasterSaving(true);
                             try {
-                                const cat = customInventory[newMasterCatIdx];
-                                const newId = nextItemId(cat, newMasterCatIdx);
-                                const newItem = {
-                                    id: newId,
-                                    name: trimmed,
-                                    nameEs: (newMasterNameEs || "").trim(),
-                                    vendor: vendor === "sysco" ? "Sysco" : "US Foods",
-                                    supplier: vendor === "sysco" ? "Sysco" : "US Foods",
-                                    preferredVendor: vendor === "sysco" ? "Sysco" : "US Foods",
-                                    orderDay: "",
-                                    pack: "",
-                                    price: null,
-                                    subcat: "",
-                                    addedFromVendor: vendor === "sysco" ? "Sysco" : "US Foods",
-                                };
-                                const updated = customInventory.map((c, i) =>
-                                    i === newMasterCatIdx ? { ...c, items: [...c.items, newItem] } : c
-                                );
-                                setCustomInventory(updated);
-                                await saveInventory(inventory, updated);
+                                // Was: build `updated` from local customInventory + legacy
+                                // saveInventory() (a full-doc setDoc). That CLOBBERED the whole
+                                // list from a possibly-stale local copy — so a second add could
+                                // erase the item added just before it. Now goes through the
+                                // transactional mutateInventory (reads the live doc, appends),
+                                // locating the category by NAME so it's immune to saved-vs-merged
+                                // ordering. newId is computed inside the txn against the live cat.
+                                const targetName = customInventory[newMasterCatIdx]?.name;
+                                let newId = null;
+                                const result = await mutateInventory((live) => {
+                                    let idx = live.findIndex(c => c && c.name === targetName);
+                                    let working = live;
+                                    if (idx === -1) { working = [...live, { name: targetName, items: [] }]; idx = working.length - 1; }
+                                    const liveCat = working[idx];
+                                    newId = nextItemId(liveCat, idx);
+                                    const newItem = {
+                                        id: newId,
+                                        name: trimmed,
+                                        nameEs: (newMasterNameEs || "").trim(),
+                                        vendor: vendor === "sysco" ? "Sysco" : "US Foods",
+                                        supplier: vendor === "sysco" ? "Sysco" : "US Foods",
+                                        preferredVendor: vendor === "sysco" ? "Sysco" : "US Foods",
+                                        orderDay: "",
+                                        pack: "",
+                                        price: null,
+                                        subcat: "",
+                                        addedFromVendor: vendor === "sysco" ? "Sysco" : "US Foods",
+                                    };
+                                    return working.map((c, i) => i === idx ? { ...c, items: [...c.items, newItem] } : c);
+                                });
+                                if (!result || !newId) throw new Error("inventory save failed");
                                 await saveVendorMatch(vendor, vendorId, newId);
                                 closeEditor();
                             } catch (e) {
