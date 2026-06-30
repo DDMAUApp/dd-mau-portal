@@ -2218,6 +2218,7 @@ exports.expireAndPurgeApplications = onSchedule(
 //    an ops/{docId} wildcard) so we DON'T fire on every inventory/labor write.
 function makeAttendanceRecorder(location) {
     return async (event) => {
+        const before = event.data?.before?.data();
         const after = event.data?.after?.data();
         if (!after) return; // doc deleted — nothing to record
         try {
@@ -2225,6 +2226,14 @@ function makeAttendanceRecorder(location) {
             if (n) logger.info(`recordAttendance(${location}): wrote ${n} attendance rows`);
         } catch (e) {
             logger.warn(`recordAttendance(${location}) failed:`, e?.message || e);
+        }
+        // Capture COMPLETED earlier sessions (clock out → clock back in) so the
+        // panel can show every session today, not just the latest punch.
+        try {
+            const s = await attendanceLib.recordCompletedSessions(location, before, after);
+            if (s) logger.info(`recordSessions(${location}): logged ${s} completed session(s)`);
+        } catch (e) {
+            logger.warn(`recordSessions(${location}) failed:`, e?.message || e);
         }
     };
 }

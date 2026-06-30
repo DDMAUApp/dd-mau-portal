@@ -173,7 +173,71 @@ async function markNoShows(dateKey) {
     return wrote;
 }
 
+// ── Multi-session logger — Andrew 2026-06-30 ─────────────────────────────────
+// The scraper keeps ONE entry per person = their LATEST punch. So when someone
+// clocks out and back in (e.g. left for lunch), their first in/out is OVERWRITTEN
+// and "Who's clocked in" loses it. This captures it: each time the roster is
+// rewritten we diff before→after by toastEmployeeId, and when a person's
+// clockedInAt CHANGES (a new session started), the PREVIOUS session is complete
+// and gets appended to ops/clock_sessions_{location} (one doc per location,
+// reset each Central day). The panel reads it to show every session for today.
+//
+// Idempotent: sessions are de-duped by their (stable) clockIn timestamp, so the
+// same diff seen twice writes nothing new. Best-effort — never touches the feed.
+async function recordCompletedSessions(location, before, after) {
+    const afterEntries = Array.isArray(after?.entries) ? after.entries : [];
+    const beforeEntries = Array.isArray(before?.entries) ? before.entries : [];
+    if (!beforeEntries.length || !afterEntries.length) return 0;
+
+    const beforeById = {};
+    for (const e of beforeEntries) if (e && e.toastEmployeeId) beforeById[e.toastEmployeeId] = e;
+
+    const completed = [];
+    for (const e of afterEntries) {
+        if (!e || !e.toastEmployeeId || !e.clockedInAt) continue;
+        const prev = beforeById[e.toastEmployeeId];
+        if (!prev || !prev.clockedInAt) continue;
+        // A different clockedInAt means a NEW session began → the prior one ended.
+        if (prev.clockedInAt !== e.clockedInAt) {
+            completed.push({
+                id: String(e.toastEmployeeId),
+                name: prev.employeeName || e.employeeName || "",
+                clockIn: prev.clockedInAt,
+                // prefer the recorded clock-out; fall back to when the next session
+                // started if the scraper hadn't stamped clockedOutAt yet.
+                clockOut: prev.clockedOutAt || e.clockedInAt,
+            });
+        }
+    }
+    if (!completed.length) return 0;
+
+    const db = getFirestore();
+    const today = ctDateKey(new Date());
+    const ref = db.collection("ops").doc(`clock_sessions_${location}`);
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        let data = snap.exists ? snap.data() : null;
+        // New Central day → start fresh (the panel only shows today).
+        if (!data || data.date !== today) data = { date: today, location, employees: {} };
+        if (!data.employees) data.employees = {};
+        for (const c of completed) {
+            const emp = data.employees[c.id] || { name: c.name, sessions: [] };
+            emp.name = c.name || emp.name;
+            if (!Array.isArray(emp.sessions)) emp.sessions = [];
+            if (!emp.sessions.some(s => s.clockIn === c.clockIn)) {
+                emp.sessions.push({ clockIn: c.clockIn, clockOut: c.clockOut });
+                emp.sessions.sort((a, b) => String(a.clockIn).localeCompare(String(b.clockIn)));
+                if (emp.sessions.length > 12) emp.sessions = emp.sessions.slice(-12); // bound doc size
+            }
+            data.employees[c.id] = emp;
+        }
+        data.updatedAt = new Date().toISOString();
+        tx.set(ref, data);
+    });
+    return completed.length;
+}
+
 module.exports = {
     normName, ctDateKey, shiftStartMs, pickBestShift, classify,
-    recordClockedInAttendance, markNoShows,
+    recordClockedInAttendance, markNoShows, recordCompletedSessions,
 };

@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import {
     subscribeClockedIn, getClockedInStatus,
+    subscribeClockSessions, earlierSessionsFor,
     fmtClockTime, hoursWeekTone,
 } from '../data/clockedIn';
 import ModalPortal from './ModalPortal';
@@ -151,6 +152,8 @@ function getPunctuality(clockedInIso, scheduledShift, isEs) {
 function useClockedIn(location) {
     const [webster, setWebster]   = useState(null);
     const [maryland, setMaryland] = useState(null);
+    const [wSess, setWSess] = useState(null);   // ops/clock_sessions_webster
+    const [mSess, setMSess] = useState(null);   // ops/clock_sessions_maryland
     const [tick, setTick] = useState(0);
     const refresh = useCallback(() => setTick(t => t + 1), []);
 
@@ -173,29 +176,34 @@ function useClockedIn(location) {
 
     useEffect(() => {
         if (location === 'webster') {
-            const unsub = subscribeClockedIn('webster', setWebster);
-            return () => unsub();
+            const u1 = subscribeClockedIn('webster', setWebster);
+            const u2 = subscribeClockSessions('webster', setWSess);
+            return () => { u1(); u2(); };
         }
         if (location === 'maryland') {
-            const unsub = subscribeClockedIn('maryland', setMaryland);
-            return () => unsub();
+            const u1 = subscribeClockedIn('maryland', setMaryland);
+            const u2 = subscribeClockSessions('maryland', setMSess);
+            return () => { u1(); u2(); };
         }
-        // 'both' — subscribe to both, merge in the consumer.
-        const unsubW = subscribeClockedIn('webster',  setWebster);
-        const unsubM = subscribeClockedIn('maryland', setMaryland);
-        return () => { unsubW(); unsubM(); };
+        // 'both' — subscribe to both rosters + both session docs, merge in consumer.
+        const uW1 = subscribeClockedIn('webster',  setWebster);
+        const uW2 = subscribeClockSessions('webster', setWSess);
+        const uM1 = subscribeClockedIn('maryland', setMaryland);
+        const uM2 = subscribeClockSessions('maryland', setMSess);
+        return () => { uW1(); uW2(); uM1(); uM2(); };
     }, [location, tick]);
 
     return useMemo(() => {
         const w = getClockedInStatus(webster);
         const m = getClockedInStatus(maryland);
-        if (location === 'webster')  return { combined: w, perLoc: { webster: w }, refresh };
-        if (location === 'maryland') return { combined: m, perLoc: { maryland: m }, refresh };
+        // Enrich each entry with TODAY's earlier completed sessions (clock out →
+        // clock back in), captured by the recordCompletedSessions Cloud Function.
+        const wE = w.entries.map(e => ({ ...e, _loc: 'webster', earlierSessions: earlierSessionsFor(wSess, e.toastEmployeeId) }));
+        const mE = m.entries.map(e => ({ ...e, _loc: 'maryland', earlierSessions: earlierSessionsFor(mSess, e.toastEmployeeId) }));
+        if (location === 'webster')  { const ws = { ...w, entries: wE }; return { combined: ws, perLoc: { webster: ws }, refresh }; }
+        if (location === 'maryland') { const ms = { ...m, entries: mE }; return { combined: ms, perLoc: { maryland: ms }, refresh }; }
         // both
-        const mergedEntries = [
-            ...w.entries.map(e => ({ ...e, _loc: 'webster' })),
-            ...m.entries.map(e => ({ ...e, _loc: 'maryland' })),
-        ].sort((a, b) => (a.clockedInAt || '').localeCompare(b.clockedInAt || ''));
+        const mergedEntries = [...wE, ...mE].sort((a, b) => (a.clockedInAt || '').localeCompare(b.clockedInAt || ''));
         // Combined status: oldest updatedAt is the "least fresh" one.
         const updatedAt = w.updatedAt && m.updatedAt
             ? (w.updatedAt < m.updatedAt ? w.updatedAt : m.updatedAt)
@@ -212,10 +220,10 @@ function useClockedIn(location) {
                 minutesAgo,
                 isStale: (w.isStale || m.isStale),
             },
-            perLoc: { webster: w, maryland: m },
+            perLoc: { webster: { ...w, entries: wE }, maryland: { ...m, entries: mE } },
             refresh,
         };
-    }, [webster, maryland, location, refresh]);
+    }, [webster, maryland, wSess, mSess, location, refresh]);
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
@@ -332,6 +340,17 @@ function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
                                     <span className="truncate">{entry.jobName}</span>
                                 </>
                             )}
+                        </div>
+                    )}
+                    {entry.earlierSessions && entry.earlierSessions.length > 0 && (
+                        <div className="text-[11px] text-dd-text-2/90 flex items-start gap-1.5 mt-0.5">
+                            <History size={11} strokeWidth={2.25} className="shrink-0 mt-px" />
+                            <span>
+                                {tx('Earlier today', 'Antes hoy')}:{' '}
+                                {entry.earlierSessions.map((s, i) => (
+                                    <span key={i}>{i > 0 ? ', ' : ''}{fmtClockTime(s.clockIn)}–{s.clockOut ? fmtClockTime(s.clockOut) : '…'}</span>
+                                ))}
+                            </span>
                         </div>
                     )}
                     {isNoShow && sched && (

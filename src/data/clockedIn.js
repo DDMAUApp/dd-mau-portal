@@ -54,6 +54,41 @@ export function subscribeClockedIn(location, callback) {
 }
 
 /**
+ * Subscribe to a location's COMPLETED-sessions doc (ops/clock_sessions_{location}),
+ * written by the recordCompletedSessions Cloud Function. Shape:
+ *   { date: 'YYYY-MM-DD', location, employees: { [toastEmployeeId]: { name, sessions: [{clockIn, clockOut}] } } }
+ * Lets the panel show every clock in/out today, not just the latest punch.
+ */
+export function subscribeClockSessions(location, callback) {
+    if (!location) {
+        callback(null);
+        return () => {};
+    }
+    const ref = doc(db, 'ops', `clock_sessions_${location}`);
+    return onSnapshot(
+        ref,
+        (snap) => callback(snap.exists() ? snap.data() : null),
+        (err) => {
+            console.warn(`clock_sessions_${location} snapshot failed:`, err);
+            callback(null);
+        }
+    );
+}
+
+/** Today's earlier sessions for a person, from a clock_sessions doc.
+ *  Returns [] unless the doc is for TODAY (Central) — so a stale doc from a
+ *  prior day never bleeds in. */
+export function earlierSessionsFor(sessionsDoc, toastEmployeeId) {
+    if (!sessionsDoc || !toastEmployeeId) return [];
+    const todayCT = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    if (sessionsDoc.date !== todayCT) return [];
+    const emp = sessionsDoc.employees && sessionsDoc.employees[String(toastEmployeeId)];
+    return (emp && Array.isArray(emp.sessions)) ? emp.sessions : [];
+}
+
+/**
  * Distill the doc into a UI-ready status. Same mental model as
  * getLaborStatus() — caller asks "is this data trustworthy AND fresh?"
  * and renders accordingly.
