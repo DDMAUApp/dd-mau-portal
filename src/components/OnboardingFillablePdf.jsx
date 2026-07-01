@@ -784,8 +784,11 @@ function FieldInput({ field, value, onChange, onOpenSig, signerName, signedAtMs,
             <>
             {stampText && (
                 <div className="absolute pointer-events-none z-10"
-                    style={{ left: `${field.x * 100}%`, top: `${(field.y + field.h) * 100}%`, marginTop: 1 }}>
-                    <span className="inline-block whitespace-nowrap rounded bg-white/85 px-1 text-[8px] leading-tight font-semibold text-blue-800 border border-blue-200">
+                    // Anchor the caption's BOTTOM to the bottom edge of the signature
+                    // box (translateY(-100%)) so it tucks right under the signature
+                    // instead of dropping a full line into the table cell below.
+                    style={{ left: `${field.x * 100}%`, top: `${(field.y + field.h) * 100}%`, transform: 'translateY(-100%)' }}>
+                    <span className="inline-block whitespace-nowrap rounded bg-white/90 px-1 text-[8px] leading-tight font-semibold text-blue-800 border border-blue-200">
                         {stampText}
                     </span>
                 </div>
