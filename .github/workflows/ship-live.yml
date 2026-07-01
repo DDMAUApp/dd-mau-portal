@@ -96,10 +96,18 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # Only when the fix actually touched server code. Skipped (non-fatal) if
-      # no FIREBASE_TOKEN is configured — web + phones already shipped above.
+      # Only when the fix actually touched server code. SECONDARY leg — web +
+      # phones already shipped above, so this NEVER fails the whole ship. It can
+      # fail-soft for two known reasons and just leave a loud warning:
+      #   • no FIREBASE_TOKEN secret configured, or
+      #   • the CI token account lacks iam.serviceAccounts.actAs / "Service Account
+      #     User" on the runtime SA that 2nd-gen functions require (or the deprecated
+      #     --token auth is rejected).
+      # When it warns, deploy the function from the Mac (as ddmaustl@gmail.com):
+      #   npx firebase deploy --only functions
       - name: Deploy Cloud Functions (optional)
         if: ${{ github.event.inputs.deploy_functions == 'true' || github.event.client_payload.deploy_functions == true }}
+        continue-on-error: true   # a CF-deploy hiccup must not red-flag the whole ship
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
@@ -109,4 +117,5 @@ jobs:
           fi
           ( cd functions && npm ci )
           npx firebase-tools@latest deploy --only functions \
-            --project dd-mau-staff-app --token "$FIREBASE_TOKEN" --non-interactive
+            --project dd-mau-staff-app --token "$FIREBASE_TOKEN" --non-interactive \
+            || { echo "::warning::Cloud Functions did NOT deploy — web + phones ARE live. Deploy it from the Mac: npx firebase deploy --only functions"; exit 1; }
