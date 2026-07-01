@@ -166,9 +166,25 @@ export function asRateData(data, loc, toastEmps) {
     }
     for (const s of (data[loc] && data[loc].salary) || []) {
         const key = keyFromMaster(s.first, s.last);
+        // PH2 — name-key collision guard. A salary person whose first+last key
+        // matches a worked hourly employee would OVERWRITE them in byKey below, so
+        // that employee's Toast row then resolves to a SALARY master and their
+        // hourly wages get routed to the unpaid review block (silently dropped).
+        // We can't tell which person a given Toast row belongs to, so refuse to
+        // guess — record a roster error that runLocation turns into a hard FAIL,
+        // but only when the colliding name actually WORKED this period (no hours →
+        // harmless, so we don't nag). toastEmps is optional; guard defensively.
+        const clash = byKey[key];
+        if (clash && clash.section !== 'SALARY' && toastEmps && toastEmps[key]) {
+            errors.push(`"${s.first} ${s.last}" is set up as SALARY, but a different worked employee has the same name (${clash.first} ${clash.last}). Their hours would be dropped from pay. Give one of them a distinct name (e.g. add a middle initial) on the People step, then re-run.`);
+        }
         const [lf, ll] = splitLegal(s.legal_name);
         const emp = {
-            first: s.first, last: s.last, rate: Number(s.amount || 0),
+            // PL1 — accept "$1,200" / "1,200" (strip $, commas, spaces). A US
+            // per-period salary uses '.' as the decimal separator and ',' only as a
+            // thousands separator, so stripping can't misread a real amount; a truly
+            // bad value still coerces here and runLocation hard-FAILS any NaN/<=0.
+            first: s.first, last: s.last, rate: Number(String(s.amount ?? '').replace(/[$,\s]/g, '') || 0),
             section: 'SALARY', direct_deposit: s.direct_deposit === undefined ? true : !!s.direct_deposit,
             no_tip: true, legal_name: s.legal_name || '',
             legal_first: lf, legal_last: ll, note: '', row: null, key,

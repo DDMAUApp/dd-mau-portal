@@ -245,7 +245,9 @@ export default function PayrollPanel({ language, staffName, staffList }) {
             if (err) { extrasErrors.push(err); adjResults[adj.id] = { error: err }; }
             else { periodExtras.push(x); adjResults[adj.id] = { amount_cents: x.amount_cents }; }
         }
-        const cashNum = { WG: Number(cash.WG) || 0, MH: Number(cash.MH) || 0 };
+        // PM2 — cash tips are physically-collected cash: never negative. Clamp to
+        // >=0 so a mistyped/pasted negative can't flip the whole tip-pool sign.
+        const cashNum = { WG: Math.max(0, Number(cash.WG) || 0), MH: Math.max(0, Number(cash.MH) || 0) };
         // Only default FOH% to 50 when the field is truly blank/invalid — NOT when
         // it's a deliberate 0 (a BOH-only day). `Number('0') || 50` would wrongly
         // turn 0% into 50/50 and misallocate the whole pool.
@@ -315,19 +317,23 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                 syncWithToast(roster, loc, p.exports.employees[loc] || {}, per, defaults);
             }
             await saveRoster(roster);     // new names persist (section pre-filled or null)
-            setAdjustments([]);           // pay-adds are per-period — start clean each import
             // Warm the heavy doc-generation chunks NOW, while THIS bundle is known
             // good, so "Create docs" later resolves exceljs/jszip from cache and
             // can't fail on a stale lazy import even if a deploy lands mid-session.
             import('exceljs').catch(() => {});
             import('jszip').catch(() => {});
             if (isNewPeriod) {
-                // Cash tips, FOH split, and the acknowledgment are PER-PERIOD — never
-                // carry them from the previous period into a new one (silent stale
-                // tips would misallocate the pool). Re-entered fresh for this period.
+                // Cash tips, FOH split, pay-adds, and the acknowledgment are
+                // PER-PERIOD — never carry them from the previous period into a new
+                // one (silent stale tips/advances would misallocate or mis-deduct).
+                // PH1: clear pay-adds ONLY here. A SAME-period re-import (fixing one
+                // bad Toast file) now KEEPS the advances/bonuses the owner already
+                // entered — clearing them unconditionally was a silent-data-loss bug
+                // that could ship an over- or under-paid check.
                 setPeriod(guessed);
                 setCash({ WG: '', MH: '' });
                 setFoh({ WG: 50, MH: 50 });
+                setAdjustments([]);
             }
             setAck(false);                // a fresh import always needs re-acknowledgment
             setParsed(p);
@@ -401,7 +407,11 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     // ── generate ──
     const fails = live ? LOCS.flatMap((l) => (live.results[l]?.checks || []).filter((k) => k.level === 'fail').map((k) => k.title)) : [];
     const warns = live ? LOCS.reduce((n, l) => n + (live.results[l]?.checks || []).filter((k) => k.level === 'warn').length, 0) : 0;
-    const blocked = fails.length > 0 || (live && live.extrasErrors.length > 0) || (warns && !ack);
+    // PM1 — a blank period would name the files "WG_PAYROLL_.xlsx" and key the
+    // saved run + comparison history on an empty string. Block generation until
+    // it's set (it's normally auto-filled from the Toast filenames on import).
+    const noPeriod = !String(period || '').trim();
+    const blocked = noPeriod || fails.length > 0 || (live && live.extrasErrors.length > 0) || (warns && !ack);
 
     const generate = async () => {
         if (blocked) return;
@@ -737,7 +747,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
                                     <label className="block"><span className="block text-[11px] text-dd-text-2 mb-0.5">Card tips</span>
                                         <input value={money(t.card_cents)} disabled className="px-2 py-1 border border-dd-line rounded bg-dd-bg w-28 text-right" /></label>
                                     <label className="block"><span className="block text-[11px] text-dd-text-2 mb-0.5">Cash tips $</span>
-                                        <input type="number" step="0.01" value={cash[loc]} onChange={(e) => setCash((c) => ({ ...c, [loc]: e.target.value }))} placeholder="0" className="px-2 py-1 border border-dd-line rounded w-24" /></label>
+                                        <input type="number" step="0.01" min="0" value={cash[loc]} onChange={(e) => setCash((c) => ({ ...c, [loc]: e.target.value }))} placeholder="0" className="px-2 py-1 border border-dd-line rounded w-24" /></label>
                                     <label className="block"><span className="block text-[11px] text-dd-text-2 mb-0.5">FOH %</span>
                                         <input type="number" step="0.5" min="0" max="100" value={foh[loc]} onChange={(e) => setFoh((c) => ({ ...c, [loc]: e.target.value }))} className="px-2 py-1 border border-dd-line rounded w-20" /></label>
                                 </div>
@@ -825,6 +835,9 @@ export default function PayrollPanel({ language, staffName, staffList }) {
             {step === 5 && live && (
                 <div className="rounded-xl border border-dd-line bg-white p-4">
                     <h4 className="font-bold text-dd-text mb-2">Create the payroll docs</h4>
+                    {noPeriod && (
+                        <div className="text-[11px] text-red-700 bg-red-50 rounded px-2 py-1 mb-2"><b>Set the pay period first</b> — go to the Import step and fill in "Pay period". It names the files and the saved run.</div>
+                    )}
                     {fails.length > 0 && (
                         <div className="text-[11px] text-red-700 bg-red-50 rounded px-2 py-1 mb-2"><b>Can't create — fix these first:</b><br />{fails.join(' · ')}</div>
                     )}

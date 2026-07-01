@@ -293,3 +293,68 @@ describe('runLocation FAILS when two different names merge into one key', () => 
         expect(res.checks.some((k) => k.id.startsWith('namemerge:') && k.level === 'fail')).toBe(true);
     });
 });
+
+// ── PL1 — salary amount accepts "$" and thousands commas ─────────────────────
+describe('asRateData salary amount parsing (PL1)', () => {
+    const mkSalary = (amount) => normalizeRoster({
+        WG: { people: {}, salary: [{ first: 'Sal', last: 'Aried', amount }] }, MH: { people: {}, salary: [] },
+    });
+    it('parses "1,200" as 1200 (was NaN before)', () => {
+        expect(asRateData(mkSalary('1,200'), 'WG', {}).salary[0].rate).toBe(1200);
+    });
+    it('parses "$1,200.50"', () => {
+        expect(asRateData(mkSalary('$1,200.50'), 'WG', {}).salary[0].rate).toBe(1200.5);
+    });
+    it('leaves a plain number unchanged', () => {
+        expect(asRateData(mkSalary(1500), 'WG', {}).salary[0].rate).toBe(1500);
+    });
+    it('keeps blank at 0 (runLocation then hard-FAILS it)', () => {
+        expect(asRateData(mkSalary(''), 'WG', {}).salary[0].rate).toBe(0);
+    });
+});
+
+// ── PH2 — SALARY name colliding with a WORKED hourly employee ────────────────
+describe('asRateData salary/hourly name-key collision (PH2)', () => {
+    const ck = keyFromMaster('Chris', 'Campos');
+    const build = () => normalizeRoster({
+        WG: {
+            people: { [ck]: { key: ck, first: 'Chris', last: 'Campos', section: 'FOH', last_rate: 15 } },
+            salary: [{ first: 'Chris', last: 'Campos', amount: 2000 }],
+        },
+        MH: { people: {}, salary: [] },
+    });
+    it('records a roster error when the colliding hourly name worked this period', () => {
+        const worked = { [ck]: { toast_rate: 15, reg_hours: 30, ot_hours: 0 } };
+        const rd = asRateData(build(), 'WG', worked);
+        expect(rd.errors.length).toBe(1);
+        expect(rd.errors[0]).toMatch(/same name/i);
+    });
+    it('stays quiet when the colliding hourly name did NOT work (no hours)', () => {
+        expect(asRateData(build(), 'WG', {}).errors.length).toBe(0);
+    });
+    it('the roster error becomes a hard FAIL in runLocation', () => {
+        const worked = { [ck]: { toast_name: 'Campos, Chris', first: 'Chris', last: 'Campos', toast_rate: 15, reg_hours: 30, ot_hours: 0, multi_line: false, lines: [] } };
+        const rd = asRateData(build(), 'WG', worked);
+        const res = runLocation('WG', worked, rd, 0, 0, 50, []);
+        expect(res.checks.some((k) => k.level === 'fail' && /roster problem/i.test(k.title))).toBe(true);
+    });
+});
+
+// ── PM6 — Toast reports $0 but a roster rate is used ─────────────────────────
+describe('runLocation warns on a $0 Toast rate paid from the roster (PM6)', () => {
+    it('emits a toastzero warn and still pays from the roster rate (no zerorate fail)', () => {
+        const e = emp('Val', 'Ued', 18, 'FOH');
+        const md = { employees: [e], salary: [], by_key: { [e.key]: e }, errors: [] };
+        const t = { [e.key]: { toast_name: 'Ued, Val', first: 'Val', last: 'Ued', toast_rate: 0, reg_hours: 25, ot_hours: 0, multi_line: false, lines: [] } };
+        const res = runLocation('WG', t, md, 0, 0, 50, []);
+        expect(res.checks.some((k) => k.id.startsWith('toastzero:') && k.level === 'warn')).toBe(true);
+        expect(res.checks.some((k) => k.id.startsWith('zerorate:') && k.level === 'fail')).toBe(false);
+    });
+    it('does NOT warn on a normal nonzero Toast rate', () => {
+        const e = emp('Nor', 'Mal', 18, 'FOH');
+        const md = { employees: [e], salary: [], by_key: { [e.key]: e }, errors: [] };
+        const t = { [e.key]: { toast_name: 'Mal, Nor', first: 'Nor', last: 'Mal', toast_rate: 18, reg_hours: 25, ot_hours: 0, multi_line: false, lines: [] } };
+        const res = runLocation('WG', t, md, 0, 0, 50, []);
+        expect(res.checks.some((k) => k.id.startsWith('toastzero:'))).toBe(false);
+    });
+});
