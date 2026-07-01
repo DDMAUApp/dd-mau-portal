@@ -601,24 +601,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     autoEmptyingRef.current = false;
                 }
             }, [storeLocation]);
-
-            // Distinct counted items across master + vendor-only maps.
-            const deliveryItemCount = useMemo(() => (
-                Object.values(inventory).filter((v) => Number(v) > 0).length +
-                Object.values(vendorCounts).filter((v) => Number(v) > 0).length
-            ), [inventory, vendorCounts]);
-            // Prompt for a delivery date when a NEW item is added to a cart that has
-            // no date yet (fires on the first item, and again on the next new item if
-            // the staffer dismissed — but never on +/- of an existing item). Also
-            // catches an app-reload with counts-but-no-date (legacy cart) → prompts
-            // once. Resets when the cart empties.
-            useEffect(() => {
-                const prev = lastDeliveryPromptCountRef.current;
-                lastDeliveryPromptCountRef.current = deliveryItemCount;
-                if (deliveryItemCount === 0) return;                 // empty → nothing to ask
-                if (deliveryDate || showDeliveryModal) return;       // already dated / already asking
-                if (deliveryItemCount > prev) setShowDeliveryModal(true);
-            }, [deliveryItemCount, deliveryDate, showDeliveryModal]);
+            // NOTE: deliveryItemCount (useMemo) + its prompt useEffect used to live
+            // here, but they read `vendorCounts` — a useState declared ~60 lines
+            // BELOW. A useMemo factory runs synchronously during render, so on first
+            // mount it hit `vendorCounts` while still in its temporal dead zone →
+            // "ReferenceError: Cannot access 'vendorCounts' before initialization",
+            // crashing Operations on every open (autofix 2026-07-01). They now live
+            // just after the vendorCounts declaration below.
             // "Last ordered" per item — computed from inventoryHistory_{loc}.
             // For each item, finds the most recent saved snapshot where the
             // item had a count > 0. That date + qty is the "last time you
@@ -664,6 +653,26 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Keyed as `${vendor}:${vendorId}` (e.g. "sysco:5106402") so it can't collide with
             // master inventory ids. Stored under inventory_<location>.vendorCounts in Firestore.
             const [vendorCounts, setVendorCounts] = useState({});
+            // Distinct counted items across master + vendor-only maps.
+            // MUST stay AFTER the vendorCounts useState above — a useMemo factory
+            // runs during render, so referencing vendorCounts before its declaration
+            // is a temporal-dead-zone crash (see NOTE above the "Last ordered" block).
+            const deliveryItemCount = useMemo(() => (
+                Object.values(inventory).filter((v) => Number(v) > 0).length +
+                Object.values(vendorCounts).filter((v) => Number(v) > 0).length
+            ), [inventory, vendorCounts]);
+            // Prompt for a delivery date when a NEW item is added to a cart that has
+            // no date yet (fires on the first item, and again on the next new item if
+            // the staffer dismissed — but never on +/- of an existing item). Also
+            // catches an app-reload with counts-but-no-date (legacy cart) → prompts
+            // once. Resets when the cart empties.
+            useEffect(() => {
+                const prev = lastDeliveryPromptCountRef.current;
+                lastDeliveryPromptCountRef.current = deliveryItemCount;
+                if (deliveryItemCount === 0) return;                 // empty → nothing to ask
+                if (deliveryDate || showDeliveryModal) return;       // already dated / already asking
+                if (deliveryItemCount > prev) setShowDeliveryModal(true);
+            }, [deliveryItemCount, deliveryDate, showDeliveryModal]);
             const [activeTab, setActiveTab] = useState("checklist");
             // DC-2, 2026-05-30: removed lastUpdated state — set 4× from
             // snapshot handlers but never rendered (the "last updated X"
