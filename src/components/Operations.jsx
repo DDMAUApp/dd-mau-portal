@@ -493,6 +493,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Nothing references these any more; commit history preserves them.
             const [inventory, setInventory] = useState({});
             const [invCountMeta, setInvCountMeta] = useState({}); // { itemId: { by, at } }
+            // Counts for vendor-only items that aren't matched to a master inventory item.
+            // Keyed as `${vendor}:${vendorId}` (e.g. "sysco:5106402") so it can't collide with
+            // master inventory ids. Stored under inventory_<location>.vendorCounts in Firestore.
+            // NOTE: declared HERE (beside inventory/invCountMeta), NOT lower down — the
+            // delivery-cart `deliveryItemCount` useMemo below reads vendorCounts in its
+            // body + dep array, so a lower declaration hits a temporal-dead-zone crash
+            // ("Cannot access 'vendorCounts' before initialization"). Keep it above.
+            const [vendorCounts, setVendorCounts] = useState({});
             // ── Dated delivery cart (2026-06-30) ─────────────────────────────
             // The cart is an order FOR a specific delivery day. When the first
             // item lands in an empty cart we ask which day; the cart persists +
@@ -660,10 +668,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // here. Parser writes the rows as a new inventoryHistory
             // snapshot so the "Last ordered" badge updates downstream.
             const [showCsvImport, setShowCsvImport] = useState(false);
-            // Counts for vendor-only items that aren't matched to a master inventory item.
-            // Keyed as `${vendor}:${vendorId}` (e.g. "sysco:5106402") so it can't collide with
-            // master inventory ids. Stored under inventory_<location>.vendorCounts in Firestore.
-            const [vendorCounts, setVendorCounts] = useState({});
+            // (vendorCounts state moved up beside inventory/invCountMeta to avoid a
+            // temporal-dead-zone crash in the delivery-cart useMemo — see note there.)
             const [activeTab, setActiveTab] = useState("checklist");
             // DC-2, 2026-05-30: removed lastUpdated state — set 4× from
             // snapshot handlers but never rendered (the "last updated X"
