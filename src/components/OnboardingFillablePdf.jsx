@@ -142,6 +142,13 @@ export default function OnboardingFillablePdf({
     const [pdfBytes, setPdfBytes] = useState(null);
     const [loading, setLoading] = useState(true);
     const [values, setValues] = useState({});               // fieldId -> string (or data URL for signature)
+    // Per-signature "signed at" (epoch ms) captured the moment the hire taps
+    // Done in the pad. Drives a DocuSign-style caption UNDER the signature in
+    // the fill view so the hire sees the timestamp live (previously the stamp
+    // only existed in the flattened PDF, so there was nothing to see on-screen).
+    // Session-only — the authoritative record is the PDF stamp + the signing
+    // certificate; this is just the live confirmation.
+    const [sigStamps, setSigStamps] = useState({});         // fieldId -> epoch ms
     const [submitting, setSubmitting] = useState(false);
     const [progressMsg, setProgressMsg] = useState('');
     const [err, setErr] = useState('');
@@ -664,6 +671,8 @@ export default function OnboardingFillablePdf({
                                     value={values[f.id]}
                                     onChange={(v) => setValue(f.id, v)}
                                     onOpenSig={() => setSigField(f)}
+                                    signerName={hire?.personal?.legalName || hire?.name || ''}
+                                    signedAtMs={sigStamps[f.id]}
                                     isEs={isEs} />
                             )
                         ))}
@@ -693,6 +702,7 @@ export default function OnboardingFillablePdf({
                         if (sigField.type === 'signature') {
                             try { localStorage.setItem('dd:sig:' + hireId, dataUrl); } catch { /* ignore */ }
                         }
+                        setSigStamps(prev => ({ ...prev, [sigField.id]: Date.now() }));
                         setValue(sigField.id, dataUrl);
                         setSigField(null);
                     }} />
@@ -749,7 +759,7 @@ function isSensitiveField(field) {
     return /\bssn\b|social\s*security|\btin\b/.test(label);
 }
 
-function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
+function FieldInput({ field, value, onChange, onOpenSig, signerName, signedAtMs, isEs }) {
     const tx = (en, es) => (isEs ? es : en);
     const style = {
         left: `${field.x * 100}%`,
@@ -759,7 +769,27 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
     };
     if (field.type === 'signature' || field.type === 'initials') {
         const signed = value && typeof value === 'string' && value.startsWith('data:image');
+        // DocuSign-style live caption UNDER a signed signature so the hire sees
+        // the timestamp on-screen the moment they sign (the permanent stamp is
+        // baked into the flattened PDF at submit; this mirrors it live). Only
+        // for full signatures, not the tiny initials boxes.
+        const stampText = (field.type === 'signature' && signed)
+            ? `✓ ${tx('Electronically signed', 'Firmado electrónicamente')}`
+                + (signerName ? ` — ${signerName}` : '')
+                + (signedAtMs
+                    ? ` · ${new Date(signedAtMs).toLocaleString(isEs ? 'es' : 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                    : '')
+            : null;
         return (
+            <>
+            {stampText && (
+                <div className="absolute pointer-events-none z-10"
+                    style={{ left: `${field.x * 100}%`, top: `${(field.y + field.h) * 100}%`, marginTop: 1 }}>
+                    <span className="inline-block whitespace-nowrap rounded bg-white/85 px-1 text-[8px] leading-tight font-semibold text-blue-800 border border-blue-200">
+                        {stampText}
+                    </span>
+                </div>
+            )}
             <button onClick={onOpenSig}
                 // 2026-06-01 — Same readability fix as the text input
                 // below. /60 was opaque enough to hide a printed
@@ -780,6 +810,7 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
                     <span>{field.type === 'signature' ? tx('Tap to sign', 'Toca para firmar') : tx('Initials', 'Iniciales')}</span>
                 )}
             </button>
+            </>
         );
     }
     if (field.type === 'checkbox') {
