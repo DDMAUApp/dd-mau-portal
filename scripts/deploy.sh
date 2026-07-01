@@ -49,10 +49,22 @@ echo "  ✓ Web pushed — live in ~1-2 min."
 
 # 4) Upload the OTA bundle → iOS + Android apps pull it on their next open.
 echo "▸ Pushing OTA to iOS + Android (Capgo)…"
+# The token usually lives in ~/.zprofile, but `npm run deploy` spawns a NON-login
+# shell that never sources it — so CAPGO_TOKEN was often unset HERE and the OTA
+# step skipped SILENTLY (web shipped, phones did NOT, and it exited 0 = "success").
+# Pull it from the profile files as a fallback, then FAIL LOUD if truly missing so
+# a half-shipped release can never masquerade as a full one.
 if [ -z "${CAPGO_TOKEN:-}" ]; then
-  echo "  ⚠ CAPGO_TOKEN not set — skipped the phone-app OTA (web still shipped)."
-  echo "    One-time: export CAPGO_TOKEN=<your key>  +  set channel '$CHANNEL' DEFAULT in console.capgo.app (see DEPLOY.md)."
-  exit 0
+  set +e   # a missing profile file must not abort the deploy under `set -e`
+  CAPGO_TOKEN="$(sed -n 's/^[[:space:]]*export CAPGO_TOKEN=//p' ~/.zprofile ~/.zshrc ~/.bash_profile 2>/dev/null | tr -d "\"'" | head -1)"
+  set -e
+fi
+if [ -z "${CAPGO_TOKEN:-}" ]; then
+  echo "  ✗ CAPGO_TOKEN not set — the phone-app OTA did NOT ship (the web IS live)." >&2
+  echo "    Fix: add 'export CAPGO_TOKEN=<your key>' to ~/.zprofile, then re-run this deploy." >&2
+  echo "    Or ship the OTA for THIS release manually:" >&2
+  echo "      npx @capgo/cli@latest bundle upload --apikey <key> --channel '$CHANNEL' --bundle '$VERSION'" >&2
+  exit 1
 fi
 npx @capgo/cli@latest bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION"
 echo "  ✓ OTA v$VERSION uploaded to channel '$CHANNEL' — phones update on next open."

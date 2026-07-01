@@ -166,6 +166,16 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
             checks.push(check(`rate:${key}`, 'warn', `${m.first} ${m.last}: rate differs from Toast`,
                 `Master list $${fmtG(m.rate)}/hr (used for pay) vs Toast $${fmtG(t.toast_rate)}/hr. Fix whichever is wrong.`));
         }
+        // PM6 — Toast reported a $0/blank rate but we have a real roster rate to
+        // fall back on. We DID pay them (from last-known / override), but the
+        // rate-drift check above skips a falsy Toast rate — so surface it out loud
+        // rather than let a stale $0-from-Toast hide silently. Additive warn only;
+        // no money math changes. (A $0 Toast rate with NO roster fallback still
+        // hits the zerorate hard-FAIL below.)
+        if (!t.toast_rate && Number.isFinite(m.rate) && m.rate > 0 && ((t.reg_hours || 0) > 0 || (t.ot_hours || 0) > 0)) {
+            checks.push(check(`toastzero:${key}`, 'warn', `${m.first} ${m.last}: Toast reported $0/hr`,
+                `Toast's pay rate for them was $0 or blank, so pay used $${fmtG(m.rate)}/hr from the roster (last known or your override). Confirm that's the right rate.`));
+        }
     }
 
     // Roster people with no hours this period — shown, never dropped silently.
