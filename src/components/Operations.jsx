@@ -571,10 +571,32 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const dd = data.deliveryDate || null;
                 if (!shouldAutoEmpty(dd, centralToday())) return;
                 const counts = data.counts || {};
+                const vCounts = data.vendorCounts || {};
                 const hasCounts = Object.values(counts).some((v) => Number(v) > 0);
+                const hasVendor = Object.values(vCounts).some((v) => Number(v) > 0);
                 if (!hasCounts) {
-                    // Nothing to archive, but still clear a stale past deliveryDate.
-                    try { await updateDoc(doc(db, 'ops', 'inventory_' + storeLocation), { deliveryDate: deleteField() }); } catch { /* ignore */ }
+                    // No master-inventory items to archive. Clear the stale
+                    // deliveryDate — AND zero any vendor-only counts too. Why:
+                    // deliveryItemCount (below) counts vendorCounts, so a
+                    // vendor-only cart (e.g. a pure Sysco order) CAN be dated,
+                    // but if we only clear the date here the vendor counts stay
+                    // stranded and the "⚠ Set delivery date" prompt re-fires
+                    // forever. Vendor-only items aren't written to
+                    // inventoryHistory (same gap as the manual Save path), so
+                    // there's nothing to archive — just wipe + toast so it's
+                    // never silent.
+                    try {
+                        const patch = { deliveryDate: deleteField() };
+                        if (hasVendor) { patch.vendorCounts = {}; patch.date = new Date().toISOString(); }
+                        await updateDoc(doc(db, 'ops', 'inventory_' + storeLocation), patch);
+                        if (hasVendor) {
+                            setVendorCounts({});
+                            toast(language === 'es'
+                                ? '✓ Pedido de entrega archivado — carrito nuevo'
+                                : '✓ Delivery order archived — fresh cart started',
+                                { kind: 'success', duration: 6000 });
+                        }
+                    } catch { /* ignore */ }
                     return;
                 }
                 autoEmptyingRef.current = true;
