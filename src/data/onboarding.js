@@ -217,14 +217,19 @@ export const ONBOARDING_DOCS = [
     // entry was deleted in the same commit — recreate from git history.
     {
         id: 'minor_permit',
-        en: 'Minor work permit',
-        es: 'Permiso de menor',
+        en: 'Minor work certificate',
+        es: 'Certificado de trabajo de menor',
         emoji: '🧒',
         kind: 'file',
-        required: false,            // auto-required when DOB indicates under 18
+        required: false,            // auto-required for 14–15 y/o (under 16) — see under16Only
         daysFromHire: 7,
-        description: 'Required if you are under 18. School-issued work permit.',
-        minorOnly: true,
+        description: 'Only if you are 14 or 15: upload your Missouri school work certificate (get it from your school office). Not needed at 16+.',
+        // Missouri requires a school-issued Work Certificate ONLY for 14- and
+        // 15-year-olds (under 16); 16–17 y/o need none. Gate on EXACT AGE
+        // (under16Only → isHireUnder16, DOB-based) rather than the under-18
+        // `minorOnly` flag, so a 16–17 y/o is never blocked by a permit they
+        // can't obtain. Ref: labor.mo.gov/dls/youth-employment.
+        under16Only: true,
     },
 ];
 
@@ -370,17 +375,43 @@ export function makeInviteToken() {
 //      Empty/undefined subsetDocs = the full required-doc list (normal
 //      new-hire flow).
 export function docsForHire(hire) {
-    const isMinor = isHireMinor(hire);
+    const isMinor = isHireMinor(hire);      // under 18 (DOB or manual flag)
+    const isUnder16 = isHireUnder16(hire);  // exactly 14–15 (DOB only)
     const subset = Array.isArray(hire?.subsetDocs) && hire.subsetDocs.length > 0
         ? new Set(hire.subsetDocs)
         : null;
     return ONBOARDING_DOCS
         .filter(d => !d.minorOnly || isMinor)
+        .filter(d => !d.under16Only || isUnder16)
         .filter(d => !subset || subset.has(d.id))
         .map(d => ({
             ...d,
-            required: d.required || (d.minorOnly && isMinor),
+            required: d.required || (d.minorOnly && isMinor) || (d.under16Only && isUnder16),
         }));
+}
+
+// Exact age in years from the hire's DOB, or null if unknown/unparseable.
+export function hireAge(hire) {
+    const dob = hire && hire.personal && hire.personal.dob;
+    if (!dob) return null;
+    const parts = String(dob).split('-').map(Number);      // "YYYY-MM-DD"
+    if (parts.length !== 3 || parts.some(isNaN)) return null;
+    const [y, m, d] = parts;
+    const today = new Date();
+    let age = today.getFullYear() - y;
+    const m0 = today.getMonth() + 1;
+    const d0 = today.getDate();
+    if (m0 < m || (m0 === m && d0 < d)) age--;
+    return age;
+}
+
+// Under 16 → Missouri requires a school Work Certificate (14–15 only). Unlike
+// isHireMinor (under 18, also settable via a manual flag), this is DOB-ONLY:
+// the certificate is strictly age-based and we must never force a 16–17 y/o to
+// produce a permit that only 14–15 y/o can obtain. Unknown DOB → false.
+export function isHireUnder16(hire) {
+    const age = hireAge(hire);
+    return age != null && age < 16;
 }
 
 export function isHireMinor(hire) {
