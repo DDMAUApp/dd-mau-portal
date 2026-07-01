@@ -1313,7 +1313,19 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
         try {
             const folderRef = sref(storage, `onboarding/${hire.id}/${docDef.id}`);
             const list = await listAll(folderRef);
-            const enriched = await Promise.all(list.items.map(async (it) => {
+            let items = list.items.slice();
+            // Single-PDF 'template' docs (W-4, I-9, MO W-4, direct deposit): a
+            // re-fill is an UPDATE, not a new copy — show only the newest and prune
+            // older duplicates so the admin doesn't see 4 of the same W-4 (Andrew
+            // 2026-06-30). File/ID docs can legitimately hold multiple distinct
+            // uploads (e.g. ID front + back), so those are left untouched.
+            if (docDef.kind === 'template' && items.length > 1) {
+                const tsOf = (n) => { const m = /_(\d+)\.pdf$/i.exec(n || ''); return m ? Number(m[1]) : 0; };
+                items.sort((a, b) => tsOf(b.name) - tsOf(a.name));
+                for (const stale of items.slice(1)) deleteObject(stale).catch(() => {});
+                items = items.slice(0, 1);
+            }
+            const enriched = await Promise.all(items.map(async (it) => {
                 const url = await getDownloadURL(it);
                 let m = null;
                 try { m = await getMetadata(it); } catch {}
