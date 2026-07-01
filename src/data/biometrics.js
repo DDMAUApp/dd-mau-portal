@@ -27,9 +27,28 @@ const SERVER = 'app.ddmau.staff';          // Keychain/Keystore "server" key
 const ENABLED_KEY = 'bio:enabledFor';      // staffName this device is enrolled for
 const DECLINED_KEY = 'bio:declined';       // user said "not now" — don't nag
 
-// True only on a native build that actually contains the plugin. False on web
-// and on the current store binary → all biometric features are inert.
+// Once ANY biometric call reports the native plugin isn't in this binary, go
+// permanently inert for the session. NOTE: Capacitor.isPluginAvailable() returns
+// TRUE for a registerPlugin()-style plugin (like NativeBiometric) even when the
+// NATIVE side isn't compiled into the current store binary — the JS proxy is
+// registered regardless. So the availability check alone would keep letting us
+// call the plugin, which throws "NativeBiometric.<m>() is not implemented" every
+// time. `_dead` latches after the first such failure so we stop calling it (and
+// stop spamming the error log). Cleared naturally on the next app launch that
+// actually contains the plugin. Andrew 2026-06-30.
+let _dead = false;
+function noteFailure(e) {
+    const m = (e && (e.message || String(e))) || '';
+    if (/not implemented|unimplemented|not available on this|no such plugin/i.test(m)) {
+        _dead = true;
+    }
+}
+
+// True only on a native build that actually contains the plugin. False on web,
+// on the current store binary (no native plugin), and after `_dead` latches →
+// all biometric features are inert.
 function pluginReady() {
+    if (_dead) return false;
     try {
         return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('NativeBiometric');
     } catch {
@@ -70,6 +89,7 @@ export async function isBiometricAvailable() {
         const res = await NativeBiometric.isAvailable({ useFallback: false });
         return { available: !!res?.isAvailable, type: typeLabel(res?.biometryType) };
     } catch (e) {
+        noteFailure(e); // latch inert if the native plugin isn't in this binary
         console.warn('biometrics isAvailable failed:', e?.message || e);
         return { available: false, type: 'Biometrics' };
     }
@@ -112,6 +132,7 @@ export async function enableBiometric({ staffName, pin }) {
         await Preferences.remove({ key: DECLINED_KEY });
         return true;
     } catch (e) {
+        noteFailure(e); // latch inert if the native plugin isn't in this binary
         console.warn('enableBiometric failed/cancelled:', e?.message || e);
         return false;
     }
@@ -138,6 +159,7 @@ export async function tryBiometricLogin() {
         return { staffName: creds.username, pin: creds.password };
     } catch (e) {
         // Cancel / no-match / lockout all land here → silent fallback to PIN.
+        noteFailure(e); // latch inert if the native plugin isn't in this binary
         console.warn('biometric login fell back to PIN:', e?.message || e);
         return null;
     }

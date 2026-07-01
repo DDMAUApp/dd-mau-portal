@@ -187,7 +187,13 @@ function buildCommonContext() {
 //     (sentryClient.js ignoreErrors); mirrored here so they don't create
 //     /error_logs rows that surface in the debug queue.
 //     2026-06-25 — "Attempt to iterate a cursor that doesn't exist" (Andrew).
-const NOISE_PATTERN_LOG = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module|^Script error\.?$|internal error was encountered in the Indexed Database server|Attempt to iterate a cursor that doesn't exist/i;
+//   • Capacitor "<Plugin>" plugin is not implemented on ios/android — a plugin
+//     (Keyboard, App, PushNotifications, NativeBiometric, …) whose JS is bundled
+//     but whose NATIVE side isn't in the current store binary. The app already
+//     degrades gracefully (guards + try/catch); these are expected on the
+//     current binary and only pollute the report (2026-06-30, Andrew — the log
+//     was ~240 of these drowning real errors, incl. the biometric one).
+const NOISE_PATTERN_LOG = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module|^Script error\.?$|internal error was encountered in the Indexed Database server|Attempt to iterate a cursor that doesn't exist|is not implemented on (ios|android)/i;
 
 export async function logError({ error, severity = 'error', feature, meta } = {}) {
     const errObj = error instanceof Error ? error : new Error(String(error ?? 'unknown error'));

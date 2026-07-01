@@ -237,6 +237,10 @@ export async function initSentry() {
             /dynamically imported module/i,
             /Failed to load module/i,
             /ChunkLoadError/i,
+            // Capacitor plugin whose native side isn't in the current store
+            // binary (Keyboard/App/PushNotifications/NativeBiometric/…). The app
+            // degrades gracefully; expected noise, not a bug. 2026-06-30.
+            /is not implemented on (ios|android)/i,
             // Cross-origin script errors with no detail (Sentry FAQ
             // calls these out as the most common noise source on
             // third-party-script-heavy pages).
