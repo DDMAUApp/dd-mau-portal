@@ -792,17 +792,16 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
             </label>
         );
     }
-    // SSN / sensitive fields: render as masked input so digits aren't
-    // visible on-screen. The PDF still receives the plaintext value at
-    // submit time (it has to — that's what the IRS expects on the
-    // flattened form), but during the fill-in step we protect against
-    // shoulder-surfing, screen recordings, and screenshots. inputMode
-    // numeric keeps the mobile keypad simple; autoComplete off / new-
-    // password keeps browsers from caching SSNs as autofill candidates.
+    // SSN / sensitive fields. 2026-06-30 — Andrew: hires couldn't see what
+    // they were typing into the SSN box, so these now render as VISIBLE text
+    // (previously a masked password field). The at-rest protection is UNCHANGED
+    // and lives elsewhere: the SSN is NEVER stored or autofilled (the
+    // SSN_AUTOFILL_DENYLIST + the isSensitiveField skip at the autofill site),
+    // it only flows into the flattened PDF at submit time (the IRS requires the
+    // plaintext there). We still keep inputMode numeric (simple mobile keypad)
+    // and autoComplete 'new-password' so the browser won't cache the SSN.
     const sensitive = isSensitiveField(field);
-    const inputType = sensitive
-        ? 'password'
-        : field.type === 'date' ? 'date' : 'text';
+    const inputType = field.type === 'date' ? 'date' : 'text';
     return (
         <input
             type={inputType}
