@@ -7,6 +7,7 @@ import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
 import { reconcileCounts } from '../data/inventoryReconcile';
+import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
 // Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
 // returns the priority-ranked price (manual > receipt > … > legacy scraped).
 import { subscribeItemPrices, resolveTrustedPrice, PRICE_SOURCE_LABEL, cheapestVendor as pickCheapestVendor, lastOrdered as pickLastOrdered, orderQtyStats as pickOrderQty } from '../data/itemPricing';
@@ -492,6 +493,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Nothing references these any more; commit history preserves them.
             const [inventory, setInventory] = useState({});
             const [invCountMeta, setInvCountMeta] = useState({}); // { itemId: { by, at } }
+            // ── Dated delivery cart (2026-06-30) ─────────────────────────────
+            // The cart is an order FOR a specific delivery day. When the first
+            // item lands in an empty cart we ask which day; the cart persists +
+            // is archived to history, and on the delivery date at 12am Central it
+            // auto-empties. `deliveryDate` mirrors ops/inventory_{loc}.deliveryDate.
+            const [deliveryDate, setDeliveryDate] = useState(null);   // 'YYYY-MM-DD' | null
+            const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+            // Tracks the distinct-counted-item count so we prompt only when a NEW
+            // item is added (not on +/- qty of an existing one). A dismiss re-prompts
+            // on the next new item; resets to 0 when the cart empties.
+            const lastDeliveryPromptCountRef = useRef(0);
+            // Guards the client-backup auto-empty so it fires once per delivered
+            // date even across rapid snapshots (the CF is the primary; this is the
+            // safety net for when nobody/no-cron ran at midnight).
+            const autoEmptyingRef = useRef(false);
             // ── Optimistic-count reconciliation (2026-06-30, the real fix for
             // "tap +/- → count reverts/disappears then comes back a few seconds
             // later") ──────────────────────────────────────────────────────────
@@ -518,6 +534,91 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 (serverCounts) => reconcileCounts(serverCounts, pendingCountsRef.current, Date.now()),
                 [],
             );
+
+            // Persist the delivery date the staffer picked (or edited) for the
+            // current cart. Writes ops/inventory_{loc}.deliveryDate + audit.
+            const setDeliveryForCart = useCallback(async (dateStr) => {
+                if (!storeLocation || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) return;
+                setDeliveryDate(dateStr);                 // optimistic
+                try {
+                    await updateDoc(doc(db, 'ops', 'inventory_' + storeLocation), {
+                        deliveryDate: dateStr,
+                        deliverySetAt: new Date().toISOString(),
+                        deliverySetBy: staffName || 'Unknown',
+                    });
+                } catch (e) {
+                    console.warn('setDeliveryForCart failed:', e);
+                }
+            }, [storeLocation, staffName]);
+
+            // Client BACKUP for the 12am auto-empty (the Cloud Function is primary).
+            // Reads straight from the snapshot `data` (no stale closure) so it always
+            // sees the live counts/customInventory/deliveryDate. On/after the delivery
+            // date, archive the cart to inventoryHistory_{loc}/<date>_delivered (a
+            // DETERMINISTIC id → a client+cron race just overwrites one row), then zero
+            // the counts + clear deliveryDate. Clearing deliveryDate makes any second
+            // tablet skip. Best-effort; never throws into the snapshot handler.
+            const archiveAndClearIfDelivered = useCallback(async (data) => {
+                if (!data || autoEmptyingRef.current) return;
+                const dd = data.deliveryDate || null;
+                if (!shouldAutoEmpty(dd, centralToday())) return;
+                const counts = data.counts || {};
+                const hasCounts = Object.values(counts).some((v) => Number(v) > 0);
+                if (!hasCounts) {
+                    // Nothing to archive, but still clear a stale past deliveryDate.
+                    try { await updateDoc(doc(db, 'ops', 'inventory_' + storeLocation), { deliveryDate: deleteField() }); } catch { /* ignore */ }
+                    return;
+                }
+                autoEmptyingRef.current = true;
+                try {
+                    const histDoc = buildHistoryDoc({
+                        counts,
+                        customInventory: data.customInventory || [],
+                        countMeta: data.countMeta || {},
+                        deliveryDate: dd,
+                        nowIso: new Date().toISOString(),
+                    });
+                    await setDoc(doc(db, 'inventoryHistory_' + storeLocation, deliveredDocId(dd)), histDoc);
+                    pendingCountsRef.current = {};
+                    setInventory({});
+                    setInvCountMeta({});
+                    setVendorCounts({});
+                    setDeliveryDate(null);
+                    await updateDoc(doc(db, 'ops', 'inventory_' + storeLocation), {
+                        counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(),
+                        date: new Date().toISOString(),
+                    });
+                    // Never wipe the cart silently — tell the staffer why it cleared
+                    // (it's safely archived under Recent Orders). Mirrors saveAndReset.
+                    toast(language === 'es'
+                        ? '✓ Pedido de entrega archivado — carrito nuevo'
+                        : '✓ Delivery order archived — fresh cart started',
+                        { kind: 'success', duration: 6000 });
+                    reloadLastEnteredByItem().catch(() => {});
+                } catch (e) {
+                    console.warn('archiveAndClearIfDelivered failed:', e);
+                } finally {
+                    autoEmptyingRef.current = false;
+                }
+            }, [storeLocation]);
+
+            // Distinct counted items across master + vendor-only maps.
+            const deliveryItemCount = useMemo(() => (
+                Object.values(inventory).filter((v) => Number(v) > 0).length +
+                Object.values(vendorCounts).filter((v) => Number(v) > 0).length
+            ), [inventory, vendorCounts]);
+            // Prompt for a delivery date when a NEW item is added to a cart that has
+            // no date yet (fires on the first item, and again on the next new item if
+            // the staffer dismissed — but never on +/- of an existing item). Also
+            // catches an app-reload with counts-but-no-date (legacy cart) → prompts
+            // once. Resets when the cart empties.
+            useEffect(() => {
+                const prev = lastDeliveryPromptCountRef.current;
+                lastDeliveryPromptCountRef.current = deliveryItemCount;
+                if (deliveryItemCount === 0) return;                 // empty → nothing to ask
+                if (deliveryDate || showDeliveryModal) return;       // already dated / already asking
+                if (deliveryItemCount > prev) setShowDeliveryModal(true);
+            }, [deliveryItemCount, deliveryDate, showDeliveryModal]);
             // "Last ordered" per item — computed from inventoryHistory_{loc}.
             // For each item, finds the most recent saved snapshot where the
             // item had a count > 0. That date + qty is the "last time you
@@ -2188,6 +2289,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         setInventory(reconcileServerCounts(data.counts || {}));
                         setInvCountMeta(data.countMeta || {});
                         setVendorCounts(data.vendorCounts || {});
+                        // Dated delivery cart: mirror the delivery date, and if we've
+                        // reached/passed its midnight, archive + empty (client backup
+                        // for the 12am Cloud Function). archiveAndClearIfDelivered is
+                        // idempotent (deterministic history id + clears deliveryDate).
+                        setDeliveryDate(data.deliveryDate || null);
+                        archiveAndClearIfDelivered(data);
                         // If an admin-activated list is in play, IT owns the
                         // categories structure — skip the legacy merge from
                         // the ops doc. Counts/meta still come from the ops
@@ -3850,8 +3957,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const ref = doc(db, "ops", "inventory_" + storeLocation);
                     // updateDoc replaces these top-level fields without touching customInventory or other fields,
                     // so a concurrent schema edit (add item, change vendor) on another tablet isn't clobbered.
+                    setDeliveryDate(null);
                     try {
-                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, date: new Date().toISOString() });
+                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), date: new Date().toISOString() });
                     } catch (err) {
                         if (err?.code === "not-found") {
                             await setDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, customInventory, date: new Date().toISOString() });
@@ -3897,9 +4005,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setInventory({});
                 setInvCountMeta({});
                 setVendorCounts({});
+                setDeliveryDate(null);
                 try {
                     await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
-                        counts: {}, countMeta: {}, vendorCounts: {}, date: new Date().toISOString(),
+                        counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), date: new Date().toISOString(),
                     });
                     toast(language === 'es' ? '✓ Conteo limpiado' : '✓ Counts cleared', { kind: 'success' });
                 } catch (e) {
@@ -7353,6 +7462,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 const cartEmpty = itemCount === 0;
                                 return (
                                     <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex items-center justify-between">
+                                        <div className="flex flex-col gap-0.5 min-w-0">
                                         {cartEmpty ? (
                                             <span className="text-sm font-bold text-mint-700/40 flex items-center gap-1 select-none">
                                                 {"\u{1F6D2}"} {language === "es" ? "Carrito vacío" : "Cart empty"}
@@ -7363,6 +7473,23 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             <span className="text-xs text-mint-500 ml-1">{language === "es" ? "ver ▸" : "view ▸"}</span>
                                         </button>
                                         )}
+                                        {/* Delivery date for this cart — tap to set/change. Only shown
+                                            once the cart has items (a dated purchase order). */}
+                                        {!cartEmpty && (
+                                            deliveryDate ? (
+                                                <button onClick={() => setShowDeliveryModal(true)}
+                                                    className="text-[11px] text-mint-700/80 hover:text-mint-900 flex items-center gap-1 text-left">
+                                                    📅 {language === "es" ? "para" : "for"} {formatDeliveryLabel(deliveryDate, language === "es")}
+                                                    <span className="text-mint-500">✎</span>
+                                                </button>
+                                            ) : (
+                                                <button onClick={() => setShowDeliveryModal(true)}
+                                                    className="text-[11px] font-bold text-amber-700 hover:text-amber-900 flex items-center gap-1 text-left animate-pulse">
+                                                    ⚠ {language === "es" ? "Fijar fecha de entrega" : "Set delivery date"}
+                                                </button>
+                                            )
+                                        )}
+                                        </div>
                                         <div className="flex items-center gap-1.5">
                                             <button onClick={() => setInvShowOnlyLow(v => !v)}
                                                 className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyLow ? "bg-amber-600 text-white" : "bg-amber-100 text-amber-800 hover:bg-amber-200"}`}>
@@ -7376,6 +7503,17 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     </div>
                                 );
                             })()}
+
+                            {/* Delivery-date prompt (first item → "what day is this for?" +
+                                the ✎ edit path). Sets ops/inventory_{loc}.deliveryDate. */}
+                            {showDeliveryModal && (
+                                <DeliveryDateModal
+                                    current={deliveryDate}
+                                    isEs={language === 'es'}
+                                    onClose={() => setShowDeliveryModal(false)}
+                                    onConfirm={(d) => { setDeliveryForCart(d); setShowDeliveryModal(false); }}
+                                />
+                            )}
 
                             {/* ── CART MODAL ── multi-vendor comparison view ──
                                 One row per counted item with all vendor prices side-by-side.
@@ -10012,6 +10150,46 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
 // needed). Each row has a "Send to cart" button that runs the same
 // shared restore helper as the bar. Click outside or X to close.
 // ─────────────────────────────────────────────────────────────────
+// DeliveryDateModal — asks "what day is this delivery for?" when the first item
+// lands in an empty cart (and reopened via the ✎ in the cart bar to change it).
+// Native date picker, prefilled to tomorrow (Central), min today. The cart then
+// auto-empties at 12am on that day (Cloud Function + client backup).
+function DeliveryDateModal({ current, onConfirm, onClose, isEs }) {
+    // Earliest pick is TOMORROW: a cart is built BEFORE its delivery and empties
+    // at 12am ON the delivery day, so "today" would empty the moment it's opened.
+    const minDate = centralTomorrow();
+    const [val, setVal] = useState(current || centralTomorrow());
+    return (
+        <ModalPortal onClose={onClose}>
+            <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+                <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+                    <h3 className="text-base font-black text-gray-900 mb-1">
+                        📦 {isEs ? '¿Para qué día es esta entrega?' : 'What day is this delivery for?'}
+                    </h3>
+                    <p className="text-xs text-gray-500 mb-3">
+                        {isEs
+                            ? 'La lista se guarda y se vacía sola a las 12am de ese día.'
+                            : 'The list is saved and clears itself at 12am on that day.'}
+                    </p>
+                    <input type="date" value={val} min={minDate}
+                        onChange={(e) => setVal(e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 text-base font-bold text-gray-800 focus:border-mint-500 focus:outline-none" />
+                    <div className="flex gap-2 mt-4">
+                        <button onClick={onClose}
+                            className="flex-1 py-2.5 rounded-xl border-2 border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50">
+                            {isEs ? 'Ahora no' : 'Not now'}
+                        </button>
+                        <button onClick={() => { if (val) onConfirm(val); }} disabled={!val}
+                            className="flex-1 py-2.5 rounded-xl bg-mint-700 text-white font-black text-sm active:scale-95 disabled:opacity-50">
+                            {isEs ? 'Confirmar' : 'Confirm'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </ModalPortal>
+    );
+}
+
 function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventory, language, onClose, itemNameById = {}, initialExpandedId = null }) {
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);

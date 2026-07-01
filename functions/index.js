@@ -5474,3 +5474,69 @@ exports.watchScraperFreshness = onSchedule(
         logger.info(`watchScraperFreshness: ${report.join(" | ")}`);
     },
 );
+
+// ── Empty delivered inventory carts at 12am Central ──────────────────────────
+// Each inventory cart (ops/inventory_{loc}) is an order FOR a delivery date the
+// staff picked when the first item was added. At 12:05am Central, for any
+// location whose deliveryDate is today-or-past and whose cart still has items,
+// archive the cart to inventoryHistory_{loc}/<date>_delivered (a DETERMINISTIC
+// id → idempotent vs. the client-side backup in Operations.jsx) then zero the
+// counts + clear deliveryDate so the next delivery starts fresh. The helpers
+// mirror src/data/inventoryDelivery.js exactly (kept in-file; functions/ can't
+// import the app src). Andrew 2026-06-30.
+function _deliveryCentralToday(now = new Date()) {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+function _deliveryShouldEmpty(deliveryDate, todayStr) {
+    if (!deliveryDate || typeof deliveryDate !== "string") return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) return false;
+    return deliveryDate <= todayStr;
+}
+function _deliveryBuildHistoryDoc(counts, customInventory, countMeta, deliveryDate, nowIso) {
+    const cleanCounts = {};
+    for (const [k, v] of Object.entries(counts || {})) { if (v && Number(v) > 0) cleanCounts[k] = v; }
+    const items = (customInventory || []).map((cat) => ({
+        category: cat.category || cat.name || "",
+        items: (cat.items || []).filter((i) => cleanCounts[i.id]).map((i) => ({
+            id: i.id, name: i.name || "", nameEs: i.nameEs || "",
+            vendor: i.vendor || i.supplier || "", supplier: i.vendor || i.supplier || "",
+            orderDay: i.orderDay || "", pack: i.pack || "", price: i.price != null ? i.price : null,
+        })),
+    })).filter((cat) => cat.items.length > 0);
+    const cleanMeta = {};
+    for (const [k, v] of Object.entries(countMeta || {})) { if (cleanCounts[k]) cleanMeta[k] = v; }
+    return { counts: cleanCounts, items, countMeta: cleanMeta, date: nowIso, listName: deliveryDate ? `Delivery ${deliveryDate}` : "", deliveryDate: deliveryDate || "", ordered: {} };
+}
+
+exports.emptyDeliveredInventoryCarts = onSchedule(
+    { schedule: "5 0 * * *", timeZone: "America/Chicago", region: "us-central1", maxInstances: 3 },
+    async () => {
+        const todayStr = _deliveryCentralToday();
+        const report = [];
+        for (const loc of ["webster", "maryland"]) {
+            try {
+                const ref = db.doc(`ops/inventory_${loc}`);
+                const snap = await ref.get();
+                if (!snap.exists) continue;
+                const data = snap.data() || {};
+                const dd = data.deliveryDate || null;
+                if (!_deliveryShouldEmpty(dd, todayStr)) continue;
+                const counts = data.counts || {};
+                const hasCounts = Object.values(counts).some((v) => Number(v) > 0);
+                if (!hasCounts) {
+                    await ref.update({ deliveryDate: FieldValue.delete() });
+                    report.push(`${loc}: date ${dd} past, cart empty → cleared date`);
+                    continue;
+                }
+                const histDoc = _deliveryBuildHistoryDoc(counts, data.customInventory || [], data.countMeta || {}, dd, new Date().toISOString());
+                await db.doc(`inventoryHistory_${loc}/${dd}_delivered`).set(histDoc);
+                await ref.update({ counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: FieldValue.delete(), date: new Date().toISOString() });
+                report.push(`${loc}: archived + emptied delivery ${dd} (${Object.keys(histDoc.counts).length} items)`);
+            } catch (e) {
+                logger.error(`emptyDeliveredInventoryCarts ${loc} failed:`, e);
+                try { captureWithContext(e, { fn: "emptyDeliveredInventoryCarts", tags: { location: loc } }); } catch { /* ignore */ }
+            }
+        }
+        logger.info(`emptyDeliveredInventoryCarts: ${report.length ? report.join(" | ") : "nothing due"}`);
+    },
+);
