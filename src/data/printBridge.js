@@ -109,6 +109,39 @@ async function fetchWithTimeout(url, options, timeoutMs) {
     }
 }
 
+// ── Connection pre-warming ──────────────────────────────────────────
+// The real "printer takes a while to connect" latency is the /healthz probe:
+// it establishes the Tailscale Funnel HTTPS session (cold TLS + relay routing)
+// AND makes the Pi open a TCP socket to the Brother (waking it from sleep).
+// Doing that lazily at Print time = a visible stall. Instead we warm it the
+// moment a print surface opens (the user then spends a few seconds picking
+// size/copies), and cache the successful probe so the actual Print skips it.
+//   lastProbe: the most recent probe result + when it happened.
+//   PROBE_FRESH_MS: how long a good probe is trusted (skip re-probing).
+let lastProbe = { ok: false, at: 0 };
+let warmInFlight = null;          // de-dupe concurrent warms (rapid re-renders)
+const PROBE_FRESH_MS = 8000;      // a green probe is trusted for 8s
+
+function probeIsFresh() {
+    return lastProbe.ok && (Date.now() - lastProbe.at) < PROBE_FRESH_MS;
+}
+
+// Fire-and-forget: open the tunnel + wake the printer ahead of the print.
+// Safe to call repeatedly (in-flight de-duped). Never throws.
+export async function warmPrintBridge() {
+    if (warmInFlight) return warmInFlight;
+    warmInFlight = (async () => {
+        try {
+            const config = await getPrintBridgeConfig();
+            if (!config) { lastProbe = { ok: false, at: Date.now() }; return; }
+            const probe = await probePrintBridge(config);
+            lastProbe = { ok: probe.ok, at: Date.now() };
+        } catch { /* warming is best-effort */ }
+        finally { warmInFlight = null; }
+    })();
+    return warmInFlight;
+}
+
 // Probe /healthz with a short timeout. Used by the caller to decide
 // whether to attempt the bridge or skip straight to the share-sheet
 // fallback. Returns { ok, body? }.
@@ -271,9 +304,16 @@ export async function tryPrintViaBridge({ payload, copies = 1, freeText = null }
 
     // Probe first — if the Pi or printer is unreachable, skip the POST
     // (which would either hang or 502) and let the fallback path take over.
-    const probe = await probePrintBridge(config);
-    if (!probe.ok) {
-        return { ok: false, fallback: true, reason: `probe_${probe.error}` };
+    // BUT if we warmed the bridge on modal-open and that probe is still fresh
+    // (<8s), skip this probe entirely — the tunnel is up and the printer is
+    // awake, so go straight to the POST. This is what makes the actual Print
+    // feel instant after opening the sticker.
+    if (!probeIsFresh()) {
+        const probe = await probePrintBridge(config);
+        lastProbe = { ok: probe.ok, at: Date.now() };
+        if (!probe.ok) {
+            return { ok: false, fallback: true, reason: `probe_${probe.error}` };
+        }
     }
 
     let res;

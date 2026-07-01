@@ -1589,7 +1589,20 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                         </button>
                     )}
                     {(status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.REJECTED) && (
-                        <button onClick={() => setStatus(DOC_STATUS.APPROVED)}
+                        <button onClick={() => {
+                            // Guard: an employer-fill doc (I-9 Section 2) that's still
+                            // SUBMITTED means Section 2 hasn't been completed (finishing
+                            // it flips status to APPROVED). Warn before approving an
+                            // I-9 with a blank, federally-incomplete Section 2.
+                            if (hasEmployerFields && status === DOC_STATUS.SUBMITTED) {
+                                const ok = window.confirm(tx(
+                                    'The employer section (e.g. I-9 Section 2) is not completed yet — use "Complete employer" first. Approve anyway?',
+                                    'La sección del empleador (p. ej. Sección 2 del I-9) aún no está completa — usa "Completar empleador" primero. ¿Aprobar de todos modos?'
+                                ));
+                                if (!ok) return;
+                            }
+                            setStatus(DOC_STATUS.APPROVED);
+                        }}
                             className="text-[10px] px-2 py-1 rounded bg-green-600 text-white font-bold">
                             ✓ {tx('Approve', 'Aprobar')}
                         </button>

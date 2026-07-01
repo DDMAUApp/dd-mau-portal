@@ -53,6 +53,7 @@ import {
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
 import { isAdmin } from '../data/staff';
+import { warmPrintBridge } from '../data/printBridge';
 import { subscribeAllBuildOverrides, applyBuildOverride } from '../data/buildOverrides';
 import { subscribeAllCustomItems } from '../data/customItems';
 
@@ -135,6 +136,16 @@ export default function DateStickerPrinter({
         }
         const t = setTimeout(warm, 800);
         return () => clearTimeout(t);
+    }, []);
+    // Open the printer CONNECTION as soon as the sticker page mounts (Tailscale
+    // tunnel + wake the Brother), then keep it warm every 25s while the page is
+    // open — so by the time a sticker is picked and Print is tapped, the printer
+    // is already connected instead of cold-starting. No-op when the bridge is
+    // disabled (config → null, no network). Andrew 2026-06-30.
+    useEffect(() => {
+        warmPrintBridge();
+        const id = setInterval(() => warmPrintBridge(), 25000);
+        return () => clearInterval(id);
     }, []);
     // Edit Mode — admin-only. When ON, each row in the flat sections
     // becomes an editable form with delete + add-row buttons. Off

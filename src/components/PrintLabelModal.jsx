@@ -150,13 +150,18 @@ export default function PrintLabelModal({
     // missing" strip reflects the chosen target.
     useEffect(() => {
         if (!location) return;
-        // Pre-warm the print hot path's config cache the moment the
-        // modal opens — by the time the user has picked size/copies
-        // and taps Print, printPrepLabel resolves both configs in 0ms
-        // instead of doing 2 Firestore round-trips ("sticky" print,
-        // Andrew 2026-06-11).
+        // Pre-warm the print hot path's config cache AND the printer connection
+        // (Tailscale tunnel + wake the Brother) the moment the modal opens — by
+        // the time the user has picked size/copies and taps Print, printPrepLabel
+        // resolves both configs in 0ms AND the bridge probe is already fresh, so
+        // the print fires without a cold connect. ("sticky" print, Andrew
+        // 2026-06-11; connection warm-up 2026-06-30.)
         warmPrintConfigs(location, slot);
-        return subscribePrinterConfig(location, setPrinter, slot);
+        const unsub = subscribePrinterConfig(location, setPrinter, slot);
+        // Keep the connection warm while the modal stays open so the Brother
+        // can't re-sleep between opening the sticker and tapping Print.
+        const keepAlive = setInterval(() => warmPrintConfigs(location, slot), 25000);
+        return () => { clearInterval(keepAlive); unsub(); };
     }, [location, slot]);
 
     // Subscribe to the global label format so the preview reflects

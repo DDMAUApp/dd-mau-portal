@@ -68,7 +68,7 @@ import { getLabelFormat, getLabelFormatFast } from './labelFormat';
 // bridge is disabled, unreachable, or the Brother is offline, we fall
 // through to the existing PDF + Web Share Sheet path so date stickers
 // still work. See src/data/printBridge.js + /pi5-print-bridge/.
-import { tryPrintViaBridge, payloadToBridgeFormat } from './printBridge';
+import { tryPrintViaBridge, payloadToBridgeFormat, warmPrintBridge } from './printBridge';
 import { printBrotherDirect } from './brotherIpp';
 
 // ── Public types ──────────────────────────────────────────────
@@ -443,6 +443,13 @@ export function warmPrintConfigs(location, slot = DEFAULT_PRINTER_SLOT) {
     try {
         getPrinterConfigFast(location, slot).catch(() => {});
         getLabelFormatFast().catch(() => {});
+        // Also OPEN THE PRINTER CONNECTION now (Tailscale tunnel + wake the
+        // Brother), not just the Firestore config — that network handshake is
+        // the real "takes a while to connect" latency. Warming it here while
+        // the user picks size/copies means the actual Print skips the probe
+        // and prints immediately. No-op when the bridge is disabled (config
+        // resolves null → no network). Andrew 2026-06-30.
+        warmPrintBridge();
     } catch { /* warming is best-effort */ }
 }
 
