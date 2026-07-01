@@ -223,13 +223,31 @@ export const ONBOARDING_DOCS = [
         kind: 'file',
         required: false,            // auto-required for 14–15 y/o (under 16) — see under16Only
         daysFromHire: 7,
-        description: 'Only if you are 14 or 15: upload your Missouri school work certificate (get it from your school office). Not needed at 16+.',
+        description: 'Only if you are 14 or 15: upload your Missouri school work certificate (get it from your school office). More info at labor.mo.gov/youth-employment. Not needed at 16+.',
         // Missouri requires a school-issued Work Certificate ONLY for 14- and
         // 15-year-olds (under 16); 16–17 y/o need none. Gate on EXACT AGE
         // (under16Only → isHireUnder16, DOB-based) rather than the under-18
         // `minorOnly` flag, so a 16–17 y/o is never blocked by a permit they
         // can't obtain. Ref: labor.mo.gov/dls/youth-employment.
         under16Only: true,
+    },
+    {
+        // Minor work-rules acknowledgment — shown to EVERY hire under 18
+        // (minorOnly), since the FLSA hazardous-task limits apply to all
+        // minors while the hour limits mainly bind 14–15 y/o. The hire reads
+        // the MO/federal hour + no-hazardous-task rules and signs. Not a
+        // state-mandated form, but a sensible record that the young worker
+        // was told the limits. Policy body lives in DEFAULT_POLICIES.minor_work_rules.
+        id: 'minor_safety_ack',
+        en: 'Minor work rules acknowledgment',
+        es: 'Reconocimiento de reglas para menores',
+        emoji: '🧒',
+        kind: 'acknowledgment',
+        required: false,            // auto-required for any hire under 18 — see minorOnly
+        daysFromHire: 1,
+        description: 'Read and sign the hour limits and prohibited tasks that apply to workers under 18.',
+        policyKey: 'minor_work_rules',
+        minorOnly: true,
     },
 ];
 

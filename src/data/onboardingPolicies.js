@@ -1047,6 +1047,71 @@ RECONOCIMIENTO
 He leído este aviso. Entiendo que DD Mau me paga el salario mínimo completo de Missouri o más y no toma un crédito por propinas. Entiendo el fondo común de propinas obligatorio 50/50 FOH/BOH y cómo se calcula mi porción. Entiendo que los dueños, gerentes y supervisores están excluidos del fondo.`,
         },
     },
+    // Minor work-rules acknowledgment — shown ONLY to hires under 18 (minorOnly).
+    // Documents that the young worker was told Missouri + federal (FLSA) hour and
+    // hazardous-task limits before starting. Not a state-mandated form, but a
+    // sensible liability record. Keep in sync with labor.mo.gov/dls/youth-employment
+    // and US DOL Fact Sheet #2A if the rules change.
+    minor_work_rules: {
+        en: {
+            title: 'Minor Work Rules Acknowledgment',
+            body: `MINOR WORK RULES (UNDER 18)
+
+Because you are under 18, state and federal law limit the hours you can work and the tasks you can do. Read this and sign to confirm you understand. If anything here is unclear, ask a manager before you start.
+
+HOURS (14 & 15 YEAR OLDS)
+ - You must have a Missouri school work certificate on file before your first shift.
+ - No more than 3 hours on a school day (including Fridays) and no more than 8 hours on a non-school day.
+ - Not before 7:00 a.m., and not after 7:00 p.m. during the school year (extended to 9:00 p.m. from June 1 through Labor Day).
+ - No more than 40 hours in a non-school week; no more than 18 hours in a school week.
+
+HOURS (16 & 17 YEAR OLDS)
+ - No Missouri hour limits, but your schedule still must not interfere with school.
+
+TASKS YOU MAY NOT DO (ALL UNDER 18)
+ - Operate, clean, or repair power-driven meat slicers, meat grinders, meat choppers, meat saws, patty-forming machines, commercial mixers, or certain power-driven bakery machines.
+ - Operate or unload a motor vehicle as part of your job.
+ - Work that federal or Missouri law declares hazardous for minors.
+
+EXTRA RULE FOR UNDER 16
+ - You may not cook with or handle hot oil or grease, and you may not work where alcohol is more than 50% of sales.
+
+BREAKS
+ - Follow the break schedule your manager gives you.
+
+ACKNOWLEDGMENT
+I understand the hour limits and the tasks I am not allowed to do because I am under 18. I will tell a manager if I am ever asked to do something on this list, and I will not operate any prohibited equipment.`,
+        },
+        es: {
+            title: 'Reconocimiento de Reglas de Trabajo para Menores',
+            body: `REGLAS DE TRABAJO PARA MENORES (MENORES DE 18)
+
+Como eres menor de 18 años, la ley estatal y federal limita las horas que puedes trabajar y las tareas que puedes hacer. Lee esto y firma para confirmar que lo entiendes. Si algo no está claro, pregunta a un gerente antes de empezar.
+
+HORAS (14 Y 15 AÑOS)
+ - Debes tener en archivo un certificado de trabajo escolar de Missouri antes de tu primer turno.
+ - No más de 3 horas en un día escolar (incluidos los viernes) y no más de 8 horas en un día no escolar.
+ - No antes de las 7:00 a.m., y no después de las 7:00 p.m. durante el año escolar (hasta las 9:00 p.m. del 1 de junio al Día del Trabajo).
+ - No más de 40 horas en una semana no escolar; no más de 18 horas en una semana escolar.
+
+HORAS (16 Y 17 AÑOS)
+ - Sin límites de horas en Missouri, pero tu horario no debe interferir con la escuela.
+
+TAREAS QUE NO PUEDES HACER (TODOS LOS MENORES DE 18)
+ - Operar, limpiar o reparar rebanadoras de carne, molinos de carne, picadoras de carne, sierras de carne, máquinas para formar hamburguesas, mezcladoras comerciales o ciertas máquinas de panadería eléctricas.
+ - Operar o descargar un vehículo motorizado como parte de tu trabajo.
+ - Trabajo que la ley federal o de Missouri declare peligroso para menores.
+
+REGLA ADICIONAL PARA MENORES DE 16
+ - No puedes cocinar ni manejar aceite o grasa caliente, y no puedes trabajar donde el alcohol sea más del 50% de las ventas.
+
+DESCANSOS
+ - Sigue el horario de descansos que te dé tu gerente.
+
+RECONOCIMIENTO
+Entiendo los límites de horas y las tareas que no puedo hacer por ser menor de 18 años. Le diré a un gerente si alguna vez me piden hacer algo de esta lista, y no operaré ningún equipo prohibido.`,
+        },
+    },
 };
 
 // Workers' comp policy was removed 2026-05-13 per Andrew. Coverage of

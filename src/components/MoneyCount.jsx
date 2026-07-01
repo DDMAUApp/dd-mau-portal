@@ -24,6 +24,17 @@ function fmtWhen(ms, isEn) {
     } catch { return '—'; }
 }
 
+// Time-of-day only (Central), e.g. "8:12 PM". Used on tip-history rows so a
+// manager can see WHEN each cash-tip total was entered, not just the day.
+function fmtTime(ms, isEn) {
+    if (!ms) return '';
+    try {
+        return new Date(ms).toLocaleTimeString(isEn ? 'en-US' : 'es-US', {
+            timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit',
+        });
+    } catch { return ''; }
+}
+
 // One denomination row: label · count input · row subtotal. Memoized + given a
 // STABLE setCount, so typing in one row re-renders only that row — the other
 // denominations bail out (their value is unchanged), keeping input snappy.
@@ -459,7 +470,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                                         <div className="flex items-center justify-between gap-2 px-3 py-2">
                                                             <div className="min-w-0">
                                                                 <span className="text-sm font-bold text-dd-text tabular-nums">{fmtMoney(r.amountCents)}</span>
-                                                                <span className="ml-2 text-[11px] text-dd-text-2">{r.date} · {r.staffName || '—'}</span>
+                                                                <span className="ml-2 text-[11px] text-dd-text-2">{r.date}{r.updatedMs ? ` · ${fmtTime(r.updatedMs, isEn)}` : ''} · {r.staffName || '—'}</span>
                                                                 {edits.length > 0 && <span className="ml-1 text-[10px] font-bold text-amber-700">✎{edits.length}</span>}
                                                             </div>
                                                             <div className="flex items-center gap-1 shrink-0">
