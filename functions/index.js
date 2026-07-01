@@ -5522,10 +5522,20 @@ exports.emptyDeliveredInventoryCarts = onSchedule(
                 const dd = data.deliveryDate || null;
                 if (!_deliveryShouldEmpty(dd, todayStr)) continue;
                 const counts = data.counts || {};
+                const vCounts = data.vendorCounts || {};
                 const hasCounts = Object.values(counts).some((v) => Number(v) > 0);
+                const hasVendor = Object.values(vCounts).some((v) => Number(v) > 0);
                 if (!hasCounts) {
-                    await ref.update({ deliveryDate: FieldValue.delete() });
-                    report.push(`${loc}: date ${dd} past, cart empty → cleared date`);
+                    // No master-inventory items to archive. Clear the stale date,
+                    // and zero any vendor-only counts too so a vendor-only cart
+                    // (deliveryItemCount counts vendorCounts client-side) doesn't
+                    // stay stranded + re-prompt forever. Vendor-only items aren't
+                    // written to inventoryHistory (matches the client), so there's
+                    // nothing to archive here.
+                    const patch = { deliveryDate: FieldValue.delete() };
+                    if (hasVendor) patch.vendorCounts = {};
+                    await ref.update(patch);
+                    report.push(`${loc}: date ${dd} past, no master counts → cleared date${hasVendor ? " + vendor counts" : ""}`);
                     continue;
                 }
                 const histDoc = _deliveryBuildHistoryDoc(counts, data.customInventory || [], data.countMeta || {}, dd, new Date().toISOString());
