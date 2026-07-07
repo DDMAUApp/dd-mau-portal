@@ -340,12 +340,36 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                 <span className="text-[11px] font-bold text-dd-text-2">{todayCounts.length} {tx('saved', 'guardados')}</span>
                             </div>
                             <ul className="space-y-1">
-                                {todayCounts.map((h, i) => (
-                                    <li key={h.id} className="flex items-center justify-between text-sm px-2.5 py-1.5 rounded-lg bg-white border border-dd-line">
-                                        <span className="font-bold text-dd-text tabular-nums">{fmtMoney(h.totalCents)}</span>
-                                        <span className="text-[11px] text-dd-text-2">{i === 0 ? `${tx('1st', '1°')} · ` : ''}{fmtWhen(h.createdMs, isEn)}</span>
-                                    </li>
-                                ))}
+                                {todayCounts.map((h, i) => {
+                                    const open = openId === h.id;
+                                    return (
+                                        <li key={h.id} className="rounded-lg bg-white border border-dd-line overflow-hidden">
+                                            {/* Tap a count to see its coin/bill breakdown (same as History). */}
+                                            <button onClick={() => setOpenId(open ? null : h.id)}
+                                                className="w-full flex items-center justify-between gap-2 text-sm px-2.5 py-1.5 text-left hover:bg-dd-bg/40 active:scale-[0.998] transition">
+                                                <span className="font-bold text-dd-text tabular-nums">{fmtMoney(h.totalCents)}</span>
+                                                <span className="flex items-center gap-1.5 text-[11px] text-dd-text-2">
+                                                    {i === 0 ? `${tx('1st', '1°')} · ` : ''}{fmtWhen(h.createdMs, isEn)}
+                                                    <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+                                                </span>
+                                            </button>
+                                            {open && (
+                                                <div className="px-2.5 pb-2 pt-1 border-t border-dd-line/60 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                                                    {[...COIN_DENOMS, ...BILL_DENOMS].map((d) => {
+                                                        const n = Number(h.counts?.[d.cents]) || 0;
+                                                        if (!n) return null;
+                                                        return (
+                                                            <div key={d.cents} className="flex items-center justify-between text-[12px] py-0.5">
+                                                                <span className="text-dd-text-2">{d.label} × {n}</span>
+                                                                <span className="font-bold text-dd-text tabular-nums">{fmtMoney(d.cents * n)}</span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </li>
+                                    );
+                                })}
                             </ul>
                             <p className="text-[10px] text-dd-text-2 mt-1.5">{tx('Saved counts for today — they move to History after midnight.', 'Conteos de hoy — pasan al Historial después de medianoche.')}</p>
                         </div>
