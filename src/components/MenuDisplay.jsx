@@ -485,8 +485,16 @@ function MenuDisplayInner({ tvId = 'webster' }) {
             window.removeEventListener('offline', off);
         };
     }, []);
-    const minutesSinceSnap = Math.max(0, Math.round((now.getTime() - lastSnapshotAt) / 60000));
-    const showOfflineBadge = !navOnline || minutesSinceSnap >= 2;
+    // Last moment we KNEW we were online (navigator.onLine true) — lets the
+    // badge show a real "offline for X min" duration when it does go down.
+    const [lastOnlineAt, setLastOnlineAt] = useState(() => Date.now());
+    useEffect(() => { if (navOnline) setLastOnlineAt(Date.now()); }, [navOnline, now]);
+    const minutesSinceOnline = Math.max(0, Math.round((now.getTime() - lastOnlineAt) / 60000));
+    // Show "Offline" ONLY when the device has genuinely lost its network
+    // connection (navigator.onLine) — NOT merely because the menu data hasn't
+    // CHANGED in a while. A static menu is still perfectly live; the old
+    // "no snapshot in 2 min" check put a false "Offline" on the customer board.
+    const showOfflineBadge = !navOnline;
 
     // Live clock — also a "feed alive" cue. Frozen clock = reboot.
     useEffect(() => {
@@ -638,7 +646,7 @@ function MenuDisplayInner({ tvId = 'webster' }) {
                     daypartLabel={activeDaypart?.label || null}
                 />
                 <PromoStrip promoStrip={tvConfig?.promoStrip} />
-                {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceSnap} />}
+                {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceOnline} />}
             </>
         );
     }
@@ -659,7 +667,7 @@ function MenuDisplayInner({ tvId = 'webster' }) {
                     label={tvConfig?.label || LOC_LABEL[location] || location}
                 />
                 <PromoStrip promoStrip={tvConfig?.promoStrip} />
-                {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceSnap} />}
+                {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceOnline} />}
             </>
         );
     }
@@ -678,7 +686,7 @@ function MenuDisplayInner({ tvId = 'webster' }) {
                 {footerNode}
             </div>
             <PromoStrip promoStrip={tvConfig?.promoStrip} />
-            {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceSnap} />}
+            {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceOnline} />}
         </>
     );
 }
