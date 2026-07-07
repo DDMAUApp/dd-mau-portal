@@ -169,6 +169,10 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
         return unsub;
     }, []);
     const backupTone = (() => {
+        // A FAILED last run is NEVER "good", no matter how recent. The old logic
+        // keyed only on time, so a backup that failed 9h ago still showed green —
+        // masking days of broken backups. Status wins.
+        if (latestBackup?.status === 'failed') return 'danger';
         const m = minutesSince(latestBackup?.triggeredAt);
         if (m === null)                      return 'neutral';
         if (m < 60 * 36)                     return 'good';
@@ -283,8 +287,12 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
                 <StatusCard
                     title={tx('Last backup', 'Último respaldo')}
                     tone={backupTone}
-                    big={latestBackup ? fmtRelative(latestBackup.triggeredAt, isEs) : tx('No data', 'Sin datos')}
-                    detail={latestBackup?.outputUriPrefix ? String(latestBackup.outputUriPrefix).split('/').slice(-2).join('/') : tx('scheduledFirestoreBackup CF', 'Función CF programada')}
+                    big={latestBackup?.status === 'failed'
+                        ? tx('⚠ FAILED', '⚠ FALLÓ')
+                        : (latestBackup ? fmtRelative(latestBackup.triggeredAt, isEs) : tx('No data', 'Sin datos'))}
+                    detail={latestBackup?.status === 'failed'
+                        ? `${fmtRelative(latestBackup.triggeredAt, isEs)} — ${tx('backup did NOT run', 'el respaldo NO se ejecutó')}`
+                        : (latestBackup?.outputUriPrefix ? String(latestBackup.outputUriPrefix).split('/').slice(-2).join('/') : tx('scheduledFirestoreBackup CF', 'Función CF programada'))}
                 />
                 <StatusCard
                     title={tx('TV displays', 'Pantallas')}

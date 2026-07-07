@@ -2067,6 +2067,22 @@ exports.scheduledFirestoreBackup = onSchedule(
                     kind: "scheduled_daily",
                 });
             } catch {}
+            // Surface it LOUD: a severity='critical' error_log fires
+            // onCriticalError, which pings the owner (cooldown-deduped) — so a
+            // broken nightly backup can never silently rot for days again.
+            try {
+                await db.collection("error_logs").add({
+                    severity: "critical",
+                    source: "backend",
+                    feature: "backup",
+                    errorName: "BackupFailed",
+                    errorMessage: `Nightly Firestore backup FAILED: ${String(err.message || err).slice(0, 300)}`,
+                    env: "prod",
+                    ts: new Date().toISOString(),
+                    occurredAt: Date.now(),
+                    createdAt: FieldValue.serverTimestamp(),
+                });
+            } catch {}
             throw err;
         }
     }
@@ -4993,13 +5009,16 @@ exports.onCriticalError = onDocumentCreated(
         // Only ping for real CODE bugs (frontend). Watchdog/healthcheck rows
         // (ScraperStale, HealthCheckFailed) are ops/infra noise — skip them.
         const isCodeBug = String(data.source || "frontend") === "frontend";
+        // ...but a FAILED nightly backup is ops-CRITICAL (data-loss risk), so
+        // alert the owner even though it's backend-sourced.
+        const alertWorthy = isCodeBug || data.feature === "backup";
         let shouldPush = false;
         try {
             await db.runTransaction(async (txn) => {
                 const cur = await txn.get(cooldownRef);
                 const prev = cur.exists ? cur.data() || {} : {};
                 const nowMs = Date.now();
-                shouldPush = isCodeBug && (!prev.lastPushMs || nowMs - prev.lastPushMs > PUSH_COOLDOWN_MS);
+                shouldPush = alertWorthy && (!prev.lastPushMs || nowMs - prev.lastPushMs > PUSH_COOLDOWN_MS);
                 txn.set(cooldownRef, {
                     lastAlertMs: nowMs,
                     lastSig: sig.slice(0, 200),
