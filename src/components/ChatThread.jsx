@@ -61,7 +61,7 @@ import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CAT
 // that file does the work.
 import { postEightySixToChat } from '../data/eightySixChat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
-import { notifyStaff } from '../data/notify';
+import { notifyStaff, composeChatNudgeSmsUrl } from '../data/notify';
 // 2026-05-27 — breadcrumb every send so the Sentry timeline shows
 // "user sent a message of type=X to chat=Y" before any error that
 // fires afterward. Single chokepoint at the bottom-of-file
@@ -1454,54 +1454,32 @@ function ChatThreadInner({
         }
     }
 
-    // ── SMS nudge (manager → unread reader, escalation) ────────────
-    // Same audience gate as handleNudge, but delivers a real TEXT
-    // MESSAGE via the dispatchSms pipeline (type chat_nudge_sms has
-    // an SMS template in functions/smsTemplates.js). For when the
-    // push nudge went unanswered — or the person never set up push.
-    // dispatchSms enforces opt-in, STOP state and a 60s per-recipient
-    // cooldown server-side; the sheet disables the button for 60s
-    // client-side to match. Costs real money per send ($0.0079/seg),
-    // hence manager-only + per-row explicit taps, no "text all".
-    async function handleSmsNudge(message, targetName) {
+    // ── SMS nudge (manual — admin's OWN phone) ─────────────────────
+    // 2026-07-08: the Twilio A2P campaign was rejected (carrier
+    // reviewer can't get past the PIN lock to verify consent), so the
+    // Text button opens the tapping admin's own Messages app
+    // pre-filled via an sms: URL (composeChatNudgeSmsUrl) — the same
+    // proven pattern as onboarding invites. Andrew texts from his
+    // number, Julie from hers, automatically. This handler only
+    // records the audit trail; the actual send happens in the
+    // admin's Messages app and can't be observed. The Twilio path
+    // (chat_nudge_sms template + dispatchSms) stays dormant for a
+    // future campaign approval.
+    // Andrew 2026-07-07: "only admin can sent sms" — admin-only,
+    // unlike the free push nudge (managers + chat co-admins).
+    function handleSmsNudge(message, targetName) {
         if (!message?.id || !targetName) return;
-        // Andrew 2026-07-07: "only admin can sent sms" — SMS costs real
-        // money and comes from the business number, so unlike the free
-        // push nudge (managers + chat co-admins), texting is admin-only.
         if (!isAdmin) return;
         if (targetName === staffName) return; // no self-text
         const chatLabel = chat?.type === 'dm' ? staffName : (chat?.name || 'Chat');
-        try {
-            await notifyStaff({
-                forStaff: targetName,
-                type: 'chat_nudge_sms',
-                title: '📱 ' + tx('Reminder', 'Recordatorio'),
-                body: tx(
-                    `${staffName} texted you to check ${chatLabel}`,
-                    `${staffName} te envió un SMS para revisar ${chatLabel}`,
-                ),
-                deepLink: 'chat',
-                link: '/chat',
-                // Same tag scheme as chat_nudge — re-texting the same
-                // message replaces, a different message is a new SMS.
-                tag: `chat_sms:${chat.id}:${message.id}:${targetName}`,
-                priority: 'high',
-                smsVars: { manager: staffName, chatLabel },
-                createdBy: staffName,
-            });
-            recordAudit({
-                action: 'chat.smsNudge.send',
-                actorName: staffName,
-                actorId: viewer?.id,
-                targetType: 'staff',
-                targetId: targetName,
-                details: { chatId: chat.id, messageId: message.id, chatLabel },
-            });
-            toast(tx(`Text sent to ${targetName}`, `SMS enviado a ${targetName}`), { kind: 'success' });
-        } catch (e) {
-            console.warn(`sms nudge failed for ${targetName}:`, e);
-            toast(tx('Text failed', 'Error al enviar SMS'), { kind: 'error' });
-        }
+        recordAudit({
+            action: 'chat.smsNudge.send',
+            actorName: staffName,
+            actorId: viewer?.id,
+            targetType: 'staff',
+            targetId: targetName,
+            details: { chatId: chat.id, messageId: message.id, chatLabel, via: 'personal-phone' },
+        });
     }
 
     // Bulk-nudge every unread reader. Used by "Nudge all" in the
@@ -4678,17 +4656,17 @@ function SeenBySheet({
         markNudged(name);
     }
 
-    // ── SMS escalation ("Text") ────────────────────────────────────
-    // Mirrors dispatchSms's isSmsEligible gates so the Text button
-    // only renders for staff a text can actually reach: phone on
-    // file + opted in + hasn't replied STOP. Costs real money per
-    // send, so: per-row explicit tap only (no "text all") and a 60s
-    // client-side disable matching the server-side cooldown.
-    const smsReady = useMemo(() => {
+    // ── SMS escalation ("Text") — manual, admin's own phone ────────
+    // 2026-07-08: sends via an sms: URL that opens the tapping
+    // admin's own Messages app pre-filled (Twilio A2P was rejected;
+    // personal P2P texting needs no registration). Only requirement
+    // is a phone on file — opt-in/STOP are Twilio-number concepts and
+    // don't apply to a personal text, same posture as the usage
+    // panel's manual link and onboarding invites.
+    const staffByName = useMemo(() => {
         const m = new Map();
         (Array.isArray(staffList) ? staffList : []).forEach(s => {
-            if (!s?.name) return;
-            m.set(s.name, !!(s.phoneE164 && s.smsOptIn === true && s.smsStopped !== true));
+            if (s?.name) m.set(s.name, s);
         });
         return m;
     }, [staffList]);
@@ -4712,8 +4690,8 @@ function SeenBySheet({
 
     // SMS is ADMIN-only (Andrew 2026-07-07: "only admin can sent sms")
     // — narrower than nudgeAllowed, which also covers managers and
-    // chat co-admins. Texts cost money and come from the business
-    // number; pushes are free.
+    // chat co-admins. The text goes from the tapping admin's own
+    // phone (sms: URL); pushes are free and stay open to managers.
     const smsAllowed = !!isAdmin;
 
     function textOne(name) {
@@ -4845,24 +4823,34 @@ function SeenBySheet({
                                                 {wasNudged ? '✓ ' + tx('Nudged', 'Recordado') : '⏰ ' + tx('Nudge', 'Recordar')}
                                             </button>
                                         )}
-                                        {/* SMS escalation — ADMIN-only, and only for
-                                            staff a text can actually reach (opted in
-                                            + phone on file). One real SMS per tap;
-                                            60s disable matches dispatchSms's
-                                            server-side cooldown. */}
-                                        {smsAllowed && smsReady.get(name) && (
-                                            <button
-                                                onClick={() => textOne(name)}
-                                                disabled={wasTexted}
-                                                className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold transition ${wasTexted
-                                                    ? 'bg-dd-sage-50 text-dd-green-700 cursor-default'
-                                                    : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'}`}
-                                                title={tx('Send a text message (SMS) telling them to open the app',
-                                                          'Enviar un SMS para que abra la app')}
-                                            >
-                                                {wasTexted ? '✓ ' + tx('Texted', 'SMS ✓') : '💬 ' + tx('Text', 'SMS')}
-                                            </button>
-                                        )}
+                                        {/* SMS escalation — ADMIN-only, staff with a
+                                            phone on file. Opens the tapping admin's
+                                            OWN Messages app pre-filled (sms: URL) in
+                                            the recipient's language; the admin
+                                            reviews and hits Send from their phone.
+                                            Tap is recorded in the audit log. */}
+                                        {smsAllowed && (() => {
+                                            const target = staffByName.get(name);
+                                            if (!target?.phoneE164) return null;
+                                            const chatLabel = chat?.type === 'dm'
+                                                ? (viewer?.name || 'DD Mau')
+                                                : (chat?.name || null);
+                                            const { url: smsUrl } = composeChatNudgeSmsUrl(target, chatLabel);
+                                            if (!smsUrl) return null;
+                                            return (
+                                                <a
+                                                    href={smsUrl}
+                                                    onClick={() => textOne(name)}
+                                                    className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold transition ${wasTexted
+                                                        ? 'bg-dd-sage-50 text-dd-green-700'
+                                                        : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'}`}
+                                                    title={tx('Opens your Messages app pre-filled — you review and send the text from your phone',
+                                                              'Abre tu app de Mensajes con el texto listo — revisas y envías desde tu teléfono')}
+                                                >
+                                                    {wasTexted ? '✓ ' + tx('Texted', 'SMS ✓') : '💬 ' + tx('Text', 'SMS')}
+                                                </a>
+                                            );
+                                        })()}
                                     </li>
                                 );
                             })}

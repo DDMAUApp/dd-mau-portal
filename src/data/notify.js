@@ -485,6 +485,33 @@ export async function sendSetupReminderSms(staff, manager, opts = {}) {
 //
 // Returns { url, body } so the caller can use the URL in an <a href>
 // and optionally show the rendered body for preview.
+// ── Chat-nudge SMS — MANUAL PATH (sms: URL scheme) ─────────────────
+// 2026-07-08 — Andrew: the Twilio A2P campaign was rejected twice
+// (carrier reviewer can't get past the portal's PIN lock to verify
+// the consent flow), so chat SMS nudges send from the ADMIN'S OWN
+// phone — the same proven pattern as onboarding invites and setup
+// reminders. Personal P2P texting needs no carrier registration and
+// no STOP footer. Whoever taps sends from their own number: Andrew
+// from his, Julie from hers. Body language follows the RECIPIENT's
+// preferredLanguage (not the sender's UI language).
+// The Twilio path (chat_nudge_sms template + dispatchSms) stays
+// dormant; if the campaign is ever approved, re-enable config/sms
+// and flip TWILIO_SMS_LIVE in StaffUsageAudit.jsx.
+export function composeChatNudgeSmsUrl(staff, chatLabel) {
+    const isEs = staff?.preferredLanguage === 'es';
+    const firstName = (staff?.name || '').split(/\s+/)[0] || (isEs ? 'hola' : 'there');
+    const label = chatLabel || (isEs ? 'el chat del equipo' : 'the team chat');
+    const url = 'https://app.ddmaustl.com/';
+    const body = isEs
+        ? `Hola ${firstName}, tienes un mensaje sin leer en ${label}. Abre la app DD Mau: ${url}`
+        : `Hi ${firstName}, you have an unread message in ${label}. Please open the DD Mau app: ${url}`;
+    const phone = staff?.phoneE164 || '';
+    const smsUrl = phone
+        ? `sms:${phone}?body=${encodeURIComponent(body)}`
+        : null;
+    return { url: smsUrl, body, phone };
+}
+
 export function composeSetupReminderSmsUrl(staff, language = 'en') {
     const isEs = language === 'es';
     const firstName = (staff?.name || '').split(/\s+/)[0] || (isEs ? 'hola' : 'there');

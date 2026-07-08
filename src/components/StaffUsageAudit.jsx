@@ -135,16 +135,20 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
         }
     }
 
-    // 2026-07-07 — Andrew: "when i dont see them as signed on yet i can
-    // send a sms too. my twilio account should be done." The automatic
-    // Twilio path (sendSetupReminderSms) was built in May but unwired
-    // when carrier A2P registration was pending and Andrew wanted
-    // manual sends from his own phone. Registration is approved now,
-    // so the auto button is back — ALONGSIDE the manual link, because
-    // the manual path still covers staff who never opted in to SMS.
-    // sendSetupReminderSms enforces phone/opt-in/STOP + the 7-day
-    // cooldown itself; `force` re-sends past the cooldown when the
-    // admin explicitly taps an already-texted chip.
+    // 2026-07-08 — Twilio A2P campaign REJECTED twice (carrier reviewer
+    // can't get past the portal's PIN lock to verify the consent flow;
+    // error 30921/30934), so automatic Twilio sends are PARKED: every
+    // send would be accepted by Twilio, billed, and then blocked by
+    // carriers (30034 undelivered — proven with a live test to Andrew's
+    // phone). Manual sms: links (admin's own phone) are the live path.
+    // If the campaign is ever approved: flip this to true AND set
+    // config/sms.enabled=true (+ turn off testMode after one live test).
+    const TWILIO_SMS_LIVE = false;
+
+    // Automatic Twilio path (sendSetupReminderSms) — built in May,
+    // fully wired, currently parked behind TWILIO_SMS_LIVE above.
+    // Enforces phone/opt-in/STOP + the 7-day cooldown itself; `force`
+    // re-sends past the cooldown on an explicit re-tap.
     async function handleAutoText(staffRow, force = false) {
         if (!staffRow?.name) return;
         setSendingState((m) => ({ ...m, [staffRow.name]: 'sending' }));
@@ -514,14 +518,13 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                                     </button>
                                                 );
                                             }
-                                            // Twilio-eligible (opted in, hasn't replied
-                                            // STOP) → also show the automatic send.
-                                            // 2026-07-07: Twilio A2P registration is
-                                            // approved, so real sends work again. The
-                                            // manual link stays for staff who never
-                                            // opted in — and for admins who prefer
-                                            // texting from their own phone.
-                                            const autoEligible = s.raw?.smsOptIn === true && s.raw?.smsStopped !== true;
+                                            // Auto-send renders only when the Twilio
+                                            // path is live (campaign approved) AND the
+                                            // staffer is opted in. Parked for now —
+                                            // see TWILIO_SMS_LIVE above. The manual
+                                            // sms: link is the live path.
+                                            const autoEligible = TWILIO_SMS_LIVE
+                                                && s.raw?.smsOptIn === true && s.raw?.smsStopped !== true;
                                             return (
                                                 <span className="shrink-0 inline-flex items-center gap-1">
                                                     {autoEligible && (
@@ -554,7 +557,7 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                                     >
                                                         <MessageSquare size={11} strokeWidth={2.5} aria-hidden="true" />
                                                         <span>
-                                                            {cooldownActive ? reason : tx('My phone', 'Mi tel.')}
+                                                            {cooldownActive ? reason : tx('Text', 'SMS')}
                                                         </span>
                                                     </a>
                                                 </span>
