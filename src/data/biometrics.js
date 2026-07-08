@@ -179,3 +179,29 @@ export async function disableBiometric() {
         console.warn('disableBiometric failed:', e?.message || e);
     }
 }
+
+// ── Old-native-build detection (2026-07-08) ────────────────────────
+// Andrew: "some staff dont have the face id prompt" — those phones
+// run a native binary older than the biometric build (iOS 1.0.3+).
+// OTA can only ship JS, never native plugins, so the fix is a store
+// update — the lock screen shows a banner that deep-links there.
+// Detection: the plugin simply isn't compiled into the binary.
+// Web is never "outdated" (biometrics don't apply there).
+const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
+const ANDROID_APP_URL = 'https://play.google.com/apps/internaltest/4701656348790704265';
+
+export function isNativeBuildOutdated() {
+    try {
+        return Capacitor.isNativePlatform() && !Capacitor.isPluginAvailable('NativeBiometric');
+    } catch {
+        return false;
+    }
+}
+
+export function nativeUpdateUrl() {
+    try {
+        return Capacitor.getPlatform() === 'android' ? ANDROID_APP_URL : IOS_APP_URL;
+    } catch {
+        return IOS_APP_URL;
+    }
+}

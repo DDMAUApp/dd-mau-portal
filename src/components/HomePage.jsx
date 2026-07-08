@@ -6,6 +6,7 @@ import InstallAppButton from './InstallAppButton';
 import {
     isBiometricAvailable, getEnrolledStaff, wasBiometricDeclined,
     enableBiometric, tryBiometricLogin, markBiometricDeclined,
+    isNativeBuildOutdated, nativeUpdateUrl,
 } from '../data/biometrics';
 
 // Rate-limit PIN attempts. Backs off exponentially:
@@ -374,6 +375,30 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                 />
                 <p className="text-headline text-dd-text-2">{t("staffPortal", language)}</p>
             </div>
+
+            {/* Old-native-build banner — 2026-07-08, Andrew: "some staff
+                dont have the face id prompt". Face ID lives in the NATIVE
+                binary (iOS 1.0.3+ / current Play build); OTA can't deliver
+                it, so phones on the old binary get this store-link nudge.
+                Non-blocking: PIN login below keeps working. Disappears on
+                its own once the phone updates (plugin becomes available). */}
+            {isNativeBuildOutdated() && (
+                <a
+                    href={nativeUpdateUrl()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full max-w-sm mb-3 px-4 py-3 rounded-glass-md bg-amber-500 text-white text-center shadow-md active:scale-95 transition"
+                >
+                    <span className="font-black text-sm">
+                        📲 {isEs ? 'Actualización de la app disponible' : 'App update available'}
+                    </span>
+                    <span className="block text-[12px] font-semibold opacity-95 mt-0.5">
+                        {isEs
+                            ? 'Toca aquí para actualizar y activar el inicio con Face ID / huella.'
+                            : 'Tap here to update and turn on Face ID / fingerprint sign-in.'}
+                    </span>
+                </a>
+            )}
 
             {collisionMatches.length > 1 ? (
                 // Collision picker — two or more staff share this PIN. Force the
