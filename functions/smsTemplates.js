@@ -160,6 +160,16 @@ const TEMPLATES = {
         en: "DD Mau: Hi {firstName}, please open the DD Mau app and turn on notifications so you don't miss schedule alerts. {url} Reply STOP to opt out.",
         es: "DD Mau: Hola {firstName}, abre la app DD Mau y activa notificaciones para no perder turnos. {url} Responde STOP para no recibir.",
     },
+    // 2026-07-07 — Andrew: SMS escalation for unread messages. A
+    // manager taps "Text" on a Seen-By row (usually after a push
+    // nudge went unanswered) → one SMS telling the staffer to open
+    // the app. {manager} = who's asking, {chatLabel} = which
+    // conversation. Client-created; dispatchSms's 60s per-recipient
+    // cooldown + opt-in gates bound the spend.
+    chat_nudge_sms: {
+        en: "DD Mau: {manager} needs you to see a team message in {chatLabel}. Please open the app. Reply STOP to opt out.",
+        es: "DD Mau: {manager} necesita que veas un mensaje en {chatLabel}. Abre la app DD Mau. Responde STOP para no recibir.",
+    },
 };
 
 // The set of notification types eligible for SMS. dispatchSms checks

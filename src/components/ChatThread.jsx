@@ -1454,6 +1454,56 @@ function ChatThreadInner({
         }
     }
 
+    // ── SMS nudge (manager → unread reader, escalation) ────────────
+    // Same audience gate as handleNudge, but delivers a real TEXT
+    // MESSAGE via the dispatchSms pipeline (type chat_nudge_sms has
+    // an SMS template in functions/smsTemplates.js). For when the
+    // push nudge went unanswered — or the person never set up push.
+    // dispatchSms enforces opt-in, STOP state and a 60s per-recipient
+    // cooldown server-side; the sheet disables the button for 60s
+    // client-side to match. Costs real money per send ($0.0079/seg),
+    // hence manager-only + per-row explicit taps, no "text all".
+    async function handleSmsNudge(message, targetName) {
+        if (!message?.id || !targetName) return;
+        if (!isAdmin && !isManager
+            && !(Array.isArray(chat?.admins) && chat.admins.includes(staffName))) {
+            return;
+        }
+        if (targetName === staffName) return; // no self-text
+        const chatLabel = chat?.type === 'dm' ? staffName : (chat?.name || 'Chat');
+        try {
+            await notifyStaff({
+                forStaff: targetName,
+                type: 'chat_nudge_sms',
+                title: '📱 ' + tx('Reminder', 'Recordatorio'),
+                body: tx(
+                    `${staffName} texted you to check ${chatLabel}`,
+                    `${staffName} te envió un SMS para revisar ${chatLabel}`,
+                ),
+                deepLink: 'chat',
+                link: '/chat',
+                // Same tag scheme as chat_nudge — re-texting the same
+                // message replaces, a different message is a new SMS.
+                tag: `chat_sms:${chat.id}:${message.id}:${targetName}`,
+                priority: 'high',
+                smsVars: { manager: staffName, chatLabel },
+                createdBy: staffName,
+            });
+            recordAudit({
+                action: 'chat.smsNudge.send',
+                actorName: staffName,
+                actorId: viewer?.id,
+                targetType: 'staff',
+                targetId: targetName,
+                details: { chatId: chat.id, messageId: message.id, chatLabel },
+            });
+            toast(tx(`Text sent to ${targetName}`, `SMS enviado a ${targetName}`), { kind: 'success' });
+        } catch (e) {
+            console.warn(`sms nudge failed for ${targetName}:`, e);
+            toast(tx('Text failed', 'Error al enviar SMS'), { kind: 'error' });
+        }
+    }
+
     // Bulk-nudge every unread reader. Used by "Nudge all" in the
     // SeenBySheet header. Sequential awaits (not Promise.all) so a
     // failure on one push doesn't abort the rest — each notifyStaff
@@ -1970,6 +2020,8 @@ function ChatThreadInner({
                                     onResolve86={() => handleResolve86(msg)}
                                     onNudge={(targetName) => handleNudge(msg, targetName)}
                                     onNudgeAll={(targetNames) => handleNudgeAll(msg, targetNames)}
+                                    onSmsNudge={(targetName) => handleSmsNudge(msg, targetName)}
+                                    staffList={staffList}
                                     editing={editingMessageId === msg.id}
                                     onStartEdit={() => setEditingMessageId(msg.id)}
                                     onCancelEdit={() => setEditingMessageId(null)}
@@ -2301,7 +2353,7 @@ function MessageBubbleInner({
     targetLang, autoTranslate,
     onReact, onReply, onAck, onOpenAckDashboard, onTogglePin, onMakeTask, onDelete, onCopy,
     onClaimCoverage, onApproveCoverage, onDenyCoverage, onWithdrawCoverage,
-    onVote, onClosePoll, onResolve86, onNudge, onNudgeAll,
+    onVote, onClosePoll, onResolve86, onNudge, onNudgeAll, onSmsNudge, staffList,
     editing, onStartEdit, onCancelEdit, onSaveEdit,
     onJumpToReply,
 }) {
@@ -2739,6 +2791,8 @@ function MessageBubbleInner({
                     isEs={isEs}
                     onNudge={onNudge}
                     onNudgeAll={onNudgeAll}
+                    onSmsNudge={onSmsNudge}
+                    staffList={staffList}
                     onClose={() => setShowSeenBy(false)}
                 />
             )}
@@ -4585,7 +4639,7 @@ function ScheduledListDrawer({ items, isEs, onCancel, onClose }) {
 // 30 seconds and disables, preventing accidental spam-tapping.
 function SeenBySheet({
     seenBy, chat, message, viewer, isAdmin, isManager, isEs,
-    onNudge, onNudgeAll, onClose,
+    onNudge, onNudgeAll, onSmsNudge, staffList, onClose,
 }) {
     const tx = (en, es) => (isEs ? es : en);
 
@@ -4622,6 +4676,45 @@ function SeenBySheet({
         if (recentlyNudged.has(name)) return;
         onNudge?.(name);
         markNudged(name);
+    }
+
+    // ── SMS escalation ("Text") ────────────────────────────────────
+    // Mirrors dispatchSms's isSmsEligible gates so the Text button
+    // only renders for staff a text can actually reach: phone on
+    // file + opted in + hasn't replied STOP. Costs real money per
+    // send, so: per-row explicit tap only (no "text all") and a 60s
+    // client-side disable matching the server-side cooldown.
+    const smsReady = useMemo(() => {
+        const m = new Map();
+        (Array.isArray(staffList) ? staffList : []).forEach(s => {
+            if (!s?.name) return;
+            m.set(s.name, !!(s.phoneE164 && s.smsOptIn === true && s.smsStopped !== true));
+        });
+        return m;
+    }, [staffList]);
+
+    const [recentlyTexted, setRecentlyTexted] = useState(() => new Set());
+    function markTexted(name) {
+        setRecentlyTexted(prev => {
+            const next = new Set(prev);
+            next.add(name);
+            return next;
+        });
+        setTimeout(() => {
+            setRecentlyTexted(prev => {
+                if (!prev.has(name)) return prev;
+                const next = new Set(prev);
+                next.delete(name);
+                return next;
+            });
+        }, 60_000);
+    }
+
+    function textOne(name) {
+        if (!nudgeAllowed) return;
+        if (recentlyTexted.has(name)) return;
+        onSmsNudge?.(name);
+        markTexted(name);
     }
 
     const fmtTime = (ms) => {
@@ -4717,6 +4810,7 @@ function SeenBySheet({
                             )}
                             {notSeen.map((name) => {
                                 const wasNudged = recentlyNudged.has(name);
+                                const wasTexted = recentlyTexted.has(name);
                                 return (
                                     <li key={`ns-${name}`} className="px-4 py-2.5 flex items-center gap-3">
                                         <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-[11px] font-black shrink-0 border border-dd-line">
@@ -4725,9 +4819,11 @@ function SeenBySheet({
                                         <div className="flex-1 min-w-0">
                                             <div className="text-sm font-bold text-dd-text truncate">{name}</div>
                                             <div className="text-[11px] text-dd-text-2">
-                                                {wasNudged
-                                                    ? tx('Nudged just now', 'Recordado ahora')
-                                                    : tx('Not yet', 'Pendiente')}
+                                                {wasTexted
+                                                    ? tx('Text sent just now', 'SMS enviado ahora')
+                                                    : wasNudged
+                                                        ? tx('Nudged just now', 'Recordado ahora')
+                                                        : tx('Not yet', 'Pendiente')}
                                             </div>
                                         </div>
                                         {nudgeAllowed && (
@@ -4741,6 +4837,23 @@ function SeenBySheet({
                                                           'Enviar un recordatorio a esta persona')}
                                             >
                                                 {wasNudged ? '✓ ' + tx('Nudged', 'Recordado') : '⏰ ' + tx('Nudge', 'Recordar')}
+                                            </button>
+                                        )}
+                                        {/* SMS escalation — only for staff a text can
+                                            actually reach (opted in + phone on file).
+                                            One real SMS per tap; 60s disable matches
+                                            dispatchSms's server-side cooldown. */}
+                                        {nudgeAllowed && smsReady.get(name) && (
+                                            <button
+                                                onClick={() => textOne(name)}
+                                                disabled={wasTexted}
+                                                className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold transition ${wasTexted
+                                                    ? 'bg-dd-sage-50 text-dd-green-700 cursor-default'
+                                                    : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'}`}
+                                                title={tx('Send a text message (SMS) telling them to open the app',
+                                                          'Enviar un SMS para que abra la app')}
+                                            >
+                                                {wasTexted ? '✓ ' + tx('Texted', 'SMS ✓') : '💬 ' + tx('Text', 'SMS')}
                                             </button>
                                         )}
                                     </li>

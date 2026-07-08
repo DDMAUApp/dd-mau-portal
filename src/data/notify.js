@@ -294,6 +294,7 @@ export async function notifyStaff({
     tag,
     priority,        // 'high' | 'normal' (default). 'high' bypasses quiet hours + digests.
     forceDeliver,    // bool — when true, dispatcher bypasses the off-shift gate
+    smsVars,         // object — explicit {placeholder} values for SMS-eligible types (dispatchSms buildSmsVars)
     createdBy = 'system',
     excludeStaff = null,
 }) {
@@ -336,6 +337,7 @@ export async function notifyStaff({
             ...(deepLink ? { deepLink } : {}),
             ...(priority ? { priority } : {}),
             ...(forceDeliver === true ? { forceDeliver: true } : {}),
+            ...(smsVars && typeof smsVars === 'object' ? { smsVars } : {}),
             tag: tag || `${type}:${forStaff}:${fallbackTagBucket()}`,
             createdAt: serverTimestamp(),
             read: false,
