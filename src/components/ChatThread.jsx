@@ -1465,10 +1465,10 @@ function ChatThreadInner({
     // hence manager-only + per-row explicit taps, no "text all".
     async function handleSmsNudge(message, targetName) {
         if (!message?.id || !targetName) return;
-        if (!isAdmin && !isManager
-            && !(Array.isArray(chat?.admins) && chat.admins.includes(staffName))) {
-            return;
-        }
+        // Andrew 2026-07-07: "only admin can sent sms" — SMS costs real
+        // money and comes from the business number, so unlike the free
+        // push nudge (managers + chat co-admins), texting is admin-only.
+        if (!isAdmin) return;
         if (targetName === staffName) return; // no self-text
         const chatLabel = chat?.type === 'dm' ? staffName : (chat?.name || 'Chat');
         try {
@@ -4710,8 +4710,14 @@ function SeenBySheet({
         }, 60_000);
     }
 
+    // SMS is ADMIN-only (Andrew 2026-07-07: "only admin can sent sms")
+    // — narrower than nudgeAllowed, which also covers managers and
+    // chat co-admins. Texts cost money and come from the business
+    // number; pushes are free.
+    const smsAllowed = !!isAdmin;
+
     function textOne(name) {
-        if (!nudgeAllowed) return;
+        if (!smsAllowed) return;
         if (recentlyTexted.has(name)) return;
         onSmsNudge?.(name);
         markTexted(name);
@@ -4839,11 +4845,12 @@ function SeenBySheet({
                                                 {wasNudged ? '✓ ' + tx('Nudged', 'Recordado') : '⏰ ' + tx('Nudge', 'Recordar')}
                                             </button>
                                         )}
-                                        {/* SMS escalation — only for staff a text can
-                                            actually reach (opted in + phone on file).
-                                            One real SMS per tap; 60s disable matches
-                                            dispatchSms's server-side cooldown. */}
-                                        {nudgeAllowed && smsReady.get(name) && (
+                                        {/* SMS escalation — ADMIN-only, and only for
+                                            staff a text can actually reach (opted in
+                                            + phone on file). One real SMS per tap;
+                                            60s disable matches dispatchSms's
+                                            server-side cooldown. */}
+                                        {smsAllowed && smsReady.get(name) && (
                                             <button
                                                 onClick={() => textOne(name)}
                                                 disabled={wasTexted}
