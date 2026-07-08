@@ -51,7 +51,7 @@ import {
     Check, AlertTriangle, Clock, ChevronDown, MonitorSmartphone, Wifi, Globe,
     MessageSquare, Send, PhoneOff, Phone,
 } from 'lucide-react';
-import { composeSetupReminderSmsUrl, stampSetupReminderSent } from '../data/notify';
+import { composeSetupReminderSmsUrl, stampSetupReminderSent, sendSetupReminderSms } from '../data/notify';
 
 // Coerce any timestamp shape to a millisecond number (or 0 for
 // nothing). Handles Firestore Timestamp objects, JS Dates, ISO
@@ -132,6 +132,46 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
             setSendingState((m) => ({ ...m, [staffRow.name]: 'error' }));
             setToast(tx('Could not record reminder', 'No se pudo registrar'));
             setTimeout(() => setToast(null), 3000);
+        }
+    }
+
+    // 2026-07-07 — Andrew: "when i dont see them as signed on yet i can
+    // send a sms too. my twilio account should be done." The automatic
+    // Twilio path (sendSetupReminderSms) was built in May but unwired
+    // when carrier A2P registration was pending and Andrew wanted
+    // manual sends from his own phone. Registration is approved now,
+    // so the auto button is back — ALONGSIDE the manual link, because
+    // the manual path still covers staff who never opted in to SMS.
+    // sendSetupReminderSms enforces phone/opt-in/STOP + the 7-day
+    // cooldown itself; `force` re-sends past the cooldown when the
+    // admin explicitly taps an already-texted chip.
+    async function handleAutoText(staffRow, force = false) {
+        if (!staffRow?.name) return;
+        setSendingState((m) => ({ ...m, [staffRow.name]: 'sending' }));
+        const res = await sendSetupReminderSms(
+            staffRow,
+            { name: currentManagerName, id: currentManagerId },
+            { force },
+        );
+        if (res.ok) {
+            setSendingState((m) => ({ ...m, [staffRow.name]: 'sent' }));
+            setToast(tx(`Text sent to ${staffRow.name}`, `SMS enviado a ${staffRow.name}`));
+            setTimeout(() => setToast(null), 3000);
+        } else {
+            setSendingState((m) => {
+                const n = { ...m };
+                delete n[staffRow.name];
+                return n;
+            });
+            const msg = res.reason === 'cooldown'
+                ? tx('Already texted recently', 'Ya enviado recientemente')
+                : res.reason === 'not_opted_in'
+                ? tx('Not opted in to SMS', 'Sin consentimiento SMS')
+                : res.reason === 'replied_stop'
+                ? tx('They replied STOP — cannot text', 'Respondió STOP — no se puede enviar')
+                : tx('Text failed', 'Error al enviar SMS');
+            setToast(msg);
+            setTimeout(() => setToast(null), 4000);
         }
     }
 
@@ -474,26 +514,50 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                                     </button>
                                                 );
                                             }
+                                            // Twilio-eligible (opted in, hasn't replied
+                                            // STOP) → also show the automatic send.
+                                            // 2026-07-07: Twilio A2P registration is
+                                            // approved, so real sends work again. The
+                                            // manual link stays for staff who never
+                                            // opted in — and for admins who prefer
+                                            // texting from their own phone.
+                                            const autoEligible = s.raw?.smsOptIn === true && s.raw?.smsStopped !== true;
                                             return (
-                                                <a
-                                                    href={smsUrl}
-                                                    onClick={() => handleStampReminderSent(s)}
-                                                    className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap transition active:scale-95 ${
-                                                        cooldownActive
-                                                            ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                                                            : 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600'
-                                                    }`}
-                                                    title={cooldownActive
-                                                        ? tx(`Already texted ${fmtRelative(s.reminderSentMs, isEs)} — tap again to re-text.`, `Enviado ${fmtRelative(s.reminderSentMs, isEs)} — toca para reenviar.`)
-                                                        : tx('Open native Messages app pre-filled. Reviews & sends from your phone.', 'Abre Mensajes del teléfono con el texto listo.')}
-                                                >
-                                                    {state === 'sending'
-                                                        ? <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" aria-hidden="true" />
-                                                        : <MessageSquare size={11} strokeWidth={2.5} aria-hidden="true" />}
-                                                    <span>
-                                                        {cooldownActive ? reason : tx('Text', 'SMS')}
-                                                    </span>
-                                                </a>
+                                                <span className="shrink-0 inline-flex items-center gap-1">
+                                                    {autoEligible && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleAutoText(s.raw, cooldownActive)}
+                                                            disabled={state === 'sending'}
+                                                            className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap bg-dd-green text-white border-dd-green hover:bg-dd-green-700 active:scale-95 transition"
+                                                            title={cooldownActive
+                                                                ? tx(`Already texted ${fmtRelative(s.reminderSentMs, isEs)} — tap to send again now (Twilio).`, `Enviado ${fmtRelative(s.reminderSentMs, isEs)} — toca para reenviar (Twilio).`)
+                                                                : tx('Send the reminder text automatically from the DD Mau number (Twilio).', 'Enviar el SMS automáticamente desde el número DD Mau (Twilio).')}
+                                                        >
+                                                            {state === 'sending'
+                                                                ? <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                                                                : <Send size={11} strokeWidth={2.5} aria-hidden="true" />}
+                                                            <span>{tx('Auto-text', 'SMS auto')}</span>
+                                                        </button>
+                                                    )}
+                                                    <a
+                                                        href={smsUrl}
+                                                        onClick={() => handleStampReminderSent(s)}
+                                                        className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap transition active:scale-95 ${
+                                                            cooldownActive
+                                                                ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                                                                : 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600'
+                                                        }`}
+                                                        title={cooldownActive
+                                                            ? tx(`Already texted ${fmtRelative(s.reminderSentMs, isEs)} — tap again to re-text.`, `Enviado ${fmtRelative(s.reminderSentMs, isEs)} — toca para reenviar.`)
+                                                            : tx('Open native Messages app pre-filled. Reviews & sends from your phone.', 'Abre Mensajes del teléfono con el texto listo.')}
+                                                    >
+                                                        <MessageSquare size={11} strokeWidth={2.5} aria-hidden="true" />
+                                                        <span>
+                                                            {cooldownActive ? reason : tx('My phone', 'Mi tel.')}
+                                                        </span>
+                                                    </a>
+                                                </span>
                                             );
                                         })()
                                     )}
