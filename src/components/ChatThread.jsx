@@ -91,10 +91,10 @@ const ChatEightySixModal = lazy(() => import('./ChatEightySixModal').then(m => (
 
 const TYPING_TTL_MS = 5000;          // typing heartbeat valid for 5s
 const MAX_IMAGE_DIM = 1600;          // resize images larger than this
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024;  // 50MB cap on video uploads
+const MAX_VIDEO_BYTES = 250 * 1024 * 1024;  // 250MB cap on video uploads (matches storage.rules chats/ cap)
 // Voice messages auto-stop at 5 minutes. The MediaRecorder will happily
 // run forever if the user forgets to hit stop; a runaway hold-to-record
-// session can dump hundreds of MB into Storage and overrun the 50MB
+// session can dump hundreds of MB into Storage and overrun the
 // upload-byte budget assumed elsewhere. 5 minutes is the longest useful
 // kitchen voice memo (a recipe walkthrough), past that they should
 // type or call. Hard stop fires onStop so the upload pipeline runs
@@ -841,7 +841,7 @@ function ChatThreadInner({
         e.target.value = ''; // reset so re-picking same file fires change
         if (!file) return;
         if (kind === 'video' && file.size > MAX_VIDEO_BYTES) {
-            toast(tx('Video too large (50MB max).', 'Video muy grande (50MB máx).'), { kind: 'warn' });
+            toast(tx('Video too large (250MB max).', 'Video muy grande (250MB máx).'), { kind: 'warn' });
             return;
         }
         // Briefly disable the composer while we resize/probe — these
