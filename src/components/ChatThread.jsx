@@ -4694,6 +4694,14 @@ function SeenBySheet({
     // phone (sms: URL); pushes are free and stay open to managers.
     const smsAllowed = !!isAdmin;
 
+    // Andrew 2026-07-08: "we can have toggles to if we want to send
+    // sms so most time we can just notify them through notifications
+    // and when that doesnt work we can then send sms." SMS buttons
+    // are HIDDEN by default — the sheet opens showing only the free
+    // push Nudge. Flipping the 💬 SMS chip in the header reveals the
+    // per-row Text links for the escalation case. Resets per open.
+    const [showSms, setShowSms] = useState(false);
+
     function textOne(name) {
         if (!smsAllowed) return;
         if (recentlyTexted.has(name)) return;
@@ -4759,6 +4767,23 @@ function SeenBySheet({
                                        'Enviar recordatorio a quienes no han leído')}
                         >
                             ⏰ {tx(`Nudge ${nudgeAllTargets.length}`, `Recordar ${nudgeAllTargets.length}`)}
+                        </button>
+                    )}
+                    {/* SMS mode toggle — admin-only. OFF by default so
+                        the everyday flow is push-only; flip it when
+                        pushes aren't landing and you want to text from
+                        your own phone. */}
+                    {smsAllowed && notSeen.length > 0 && (
+                        <button
+                            onClick={() => setShowSms(v => !v)}
+                            aria-pressed={showSms}
+                            className={`px-2.5 py-1.5 rounded-full text-[11px] font-black shadow-sm active:scale-95 transition shrink-0 ${showSms
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-blue-50'}`}
+                            title={tx('Show Text buttons — texts send from YOUR phone via your Messages app',
+                                      'Mostrar botones de SMS — se envían desde TU teléfono')}
+                        >
+                            💬 {tx('SMS', 'SMS')}
                         </button>
                     )}
                     <button onClick={onClose}
@@ -4829,7 +4854,7 @@ function SeenBySheet({
                                             the recipient's language; the admin
                                             reviews and hits Send from their phone.
                                             Tap is recorded in the audit log. */}
-                                        {smsAllowed && (() => {
+                                        {smsAllowed && showSms && (() => {
                                             const target = staffByName.get(name);
                                             if (!target?.phoneE164) return null;
                                             const chatLabel = chat?.type === 'dm'
