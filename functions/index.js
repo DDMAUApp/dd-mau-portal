@@ -1969,19 +1969,20 @@ exports.sendDueReminders = onSchedule(
  *
  * Setup (one-time, by user):
  *   1. Create a GCS bucket named `dd-mau-staff-app-backups` in the
- *      same region as Firestore (us-central1):
+ *      US multi-region (must match the Firestore nam5 location):
  *        gcloud storage buckets create gs://dd-mau-staff-app-backups \
- *          --location=us-central1
- *   2. Grant the App Engine default service account the
- *      "Cloud Datastore Import Export Admin" role:
+ *          --location=us
+ *   2. Grant the RUNTIME service account the
+ *      "Cloud Datastore Import Export Admin" role. IMPORTANT: this is a
+ *      v2 (onSchedule) function, so it runs as the COMPUTE default SA
+ *      (294644627803-compute@developer.gserviceaccount.com), NOT the
+ *      App Engine (appspot) SA. Editor role is NOT sufficient — Firestore
+ *      export/import is explicitly excluded from roles/editor.
  *        gcloud projects add-iam-policy-binding dd-mau-staff-app \
- *          --member="serviceAccount:dd-mau-staff-app@appspot.gserviceaccount.com" \
+ *          --member="serviceAccount:294644627803-compute@developer.gserviceaccount.com" \
  *          --role="roles/datastore.importExportAdmin"
- *   3. Same service account also needs Storage Admin on the bucket:
- *        gcloud storage buckets add-iam-policy-binding \
- *          gs://dd-mau-staff-app-backups \
- *          --member="serviceAccount:dd-mau-staff-app@appspot.gserviceaccount.com" \
- *          --role="roles/storage.admin"
+ *   3. Storage write to the bucket is already covered by the compute SA's
+ *      roles/editor; no extra bucket grant needed.
  *   4. Deploy: firebase deploy --only functions
  *
  * Schedule: every day at 03:00 America/Chicago (off-hours, no traffic).
