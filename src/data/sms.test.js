@@ -4,6 +4,8 @@ import {
     isValidPhone,
     formatE164ForDisplay,
     smsStatusPill,
+    hireNameKey,
+    buildHirePhoneMap,
     CONSENT_TEXT_VERSION,
     CONSENT_TEXT,
 } from './sms';
@@ -173,5 +175,63 @@ describe('consent text snapshots', () => {
         // Lists representative message kinds so users know what they're agreeing to
         expect(CONSENT_TEXT.en).toMatch(/shift|coverage|schedule|weather|86/);
         expect(CONSENT_TEXT.es).toMatch(/turno|cobertura|horario|clima|86/);
+    });
+});
+
+describe('hireNameKey', () => {
+    it('lowercases, strips punctuation, collapses whitespace', () => {
+        expect(hireNameKey('Bill Smith.')).toBe('bill smith');
+        expect(hireNameKey('  bill   SMITH ')).toBe('bill smith');
+        expect(hireNameKey("O'Brien, Pat")).toBe('obrien pat');
+    });
+
+    it('empty / null / non-string → empty key', () => {
+        expect(hireNameKey('')).toBe('');
+        expect(hireNameKey(null)).toBe('');
+        expect(hireNameKey(undefined)).toBe('');
+    });
+});
+
+describe('buildHirePhoneMap', () => {
+    it('maps hire names to normalized E.164 phones', () => {
+        const map = buildHirePhoneMap([
+            { name: 'Bill Smith', phone: '(314) 555-1234', createdAt: '2026-07-01T00:00:00.000Z' },
+            { name: 'Emily Garcia', phone: '3145559999', createdAt: '2026-07-02T00:00:00.000Z' },
+        ]);
+        expect(map.get('bill smith')).toBe('+13145551234');
+        expect(map.get('emily garcia')).toBe('+13145559999');
+    });
+
+    it('skips hires with missing or unparseable phones', () => {
+        const map = buildHirePhoneMap([
+            { name: 'No Phone', phone: '', createdAt: '2026-07-01T00:00:00.000Z' },
+            { name: 'Bad Phone', phone: 'call me', createdAt: '2026-07-01T00:00:00.000Z' },
+            { name: 'Short Phone', phone: '555-1234', createdAt: '2026-07-01T00:00:00.000Z' },
+        ]);
+        expect(map.size).toBe(0);
+    });
+
+    it('newest createdAt wins on duplicate names (re-hire / re-invite)', () => {
+        const map = buildHirePhoneMap([
+            { name: 'Bill Smith', phone: '3145550001', createdAt: '2026-01-01T00:00:00.000Z' },
+            { name: 'bill  smith.', phone: '3145550002', createdAt: '2026-07-01T00:00:00.000Z' },
+        ]);
+        expect(map.size).toBe(1);
+        expect(map.get('bill smith')).toBe('+13145550002');
+    });
+
+    it('older duplicate with valid phone does not clobber newer', () => {
+        // Reverse insertion order of the test above — order-independent.
+        const map = buildHirePhoneMap([
+            { name: 'Bill Smith', phone: '3145550002', createdAt: '2026-07-01T00:00:00.000Z' },
+            { name: 'Bill Smith', phone: '3145550001', createdAt: '2026-01-01T00:00:00.000Z' },
+        ]);
+        expect(map.get('bill smith')).toBe('+13145550002');
+    });
+
+    it('tolerates empty / null input and junk records', () => {
+        expect(buildHirePhoneMap(null).size).toBe(0);
+        expect(buildHirePhoneMap([]).size).toBe(0);
+        expect(buildHirePhoneMap([null, {}, { name: '', phone: '3145551234' }]).size).toBe(0);
     });
 });

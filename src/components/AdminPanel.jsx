@@ -16,6 +16,8 @@ import {
     formatE164ForDisplay,
     smsStatusPill,
     writeClientOptInEvent,
+    fetchHirePhoneMap,
+    hireNameKey,
 } from '../data/sms';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
@@ -2233,6 +2235,14 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     toast(language === 'es' ? 'Ya existe un miembro con ese nombre.' : 'A staff member with that name already exists.', { kind: 'error' });
                     return;
                 }
+                // Carry the onboarding phone forward: if this name matches
+                // an onboarding hire, copy their apply-form phone onto the
+                // new staff record as phoneE164 (normalized). Saves the
+                // re-keying step in StaffUsageAudit / the staff editor.
+                // Best-effort — no match / unparseable phone / fetch error
+                // just means the field isn't set. smsOptIn is intentionally
+                // NOT set here; consent is a separate audited toggle.
+                const hirePhone = (await fetchHirePhoneMap()).get(hireNameKey(newName)) || null;
                 // Functional setState — read latest list from React state
                 // instead of closing over a stale snapshot. Otherwise two
                 // admins adding back-to-back can silently lose one entry
@@ -2258,6 +2268,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         shiftLead: newShiftLead,
                         isMinor: newIsMinor,
                         scheduleSide: newScheduleSide,
+                        ...(hirePhone ? { phoneE164: hirePhone } : {}),
                     };
                     latest = [...prev, newStaff];
                     return latest;
@@ -3568,19 +3579,30 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             language={language}
                             onCancel={() => setShowImportStaff(false)}
                             onImport={async (newStaffArray) => {
+                                // Carry onboarding phones forward — same as
+                                // handleAddStaff: name-match each imported row
+                                // against onboarding_hires and prefill phoneE164
+                                // (normalized). Phone only, never smsOptIn.
+                                // fetchHirePhoneMap never throws; empty map = no-op.
+                                const hirePhones = await fetchHirePhoneMap();
+                                const toAdd = hirePhones.size === 0 ? newStaffArray
+                                    : newStaffArray.map(r => {
+                                        const phone = hirePhones.get(hireNameKey(r.name));
+                                        return phone ? { ...r, phoneE164: phone } : r;
+                                    });
                                 // Optimistic update + Firestore save. Functional
                                 // setState avoids stale-closure clobber if a
                                 // concurrent admin edit lands mid-import.
                                 let latest = null;
                                 setStaffList(prev => {
-                                    latest = [...(prev || []), ...newStaffArray];
+                                    latest = [...(prev || []), ...toAdd];
                                     return latest;
                                 });
                                 try {
                                     if (latest) await saveStaffToFirestore(latest);
                                     toast(language === 'es'
-                                        ? `Importados ${newStaffArray.length} miembros del personal`
-                                        : `Imported ${newStaffArray.length} staff member${newStaffArray.length === 1 ? '' : 's'}`,
+                                        ? `Importados ${toAdd.length} miembros del personal`
+                                        : `Imported ${toAdd.length} staff member${toAdd.length === 1 ? '' : 's'}`,
                                         { kind: 'success', duration: 4000 });
                                     setShowImportStaff(false);
                                 } catch (err) {
@@ -3591,7 +3613,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         { kind: 'error', duration: 6000 });
                                     // Roll back the optimistic add so the UI matches Firestore.
                                     setStaffList(prev => (prev || []).filter(s =>
-                                        !newStaffArray.find(n => n.id === s.id)
+                                        !toAdd.find(n => n.id === s.id)
                                     ));
                                 }
                             }}

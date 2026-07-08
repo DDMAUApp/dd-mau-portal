@@ -15,7 +15,7 @@
 // places when the disclosure language changes.
 
 import { db } from '../firebase';
-import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, serverTimestamp, setDoc } from 'firebase/firestore';
 
 // Bump in lockstep with functions/smsTemplates.js CONSENT_TEXT_VERSION
 // whenever the disclosure language changes. The version is snapshotted
@@ -91,6 +91,66 @@ export function formatE164ForDisplay(e164) {
     const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(e164);
     if (!m) return e164;
     return `(${m[1]}) ${m[2]}-${m[3]}`;
+}
+
+// ── Onboarding-hire phone carry-forward ──────────────────────────────
+// When an admin creates a staff record (Add Staff form / Import Staff),
+// the person often just went through onboarding — and their hire record
+// (onboarding_hires.phone, free-form) already has the phone they typed
+// on the apply form. These helpers copy it onto the new staff record's
+// phoneE164 so admins don't have to re-key it later via StaffUsageAudit
+// or the staff editor. Phone ONLY — smsOptIn is never touched here;
+// consent stays an explicit, separately-audited admin action.
+
+// Loose name key for matching a typed staff name against hire records:
+// lowercase, punctuation stripped, whitespace collapsed. Mirrors
+// ImportStaffModal.normalizeName so "Bill Smith." ≡ "bill  smith".
+export function hireNameKey(s) {
+    if (!s) return '';
+    return String(s).toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Pure map builder — separated from the Firestore fetch so it's unit-
+// testable. Takes raw hire objects ({ name, phone, createdAt }) and
+// returns Map<hireNameKey, E.164 phone>. Hires with no name or an
+// unparseable phone are skipped silently. When the same name appears on
+// multiple hire records (re-hire, re-invite), the newest createdAt wins
+// — createdAt is an ISO string so lexicographic compare is chronological.
+export function buildHirePhoneMap(hires) {
+    const best = new Map(); // key → { createdAt, phone }
+    for (const h of hires || []) {
+        const key = hireNameKey(h?.name);
+        if (!key) continue;
+        const phone = normalizeToE164(h?.phone);
+        if (!phone) continue;
+        const createdAt = typeof h?.createdAt === 'string' ? h.createdAt : '';
+        const prev = best.get(key);
+        if (prev && prev.createdAt >= createdAt) continue;
+        best.set(key, { createdAt, phone });
+    }
+    const out = new Map();
+    best.forEach((v, k) => out.set(k, v.phone));
+    return out;
+}
+
+// One-shot fetch of every onboarding hire → phone map. Called at staff-
+// creation time only (rare, admin-only) so a full-collection read is
+// fine at DD Mau scale (AdminPanel deliberately does NOT subscribe to
+// this collection — its badges use count() aggregates). NEVER throws:
+// enrichment is best-effort and must not block creating the staff
+// record — on any error you get an empty map and the admin adds the
+// phone by hand later, exactly like before this existed.
+export async function fetchHirePhoneMap() {
+    try {
+        const snap = await getDocs(collection(db, 'onboarding_hires'));
+        const hires = [];
+        snap.forEach(d => hires.push(d.data()));
+        return buildHirePhoneMap(hires);
+    } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('hire phone lookup failed (skipping phone prefill):', e?.code || e);
+        return new Map();
+    }
 }
 
 // Write one /sms_opt_in_events row. Called whenever a staff member's
