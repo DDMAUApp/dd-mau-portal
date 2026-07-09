@@ -613,6 +613,35 @@ export function effectiveDocDescription(docDef, opts = {}) {
     return docDef?.description || '';
 }
 
+// Which files to KEEP vs PRUNE in a single-PDF template doc's Storage
+// folder (onboarding/{hireId}/{docId}/). A re-fill is an UPDATE, not a
+// new copy, so we keep only the newest — but the hire's submission
+// (filled_TS.pdf) and the admin's employer-completed version
+// (complete_TS.pdf, I-9 Section 2) are DIFFERENT documents that must
+// coexist: complete_ is drawn on top of a filled_ snapshot, and the
+// original filled_ is the audit trail of what the HIRE signed (and the
+// re-process source if the admin redoes the employer section).
+//
+// The old inline prune in the admin Files expander kept exactly one file
+// overall by timestamp, so opening Files after an employer completion
+// silently DELETED the hire's signed original (complete_ always carries
+// the later timestamp). Now: newest of EACH kind survives, older
+// duplicates within a kind are pruned, never across kinds.
+//
+// Returns { keep, prune } of file NAMES. `keep` lists employer-complete
+// first — it's the finished document the admin usually wants to view.
+export function partitionTemplateFiles(names) {
+    const list = Array.isArray(names) ? names.filter(n => typeof n === 'string' && n) : [];
+    const tsOf = (n) => { const m = /_(\d+)\.pdf$/i.exec(n); return m ? Number(m[1]) : 0; };
+    const newest = (group) => group.slice().sort((a, b) => tsOf(b) - tsOf(a))[0];
+    const employer = list.filter(n => /^complete_/i.test(n));
+    const hire = list.filter(n => !/^complete_/i.test(n));
+    const keep = [];
+    if (employer.length) keep.push(newest(employer));
+    if (hire.length) keep.push(newest(hire));
+    return { keep, prune: list.filter(n => !keep.includes(n)) };
+}
+
 // Counts {needed, started, submitted, approved} across the required docs
 // for a hire. Used by the donut/progress UI.
 export function hireProgressCounts(hire) {

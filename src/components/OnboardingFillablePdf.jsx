@@ -922,7 +922,10 @@ function FieldInput({ field, value, onChange, onOpenSig, signerName, signedAtMs,
 
 // SignatureModal — canvas-based signature pad. Saves as a transparent PNG
 // data URL on Done. Works on touch + mouse.
-function SignatureModal({ field, initial, isEs, onClose, onSave }) {
+// Exported: OnboardingEmployerFill reuses this exact pad (Draw + Type
+// modes, ESIGN consent line, body-scroll lock) for the admin's employer-
+// section signature instead of maintaining a stripped-down copy.
+export function SignatureModal({ field, initial, isEs, onClose, onSave }) {
     const tx = (en, es) => (isEs ? es : en);
     const canvasRef = useRef(null);
     const drawing = useRef(false);

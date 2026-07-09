@@ -11,19 +11,27 @@
 //   2. Load the hire's submitted PDF as the background image (so admin
 //      sees what the hire filled before completing their part)
 //   3. Render ONLY employer-fill fields as interactive inputs
-//   4. Admin fills, signs, hits Finalize
+//   4. Admin fills, signs (same Draw/Type pad the hire uses), hits Finalize
 //   5. We open the hire's submitted PDF with pdf-lib, draw the employer
-//      values on top, upload as a NEW version (complete_TS.pdf)
-//   6. Audit log entry + status flip to 'approved'
+//      values on top — signatures get the same DocuSign-style
+//      "Electronically signed by" stamp as hire signatures, with the
+//      ADMIN's staff name as signer — upload as a NEW version
+//      (complete_TS.pdf)
+//   6. Audit log entry + status flip to 'approved' + employerCompleted*
+//      markers on the checklist entry (cleared again if the hire
+//      re-submits — see OnboardingPortal's setDocStatus)
 //
 // The hire's original submission is preserved alongside the completed
-// version so we have an audit trail of who filled what when.
+// version so we have an audit trail of who filled what when (the admin
+// Files expander prunes per-kind, never across — partitionTemplateFiles).
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { db, storage } from '../firebase';
 import { collection, query, where, getDocs, updateDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref as sref, uploadBytes, getDownloadURL, getBytes, listAll, getMetadata } from 'firebase/storage';
+import { ref as sref, uploadBytes, getBytes, listAll, getMetadata } from 'firebase/storage';
 import { DOC_STATUS } from '../data/onboarding';
+import ModalPortal from './ModalPortal';
+import { SignatureModal } from './OnboardingFillablePdf';
 
 async function loadPdfJs() {
     const pdfjs = await import('pdfjs-dist');
@@ -161,17 +169,36 @@ export default function OnboardingEmployerFill({
 
     const submit = async () => {
         if (!template || !pdfBytes) return;
-        // Validate — every employer field needs a value (admin chose to
-        // include them; assume they're all required from admin side).
+        // Validate — same rule as the hire side: only fields explicitly
+        // marked `required` in the template editor block finalize. The
+        // real I-9 Section 2 has ~28 employer fields of which most stay
+        // legitimately BLANK (you fill ONE List A document OR List B+C;
+        // every "if any" box is conditional), so requiring all of them
+        // made the doc impossible to finalize honestly.
         const missing = employerFields.filter(f => {
             if (f.type === 'checkbox') return false;
+            if (f.required !== true) return false;
             const v = values[f.id];
             return !v || (typeof v === 'string' && !v.trim());
         });
         if (missing.length > 0) {
             setErr(tx(
-                `Fill ${missing.length} more field${missing.length === 1 ? '' : 's'} before finalizing.`,
-                `Llena ${missing.length} campo${missing.length === 1 ? '' : 's'} más antes de finalizar.`,
+                `Fill ${missing.length} more required field${missing.length === 1 ? '' : 's'} before finalizing.`,
+                `Llena ${missing.length} campo${missing.length === 1 ? '' : 's'} requerido${missing.length === 1 ? '' : 's'} antes de finalizar.`,
+            ));
+            return;
+        }
+        // With no required flags set, still refuse an entirely blank
+        // finalize — a complete_ PDF with an untouched Section 2 would
+        // read as done in the admin list while being federally empty.
+        const anyFilled = employerFields.some(f => {
+            const v = values[f.id];
+            return f.type === 'checkbox' ? !!v : !!(v && String(v).trim());
+        });
+        if (!anyFilled) {
+            setErr(tx(
+                'Nothing is filled in yet — complete the employer fields first.',
+                'Aún no has llenado nada — completa los campos del empleador primero.',
             ));
             return;
         }
@@ -182,7 +209,19 @@ export default function OnboardingEmployerFill({
             const { PDFDocument, StandardFonts, rgb, PDFName } = pdfLib;
             const pdfDoc = await PDFDocument.load(pdfBytes);
             const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+            const helvBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
             const pages = pdfDoc.getPages();
+
+            // One signing moment + record ID for the employer completion —
+            // same scheme as the hire-side submit so the inline stamp, the
+            // Certificate of Completion page, and the Firestore signature
+            // event all agree. Signer here is the ADMIN, not the hire.
+            const signedAt = new Date();
+            const signId = 'DDM-' + signedAt.getTime().toString(36).toUpperCase()
+                + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+            const stampWhen = signedAt.toLocaleString('en-US', {
+                year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+            });
 
             for (const f of employerFields) {
                 const page = pages[f.page];
@@ -199,6 +238,22 @@ export default function OnboardingEmployerFill({
                     const pngBytes = Uint8Array.from(atob(val.split(',')[1]), c => c.charCodeAt(0));
                     const sigImg = await pdfDoc.embedPng(pngBytes);
                     page.drawImage(sigImg, { x, y: yPdf, width: w, height: h });
+                    // Same DocuSign-style inline stamp the hire's signature
+                    // gets, so the employer signature line carries its own
+                    // audit caption too — signer is the ADMIN's staff name.
+                    if (f.type === 'signature') {
+                        const sz = 5.2;
+                        const blue = rgb(0.13, 0.32, 0.55);
+                        const grey = rgb(0.42, 0.45, 0.5);
+                        const line1 = winAnsiSafe(helvBold, `Electronically signed by ${staffName}`);
+                        const line2 = winAnsiSafe(helvetica, `${stampWhen}  -  ID ${signId}`);
+                        // Just below the box; if too close to the page bottom,
+                        // stack it just above so it can never fall off-page.
+                        let y1 = yPdf - 1.5 - sz;
+                        if (y1 - sz - 1 < 4) y1 = yPdf + h + 1.5 + 2 * sz + 1;
+                        page.drawText(line1, { x, y: y1, size: sz, font: helvBold, color: blue });
+                        page.drawText(line2, { x, y: y1 - sz - 1, size: sz, font: helvetica, color: grey });
+                    }
                 } else if (f.type === 'checkbox') {
                     if (val) {
                         page.drawText('X', {
@@ -265,7 +320,8 @@ export default function OnboardingEmployerFill({
                 await cert.appendCompletionCertificate(pdfDoc, pdfLib, {
                     signerName: staffName + ' (employer)',
                     docTitle: (docDef.en || docDef.id) + ' - Employer Section',
-                    signedAt: new Date(),
+                    signedAt,
+                    signId,
                     contentHash: pdfHash,
                     signatureCount: sigCount,
                     platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
@@ -283,16 +339,22 @@ export default function OnboardingEmployerFill({
                 await addDoc(collection(db, 'onboarding_signature_events'), {
                     hireId, hireName: hire?.name || '', signerRole: 'employer', signerName: staffName,
                     docId: docDef.id, docTitle: docDef.en, docVersion: `complete_${ts}`,
-                    signatureCount: sigCount, pdfHash, pdfPath: path, signedAt: serverTimestamp(),
+                    signatureCount: sigCount, pdfHash, pdfPath: path, signId, signedAt: serverTimestamp(),
                     platform: (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.()) || 'web',
                 });
             } catch (logErr) { console.warn('signature event log skipped:', logErr?.message || logErr); }
 
             // Flip the doc's checklist to approved + audit who completed it.
+            // employerPdfPath is the Storage PATH, deliberately not a
+            // download URL — the raw file (I-9 = SSN + document numbers)
+            // stays behind just-in-time getDownloadURL like everything else
+            // in this subsystem; a stored URL would be a durable bearer link
+            // to PII sitting in Firestore.
             await updateDoc(doc(db, 'onboarding_hires', hireId), {
                 [`checklist.${docDef.id}.status`]: DOC_STATUS.APPROVED,
                 [`checklist.${docDef.id}.employerCompletedBy`]: staffName,
                 [`checklist.${docDef.id}.employerCompletedAt`]: new Date().toISOString(),
+                [`checklist.${docDef.id}.employerPdfPath`]: path,
                 ...(pdfHash ? { [`checklist.${docDef.id}.employerPdfHash`]: pdfHash } : {}),
             });
             if (typeof onWriteAudit === 'function') {
@@ -311,6 +373,11 @@ export default function OnboardingEmployerFill({
     };
 
     return (
+        // ModalPortal so `position: fixed` measures against the viewport —
+        // the Onboarding page sits inside glass-card backdrop-filter
+        // ancestors that would otherwise hijack the containing block and
+        // strand this sheet off-screen on a scrolled page (see ModalPortal).
+        <ModalPortal onBackPress={onClose}>
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
             <div className="bg-white w-full max-w-3xl rounded-2xl flex flex-col max-h-[95vh]">
                 <div className="border-b border-gray-200 p-3 flex items-center justify-between gap-2 flex-shrink-0">
@@ -338,7 +405,7 @@ export default function OnboardingEmployerFill({
                             <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 text-[11px] text-purple-900">
                                 {tx(
                                     `${employerFields.length} field${employerFields.length === 1 ? '' : 's'} need your input. The hire's already-filled values show in the background; only the purple boxes are yours to complete.`,
-                                    `${employerFields.length} campo${employerFields.length === 1 ? '' : 's'} requieren tu información.`,
+                                    `${employerFields.length} campo${employerFields.length === 1 ? '' : 's'} requieren tu información. Lo que ya llenó el contratado se ve de fondo; solo las cajas moradas te tocan a ti.`,
                                 )}
                             </div>
                             <div className="space-y-2 bg-gray-100 p-2 rounded-lg">
@@ -371,11 +438,16 @@ export default function OnboardingEmployerFill({
                 </div>
             </div>
             {sigField && (
-                <EmployerSigModal field={sigField} isEs={isEs}
+                // The hire-side pad, reused verbatim — Draw + Type modes,
+                // ESIGN consent line. Renders after the sheet in the same
+                // portal so DOM order stacks it on top.
+                <SignatureModal field={sigField} isEs={isEs}
+                    initial={values[sigField.id] || null}
                     onClose={() => setSigField(null)}
                     onSave={(dataUrl) => { setValue(sigField.id, dataUrl); setSigField(null); }} />
             )}
         </div>
+        </ModalPortal>
     );
 }
 
@@ -391,11 +463,17 @@ function EmployerFieldInput({ field, value, onChange, onOpenSig, isEs }) {
         const signed = value && typeof value === 'string' && value.startsWith('data:image');
         return (
             <button onClick={onOpenSig}
+                // Empty-state opacity dropped to /30 so the printed
+                // "Signature of Employer" line underneath stays readable —
+                // same fix as the hire-side signature button.
                 className={`absolute border rounded text-[10px] font-bold flex items-center justify-center transition ${
-                    signed ? 'border-green-500 bg-green-100/60'
-                        : 'border-purple-500 bg-purple-100/60 animate-pulse'
+                    signed ? 'border-green-500 bg-green-100/50'
+                        : 'border-purple-500 bg-purple-100/30 animate-pulse'
                 }`}
-                style={style}>
+                // UA-min-height defeat (see hire-side FieldInput) — Andrew
+                // reviews these on the iPad, where mobile Safari would grow
+                // the button past the field slot and cover PDF text.
+                style={{ ...style, minHeight: 0, minWidth: 0, padding: 0 }}>
                 {signed ? (
                     <img src={value} alt="sig" className="max-w-full max-h-full" />
                 ) : (
@@ -406,9 +484,11 @@ function EmployerFieldInput({ field, value, onChange, onOpenSig, isEs }) {
     }
     if (field.type === 'checkbox') {
         return (
-            <label className="absolute flex items-center justify-center cursor-pointer" style={style}>
+            <label className="absolute flex items-center justify-center cursor-pointer"
+                style={{ ...style, minHeight: 0, minWidth: 0 }}>
                 <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)}
-                    className="w-full h-full accent-purple-600" />
+                    className="w-full h-full accent-purple-600"
+                    style={{ minHeight: 0, minWidth: 0, margin: 0 }} />
             </label>
         );
     }
@@ -417,92 +497,28 @@ function EmployerFieldInput({ field, value, onChange, onOpenSig, isEs }) {
             type={field.type === 'date' ? 'date' : 'text'}
             value={value || ''}
             onChange={e => onChange(e.target.value)}
-            className={`absolute border rounded px-1 text-[11px] bg-purple-50/90 ${
-                value ? 'border-green-500' : 'border-purple-500'
+            // Keyboard-covers-field fix, same as hire-side: scroll the
+            // focused overlay input to mid-viewport after the on-screen
+            // keyboard animates in.
+            onFocus={e => { const el = e.currentTarget; setTimeout(() => { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { /* ignore */ } }, 300); }}
+            // Opacity conditional on value state (hire-side "text bubble
+            // covers the label" fix): near-transparent while empty so the
+            // printed I-9 label reads through, opaque once filled so the
+            // typed text doesn't collide with it.
+            className={`absolute border rounded px-1 text-[11px] ${
+                value ? 'border-green-500 bg-purple-50/80' : 'border-purple-500 bg-purple-50/20'
             }`}
-            style={{ ...style, fontSize: (field.fontSize || 11) + 'px' }}
+            // minHeight/minWidth 0 + lineHeight 1 defeat the UA input
+            // min-height; ≥16px font kills iOS Safari's focus auto-zoom.
+            // On-screen only — the PDF draws at the field's own fontSize.
+            style={{
+                ...style,
+                minHeight: 0,
+                minWidth: 0,
+                lineHeight: 1,
+                fontSize: Math.max(16, field.fontSize || 11) + 'px',
+            }}
             placeholder={field.label || ''} />
     );
 }
 
-function EmployerSigModal({ field, isEs, onClose, onSave }) {
-    const tx = (en, es) => (isEs ? es : en);
-    const canvasRef = useRef(null);
-    const drawing = useRef(false);
-    const lastPoint = useRef(null);
-    const [empty, setEmpty] = useState(true);
-
-    useEffect(() => {
-        const c = canvasRef.current;
-        if (!c) return;
-        const r = c.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        c.width = r.width * dpr;
-        c.height = r.height * dpr;
-        const ctx = c.getContext('2d');
-        ctx.scale(dpr, dpr);
-        ctx.lineWidth = 2.2;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = '#1f2937';
-    }, []);
-
-    const pos = (e) => {
-        const r = canvasRef.current.getBoundingClientRect();
-        const t = e.touches ? e.touches[0] : e;
-        return { x: t.clientX - r.left, y: t.clientY - r.top };
-    };
-    const start = (e) => { e.preventDefault(); drawing.current = true; lastPoint.current = pos(e); setEmpty(false); };
-    const move = (e) => {
-        if (!drawing.current) return;
-        e.preventDefault();
-        const ctx = canvasRef.current.getContext('2d');
-        const p = pos(e);
-        ctx.beginPath();
-        ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-        lastPoint.current = p;
-    };
-    const end = () => { drawing.current = false; lastPoint.current = null; };
-    const clear = () => {
-        const c = canvasRef.current;
-        c.getContext('2d').clearRect(0, 0, c.width, c.height);
-        setEmpty(true);
-    };
-    const save = () => {
-        if (empty) return;
-        const dataUrl = canvasRef.current.toDataURL('image/png');
-        onSave(dataUrl);
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-end sm:items-center justify-center p-3">
-            <div className="bg-white w-full sm:max-w-md rounded-2xl">
-                <div className="p-3 border-b border-gray-200">
-                    <h3 className="font-bold text-sm">
-                        ✍️ {field.type === 'initials' ? tx('Initials', 'Iniciales') : tx('Sign here', 'Firma aquí')}
-                    </h3>
-                </div>
-                <div className="p-3">
-                    <canvas ref={canvasRef}
-                        className="w-full h-44 bg-gray-50 border-2 border-dashed border-purple-300 rounded-lg touch-none"
-                        onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
-                        onTouchStart={start} onTouchMove={move} onTouchEnd={end} />
-                </div>
-                <div className="p-3 border-t border-gray-200 flex gap-2">
-                    <button onClick={clear} className="flex-1 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold">
-                        {tx('Clear', 'Borrar')}
-                    </button>
-                    <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 text-sm font-bold">
-                        {tx('Cancel', 'Cancelar')}
-                    </button>
-                    <button onClick={save} disabled={empty}
-                        className="flex-1 py-2 rounded-lg bg-purple-600 text-white text-sm font-bold disabled:opacity-50">
-                        {tx('Done', 'Listo')}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}

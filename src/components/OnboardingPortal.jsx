@@ -285,14 +285,28 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     const setDocStatus = async (docId, next, extra = {}) => {
         if (!hireId) return;
         const prevStatus = (hire.checklist && hire.checklist[docId] && hire.checklist[docId].status) || DOC_STATUS.NEEDED;
+        // A (re-)submission INVALIDATES any admin-side employer completion
+        // (I-9 Section 2): the employer-completed PDF was drawn on top of the
+        // PREVIOUS filled version (and the submit path already pruned it from
+        // Storage), so the admin must redo the section against the new
+        // submission. This write replaces the whole checklist.{docId} map, so
+        // dropping the keys here deletes them in Firestore — which flips the
+        // admin row back to the purple "Fill employer section" button.
+        const prevEntry = { ...(hire.checklist?.[docId] || {}) };
+        if (next === DOC_STATUS.SUBMITTED) {
+            delete prevEntry.employerCompletedAt;
+            delete prevEntry.employerCompletedBy;
+            delete prevEntry.employerPdfHash;
+            delete prevEntry.employerPdfPath;
+        }
         const newChecklist = {
             ...(hire.checklist || {}),
-            [docId]: { ...(hire.checklist?.[docId] || {}), status: next, ...extra },
+            [docId]: { ...prevEntry, status: next, ...extra },
         };
         setHire({ ...hire, checklist: newChecklist });
         try {
             await updateDoc(doc(db, 'onboarding_hires', hireId), {
-                [`checklist.${docId}`]: { ...(hire.checklist?.[docId] || {}), status: next, ...extra },
+                [`checklist.${docId}`]: { ...prevEntry, status: next, ...extra },
                 lastUpdate: new Date().toISOString(),
             });
         } catch (e) { console.warn('setDocStatus failed', e); }

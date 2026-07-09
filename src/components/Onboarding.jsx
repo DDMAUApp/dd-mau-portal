@@ -27,6 +27,7 @@ import {
     INVITE_TTL_DAYS, makeInviteToken,
     docsForHire, isHireMinor, deriveHireStatus, hireProgressCounts,
     docDeadlineState, effectiveDocDescription, effectiveDaysFromHire,
+    partitionTemplateFiles,
 } from '../data/onboarding';
 import {
     POSITIONS, LOCATIONS, DESIRED_HOURS,
@@ -1319,11 +1320,21 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
             // older duplicates so the admin doesn't see 4 of the same W-4 (Andrew
             // 2026-06-30). File/ID docs can legitimately hold multiple distinct
             // uploads (e.g. ID front + back), so those are left untouched.
+            //
+            // Kind-aware since the employer-section flow: the hire's filled_
+            // submission and the admin's complete_ (employer-completed) PDF
+            // are different documents and BOTH survive — the old keep-one-
+            // overall prune deleted the hire's signed original the first time
+            // Files was opened after an I-9 Section 2 completion. See
+            // partitionTemplateFiles for the full rationale.
             if (docDef.kind === 'template' && items.length > 1) {
-                const tsOf = (n) => { const m = /_(\d+)\.pdf$/i.exec(n || ''); return m ? Number(m[1]) : 0; };
-                items.sort((a, b) => tsOf(b.name) - tsOf(a.name));
-                for (const stale of items.slice(1)) deleteObject(stale).catch(() => {});
-                items = items.slice(0, 1);
+                const { keep, prune } = partitionTemplateFiles(items.map(it => it.name));
+                const byName = new Map(items.map(it => [it.name, it]));
+                for (const staleName of prune) {
+                    const stale = byName.get(staleName);
+                    if (stale) deleteObject(stale).catch(() => {});
+                }
+                items = keep.map(n => byName.get(n)).filter(Boolean);
             }
             const enriched = await Promise.all(items.map(async (it) => {
                 const url = await getDownloadURL(it);
@@ -1344,10 +1355,13 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
 
     // Lazy-load files the first time the expander opens. Applies to every
     // kind that writes to Storage (file / template / offer_letter / id),
-    // not just file-kind — see the expander-gate comment above.
+    // not just file-kind — see the expander-gate comment above. `files`
+    // is in the deps so a caller can invalidate the cache by setting it
+    // back to null (employer-section completion does this — the new
+    // complete_ PDF must show up without a collapse/re-expand dance).
     useEffect(() => {
-        if (expanded && docDef.kind !== 'form') loadFiles();
-    }, [expanded]);
+        if (expanded && docDef.kind !== 'form' && files === null) loadFiles();
+    }, [expanded, files]);
 
     const setStatus = async (next, note = '') => {
         // Write ONLY the review fields via deep dotted paths. The old code
@@ -1578,14 +1592,35 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                             {expanded ? '▴' : '▾'} {tx('Files', 'Archivos')}
                         </button>
                     )}
-                    {/* Complete employer section — only for template docs
-                        that have employer-fill fields AND the hire has
-                        already submitted. Lets admin fill I-9 Section 2
-                        style fields without reverting to a paper workflow. */}
-                    {hasEmployerFields && status === DOC_STATUS.SUBMITTED && (
+                    {/* Employer section (I-9 Section 2 pattern) — only for
+                        template docs with employer-fill fields, once the hire
+                        has submitted. Two states:
+                        • Not completed → purple fill button. Also shown on
+                          APPROVED docs missing employerCompletedAt, which
+                          covers "Approve anyway" past the warning below AND
+                          docs approved before this flow existed — Section 2
+                          can still be completed late.
+                        • Completed → green done chip; tapping it REDOES the
+                          section (the fill modal always re-processes from the
+                          hire's filled_ original, so a typo fix never draws
+                          on top of already-drawn employer values). */}
+                    {hasEmployerFields && !state.employerCompletedAt
+                        && (status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.APPROVED) && (
                         <button onClick={() => setEmployerFillOpen(true)}
                             className="text-[10px] px-2 py-1 rounded bg-purple-600 text-white font-bold">
-                            👔 {tx('Complete employer', 'Completar empleador')}
+                            👔 {tx('Fill employer section', 'Llenar sección del empleador')}
+                        </button>
+                    )}
+                    {hasEmployerFields && state.employerCompletedAt
+                        && (status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.APPROVED) && (
+                        <button onClick={() => setEmployerFillOpen(true)}
+                            title={tx(
+                                `Completed by ${state.employerCompletedBy || 'admin'} — tap to redo`,
+                                `Completado por ${state.employerCompletedBy || 'admin'} — toca para rehacer`)}
+                            className="text-[10px] px-2 py-1 rounded bg-green-50 text-green-700 border border-green-200 font-bold">
+                            ✓ {tx('Employer section done', 'Sección del empleador lista')}
+                            {' · '}
+                            {new Date(state.employerCompletedAt).toLocaleDateString(isEs ? 'es' : 'en-US', { month: 'short', day: 'numeric' })}
                         </button>
                     )}
                     {(status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.REJECTED) && (
@@ -1594,7 +1629,7 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                             // SUBMITTED means Section 2 hasn't been completed (finishing
                             // it flips status to APPROVED). Warn before approving an
                             // I-9 with a blank, federally-incomplete Section 2.
-                            if (hasEmployerFields && status === DOC_STATUS.SUBMITTED) {
+                            if (hasEmployerFields && !state.employerCompletedAt && status === DOC_STATUS.SUBMITTED) {
                                 const ok = window.confirm(tx(
                                     'The employer section (e.g. I-9 Section 2) is not completed yet — use "Complete employer" first. Approve anyway?',
                                     'La sección del empleador (p. ej. Sección 2 del I-9) aún no está completa — usa "Completar empleador" primero. ¿Aprobar de todos modos?'
@@ -1625,7 +1660,10 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                         staffName={staffName}
                         onWriteAudit={onWriteAudit}
                         onClose={() => setEmployerFillOpen(false)}
-                        onCompleted={() => setEmployerFillOpen(false)}
+                        // Invalidate the cached file list so the freshly-written
+                        // complete_ PDF appears in Files immediately (the load
+                        // effect refetches when files goes back to null).
+                        onCompleted={() => { setEmployerFillOpen(false); setFiles(null); }}
                     />
                 </ReactSuspense>
             )}
@@ -1639,6 +1677,18 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                             <div className="flex-1 min-w-0">
                                 <div className="text-[11px] font-semibold text-dd-text truncate">{f.name}</div>
                                 <div className="text-[9px] text-dd-text-2">
+                                    {/* Template docs can hold TWO versions side by side —
+                                        the hire's signed submission (filled_) and the
+                                        employer-completed one (complete_, I-9 Section 2).
+                                        Label them so admin opens the right one. */}
+                                    {docDef.kind === 'template' && (
+                                        <span className={`font-bold mr-1 ${/^complete_/i.test(f.name) ? 'text-purple-700' : ''}`}>
+                                            {/^complete_/i.test(f.name)
+                                                ? tx('👔 Employer-complete', '👔 Completado por empleador')
+                                                : tx('✍️ Hire submission', '✍️ Enviado por contratado')}
+                                            {' · '}
+                                        </span>
+                                    )}
                                     {f.contentType || ''}{f.size ? ` · ${Math.round(f.size / 1024)} KB` : ''}
                                 </div>
                             </div>
