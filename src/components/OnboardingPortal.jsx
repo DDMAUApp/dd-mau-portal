@@ -22,7 +22,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { db, storage, functions } from '../firebase';
-import { doc, getDoc, updateDoc, increment, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, increment, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref as sref, uploadBytes, getDownloadURL, listAll, getBytes } from 'firebase/storage';
 import {
@@ -756,15 +756,19 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, 
     const [refTemplate, setRefTemplate] = useState(null);
     const [fillableTemplate, setFillableTemplate] = useState(null);
     useEffect(() => {
+        // LIVE subscription (was a one-shot getDocs). Andrew 2026-07-09:
+        // "any time i update a template it should be a live update where
+        // the docs the new hire already ha[s] should be updated as well."
+        // An already-open portal now reflects a template save immediately —
+        // no re-invite, no reload. Deleting a template also reverts the doc
+        // to its built-in handler live (bestFill/bestRef go null).
         let alive = true;
-        (async () => {
-            try {
-                const q = query(
-                    collection(db, 'onboarding_templates'),
-                    where('forDocId', '==', doc.id),
-                );
-                const snap = await getDocs(q);
-                if (!alive || snap.empty) return;
+        const unsub = onSnapshot(
+            query(
+                collection(db, 'onboarding_templates'),
+                where('forDocId', '==', doc.id),
+            ),
+            (snap) => {
                 // Pick the most-recently-updated template per mode.
                 let bestRef = null;
                 let bestFill = null;
@@ -779,20 +783,20 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, 
                         if (!bestFill || (bestFill.updatedAt || '') < ts) bestFill = data;
                     }
                 });
+                // No URL fetch for fillable — OnboardingFillablePdf opens the
+                // storage path itself via getBytes (its existing pattern).
+                setFillableTemplate(bestFill);
                 if (bestRef) {
-                    try {
-                        const url = await getDownloadURL(sref(storage, bestRef.storagePath));
-                        if (alive) setRefTemplate({ ...bestRef, url });
-                    } catch {}
+                    getDownloadURL(sref(storage, bestRef.storagePath))
+                        .then((url) => { if (alive) setRefTemplate({ ...bestRef, url }); })
+                        .catch(() => {});
+                } else {
+                    setRefTemplate(null);
                 }
-                if (bestFill && alive) {
-                    // No URL fetch — OnboardingFillablePdf opens the storage
-                    // path itself via getBytes (its existing pattern).
-                    setFillableTemplate(bestFill);
-                }
-            } catch {}
-        })();
-        return () => { alive = false; };
+            },
+            () => { /* permission/transient — same silent behavior as before */ },
+        );
+        return () => { alive = false; unsub(); };
     }, [doc.id]);
 
     return (

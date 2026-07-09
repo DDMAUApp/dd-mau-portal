@@ -419,6 +419,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                             isEs={isEs}
                             staffName={staffName}
                             docOverrides={docOverrides}
+                            templates={templates}
                             onWriteAudit={writeAudit}
                             onMoveToComplete={async () => {
                                 if (!confirm(tx(
@@ -735,7 +736,7 @@ function ProgressDonut({ counts, size = 64 }) {
 }
 
 // ── HireDetail ────────────────────────────────────────────────────────────
-function HireDetail({ hire, isEs, staffName, docOverrides, onWriteAudit, onArchive, onResend, onEdit, onResetPassword, onMoveToComplete, onMoveBackToActive }) {
+function HireDetail({ hire, isEs, staffName, docOverrides, templates, onWriteAudit, onArchive, onResend, onEdit, onResetPassword, onMoveToComplete, onMoveBackToActive }) {
     const tx = (en, es) => (isEs ? es : en);
     const docs = docsForHire(hire);
     const counts = hireProgressCounts(hire);
@@ -1060,6 +1061,7 @@ function HireDetail({ hire, isEs, staffName, docOverrides, onWriteAudit, onArchi
                         isEs={isEs}
                         staffName={staffName}
                         docOverrides={docOverrides}
+                        templates={templates}
                         onWriteAudit={onWriteAudit}
                         forceExpand={expandAllDocs}
                     />
@@ -1214,7 +1216,7 @@ function OfferLetterEditor({ hire, isEs, staffName, onWriteAudit, onClose }) {
 }
 
 // ── DocReviewRow ──────────────────────────────────────────────────────────
-function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWriteAudit, forceExpand }) {
+function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templates, onWriteAudit, forceExpand }) {
     const tx = (en, es) => (isEs ? es : en);
     const state = (hire.checklist && hire.checklist[docDef.id]) || {};
     const status = state.status || DOC_STATUS.NEEDED;
@@ -1282,31 +1284,25 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
     // still works on top of an inactive forceExpand.
     const expanded = forceExpand || internalExpanded;
     const setExpanded = setInternalExpanded;
-    // Check if this doc's template has any employer-fill fields. If so,
-    // and the hire has submitted, surface a "Complete employer section"
-    // button so admin can fill the I-9 Section 2 style fields.
-    const [hasEmployerFields, setHasEmployerFields] = useState(false);
+    // Does this doc's template have employer-fill fields? If so, and the
+    // hire has submitted, surface the "Fill employer section" button (I-9
+    // Section 2). Derived LIVE from the page-level onboarding_templates
+    // subscription — previously a per-row one-shot query, which meant
+    // marking Section 2 boxes in the template editor didn't light up the
+    // button on already-open hire rows until a full page reload (Andrew
+    // 2026-07-09: template edits must go live everywhere, no re-send).
+    // Uses the NEWEST fillable template — the same one the fill modal loads.
     const [employerFillOpen, setEmployerFillOpen] = useState(false);
-    useEffect(() => {
-        if (docDef.kind !== 'template') return;
-        let alive = true;
-        (async () => {
-            try {
-                const tSnap = await getDocs(query(
-                    collection(db, 'onboarding_templates'),
-                    where('forDocId', '==', docDef.id),
-                ));
-                let found = false;
-                tSnap.forEach(d => {
-                    const data = d.data();
-                    if ((data.mode || 'fillable') !== 'fillable') return;
-                    if ((data.fields || []).some(f => f.filledBy === 'employer')) found = true;
-                });
-                if (alive) setHasEmployerFields(found);
-            } catch {}
-        })();
-        return () => { alive = false; };
-    }, [docDef.id, docDef.kind]);
+    const hasEmployerFields = useMemo(() => {
+        if (docDef.kind !== 'template') return false;
+        let chosen = null;
+        for (const t of templates || []) {
+            if (t.forDocId !== docDef.id) continue;
+            if ((t.mode || 'fillable') !== 'fillable') continue;
+            if (!chosen || (t.updatedAt || '') > (chosen.updatedAt || '')) chosen = t;
+        }
+        return !!chosen && (chosen.fields || []).some(f => f.filledBy === 'employer');
+    }, [templates, docDef.id, docDef.kind]);
 
     const loadFiles = async () => {
         if (files !== null) return;

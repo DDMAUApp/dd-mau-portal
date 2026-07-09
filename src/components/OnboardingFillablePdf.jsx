@@ -15,7 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
-import { collection, query, where, getDocs, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL, getBytes, listAll, deleteObject } from 'firebase/storage';
 import { LOCATION_INFO } from '../data/onboarding';
 
@@ -164,14 +164,21 @@ export default function OnboardingFillablePdf({
     const wasSubmitted = docStatus === 'submitted' || docStatus === 'approved';
     const [showSubmitted, setShowSubmitted] = useState(wasSubmitted);
 
-    // Look up template for this docId.
+    // Template subscription — LIVE (was a one-shot getDocs). When the
+    // admin edits the template while a hire has this form open — moves a
+    // box, adds a field, marks something employer-only — the overlay
+    // updates in place, and a portal opened AFTER the edit always sees
+    // the latest (Andrew 2026-07-09: template edits must reach docs
+    // already sent to hires, no re-invite). Everything the hire already
+    // typed survives the swap (values-merge effect below); the page
+    // images only re-render if the PDF file itself was replaced (the
+    // bytes effect is keyed on storagePath, which is append-only per
+    // upload in the template editor).
     useEffect(() => {
-        let alive = true;
-        (async () => {
-            setLoading(true);
-            setErr('');
-            try {
-                const snap = await getDocs(query(collection(db, 'onboarding_templates'), where('forDocId', '==', docDef.id)));
+        setErr('');
+        const unsub = onSnapshot(
+            query(collection(db, 'onboarding_templates'), where('forDocId', '==', docDef.id)),
+            (snap) => {
                 // Filter to FILLABLE-mode templates only. Reference-mode
                 // templates (admin-uploaded reference PDFs) are surfaced
                 // by DocCard at the parent layer and shouldn't be loaded
@@ -185,7 +192,8 @@ export default function OnboardingFillablePdf({
                 });
                 if (fillable.length === 0) {
                     console.warn(`[FillablePdf] no fillable template found for ${docDef.id}`);
-                    if (alive) { setTemplate(null); setLoading(false); }
+                    setTemplate(null);
+                    setLoading(false);
                     return;
                 }
                 // Pick the most-recently-updated.
@@ -193,33 +201,59 @@ export default function OnboardingFillablePdf({
                 for (const data of fillable) {
                     if ((data.updatedAt || '') > (chosen.updatedAt || '')) chosen = data;
                 }
-                if (!alive) return;
                 setTemplate(chosen);
-                // Initialize values from autofill bindings.
-                // Static fields are admin-prefilled at template time — they're
-                // not editable here, so we don't pre-populate the values map
-                // for them (PDF generation reads field.staticValue directly).
-                const initial = {};
-                // Sign once, reuse: the hire's adopted signature persists in
-                // device localStorage so it pre-fills signature fields across docs
-                // AND across sessions (re-open keeps the signature too).
-                let storedSig = null;
-                try { storedSig = localStorage.getItem('dd:sig:' + hireId); } catch { /* ignore */ }
-                // Their exact prior entries (everything they typed last submit,
-                // EXCEPT SSN which is never saved) so re-opening continues where
-                // they left off — overrides autofill so edited values stick.
-                const prior = (hire?.checklist && hire.checklist[docDef.id] && hire.checklist[docDef.id].savedFields) || {};
-                (chosen.fields || []).forEach(f => {
-                    if (f.filledBy === 'static') return;
-                    if (f.autofill) initial[f.id] = autofillValue(f.autofill, hire);
-                    if (Object.prototype.hasOwnProperty.call(prior, f.id)) initial[f.id] = prior[f.id];
-                    else if (storedSig && f.type === 'signature' && f.filledBy !== 'employer') initial[f.id] = storedSig;
-                });
-                setValues(initial);
-                // Render PDF background. getBytes() goes through the
-                // Storage SDK's XHR-based download channel + has built-in
-                // retry / metadata handling — cleaner than the old
-                // getDownloadURL() + plain fetch() pattern.
+            },
+            (e) => {
+                console.error('template subscription failed', e);
+                setErr(String(e.message || e));
+                setLoading(false);
+            },
+        );
+        return unsub;
+    }, [docDef.id, reloadKey]);
+
+    // Seed / merge the values map whenever the template (re)arrives.
+    // Static fields are admin-prefilled at template time — they're not
+    // editable here, so we don't pre-populate the values map for them
+    // (PDF generation reads field.staticValue directly).
+    useEffect(() => {
+        if (!template) return;
+        const initial = {};
+        // Sign once, reuse: the hire's adopted signature persists in
+        // device localStorage so it pre-fills signature fields across docs
+        // AND across sessions (re-open keeps the signature too).
+        let storedSig = null;
+        try { storedSig = localStorage.getItem('dd:sig:' + hireId); } catch { /* ignore */ }
+        // Their exact prior entries (everything they typed last submit,
+        // EXCEPT SSN which is never saved) so re-opening continues where
+        // they left off — overrides autofill so edited values stick.
+        const prior = (hire?.checklist && hire.checklist[docDef.id] && hire.checklist[docDef.id].savedFields) || {};
+        (template.fields || []).forEach(f => {
+            if (f.filledBy === 'static') return;
+            if (f.autofill) initial[f.id] = autofillValue(f.autofill, hire);
+            if (Object.prototype.hasOwnProperty.call(prior, f.id)) initial[f.id] = prior[f.id];
+            else if (storedSig && f.type === 'signature' && f.filledBy !== 'employer') initial[f.id] = storedSig;
+        });
+        // MERGE, don't replace: on a live template update mid-fill, what
+        // the hire typed this session wins; only fields that didn't exist
+        // before pick up their defaults. First arrival: prev is {} so the
+        // seeds apply unchanged.
+        setValues(prev => ({ ...initial, ...prev }));
+    }, [template, hire?.id]);
+
+    // Fetch + rasterize the template's PDF. Keyed on storagePath so a
+    // fields-only template edit (the common live update) never refetches
+    // or re-renders the pages — only replacing the PDF does (the editor
+    // allocates a fresh storage path per upload, never overwrites).
+    useEffect(() => {
+        if (!template?.storagePath) return;
+        let alive = true;
+        (async () => {
+            setLoading(true);
+            try {
+                // getBytes() goes through the Storage SDK's XHR-based
+                // download channel + has built-in retry / metadata handling —
+                // cleaner than the old getDownloadURL() + plain fetch() pattern.
                 //
                 // IMPORTANT — CORS DEPENDENCY: Storage SDK downloads from
                 // cross-origin pages still require the GCS bucket itself
@@ -231,7 +265,7 @@ export default function OnboardingFillablePdf({
                 // fine via curl. Fix: run `npm run cors-setup` once to
                 // push cors.json to the bucket via firebase-admin. See
                 // scripts/setup-storage-cors.mjs.
-                const buf = await getBytes(sref(storage, chosen.storagePath));
+                const buf = await getBytes(sref(storage, template.storagePath));
                 if (!alive) return;
                 setPdfBytes(buf);
                 // Race PDF render against a 30s timeout. If pdf.js chunk
@@ -255,7 +289,7 @@ export default function OnboardingFillablePdf({
             }
         })();
         return () => { alive = false; };
-    }, [docDef.id, hire?.id, reloadKey]);
+    }, [template?.storagePath, reloadKey]);
 
     const renderPages = async (buf) => {
         const pdfjs = await loadPdfJs();
