@@ -4,21 +4,33 @@
 // rely on target="_blank" (a no-op in WKWebView).
 
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { openSpy } = vi.hoisted(() => ({ openSpy: vi.fn() }));
-vi.mock('../capacitor-bridge', () => ({ openExternalUrl: openSpy }));
-// Keep firebase + the Cloud Function client out of the test.
-vi.mock('../data/translation', () => ({
-    translateMessage: vi.fn(),
-    readCachedTranslation: () => null,
-    shouldOfferTranslation: () => false,
-    subscribeTranslation: () => () => {},
-    detectLanguageHint: () => null,
+const { openSpy, txMocks } = vi.hoisted(() => ({
+    openSpy: vi.fn(),
+    // Keep firebase + the Cloud Function client out of the test —
+    // configurable per-test so the component behavior tests below can
+    // simulate translations landing.
+    txMocks: {
+        translateMessage: vi.fn(),
+        readCachedTranslation: vi.fn(),
+        shouldOfferTranslation: vi.fn(),
+        subscribeTranslation: vi.fn(),
+        detectLanguageHint: vi.fn(),
+    },
 }));
+vi.mock('../capacitor-bridge', () => ({ openExternalUrl: openSpy }));
+vi.mock('../data/translation', () => txMocks);
 
-import { renderWithMentions } from './TranslatableText';
+import TranslatableText, { renderWithMentions } from './TranslatableText';
 
+beforeEach(() => {
+    txMocks.translateMessage.mockReset().mockResolvedValue({ translatedText: '', sourceLang: null });
+    txMocks.readCachedTranslation.mockReset().mockReturnValue(null);
+    txMocks.shouldOfferTranslation.mockReset().mockReturnValue(false);
+    txMocks.subscribeTranslation.mockReset().mockReturnValue(() => {});
+    txMocks.detectLanguageHint.mockReset().mockReturnValue(null);
+});
 afterEach(() => { cleanup(); openSpy.mockClear(); });
 
 describe('chat link rendering', () => {
@@ -45,5 +57,71 @@ describe('chat link rendering', () => {
     it('leaves plain text without a link', () => {
         render(<div data-testid="wrap">{renderWithMentions('no links here at all', false)}</div>);
         expect(screen.getByTestId('wrap').querySelector('a')).toBeNull();
+    });
+});
+
+// ── Translate chip behavior ──────────────────────────────────────────
+// Pins the 2026-07-10 fixes: auto-translate must DISPLAY the translation
+// (not just prefetch it — the ChatNotifSettings copy promises "show every
+// foreign-language message translated"), and an edit must reset the
+// bubble so it can't keep showing the pre-edit translation.
+describe('TranslatableText chip', () => {
+    const msg = { id: 'm1', senderName: 'Maria', type: 'text', text: 'Hola equipo' };
+    const baseProps = {
+        targetLang: 'en', staffName: 'Andrew Shih', chatId: 'c1',
+        isMine: false, isEs: false, blockMode: false,
+    };
+
+    it('manual tap fetches and shows the translation', async () => {
+        txMocks.shouldOfferTranslation.mockReturnValue(true);
+        txMocks.translateMessage.mockResolvedValue({ translatedText: 'Hello team', sourceLang: 'es' });
+        render(<TranslatableText message={msg} autoTranslate={false} {...baseProps} />);
+        expect(screen.getByText('Hola equipo')).toBeTruthy();
+        fireEvent.click(screen.getByText('Translate'));
+        await screen.findByText('Hello team');
+        expect(screen.getByText('Translated · Show original')).toBeTruthy();
+        expect(screen.queryByText('Hola equipo')).toBeNull();
+    });
+
+    it('auto-translate displays the translation without a tap', async () => {
+        txMocks.shouldOfferTranslation.mockReturnValue(true);
+        txMocks.detectLanguageHint.mockReturnValue('es'); // foreign vs target 'en'
+        txMocks.translateMessage.mockResolvedValue({ translatedText: 'Hello team', sourceLang: 'es' });
+        render(<TranslatableText message={msg} autoTranslate={true} {...baseProps} />);
+        await screen.findByText('Hello team');
+        expect(screen.queryByText('Hola equipo')).toBeNull();
+    });
+
+    it('"Show original" sticks even with auto-translate on', async () => {
+        txMocks.shouldOfferTranslation.mockReturnValue(true);
+        txMocks.detectLanguageHint.mockReturnValue('es');
+        txMocks.translateMessage.mockResolvedValue({ translatedText: 'Hello team', sourceLang: 'es' });
+        render(<TranslatableText message={msg} autoTranslate={true} {...baseProps} />);
+        await screen.findByText('Hello team');
+        fireEvent.click(screen.getByText('Translated · Show original'));
+        await screen.findByText('Hola equipo');
+        expect(screen.queryByText('Hello team')).toBeNull();
+    });
+
+    it('an edit resets the bubble to the new original text', async () => {
+        txMocks.shouldOfferTranslation.mockReturnValue(true);
+        txMocks.translateMessage.mockResolvedValue({ translatedText: 'Hello team', sourceLang: 'es' });
+        const { rerender } = render(<TranslatableText message={msg} autoTranslate={false} {...baseProps} />);
+        fireEvent.click(screen.getByText('Translate'));
+        await screen.findByText('Hello team');
+        const edited = { ...msg, text: 'Hola equipo — a las 5', edited: true };
+        rerender(<TranslatableText message={edited} autoTranslate={false} {...baseProps} />);
+        await screen.findByText('Hola equipo — a las 5');
+        expect(screen.queryByText('Hello team')).toBeNull();
+        // Chip is back to a fresh "Translate" for the new text.
+        expect(screen.getByText('Translate')).toBeTruthy();
+    });
+
+    it('source == target shows the inert "already in your language" pill', async () => {
+        txMocks.shouldOfferTranslation.mockReturnValue(true);
+        txMocks.translateMessage.mockResolvedValue({ translatedText: 'Hola equipo', sourceLang: 'en' });
+        render(<TranslatableText message={msg} autoTranslate={false} {...baseProps} />);
+        fireEvent.click(screen.getByText('Translate'));
+        await screen.findByText('Already in English');
     });
 });

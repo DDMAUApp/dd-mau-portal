@@ -4190,19 +4190,17 @@ exports.translateMessage = onCall(
             "https://ddmaustl.github.io",       // pre-custom-domain build target
             "http://localhost:5173",
             "http://localhost:4173",            // npm run preview
+            // Native Capacitor WebViews send their local-shell origin, not
+            // a web domain. Missing these broke Translate on the App Store /
+            // Play apps with permission-denied (proven in prod logs
+            // 2026-06-20: "rejected unknown origin: capacitor://localhost").
+            "capacitor://localhost",            // iOS (WKWebView custom scheme)
+            "https://localhost",                // Android (androidScheme: 'https')
         ];
         if (origin && !ALLOWED_ORIGINS.includes(origin)) {
             logger.warn("translateMessage: rejected unknown origin:", origin);
             throw new HttpsError("permission-denied", "origin not allowed");
         }
-
-        // Rate limit by source IP before doing any work. This is the
-        // only auth-shaped check we can do without Firebase Auth wired
-        // — see SEC-002 in AUDIT.md for the full picture.
-        const ip = request.rawRequest?.ip
-            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
-            || null;
-        await checkTranslateRateLimit(ip);
 
         const data = request.data || {};
         const targetLang = String(data.targetLang || "").toLowerCase();
@@ -4247,6 +4245,18 @@ exports.translateMessage = onCall(
         if (text.length > 5000) {
             throw new HttpsError("invalid-argument", "text too long (max 5000 chars)");
         }
+
+        // Rate limit by source IP — the only auth-shaped check we can
+        // do without Firebase Auth wired (SEC-002 in AUDIT.md). Runs
+        // AFTER the cache-hit return on purpose: cache hits cost us a
+        // Firestore read, not a Translation API call, so they shouldn't
+        // eat the 60-per-5-min budget. Before this reorder, a viewer
+        // with auto-translate ON opening a busy already-translated
+        // thread could 429 themselves on free cache reads.
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await checkTranslateRateLimit(ip);
 
         // Call Google Cloud Translation v2 REST. ADC handles the access
         // token; we never see a raw key.

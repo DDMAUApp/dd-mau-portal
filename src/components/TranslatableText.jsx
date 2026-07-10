@@ -20,7 +20,7 @@
 // `showChip={false}` (currently nobody — every text-render UI in chat
 // wants the chip).
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { openExternalUrl } from '../capacitor-bridge';
 import {
     translateMessage as translateMsg,
@@ -52,23 +52,56 @@ export default function TranslatableText({
     const [err, setErr] = useState(null);
     const [liveTranslation, setLiveTranslation] = useState(cached || null);
     const [sameLang, setSameLang] = useState(false);
+    // Latches true the moment the viewer taps Show original / Show
+    // translation on THIS bubble — after that, auto-translate keeps
+    // its hands off the toggle (flipping a message back to translated
+    // right after someone chose the original reads as broken).
+    const userChoseRef = useRef(false);
+
+    // The message text changed (edit) or the viewer's target language
+    // flipped — every piece of local state is now about the WRONG
+    // text/lang. Re-seed from the doc cache for the new key. Without
+    // this, a bubble showing a translation kept showing the PRE-edit
+    // translation after an edit (handleEditMessage wipes the doc's
+    // translations map, but not this component's state).
+    useEffect(() => {
+        setLiveTranslation(readCachedTranslation(message, targetLang) || null);
+        setShowing('original');
+        setSameLang(false);
+        setErr(null);
+        userChoseRef.current = false;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [original, targetLang]);
 
     // Subscribe to the in-memory cache so another bubble (or auto-
     // translate firing in the background) can fill us in even if the
-    // message doc snapshot hasn't re-arrived yet.
+    // message doc snapshot hasn't re-arrived yet. Keyed on the text
+    // too, so a stale pre-edit entry can't land here.
     useEffect(() => {
         if (!chatId || !message.id) return;
         const unsub = subscribeTranslation(chatId, message.id, targetLang, (v) => {
             if (v) setLiveTranslation(v);
-        });
+        }, original);
         return () => unsub();
-    }, [chatId, message.id, targetLang]);
+    }, [chatId, message.id, targetLang, original]);
 
     // If the message doc updates with a fresh cached translation
     // (e.g., someone else translated it first), pick that up.
     useEffect(() => {
         if (cached) setLiveTranslation(cached);
     }, [cached]);
+
+    // Auto-translate promises "show every foreign message translated
+    // into your language" (ChatNotifSettings copy) — so once a
+    // translation is available, DISPLAY it, don't just prefetch it.
+    // Before this fix the auto path only warmed the cache and the
+    // viewer still had to tap "Show translation" on every message,
+    // which is exactly the tap the setting claims to remove. The
+    // userChoseRef latch keeps manual toggles sticky.
+    useEffect(() => {
+        if (!autoTranslate || userChoseRef.current) return;
+        if (offered && liveTranslation) setShowing('translated');
+    }, [autoTranslate, offered, liveTranslation]);
 
     async function doTranslate(autoFire = false) {
         if (pending) return;
@@ -105,18 +138,23 @@ export default function TranslatableText({
         }
     }
 
-    // Auto-translate on mount / when prefs flip on. Only fires once
-    // per (message, targetLang) because the second call is a no-op
-    // cache hit anyway (deduped inside translateMsg).
+    // Auto-translate on mount / when prefs flip on / when the text is
+    // edited. Repeat runs are cheap: the module memo (keyed on the
+    // text) dedupes, so only genuinely new text hits the API.
+    // liveTranslation + sameLang are in the deps ON PURPOSE — the
+    // edit-reset effect above clears them a render after `original`
+    // changes, and this effect must re-run on that second render to
+    // fire the re-translate (on the first render its closure still
+    // sees the stale pre-edit values and correctly skips).
     useEffect(() => {
         if (!autoTranslate) return;
         if (!offered) return;
-        if (liveTranslation) return;
+        if (liveTranslation || sameLang) return;
         const hint = detectLanguageHint(original);
         if (hint && hint === targetLang?.split('-')[0]) return;
         doTranslate(true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [autoTranslate, offered, targetLang]);
+    }, [autoTranslate, offered, targetLang, original, liveTranslation, sameLang]);
 
     const showTranslated = showing === 'translated' && !!liveTranslation;
     const body = showTranslated ? liveTranslation : original;
@@ -145,7 +183,7 @@ export default function TranslatableText({
                         </span>
                     ) : showTranslated ? (
                         <button
-                            onClick={() => setShowing('original')}
+                            onClick={() => { userChoseRef.current = true; setShowing('original'); }}
                             className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 transition active:scale-95 ${isMine
                                 ? 'bg-white/15 text-white/80 hover:bg-white/25'
                                 : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-white'}`}
@@ -156,7 +194,7 @@ export default function TranslatableText({
                         </button>
                     ) : liveTranslation ? (
                         <button
-                            onClick={() => setShowing('translated')}
+                            onClick={() => { userChoseRef.current = true; setShowing('translated'); }}
                             className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 transition active:scale-95 ${isMine
                                 ? 'bg-white/15 text-white/80 hover:bg-white/25'
                                 : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-white'}`}

@@ -155,7 +155,7 @@ describe('translateMessage — dedup + cache + subscribers', () => {
             data: { translatedText: 'Hello' },
         });
         const received = [];
-        const unsub = subscribeTranslation('c1', 'm1', 'en', (v) => received.push(v));
+        const unsub = subscribeTranslation('c1', 'm1', 'en', (v) => received.push(v), 'Hola');
         await translateMessage({ chatId: 'c1', messageId: 'm1', targetLang: 'en', text: 'Hola' });
         expect(received).toContain('Hello');
         unsub();
@@ -167,7 +167,7 @@ describe('translateMessage — dedup + cache + subscribers', () => {
         });
         await translateMessage({ chatId: 'c1', messageId: 'm1', targetLang: 'en', text: 'Hola' });
         const received = [];
-        const unsub = subscribeTranslation('c1', 'm1', 'en', (v) => received.push(v));
+        const unsub = subscribeTranslation('c1', 'm1', 'en', (v) => received.push(v), 'Hola');
         expect(received).toEqual(['Hello']);
         unsub();
     });
@@ -176,5 +176,47 @@ describe('translateMessage — dedup + cache + subscribers', () => {
         await expect(
             translateMessage({ chatId: 'c1', messageId: 'm1' })
         ).rejects.toThrow(/targetLang/);
+    });
+
+    it('an edited message misses the memo and re-translates', async () => {
+        // Regression — the memo used to be keyed on ids+lang only, so
+        // after an edit the same tap kept serving the translation of
+        // the PRE-edit text for the rest of the session.
+        functionsMock.__mockCall
+            .mockResolvedValueOnce({ data: { translatedText: 'Hello' } })
+            .mockResolvedValueOnce({ data: { translatedText: 'Hello friends' } });
+        await translateMessage({ chatId: 'c1', messageId: 'm1', targetLang: 'en', text: 'Hola' });
+        const res = await translateMessage({ chatId: 'c1', messageId: 'm1', targetLang: 'en', text: 'Hola amigos' });
+        expect(res.translatedText).toBe('Hello friends');
+        expect(functionsMock.__mockCall).toHaveBeenCalledTimes(2);
+    });
+
+    it('memo hit preserves sourceLang', async () => {
+        functionsMock.__mockCall.mockResolvedValueOnce({
+            data: { translatedText: 'Hello', sourceLang: 'es' },
+        });
+        await translateMessage({ chatId: 'c1', messageId: 'm1', targetLang: 'en', text: 'Hola' });
+        const second = await translateMessage({ chatId: 'c1', messageId: 'm1', targetLang: 'en', text: 'Hola' });
+        expect(second.cached).toBe(true);
+        expect(second.sourceLang).toBe('es');
+    });
+
+    it('same-language results are memoized but never broadcast', async () => {
+        // source == target → the API echoed the input. Other views of
+        // the message must NOT be told "a translation landed" (they'd
+        // grow a Show-translation chip that toggles to identical text),
+        // but a re-tap should still be a free memo hit.
+        functionsMock.__mockCall.mockResolvedValueOnce({
+            data: { translatedText: 'Hello team', sourceLang: 'en' },
+        });
+        const received = [];
+        const unsub = subscribeTranslation('c1', 'm1', 'en', (v) => received.push(v), 'Hello team');
+        await translateMessage({ chatId: 'c1', messageId: 'm1', targetLang: 'en', text: 'Hello team' });
+        expect(received).toEqual([]);
+        const again = await translateMessage({ chatId: 'c1', messageId: 'm1', targetLang: 'en', text: 'Hello team' });
+        expect(again.cached).toBe(true);
+        expect(again.sourceLang).toBe('en');
+        expect(functionsMock.__mockCall).toHaveBeenCalledTimes(1);
+        unsub();
     });
 });

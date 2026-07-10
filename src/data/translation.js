@@ -42,16 +42,32 @@ import { functions } from '../firebase';
 
 // In-flight requests are deduped so two simultaneous taps on the
 // same message + lang only hit the API once. Keyed by
-// `${chatId}|${messageId}|${targetLang}`.
+// `${chatId}|${messageId}|${targetLang}|${textFingerprint}`.
 const inflight = new Map();
 
-// Memo of resolved translations from this session. The message doc
-// is the source of truth on next mount; this map just dodges a few
-// Firestore re-reads while you're scrolling.
+// Memo of resolved translations from this session, stored as
+// {text, sourceLang, sameLang} objects. The message doc is the source
+// of truth on next mount; this map just dodges a few Firestore
+// re-reads while you're scrolling.
 const memo = new Map();
 
-function cacheKey(chatId, messageId, targetLang) {
-    return `${chatId || ''}|${messageId || ''}|${(targetLang || '').toLowerCase()}`;
+// Cheap fingerprint of the message text baked into every cache key.
+// Without it, an EDITED message kept serving the translation of its
+// pre-edit text for the rest of the session: handleEditMessage wipes
+// the doc-level `translations` map, but this module's memo (keyed by
+// chatId|messageId|lang only) survived and won on the next tap.
+// Keying on the text itself makes an edit a natural cache miss — no
+// invalidation plumbing needed, remote edits included.
+function textFp(text) {
+    const s = String(text || '');
+    if (!s) return '';
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h * 31) + s.charCodeAt(i)) | 0;
+    return `${s.length}.${(h >>> 0).toString(36)}`;
+}
+
+function cacheKey(chatId, messageId, targetLang, text) {
+    return `${chatId || ''}|${messageId || ''}|${(targetLang || '').toLowerCase()}|${textFp(text)}`;
 }
 
 // Pull a cached translation off a message doc (written there by the
@@ -114,22 +130,28 @@ export function detectLanguageHint(text) {
     return null;
 }
 
-// Subscribe to a (chatId, messageId, targetLang) cache entry. Calls
-// `cb(text)` whenever the cache value lands. Returns an unsubscribe.
+// Subscribe to a (chatId, messageId, targetLang, text) cache entry.
+// Calls `cb(translatedText)` whenever a REAL translation lands —
+// same-language results are never broadcast (they'd make every other
+// view of the message grow a "Show translation" chip that toggles to
+// identical text). Pass the message's current text so the key tracks
+// edits. Returns an unsubscribe.
 const listeners = new Map(); // key -> Set<cb>
 function notify(key) {
     const set = listeners.get(key);
     if (!set) return;
-    const val = memo.get(key);
+    const entry = memo.get(key);
+    if (!entry || entry.sameLang) return;
     for (const cb of set) {
-        try { cb(val); } catch { /* swallow — one bad listener shouldn't kill others */ }
+        try { cb(entry.text); } catch { /* swallow — one bad listener shouldn't kill others */ }
     }
 }
-export function subscribeTranslation(chatId, messageId, targetLang, cb) {
-    const key = cacheKey(chatId, messageId, targetLang);
+export function subscribeTranslation(chatId, messageId, targetLang, cb, text) {
+    const key = cacheKey(chatId, messageId, targetLang, text);
     if (!listeners.has(key)) listeners.set(key, new Set());
     listeners.get(key).add(cb);
-    if (memo.has(key)) cb(memo.get(key));
+    const entry = memo.get(key);
+    if (entry && !entry.sameLang) cb(entry.text);
     return () => {
         const set = listeners.get(key);
         if (set) {
@@ -167,9 +189,14 @@ export function translateMessage({ chatId, messageId, text, targetLang }) {
         return Promise.reject(new Error('need text or chatId+messageId'));
     }
 
-    const key = cacheKey(chatId, messageId, lang);
-    if (memo.has(key)) {
-        return Promise.resolve({ translatedText: memo.get(key), sourceLang: null, cached: true });
+    const key = cacheKey(chatId, messageId, lang, text);
+    const hit = memo.get(key);
+    if (hit) {
+        // sourceLang is preserved from the original call so the caller
+        // can still detect the source==target ("already in your
+        // language") case on a memo hit — previously we returned null
+        // here and callers had to fall back to comparing text strings.
+        return Promise.resolve({ translatedText: hit.text, sourceLang: hit.sourceLang, cached: true });
     }
     if (inflight.has(key)) return inflight.get(key);
 
@@ -184,13 +211,20 @@ export function translateMessage({ chatId, messageId, text, targetLang }) {
             const res = await call(payload);
             const result = res?.data || {};
             const out = String(result.translatedText || '');
+            const sourceLang = result.sourceLang || null;
+            // source == target (or the API returned the input verbatim)
+            // → nothing was really translated. Memo it so a re-tap
+            // doesn't re-bill the API, but flag it so notify() never
+            // broadcasts it as a translation.
+            const sameLang = (sourceLang && normLang(sourceLang) === normLang(lang))
+                || (!!text && out.trim() === String(text).trim());
             if (out) {
-                memo.set(key, out);
+                memo.set(key, { text: out, sourceLang, sameLang });
                 notify(key);
             }
             return {
                 translatedText: out,
-                sourceLang: result.sourceLang || null,
+                sourceLang,
                 cached: !!result.cached,
             };
         } finally {
