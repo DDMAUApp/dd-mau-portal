@@ -200,13 +200,32 @@ export function renderLabelCanvas(lines, { width = BROTHER_IMAGEABLE_W, rightShi
         if (!text) continue;
         let px = Math.max(14, Math.round(BASE * (Number(ln.scale) || 1)));
         const weight = ln.bold ? '800' : '600';
-        // Shrink to fit the printable width.
+        // HONOR the requested size and WORD-WRAP long lines; only
+        // shrink when a single WORD can't fit at that size. The old
+        // shrink-the-whole-line loop collapsed every size choice to
+        // the same fitted px for any multi-word text — the size tabs
+        // looked dead (same bug class as the 2026-06-25 Epson fix in
+        // renderFreeTextBody).
+        const words = text.split(/\s+/);
+        const longestWord = words.reduce((m, w) => (w.length > m.length ? w : m), '');
         for (let guard = 0; guard < 40; guard++) {
             ctx.font = `${weight} ${px}px Arial, sans-serif`;
-            if (ctx.measureText(text).width <= innerW || px <= 14) break;
+            if (ctx.measureText(longestWord).width <= innerW || px <= 14) break;
             px -= 2;
         }
-        items.push({ text, px, weight, h: Math.round(px * 1.18) });
+        ctx.font = `${weight} ${px}px Arial, sans-serif`;
+        const h = Math.round(px * 1.18);
+        let cur = '';
+        for (const w of words) {
+            const cand = cur ? `${cur} ${w}` : w;
+            if (ctx.measureText(cand).width <= innerW) {
+                cur = cand;
+            } else {
+                if (cur) items.push({ text: cur, px, weight, h });
+                cur = w;
+            }
+        }
+        if (cur) items.push({ text: cur, px, weight, h });
     }
     let height = PAD;
     for (const it of items) height += it.h + GAP;

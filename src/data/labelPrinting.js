@@ -959,6 +959,31 @@ function renderPrepLabelHtmlBody(payload) {
     ].join('');
 }
 
+// Shared "printed at" stamp for free-text labels — one format for the
+// Epson XML, Brother HTML/PDF and Brother direct-IPP paths so the
+// date toggle prints identically everywhere. e.g. "07/10/26 8:15a".
+export function freeTextDateStamp(d = new Date()) {
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    let h = d.getHours(); const ampm = h >= 12 ? 'p' : 'a';
+    h = h % 12 || 12;
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${mo}/${dd}/${yy} ${h}:${mi}${ampm}`;
+}
+
+// Size-key → Brother canvas scale. The UI sends small/normal/large/
+// huge (PrintCenter sizeChips). The original map was keyed
+// small/medium/large, so 'normal' AND 'huge' silently fell through to
+// 1.0 — the size tabs looked dead on the direct-Brother path (Andrew
+// 2026-07-10). Numeric sizes pass through for programmatic callers.
+export function brotherFreeTextScale(size) {
+    const map = { small: 0.7, normal: 1.0, medium: 1.0, large: 1.45, huge: 1.9 };
+    if (map[size]) return map[size];
+    const n = Number(size);
+    return n > 0 ? n : 1.0;
+}
+
 // One free-text label as HTML body. Honors size/bold/align/stamps
 // the same way renderFreeTextBody does for Epson.
 function renderFreeTextHtmlBody(freePayload) {
@@ -974,14 +999,7 @@ function renderFreeTextHtmlBody(freePayload) {
 
     const footerLines = [];
     if (freePayload.stampDate) {
-        const d = new Date();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        const yy = String(d.getFullYear()).slice(-2);
-        let h = d.getHours(); const ampm = h >= 12 ? 'p' : 'a';
-        h = h % 12 || 12;
-        const mi = String(d.getMinutes()).padStart(2, '0');
-        footerLines.push(`${mm}/${dd}/${yy} ${h}:${mi}${ampm}`);
+        footerLines.push(freeTextDateStamp());
     }
     if (freePayload.stampSignature && freePayload.signature) {
         footerLines.push(`— ${freePayload.signature}`);
@@ -1554,14 +1572,7 @@ function renderFreeTextBody(freePayload) {
     // doesn't dwarf the user's content.
     const footerLines = [];
     if (freePayload.stampDate) {
-        const d = new Date();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        const yy = String(d.getFullYear()).slice(-2);
-        let h = d.getHours(); const ampm = h >= 12 ? 'p' : 'a';
-        h = h % 12 || 12;
-        const mi = String(d.getMinutes()).padStart(2, '0');
-        footerLines.push(`${mm}/${dd}/${yy} ${h}:${mi}${ampm}`);
+        footerLines.push(freeTextDateStamp());
     }
     if (freePayload.stampSignature && freePayload.signature) {
         footerLines.push(`— ${freePayload.signature}`);
@@ -1756,8 +1767,19 @@ export async function printFreeText({
         // Brother over Wi-Fi (direct IPP/Apple-Raster), independent of the slot
         // type. Epson + legacy-Brother branches below are unchanged.
         if (useBrother && printer.brotherIp) {
-            const sizeScale = ({ small: 0.85, medium: 1.0, large: 1.5 }[size]) || (Number(size) > 0 ? Number(size) : 1.0);
+            const sizeScale = brotherFreeTextScale(size);
             const lines = trimmed.split(/\r?\n/).map((t) => ({ text: t, scale: sizeScale, bold: !!bold }));
+            // Date/time + name stamps — same content as the Epson +
+            // AirPrint paths. This branch shipped without them, so the
+            // PrintCenter toggles printed nothing on the direct-Brother
+            // path (Andrew 2026-07-10). Rendered smaller + non-bold so
+            // they read as a footer, not part of the message.
+            if (stampDate) {
+                lines.push({ text: freeTextDateStamp(), scale: 0.55, bold: false });
+            }
+            if (stampSignature && signature) {
+                lines.push({ text: `— ${signature}`, scale: 0.55, bold: false });
+            }
             const r = await printBrotherDirect({
                 ip: printer.brotherIp,
                 lines,

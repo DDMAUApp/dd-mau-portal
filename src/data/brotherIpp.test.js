@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { rowsToUrf, imageDataToUrf, buildIppPrintJob, BROTHER_IMAGEABLE_W } from './brotherIpp';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { rowsToUrf, imageDataToUrf, buildIppPrintJob, renderLabelCanvas, BROTHER_IMAGEABLE_W } from './brotherIpp';
 
 const u32 = (b, o) => (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3];
 
@@ -57,5 +57,63 @@ describe('brother IPP Print-Job builder', () => {
 
     it('imageable width constant matches the printer (62mm tape minus margins)', () => {
         expect(BROTHER_IMAGEABLE_W).toBe(664);
+    });
+});
+
+// ── renderLabelCanvas word-wrap (2026-07-10 size-chip fix) ────────────
+// jsdom has no real 2D canvas, so stub document.createElement with a
+// fake whose measureText scales with the current font px — enough to
+// pin the wrap-vs-shrink logic without rasterizing anything.
+function withFakeCanvas(fn) {
+    const calls = { fillText: [] };
+    const ctx = {
+        font: '10px Arial', fillStyle: '', textAlign: '', textBaseline: '',
+        measureText(text) {
+            const px = Number((this.font.match(/(\d+)px/) || [])[1] || 10);
+            return { width: String(text).length * px * 0.55 };
+        },
+        fillRect() {},
+        fillText(text) { calls.fillText.push({ text, font: this.font }); },
+        getImageData(x, y, w, h) { return { data: new Uint8ClampedArray(w * h * 4) }; },
+    };
+    const cv = { width: 0, height: 0, getContext: () => ctx };
+    const spy = vi.spyOn(document, 'createElement').mockImplementation(() => cv);
+    try { return { result: fn(), calls }; } finally { spy.mockRestore(); }
+}
+afterEach(() => vi.restoreAllMocks());
+
+describe('renderLabelCanvas — honor size, wrap instead of shrink', () => {
+    it('multi-word text keeps the requested px and word-wraps', () => {
+        // Regression — the old loop shrank the WHOLE line to fit one
+        // row, so small/normal/large/huge all converged to the same
+        // fitted size for any longer text (the size tabs looked dead).
+        const { calls } = withFakeCanvas(() => renderLabelCanvas(
+            [{ text: 'CHICKEN SALAD FOR CATERING', scale: 1.9, bold: true }],
+            { footer: '' },
+        ));
+        expect(calls.fillText.length).toBeGreaterThan(1); // wrapped, not shrunk
+        for (const c of calls.fillText) expect(c.font).toContain('99px'); // 52 * 1.9
+    });
+
+    it('different scales produce different rendered px', () => {
+        const px = (scale) => {
+            const { calls } = withFakeCanvas(() => renderLabelCanvas(
+                [{ text: 'TACO TUESDAY PREP', scale, bold: false }], { footer: '' },
+            ));
+            return Number(calls.fillText[0].font.match(/(\d+)px/)[1]);
+        };
+        expect(px(0.7)).toBeLessThan(px(1.0));
+        expect(px(1.0)).toBeLessThan(px(1.45));
+        expect(px(1.45)).toBeLessThan(px(1.9));
+    });
+
+    it('a single unbreakable word still shrinks to fit the tape', () => {
+        const { calls } = withFakeCanvas(() => renderLabelCanvas(
+            [{ text: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', scale: 1.9, bold: false }],
+            { footer: '' },
+        ));
+        expect(calls.fillText.length).toBe(1);
+        const px = Number(calls.fillText[0].font.match(/(\d+)px/)[1]);
+        expect(px).toBeLessThan(99);
     });
 });
