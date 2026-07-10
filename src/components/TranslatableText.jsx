@@ -39,18 +39,31 @@ export default function TranslatableText({
     const cached = readCachedTranslation(message, targetLang);
     const offered = shouldOfferTranslation(message, staffName, targetLang);
 
-    // showing = which version we're rendering right now: 'original' or 'translated'.
+    // The team is bilingual EN/ES, so the chip is BIDIRECTIONAL
+    // (Andrew 2026-07-10: "the translate need to also translate in
+    // spanish"). primaryLang = the viewer's language; altLang = the
+    // other one. When a message is already in the viewer's language —
+    // either stamped on the doc (offeredAlt) or discovered by a tap
+    // (sameLang) — the chip offers "Translate to Spanish/English"
+    // instead of the old inert "Already in your language" pill.
+    const primaryLang = String(targetLang || '').toLowerCase().split('-')[0];
+    const altLang = primaryLang === 'es' ? 'en' : 'es';
+    const offeredAlt = !offered && shouldOfferTranslation(message, staffName, altLang);
+    const langName = (code) => (code === 'es' ? tx('Spanish', 'español') : tx('English', 'inglés'));
+
+    // showing = which version we're rendering right now: 'original',
+    //           'translated' (viewer's language) or 'alt' (the other
+    //           language, requested explicitly).
     // pending = a Cloud Function call is in flight.
     // err     = the last call failed (we show a "retry" chip).
     // sameLang = the Cloud Function detected source == target — no real
-    //            translation happened. We swap the chip for an inert
-    //            "Already in your language" pill so the user doesn't
-    //            tap the same un-translated text forever wondering why
-    //            nothing changed. (2026-05-17 fix.)
+    //            translation happened; the chip flips to offering the
+    //            OTHER language instead.
     const [showing, setShowing] = useState('original');
     const [pending, setPending] = useState(false);
     const [err, setErr] = useState(null);
     const [liveTranslation, setLiveTranslation] = useState(cached || null);
+    const [altTranslation, setAltTranslation] = useState(null);
     const [sameLang, setSameLang] = useState(false);
     // Latches true the moment the viewer taps Show original / Show
     // translation on THIS bubble — after that, auto-translate keeps
@@ -66,6 +79,7 @@ export default function TranslatableText({
     // translations map, but not this component's state).
     useEffect(() => {
         setLiveTranslation(readCachedTranslation(message, targetLang) || null);
+        setAltTranslation(null);
         setShowing('original');
         setSameLang(false);
         setErr(null);
@@ -138,6 +152,39 @@ export default function TranslatableText({
         }
     }
 
+    // Translate INTO the other language (message already in the
+    // viewer's own language). Always user-initiated, so it latches
+    // userChoseRef and flips the view immediately. The doc-level cache
+    // (translations.{altLang}) is checked first — free if any viewer
+    // of the opposite language already translated this message.
+    async function doTranslateAlt() {
+        if (pending) return;
+        userChoseRef.current = true;
+        const docCached = readCachedTranslation(message, altLang);
+        if (docCached) {
+            setAltTranslation(docCached);
+            setShowing('alt');
+            return;
+        }
+        setPending(true);
+        setErr(null);
+        try {
+            const res = await translateMsg({
+                chatId, messageId: message.id,
+                text: original, targetLang: altLang,
+            });
+            if (res?.translatedText && res.translatedText.trim() !== original.trim()) {
+                setAltTranslation(res.translatedText);
+                setShowing('alt');
+            }
+        } catch (e) {
+            console.warn('translate (alt) failed:', e);
+            setErr(e?.message || 'failed');
+        } finally {
+            setPending(false);
+        }
+    }
+
     // Auto-translate on mount / when prefs flip on / when the text is
     // edited. Repeat runs are cheap: the module memo (keyed on the
     // text) dedupes, so only genuinely new text hits the API.
@@ -157,30 +204,60 @@ export default function TranslatableText({
     }, [autoTranslate, offered, targetLang, original, liveTranslation, sameLang]);
 
     const showTranslated = showing === 'translated' && !!liveTranslation;
-    const body = showTranslated ? liveTranslation : original;
+    const showAlt = showing === 'alt' && !!altTranslation;
+    const body = showAlt ? altTranslation : showTranslated ? liveTranslation : original;
 
     return (
         <>
             <span className={`whitespace-pre-wrap text-[14.5px] leading-snug ${blockMode ? 'block mt-1' : ''}`}>
                 {renderWithMentions(body, isMine)}
             </span>
-            {showChip && offered && (
+            {showChip && (offered || offeredAlt) && (
                 <div className={`mt-1 ${isMine ? 'text-right' : 'text-left'}`}>
-                    {sameLang ? (
-                        <span
-                            className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 ${isMine
-                                ? 'bg-white/10 text-white/60'
-                                : 'bg-dd-bg text-dd-text-2/70 border border-dd-line'}`}
-                            title={tx('Already in your language', 'Ya está en tu idioma')}
-                        >
-                            <span>🌐</span>
-                            <span>
-                                {tx(
-                                    `Already in ${targetLang?.toUpperCase() === 'ES' ? 'Spanish' : targetLang?.toUpperCase() === 'EN' ? 'English' : targetLang?.toUpperCase()}`,
-                                    `Ya está en ${targetLang?.toUpperCase() === 'ES' ? 'español' : targetLang?.toUpperCase() === 'EN' ? 'inglés' : targetLang?.toUpperCase()}`,
+                    {(sameLang || offeredAlt) ? (
+                        // Message is already in the viewer's language —
+                        // offer the OTHER one (bilingual EN/ES shop).
+                        showAlt ? (
+                            <button
+                                onClick={() => { userChoseRef.current = true; setShowing('original'); }}
+                                className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 transition active:scale-95 ${isMine
+                                    ? 'bg-white/15 text-white/80 hover:bg-white/25'
+                                    : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-white'}`}
+                                title={tx('Show the message as it was sent', 'Mostrar el mensaje original')}
+                            >
+                                <span>🌐</span>
+                                <span>{tx('Translated · Show original', 'Traducido · Ver original')}</span>
+                            </button>
+                        ) : altTranslation ? (
+                            <button
+                                onClick={() => { userChoseRef.current = true; setShowing('alt'); }}
+                                className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 transition active:scale-95 ${isMine
+                                    ? 'bg-white/15 text-white/80 hover:bg-white/25'
+                                    : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-white'}`}
+                            >
+                                <span>🌐</span>
+                                <span>{tx('Show translation', 'Ver traducción')}</span>
+                            </button>
+                        ) : (
+                            <button
+                                onClick={doTranslateAlt}
+                                disabled={pending}
+                                className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 transition active:scale-95 disabled:opacity-60 ${isMine
+                                    ? 'bg-white/15 text-white/80 hover:bg-white/25'
+                                    : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-white'}`}
+                                title={tx(
+                                    `Already in ${langName(primaryLang)} — see it in ${langName(altLang)}`,
+                                    `Ya está en ${langName(primaryLang)} — verlo en ${langName(altLang)}`,
                                 )}
-                            </span>
-                        </span>
+                            >
+                                <span>🌐</span>
+                                <span>
+                                    {pending ? tx('Translating…', 'Traduciendo…')
+                                        : err ? tx('Retry', 'Reintentar')
+                                        : tx(`Translate to ${langName(altLang)}`, `Traducir al ${langName(altLang)}`)}
+                                </span>
+                            </button>
+                        )
                     ) : showTranslated ? (
                         <button
                             onClick={() => { userChoseRef.current = true; setShowing('original'); }}

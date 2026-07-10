@@ -117,11 +117,53 @@ describe('TranslatableText chip', () => {
         expect(screen.getByText('Translate')).toBeTruthy();
     });
 
-    it('source == target shows the inert "already in your language" pill', async () => {
-        txMocks.shouldOfferTranslation.mockReturnValue(true);
-        txMocks.translateMessage.mockResolvedValue({ translatedText: 'Hola equipo', sourceLang: 'en' });
-        render(<TranslatableText message={msg} autoTranslate={false} {...baseProps} />);
+    // ── Bidirectional chip (Andrew 2026-07-10: "the translate need to
+    // also translate in spanish") — a message already in the viewer's
+    // language offers the OTHER language instead of an inert pill.
+    it('source == target flips the chip to "Translate to Spanish" and it works', async () => {
+        const msgEn = { id: 'm2', senderName: 'Maria', type: 'text', text: 'The oven is broken' };
+        txMocks.shouldOfferTranslation.mockImplementation((m, n, lang) => String(lang).startsWith('en'));
+        txMocks.translateMessage.mockImplementation(({ targetLang }) => Promise.resolve(
+            targetLang === 'es'
+                ? { translatedText: 'El horno está roto', sourceLang: 'en' }
+                : { translatedText: 'The oven is broken', sourceLang: 'en' }, // echo: same lang
+        ));
+        render(<TranslatableText message={msgEn} autoTranslate={false} {...baseProps} />);
+        // First tap discovers the message is already in English…
         fireEvent.click(screen.getByText('Translate'));
-        await screen.findByText('Already in English');
+        const altBtn = await screen.findByText('Translate to Spanish');
+        // …second tap translates the other way and shows it.
+        fireEvent.click(altBtn);
+        await screen.findByText('El horno está roto');
+        expect(txMocks.translateMessage).toHaveBeenLastCalledWith(
+            expect.objectContaining({ targetLang: 'es' }),
+        );
+        // Toggle back to the original.
+        fireEvent.click(screen.getByText('Translated · Show original'));
+        await screen.findByText('The oven is broken');
+        expect(screen.getByText('Show translation')).toBeTruthy();
+    });
+
+    it('a message stamped in the viewer language offers the other language up front', () => {
+        const msgEn = {
+            id: 'm3', senderName: 'Maria', type: 'text',
+            text: 'Closing checklist is done', sourceLang: 'en',
+        };
+        // Real shouldOfferTranslation semantics: false for en (source
+        // matches), true for es.
+        txMocks.shouldOfferTranslation.mockImplementation((m, n, lang) => String(lang).startsWith('es'));
+        render(<TranslatableText message={msgEn} autoTranslate={false} {...baseProps} />);
+        expect(screen.getByText('Translate to Spanish')).toBeTruthy();
+        expect(screen.queryByText('Translate')).toBeNull();
+    });
+
+    it('Spanish viewers get "Traducir al inglés" on Spanish messages', () => {
+        const msgEs = {
+            id: 'm4', senderName: 'Maria', type: 'text',
+            text: 'La lista de cierre está lista', sourceLang: 'es',
+        };
+        txMocks.shouldOfferTranslation.mockImplementation((m, n, lang) => String(lang).startsWith('en'));
+        render(<TranslatableText message={msgEs} autoTranslate={false} {...baseProps} targetLang="es" isEs={true} />);
+        expect(screen.getByText('Traducir al inglés')).toBeTruthy();
     });
 });
