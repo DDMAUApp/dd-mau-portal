@@ -2389,12 +2389,30 @@ function MessageBubbleInner({
     }, [message.createdAt]);
 
     // Long-press → action menu (reactions + pin + task + delete).
+    // 2026-07-10 — Andrew: "when I read chats and move the page up, that
+    // action pulls up the emoji + reply window." Cause: we started the
+    // long-press timer on touchstart but only cancelled it on touchend/
+    // touchcancel — a SCROLL (finger drag) never cleared it, so reading
+    // older messages tripped the action menu at the 400ms mark. Fix: track
+    // the start point and cancel the pending timer once the finger travels
+    // past a small threshold (a scroll), so only a stationary hold opens
+    // the menu.
     const longPressTimer = useRef(null);
-    function startLongPress() {
+    const longPressStart = useRef(null);
+    function startLongPress(e) {
+        const t = e.touches?.[0];
+        longPressStart.current = t ? { x: t.clientX, y: t.clientY } : null;
         longPressTimer.current = setTimeout(() => setShowActions(true), 400);
     }
+    function moveLongPress(e) {
+        if (!longPressTimer.current || !longPressStart.current) return;
+        const t = e.touches?.[0];
+        if (!t) return;
+        if (Math.abs(t.clientX - longPressStart.current.x) > 10
+            || Math.abs(t.clientY - longPressStart.current.y) > 10) endLongPress();
+    }
     function endLongPress() {
-        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
     }
 
     // ── Soft-deleted: render a placeholder ────────────────────
@@ -2606,6 +2624,7 @@ function MessageBubbleInner({
                 <div className="relative">
                     <div
                         onTouchStart={startLongPress}
+                        onTouchMove={moveLongPress}
                         onTouchEnd={endLongPress}
                         onTouchCancel={endLongPress}
                         // 2026-05-28 — Andrew requested iMessage-style
@@ -4149,12 +4168,24 @@ function EightySixCard({ message, isEs, staffName, isAdmin, isManager, onResolve
         && (isAdmin || isManager || message.senderName === staffName);
 
     // Long-press → action menu (react/reply/pin/copy/delete).
+    // Scroll-cancel guard — see the message-bubble long-press above
+    // (Andrew 2026-07-10): a finger drag to scroll must not trip the menu.
     const longPressTimer = useRef(null);
-    function startLongPress() {
+    const longPressStart = useRef(null);
+    function startLongPress(e) {
+        const t = e.touches?.[0];
+        longPressStart.current = t ? { x: t.clientX, y: t.clientY } : null;
         longPressTimer.current = setTimeout(() => onLongPress?.(), 400);
     }
+    function moveLongPress(e) {
+        if (!longPressTimer.current || !longPressStart.current) return;
+        const t = e.touches?.[0];
+        if (!t) return;
+        if (Math.abs(t.clientX - longPressStart.current.x) > 10
+            || Math.abs(t.clientY - longPressStart.current.y) > 10) endLongPress();
+    }
     function endLongPress() {
-        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
     }
 
     const resolvedAtMs = data.resolvedAt?.toMillis ? data.resolvedAt.toMillis()
@@ -4164,6 +4195,7 @@ function EightySixCard({ message, isEs, staffName, isAdmin, isManager, onResolve
     return (
         <div
             onTouchStart={startLongPress}
+            onTouchMove={moveLongPress}
             onTouchEnd={endLongPress}
             onTouchCancel={endLongPress}
             onContextMenu={(e) => { e.preventDefault(); onLongPress?.(); }}
@@ -4433,12 +4465,24 @@ function PollCard({ message, isMine, isEs, staffName, viewer, isAdmin, onVote, o
     const canClose = open && (isAdmin || message.senderName === staffName);
 
     // Long-press → action menu.
+    // Scroll-cancel guard — see the message-bubble long-press above
+    // (Andrew 2026-07-10): a finger drag to scroll must not trip the menu.
     const longPressTimer = useRef(null);
-    function startLongPress() {
+    const longPressStart = useRef(null);
+    function startLongPress(e) {
+        const t = e.touches?.[0];
+        longPressStart.current = t ? { x: t.clientX, y: t.clientY } : null;
         longPressTimer.current = setTimeout(() => onLongPress?.(), 400);
     }
+    function moveLongPress(e) {
+        if (!longPressTimer.current || !longPressStart.current) return;
+        const t = e.touches?.[0];
+        if (!t) return;
+        if (Math.abs(t.clientX - longPressStart.current.x) > 10
+            || Math.abs(t.clientY - longPressStart.current.y) > 10) endLongPress();
+    }
     function endLongPress() {
-        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
     }
 
     const closesAtMs = poll.closesAt?.toMillis ? poll.closesAt.toMillis()
@@ -4455,6 +4499,7 @@ function PollCard({ message, isMine, isEs, staffName, viewer, isAdmin, onVote, o
     return (
         <div
             onTouchStart={startLongPress}
+            onTouchMove={moveLongPress}
             onTouchEnd={endLongPress}
             onTouchCancel={endLongPress}
             onContextMenu={(e) => { e.preventDefault(); onLongPress?.(); }}
