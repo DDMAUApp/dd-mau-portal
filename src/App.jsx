@@ -1036,12 +1036,23 @@ export default function App() {
     // app to re-download HTML+JS. Without this, PWAs installed on iOS get
     // stuck on stale builds (no native pull-to-refresh in standalone mode).
     const pullRefresh = usePullToRefresh();
-    // Run migrations once on first mount
+    // Run migrations once PER DEVICE, not once per launch. The May-2026
+    // webster-suffix migration completed long ago, but the module-level
+    // `migrationRan` flag reset on every cold start — so EVERY launch
+    // fired 2 getDoc + up to 2 getDocs server round-trips during the
+    // exact window where the login-critical /config/staff read is
+    // racing to make the PIN pad usable (2026-07-09 startup audit, W1).
+    // A localStorage done-flag makes it truly one-time; clearing site
+    // data simply re-runs a cheap idempotent check.
     useEffect(() => {
-        if (!migrationRan) {
-            migrationRan = true;
-            runMigrations();
-        }
+        if (migrationRan) return;
+        migrationRan = true;
+        try {
+            if (localStorage.getItem('ddmau:migrations:webster-suffix') === 'done') return;
+        } catch {}
+        runMigrations().finally(() => {
+            try { localStorage.setItem('ddmau:migrations:webster-suffix', 'done'); } catch {}
+        });
     }, []);
     // Pre-warm the most-likely-next chunks once the user signs in. Schedule,
     // Operations, Recipes etc. are lazy-loaded, which means tapping them
@@ -1098,8 +1109,24 @@ export default function App() {
                 if (!registered) {
                     const result = await enableFcmPush(staffName, staffList, setStaffList);
                     if (cancelled) return;
-                    if (result.ok) { pushRegisteredForRef.current = staffName; registered = true; }
-                    else console.log("[FCM] not enabled:", result.reason);
+                    // 2026-07-09 regression sweep: only latch the once-per-
+                    // user guard when the token BINDING actually persisted
+                    // to Firestore. enableFcmPush returns ok:true with
+                    // persisted:false on a transient write failure — and
+                    // since personal phones now KEEP their token across
+                    // relocks, a failed rebind during a user switch would
+                    // otherwise leave the PREVIOUS user's binding live for
+                    // the whole session (their pushes on this phone).
+                    // Not latching means the effect retries on the next
+                    // staffList emit until the rebind sticks.
+                    if (result.ok && result.persisted !== false) {
+                        pushRegisteredForRef.current = staffName; registered = true;
+                    } else if (result.ok) {
+                        console.warn("[FCM] token acquired but persist failed — will retry:", result.persistError || result.reason);
+                        registered = true; // foreground listener still useful this session
+                    } else {
+                        console.log("[FCM] not enabled:", result.reason);
+                    }
                 }
                 if (registered && !cancelled) {
                     unsubForeground = await onForegroundMessage((payload) => {
@@ -1425,18 +1452,25 @@ export default function App() {
         let cancelled = false;
         (async () => {
             try {
-                // Resolve in two steps; the imports are scoped inside the
-                // effect so the requiredTasks module is only loaded when
-                // we actually need it (post-PIN).
+                // Import scoped inside the effect so the requiredTasks
+                // module is only loaded when we actually need it (post-PIN).
+                // 2026-07-09 startup audit W2: ONE fetch, shared with the
+                // auto-resolver. This effect gates the whole home render
+                // (TabLoading until it settles) and used to run the same
+                // server query twice serially — a full extra round trip
+                // on every unlock, the single biggest PIN→home cost.
                 const mod = await import('./data/requiredTasks');
-                if (cancelled) return;
-                if (currentStaffRecord) {
-                    await mod.autoResolveTasksFor(currentStaffRecord);
-                }
                 if (cancelled) return;
                 const pending = await mod.fetchPendingTasksFor(staffName);
                 if (cancelled) return;
-                const blocking = pending.filter(t => t.blockApp === true).length;
+                let resolvedIds = [];
+                if (currentStaffRecord && pending.length > 0) {
+                    resolvedIds = await mod.autoResolveTasksFor(currentStaffRecord, pending);
+                }
+                if (cancelled) return;
+                const blocking = pending.filter(
+                    t => t.blockApp === true && !resolvedIds.includes(t.id)
+                ).length;
                 setPendingBlockingCount(blocking);
             } catch (e) {
                 console.warn('required-task check failed:', e);
@@ -1532,7 +1566,10 @@ export default function App() {
         );
         if (!isStandalone) return;
         let cancelled = false;
-        (async () => {
+        // 2026-07-09 startup audit W4: defer 5s — same reasoning as the
+        // lastSignInAt stamp below. This is a one-time audit flag; it
+        // must not contend with the unlock-gating queries.
+        const timer = setTimeout(() => { (async () => {
             try {
                 const ref = doc(db, 'config', 'staff');
                 const snap = await getDoc(ref);
@@ -1545,8 +1582,8 @@ export default function App() {
             } catch (e) {
                 console.warn('pwa install auto-detect write failed:', e);
             }
-        })();
-        return () => { cancelled = true; };
+        })(); }, 5000);
+        return () => { cancelled = true; clearTimeout(timer); };
     }, [staffName, currentStaffRecord?.pwaInstalled]);
 
     // ── Last-sign-in stamp (Andrew 2026-05-27) ─────────────────────────
@@ -1569,7 +1606,12 @@ export default function App() {
     useEffect(() => {
         if (!staffName || !currentStaffRecord) return;
         let cancelled = false;
-        (async () => {
+        // 2026-07-09 startup audit W4: wait 5s before this stamp. It does
+        // a full read-modify-write of the (large) config/staff doc at the
+        // exact moment the required-task gate queries are racing to
+        // unblock the home render; nothing about an audit timestamp is
+        // urgent, and the 30-min debounce already tolerates delay.
+        const timer = setTimeout(() => { (async () => {
             try {
                 // Skip if we've stamped within the last 30 min — keeps
                 // writes to roughly one per real session.
@@ -1614,8 +1656,8 @@ export default function App() {
             } catch (e) {
                 console.warn('lastSignInAt write failed (non-fatal):', e);
             }
-        })();
-        return () => { cancelled = true; };
+        })(); }, 5000);
+        return () => { cancelled = true; clearTimeout(timer); };
     }, [staffName, currentStaffRecord?.id]);
 
     // TV / kiosk deep link (handled before auth):

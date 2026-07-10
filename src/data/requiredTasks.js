@@ -335,10 +335,16 @@ export async function cancelTask(taskId, { byName = null } = {}) {
 // it decides whether to show the flow — saves the staffer from
 // staring at a "set your availability" gate after they just set it
 // somewhere else.
-export async function autoResolveTasksFor(staff) {
-    if (!staff || !staff.name) return 0;
-    const pending = await fetchPendingTasksFor(staff.name);
-    let resolved = 0;
+// 2026-07-09 startup audit W2: accepts an optional pre-fetched pending
+// list so the unlock gate can run ONE server query instead of two
+// identical ones back-to-back (this used to fetch, then App.jsx fetched
+// again — a full extra RTT on every unlock). Returns the resolved task
+// ids so the caller can subtract them from its own list without a
+// re-fetch.
+export async function autoResolveTasksFor(staff, pendingList = null) {
+    if (!staff || !staff.name) return [];
+    const pending = pendingList ?? await fetchPendingTasksFor(staff.name);
+    const resolvedIds = [];
     for (const task of pending) {
         const type = TASK_TYPES[task.taskType];
         if (!type || typeof type.autoComplete !== 'function') continue;
@@ -348,11 +354,11 @@ export async function autoResolveTasksFor(staff) {
                     byName: 'auto',
                     snapshot: { reason: 'autoComplete predicate matched' },
                 });
-                resolved++;
+                resolvedIds.push(task.id);
             }
         } catch (e) {
             console.warn(`autoResolveTasksFor: ${task.taskType} for ${staff.name} threw`, e);
         }
     }
-    return resolved;
+    return resolvedIds;
 }

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { notifyAdmins } from '../data/notify';
 import { t } from '../data/translations';
 import InstallAppButton from './InstallAppButton';
 import {
@@ -224,20 +225,47 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
     // ── Biometric quick-login ───────────────────────────────────────────
     // Run a biometric unlock → log in as the enrolled staff. Any failure /
     // cancel / unavailable is silent → the PIN keypad stays as the fallback.
+    //
+    // 2026-07-09 first-run audit: on a COLD launch Face ID resolves in ~1s,
+    // usually BEFORE the live /config/staff snapshot lands — so the
+    // "still on the staff list?" guard used to run against the stale
+    // baked-in default list and silently DISCARD a successful Face ID
+    // login (keypad just sat there). Refs read the CURRENT list/ready
+    // state (the mount-effect closure is stale by then), and a resolved
+    // name that arrives too early is parked until the list is ready.
+    const staffListRef = useRef(staffList);
+    staffListRef.current = staffList;
+    const staffListReadyRef = useRef(staffListReady);
+    staffListReadyRef.current = staffListReady;
+    const pendingBioNameRef = useRef(null);
     const runBiometric = async () => {
         if (bioBusy) return;
         setBioBusy(true);
         try {
             const res = await tryBiometricLogin();
             if (res?.staffName) {
+                if (!staffListReadyRef.current) {
+                    // Staff list still loading — park the win; the effect
+                    // below completes login the moment the list arrives.
+                    pendingBioNameRef.current = res.staffName;
+                    return;
+                }
                 // Guard: the enrolled person must still be on the staff list
                 // (could've been removed). If gone, forget biometrics + use PIN.
-                const stillThere = (staffList || []).some(s => s.name === res.staffName);
+                const stillThere = (staffListRef.current || []).some(s => s.name === res.staffName);
                 if (stillThere) { onSelectStaff(res.staffName); return; }
             }
         } catch { /* silent → PIN fallback */ }
         finally { setBioBusy(false); }
     };
+    useEffect(() => {
+        if (!staffListReady || !pendingBioNameRef.current) return;
+        const name = pendingBioNameRef.current;
+        pendingBioNameRef.current = null;
+        const stillThere = (staffList || []).some(s => s.name === name);
+        if (stillThere) onSelectStaff(name);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [staffListReady, staffList]);
 
     // After a correct PIN, offer to enable biometrics (once) BEFORE finishing
     // login — because logging in unmounts this screen. On the live binary
@@ -295,6 +323,12 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
     // Taps not over a key fall through, so the recover link / install button
     // keep working normally.
     const handleKeypadPointerDown = (e) => {
+        // 2026-07-09 first-run audit: the keypad keys stay MOUNTED under
+        // the recover-link / enable-Face-ID overlays, and this geometry
+        // hit-tester runs on the lock-screen ROOT — so taps on modal
+        // controls that happen to overlap a key's rect were silently
+        // typing PIN digits behind the modal. Modals open → keypad off.
+        if (showRecover || enablePrompt) return;
         const root = e.currentTarget;
         const x = e.clientX, y = e.clientY;
         if (x == null || y == null) return;
@@ -626,6 +660,24 @@ function RecoverInviteModal({ language, onClose }) {
                 source: "lock_screen",
                 language: isEs ? "es" : "en",
             });
+            // 2026-07-09 first-run audit: the resendOnboardingInvite Cloud
+            // Function referenced above was NEVER BUILT — this queue had no
+            // consumer, so hires were promised an email that provably never
+            // arrived. Until the CF exists, ping the admins so a HUMAN
+            // resends the link (Onboarding → the hire's Invite sheet).
+            // Best-effort: the request doc above is the source of truth.
+            try {
+                await notifyAdmins({
+                    type: 'onboarding_recovery',
+                    title: { en: '🔑 Onboarding link requested', es: '🔑 Enlace de onboarding solicitado' },
+                    body: {
+                        en: `${normalized} asked for a fresh onboarding link from the lock screen. Resend it from the Onboarding tab.`,
+                        es: `${normalized} pidió un nuevo enlace de onboarding desde la pantalla de bloqueo. Reenvíalo desde Onboarding.`,
+                    },
+                    link: '/onboarding',
+                    createdBy: 'lock_screen_recovery',
+                });
+            } catch { /* non-fatal — the request doc still exists for review */ }
             try { localStorage.setItem(COOLDOWN_KEY, String(Date.now())); } catch {}
             setDone(true);
         } catch (e) {
@@ -651,7 +703,7 @@ function RecoverInviteModal({ language, onClose }) {
                         </h2>
                         <p className="text-xs text-gray-600 text-center leading-snug">
                             {tx(
-                                "If that email matches one of our new hires, we'll send a fresh onboarding link there shortly. Check your inbox (and spam folder) in the next few minutes.",
+                                "Request received — a manager has been notified and will send you a fresh onboarding link soon (usually by text or email).",
                                 "Si ese correo coincide con un nuevo empleado, enviaremos un enlace nuevo a esa dirección pronto. Revisa tu bandeja de entrada (y spam) en los próximos minutos.",
                             )}
                         </p>
