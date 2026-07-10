@@ -44,10 +44,12 @@ import { redactString, redactStack, redactObject } from './redact';
 let Sentry = null;
 async function loadSentry() {
     if (Sentry) return Sentry;
-    // 2026-06-20 (QA audit P1) — import the slim wrapper (named re-exports only)
-    // so Rollup tree-shakes Session Replay / Feedback / Console out of the lazy
-    // vendor-sentry chunk. The wrapper exposes exactly the 6 methods used below.
-    try { Sentry = await import('./sentryReal'); } catch { Sentry = null; }
+    // 2026-06-20 (QA audit P1) — import the slim wrapper so Rollup tree-shakes
+    // Session Replay / Feedback / Console out of the lazy vendor-sentry chunk.
+    // The wrapper default-exports an object with exactly the 6 methods used
+    // below (a real object, not re-exports — see sentryReal.js for why that
+    // distinction keeps the SDK out of the eager entry chunk).
+    try { Sentry = (await import('./sentryReal')).default || null; } catch { Sentry = null; }
     return Sentry;
 }
 

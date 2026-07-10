@@ -210,7 +210,33 @@ export default defineConfig({
           if (id.includes('/TranslatableText.jsx') || id.includes('/data/translation.js')) {
             return 'translatable-text';
           }
+          // sentryReal.js (the slim SDK wrapper, dynamic-imported by
+          // sentryClient) rides in the SAME chunk as the SDK it wraps, so the
+          // idle-time Sentry init is a single lazy fetch. NOTE this rule only
+          // works because sentryReal default-exports a real object — a pure
+          // re-export module has no statements, never lands in any chunk, and
+          // this rule would silently not match anything (verified 2026-07-09).
+          if (id.includes('/data/sentryReal')) {
+            return 'vendor-sentry';
+          }
           if (!id.includes('node_modules')) return;
+          // Sentry SDK is imported LAZILY (dynamic import in data/sentryClient)
+          // so it stays out of the eager entry. Give it its own async chunk;
+          // nothing imports it statically, so the chunk is only fetched when
+          // initSentry() runs at idle → zero first-paint cost.
+          //
+          // 2026-07-09 — this check MUST run BEFORE the vendor-react check
+          // below. `node_modules/@sentry/react/` contains the substring
+          // '/react/', so with the old ordering @sentry/react's own modules
+          // were silently assigned to the EAGER vendor-react chunk. Their
+          // deps (@sentry/core, @sentry-internal/*) still went to
+          // vendor-sentry — so vendor-react statically imported vendor-sentry
+          // and ~50KB gzip of Sentry loaded on every cold open despite the
+          // dynamic-import design. Same path-substring bug class as the
+          // 2026-05-27 lucide-react outage. Keep ALL @sentry* in ONE chunk.
+          if (id.includes('@sentry/') || id.includes('@sentry-internal/')) {
+            return 'vendor-sentry';
+          }
           // React + scheduler + lucide-react — app-wide, stable.
           // 2026-05-27 OUTAGE — lucide-react ended up in vendor-misc
           // because the previous regex check was `/react/` which doesn't
@@ -281,13 +307,6 @@ export default defineConfig({
           // detect the native platform on boot). Andrew 2026-06-17 speed audit.
           if (id.includes('/@capgo/')) return;
           if (id.includes('/@capacitor/') && !id.includes('/@capacitor/core/')) return;
-          // Sentry SDK is imported LAZILY (dynamic import in data/sentryClient)
-          // so it stays out of the eager entry. Give it its own async chunk;
-          // because nothing imports it statically, this chunk is NOT preloaded
-          // → zero first-paint cost (was ~150KB of eager vendor-misc).
-          if (id.includes('@sentry/') || id.includes('@sentry-internal/')) {
-            return 'vendor-sentry';
-          }
           // Everything else from node_modules → generic vendor chunk.
           return 'vendor-misc';
         },
