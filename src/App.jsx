@@ -5,7 +5,7 @@ import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney } from './data/staff';
 import { toast } from './toast';
-import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate } from './messaging';
+import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate, isSharedDevice } from './messaging';
 import { playKitchenBell } from './data/bell';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
@@ -576,7 +576,11 @@ try {
             // the cold-launch critical path.
             if (priorStaff) {
                 import('./messaging').then(m => {
-                    try { m.disableFcmPush(priorStaff); } catch {}
+                    // 2026-07-09 — personal phones KEEP their push token
+                    // across a relock (see isSharedDevice in messaging.js);
+                    // only shared devices (iPads/web) drop it here so the
+                    // counter iPad never pushes last night's staffer.
+                    try { if (m.isSharedDevice()) m.disableFcmPush(priorStaff); } catch {}
                 }).catch(() => {});
             }
             // We deliberately don't clear activeTab/language/etc — those
@@ -915,10 +919,12 @@ export default function App() {
             let lastActive = 0;
             try { lastActive = parseInt(localStorage.getItem('ddmau:lastActive') || '0', 10) || 0; } catch {}
             if (lastActive && Date.now() - lastActive > IDLE_LOCK_MS) {
-                // 2026-05-24 audit fix: same FCM cleanup as manual logout
-                // — drop this device's token so push for the prior staff
-                // doesn't keep firing on the locked screen.
-                try { disableFcmPush(staffName); } catch {}
+                // 2026-05-24 audit fix: FCM cleanup on relock — drop this
+                // device's token so push for the prior staff doesn't keep
+                // firing on the locked screen. 2026-07-09: SHARED devices
+                // only — a personal phone is locked most of the day and
+                // was going push-dead; it keeps its token until logout.
+                try { if (isSharedDevice()) disableFcmPush(staffName); } catch {}
                 setStaffName(null);
                 setActiveTab('home');
             } else {
@@ -987,7 +993,10 @@ export default function App() {
                     const expired = bgStartedAt > 0 && Date.now() - bgStartedAt > IDLE_LOCK_MS;
                     if (bgTimerId) { clearTimeout(bgTimerId); bgTimerId = null; }
                     if (expired) {
-                        try { disableFcmPush(staffName); } catch {}
+                        // 2026-07-09: shared devices only — personal phones
+                        // keep their push token across the background relock
+                        // (see isSharedDevice in messaging.js).
+                        try { if (isSharedDevice()) disableFcmPush(staffName); } catch {}
                         setStaffName(null);
                         setActiveTab('home');
                     } else {

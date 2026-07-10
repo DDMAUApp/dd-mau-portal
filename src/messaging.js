@@ -825,6 +825,39 @@ export async function onPushTapNavigate(handler) {
  * Safe to call multiple times and safe to call when not signed in
  * (no-ops cleanly).
  */
+
+// ── Shared-device vs personal-phone policy (2026-07-09) ─────────────
+// Andrew: personal iPhones were losing push because the idle-relock
+// token drop (a privacy guard built for the SHARED STORE IPADS — so
+// last night's staffer doesn't get pushes on the counter iPad) fired
+// on phones too, and a personal phone is locked most of the day.
+// Andrew asked "how do you know what's a shared iPad?" — this is the
+// rule, by form factor:
+//   • iPhone / Android PHONE → personal → KEEP the token through
+//     lock/idle; it drops only on a real logout.
+//   • iPad, Android tablet, or any web browser (kiosks, desktops)
+//     → shared posture → keep today's drop-on-relock guard.
+// No native plugin needed (@capacitor/device would force a store
+// build): the user agent distinguishes these reliably in WKWebView /
+// Android WebView. Anything ambiguous defaults to SHARED — the safe
+// side is dropping a token too eagerly, never leaking one.
+export function isSharedDevice() {
+    try {
+        if (!Capacitor.isNativePlatform()) return true; // web/PWA/kiosk
+        const ua = navigator.userAgent || '';
+        // iPad WKWebView usually says "iPad"; newer iPadOS can
+        // masquerade as "Macintosh" but keeps multi-touch.
+        const isIpad = /iPad/i.test(ua)
+            || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+        if (isIpad) return true;
+        // Android: phones carry "Mobile" in the UA; tablets don't.
+        if (Capacitor.getPlatform() === 'android' && !/Mobile/i.test(ua)) return true;
+        return false; // iPhone or Android phone → personal
+    } catch {
+        return true; // unsure → shared (fail toward privacy)
+    }
+}
+
 export async function disableFcmPush(prevStaffName) {
     const deviceId = (() => {
         try { return localStorage.getItem(DEVICE_ID_KEY); }
