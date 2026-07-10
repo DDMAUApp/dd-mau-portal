@@ -4901,7 +4901,22 @@ function SeenBySheet({
                                             Tap is recorded in the audit log. */}
                                         {smsAllowed && showSms && (() => {
                                             const target = staffByName.get(name);
-                                            if (!target?.phoneE164) return null;
+                                            // No phone on file → say so instead of
+                                            // rendering nothing. Without this the
+                                            // SMS toggle looked completely dead when
+                                            // the unread staff had no numbers
+                                            // (Andrew 2026-07-09: "when i press it
+                                            // it does nothing"). Numbers get added
+                                            // in Admin → Staff Usage / staff editor.
+                                            if (!target?.phoneE164) {
+                                                return (
+                                                    <span className="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold bg-dd-bg text-dd-text-2/50 border border-dd-line"
+                                                        title={tx('No phone number on file — add one in Admin → Staff Usage',
+                                                                  'Sin número de teléfono — agrégalo en Admin → Uso del personal')}>
+                                                        {tx('No #', 'Sin #')}
+                                                    </span>
+                                                );
+                                            }
                                             const chatLabel = chat?.type === 'dm'
                                                 ? (viewer?.name || 'DD Mau')
                                                 : (chat?.name || null);
@@ -4910,7 +4925,23 @@ function SeenBySheet({
                                             return (
                                                 <a
                                                     href={smsUrl}
-                                                    onClick={() => textOne(name)}
+                                                    onClick={(e) => {
+                                                        textOne(name);
+                                                        // Native WKWebView: drive the sms:
+                                                        // launch explicitly via location.href
+                                                        // — anchor default navigation from
+                                                        // inside a portal'd sheet proved
+                                                        // unreliable on the iOS app (Andrew
+                                                        // 2026-07-09). Same OS delegate path;
+                                                        // preventDefault avoids a double-fire.
+                                                        // Web keeps plain anchor behavior.
+                                                        try {
+                                                            if (window?.Capacitor?.isNativePlatform?.()) {
+                                                                e.preventDefault();
+                                                                window.location.href = smsUrl;
+                                                            }
+                                                        } catch {}
+                                                    }}
                                                     className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold transition ${wasTexted
                                                         ? 'bg-dd-sage-50 text-dd-green-700'
                                                         : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'}`}
