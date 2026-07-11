@@ -805,7 +805,11 @@ function HireDetail({ hire, isEs, staffName, docOverrides, templates, onWriteAud
                     // on freshly-cached bucket CORS. Same migration applied
                     // to OnboardingFillablePdf / TemplateEditor / EmployerFill.
                     const buf = await getBytes(item);
-                    zip.file(`${docId}/${item.name}`, new Blob([buf]));
+                    // FLAT zip — no per-doc subfolders (Andrew 2026-07-11:
+                    // "every doc is in separate folders… make it all just
+                    // the file"). The doc id becomes a filename prefix so
+                    // files stay identifiable and can't collide.
+                    zip.file(`${docId}_${item.name}`, new Blob([buf]));
                 } catch (e) { console.warn('skip file', item.fullPath, e); }
             }
             const blob = await zip.generateAsync({ type: 'blob' });
