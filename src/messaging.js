@@ -27,6 +27,7 @@
 // dynamic import resolves synchronously after the first call since
 // the chunk is already loaded.
 import { doc, setDoc, runTransaction, getDoc } from "firebase/firestore";
+import { nextStaffRev } from "./data/staffDoc";
 import app, { db } from "./firebase";
 import { Capacitor } from "@capacitor/core";
 
@@ -400,7 +401,7 @@ async function enableNativePush(staffName, staffList, setStaffList) {
                 if (tokenDeviceSweepCount > 0) {
                     console.log(`[push][native] swept ${tokenDeviceSweepCount} cross-staff token entries for device ${deviceId.slice(0, 8)}…`);
                 }
-                tx.set(ref, { list: nextList });
+                tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
             });
             // Mirror live data into React state after txn commits.
             if (setStaffList) {
@@ -700,7 +701,7 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
                 if (tokenDeviceSweepCount > 0) {
                     console.log(`[FCM] swept ${tokenDeviceSweepCount} cross-staff token entries for device ${deviceId.slice(0, 8)}…`);
                 }
-                tx.set(ref, { list: nextList });
+                tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
             });
             // Mirror the live data into local React state so the app sees
             // the same as Firestore. Do this AFTER the transaction commits.
@@ -904,7 +905,7 @@ export async function disableFcmPush(prevStaffName) {
             const nextList = list.map((s, i) =>
                 i === idx ? { ...s, fcmTokens: filtered } : s
             );
-            tx.set(ref, { list: nextList });
+            tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
         });
     } catch (e) {
         console.warn("[FCM] disableFcmPush write failed (non-fatal):", e?.message);

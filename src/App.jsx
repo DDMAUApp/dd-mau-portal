@@ -4,6 +4,7 @@ import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } fr
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney } from './data/staff';
+import { noteStaffSnapshot, nextStaffRev } from './data/staffDoc';
 import { toast } from './toast';
 import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate, isSharedDevice } from './messaging';
 import { playKitchenBell } from './data/bell';
@@ -1207,6 +1208,10 @@ export default function App() {
                 setStaffListReady(true);
                 return;
             }
+            // Track the roster doc revision BEFORE the shape-hash
+            // short-circuit — stamps bump `rev` without changing the
+            // shape, and the admin save guard needs the latest rev.
+            noteStaffSnapshot(docSnap.data());
             const list = docSnap.data().list;
             if (!Array.isArray(list)) {
                 setStaffListReady(true);
@@ -1571,14 +1576,24 @@ export default function App() {
         // must not contend with the unlock-gating queries.
         const timer = setTimeout(() => { (async () => {
             try {
-                const ref = doc(db, 'config', 'staff');
-                const snap = await getDoc(ref);
-                if (cancelled) return;
-                const list = (snap.exists() ? snap.data().list : []) || [];
-                const next = list.map(s => s && s.name === staffName
-                    ? { ...s, pwaInstalled: true, pwaInstalledAt: new Date().toISOString(), pwaInstalledMethod: 'auto' }
-                    : s);
-                await setDoc(ref, { list: next });
+                // TRANSACTION, not getDoc→setDoc. The plain read-modify-
+                // write here (v1.0.227) raced admin roster edits: a phone
+                // that read the list moments before a rename and wrote it
+                // back moments after silently REVERTED the rename — this
+                // reverted a dozen renames on install day (2026-07-11).
+                // The txn re-reads on the server and patches one record.
+                const { runTransaction } = await import('firebase/firestore');
+                await runTransaction(db, async (tx) => {
+                    const ref = doc(db, 'config', 'staff');
+                    const snap = await tx.get(ref);
+                    if (!snap.exists()) return;
+                    const data = snap.data() || {};
+                    const list = data.list || [];
+                    const next = list.map(s => s && s.name === staffName
+                        ? { ...s, pwaInstalled: true, pwaInstalledAt: new Date().toISOString(), pwaInstalledMethod: 'auto' }
+                        : s);
+                    tx.set(ref, { list: next, rev: nextStaffRev(data) });
+                });
             } catch (e) {
                 console.warn('pwa install auto-detect write failed:', e);
             }
@@ -1639,20 +1654,27 @@ export default function App() {
                     : /Mac OS X|Macintosh/i.test(ua) ? 'Mac'
                     : /Windows/i.test(ua) ? 'Windows'
                     : 'other';
-                const ref = doc(db, 'config', 'staff');
-                const snap = await getDoc(ref);
-                if (cancelled) return;
-                const list = (snap.exists() ? snap.data().list : []) || [];
-                const next = list.map(s => s && s.name === staffName
-                    ? {
-                        ...s,
-                        lastSignInAt: Date.now(),
-                        lastSignInPlatform: platform,
-                        lastSignInStandalone: standalone,
-                        lastSignInNative: isNative,
-                    }
-                    : s);
-                await setDoc(ref, { list: next });
+                // TRANSACTION, not getDoc→setDoc — same rename-revert
+                // race as the pwaInstalled stamp above (this stamp runs
+                // on EVERY sign-in, so it was the main clobber vector).
+                const { runTransaction } = await import('firebase/firestore');
+                await runTransaction(db, async (tx) => {
+                    const ref = doc(db, 'config', 'staff');
+                    const snap = await tx.get(ref);
+                    if (!snap.exists()) return;
+                    const data = snap.data() || {};
+                    const list = data.list || [];
+                    const next = list.map(s => s && s.name === staffName
+                        ? {
+                            ...s,
+                            lastSignInAt: Date.now(),
+                            lastSignInPlatform: platform,
+                            lastSignInStandalone: standalone,
+                            lastSignInNative: isNative,
+                        }
+                        : s);
+                    tx.set(ref, { list: next, rev: nextStaffRev(data) });
+                });
             } catch (e) {
                 console.warn('lastSignInAt write failed (non-fatal):', e);
             }

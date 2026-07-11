@@ -11,6 +11,7 @@ import { getPositionTemplate, hasPositionTemplate } from '../data/positionTempla
 // silently no-op'd while the staff record had already saved (orphaned data).
 import { renameStaffEverywhere, removeStaffFromChats } from '../data/renameStaff';
 import { archiveRemovedStaff, markArchiveRestored } from '../data/staffArchive';
+import { STAFF_DOC, nextStaffRev } from '../data/staffDoc';
 import DeletedStaffSection from './DeletedStaffSection';
 import { auditAvailabilityChange } from '../data/audit';
 import {
@@ -2026,14 +2027,34 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 throw err;
                             }
                         }
-                        tx.set(doc(db, "config", "staff"), { list: updatedList });
+                        // Revision guard (2026-07-11, the rename-revert
+                        // incident): the size check above can't see SAME-
+                        // SIZE concurrent edits — exactly what a rename is.
+                        // Every roster writer now bumps `rev`; if the
+                        // server rev isn't the one our on-screen list was
+                        // built from (STAFF_DOC.rev tracks the App-level
+                        // snapshot), some other write landed that this
+                        // whole-list save would silently undo — abort and
+                        // let the admin retry on fresh data.
+                        if (snap.exists() && STAFF_DOC.rev !== undefined) {
+                            const serverRev = (snap.data() || {}).rev ?? null;
+                            if (serverRev !== STAFF_DOC.rev) {
+                                const err = new Error('CONCURRENT_STAFF_EDIT');
+                                err.code = 'CONCURRENT_STAFF_EDIT';
+                                throw err;
+                            }
+                        }
+                        tx.set(doc(db, "config", "staff"), {
+                            list: updatedList,
+                            rev: nextStaffRev(snap.exists() ? snap.data() : null),
+                        });
                     });
                 } catch (err) {
                     if (err && err.code === 'CONCURRENT_STAFF_EDIT') {
-                        console.warn('saveStaff: concurrent edit detected, asking user to reload');
+                        console.warn('saveStaff: concurrent edit detected, asking user to retry');
                         toast(language === 'es'
-                            ? 'Otro administrador editó al personal — recargue la página'
-                            : 'Another admin edited the staff list — please reload',
+                            ? 'La lista de personal acaba de cambiar — no se guardó. Intenta de nuevo.'
+                            : 'The staff list just changed — nothing was saved. Try again.',
                             { kind: 'error' });
                         return false;
                     }
