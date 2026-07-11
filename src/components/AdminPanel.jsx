@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Settings } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
@@ -87,27 +88,24 @@ const MenuConfigEditor = reactLazy(() => import('./MenuConfigEditor'));
 // collapsible — the push notifications is always open"). Children stay
 // UNMOUNTED while collapsed, matching the other admin sections, so a
 // heavy editor costs nothing until the header is tapped.
+// 2026-07-11 admin restyle: one frosted-glass header per section (the
+// emoji disc carries identity) instead of six pastel border-2 boxes.
+// The `tone` prop is kept for call-site compatibility but only tints
+// the danger section's disc — everything else is the neutral system.
 function CollapsibleAdminSection({ emoji, title, subtitle, tone = 'gray', children }) {
     const [open, setOpen] = useState(false);
-    const tones = {
-        gray:   'bg-gray-50 border-gray-200 hover:bg-gray-100 text-gray-800',
-        purple: 'bg-purple-50 border-purple-200 hover:bg-purple-100 text-purple-900',
-        blue:   'bg-blue-50 border-blue-200 hover:bg-blue-100 text-blue-900',
-        red:    'bg-red-50 border-red-300 hover:bg-red-100 text-red-900',
-        green:  'bg-emerald-50 border-emerald-200 hover:bg-emerald-100 text-emerald-900',
-    };
     return (
         <div className="mt-4 mb-6">
-            <button onClick={() => setOpen(v => !v)}
-                className={`w-full flex items-center justify-between border-2 rounded-xl p-4 transition ${tones[tone] || tones.gray}`}>
-                <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-2xl shrink-0">{emoji}</span>
+            <button onClick={() => setOpen(v => !v)} aria-expanded={open}
+                className="glass-section-head">
+                <div className="flex items-center gap-3 min-w-0">
+                    <span className="section-disc" aria-hidden="true">{emoji}</span>
                     <div className="text-left min-w-0">
-                        <h3 className="font-bold text-sm">{title}</h3>
-                        {subtitle && <p className="text-[11px] opacity-70 truncate">{subtitle}</p>}
+                        <h3 className={`font-bold text-sm ${tone === 'red' ? 'text-red-800' : 'text-dd-text'}`}>{title}</h3>
+                        {subtitle && <p className="text-[11px] text-dd-text-2 truncate">{subtitle}</p>}
                     </div>
                 </div>
-                <span className="text-gray-400 text-xl shrink-0">{open ? '▼' : '▶'}</span>
+                <span className="section-chevron text-xl" aria-hidden="true">›</span>
             </button>
             {open && <div className="mt-2">{children}</div>}
         </div>
@@ -181,7 +179,7 @@ function PrintersConfigSection({ language, byName }) {
                     ].map((l) => (
                         <button key={l.url} type="button"
                             onClick={() => openExternalUrl(l.url)}
-                            className="w-full text-left px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-purple-900 font-bold hover:bg-purple-50 active:scale-[0.99] transition flex items-center gap-2">
+                            className="glass-button-apple w-full !justify-start text-left px-2.5 py-1.5 flex items-center gap-2">
                             <span>{l.icon}</span>
                             <span className="flex-1 min-w-0 leading-tight">{tx(l.en, l.es)}</span>
                             <span className="text-purple-400">↗</span>
@@ -265,7 +263,7 @@ function PrintHistorySection({ tx }) {
     return (
         <div className="mt-3 pt-3 border-t border-purple-200">
             <button onClick={() => setExpanded(v => !v)}
-                className="w-full flex items-center justify-between text-purple-800 text-xs font-bold hover:bg-purple-50 rounded-md px-2 py-1.5 transition">
+                className="glass-button-apple w-full flex items-center justify-between text-purple-800 text-xs px-2 py-1.5">
                 <span>📜 {tx('Recent label prints', 'Impresiones recientes')}</span>
                 <span className="text-purple-500">{expanded ? '▼' : '▶'}</span>
             </button>
@@ -756,7 +754,7 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                                     if (!host) return;
                                     openExternalUrl(`http://${host}${port !== 80 ? `:${port}` : ''}/`);
                                 }}
-                                className="px-3 py-2 rounded-lg bg-purple-600 text-white text-[11px] font-bold hover:bg-purple-700 active:scale-95 transition disabled:opacity-40">
+                                className="glass-button-primary px-3 py-2 text-[11px] active:scale-95">
                                 🔧 {tx('Open printer settings page', 'Abrir configuración de la impresora')}
                             </button>
                             <span className="text-[10px] text-purple-700/80 leading-snug flex-1">
@@ -1014,7 +1012,7 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                                 <button
                                     onClick={runProbe}
                                     disabled={probing || !(probeIp || ipDraft || cfg?.ip)}
-                                    className="w-full py-1.5 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 disabled:opacity-40">
+                                    className="glass-button-primary w-full py-1.5 text-xs disabled:opacity-40">
                                     {probing ? tx('Probing…', 'Probando…') : '🔬 ' + tx('Run direct-IP probe', 'Ejecutar prueba')}
                                 </button>
                                 {probeResult && (
@@ -1042,11 +1040,11 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                 )}
                 <div className="flex gap-2 pt-1">
                     <button onClick={save} disabled={saving || !canSave}
-                        className="flex-1 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 disabled:opacity-40">
+                        className="glass-button-primary flex-1 py-1.5 text-xs disabled:opacity-40">
                         {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
                     </button>
                     <button onClick={runTest} disabled={testing || !canTest}
-                        className="flex-1 py-1.5 rounded-lg bg-white border-2 border-purple-600 text-purple-700 text-xs font-bold hover:bg-purple-50 disabled:opacity-40">
+                        className="glass-button-apple flex-1 py-1.5 text-xs disabled:opacity-40">
                         {testing ? tx('Testing…', 'Probando…') : '🏷 ' + tx('Test print', 'Probar')}
                     </button>
                 </div>
@@ -2365,12 +2363,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
             return (
                 <div className="p-4 pb-bottom-nav">
-                    <h2 className="text-2xl font-bold text-mint-700 mb-2">⚙️ {t("adminPanel", language)}</h2>
-                    <p className="text-xs text-gray-500 mb-3 bg-mint-50 border border-mint-200 rounded-lg p-2">
-                        🔐 {language === "es"
-                            ? "Solo Andrew Shih y Julie Shih pueden acceder a este panel."
-                            : "Only Andrew Shih and Julie Shih can access this panel."}
-                    </p>
+                    <PageHeader
+                        icon={Settings}
+                        title={t("adminPanel", language)}
+                        subtitle={language === "es"
+                            ? "🔐 Solo Andrew Shih y Julie Shih pueden acceder a este panel."
+                            : "🔐 Only Andrew Shih and Julie Shih can access this panel."}
+                    />
 
                     {/* 2026-05-20 — Andrew: "put a search in the first
                         staff page too". Quick-find pinned at the very
@@ -2406,7 +2405,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         />
                         {staffSearch && (
                             <button onClick={() => setStaffSearch("")}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-sm font-bold flex items-center justify-center hover:bg-blue-200">
+                                className="glass-button-apple absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full text-sm flex items-center justify-center">
                                 ✕
                             </button>
                         )}
@@ -2449,14 +2448,14 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         move, every time-off request, everything in the schedule
                         page so we can see what's happening." Reads the
                         append-only /audit collection (schedule features). */}
-                    <div className="mt-4 p-4 rounded-2xl bg-white border border-dd-line shadow-card">
+                    <div className="glass-card mt-4 p-4">
                         <ScheduleAuditLog language={language} />
                     </div>
 
                     {/* ── ATTENDANCE LOG ── Andrew 2026-06-25: who's clocked in —
                         on-time/late/no-show + shifts worked per staff (4 weeks),
                         click for a month/week drill-down. Reads /attendance. */}
-                    <div className="mt-4 p-4 rounded-2xl bg-white border border-dd-line shadow-card">
+                    <div className="glass-card mt-4 p-4">
                         <AttendanceLog language={language} staffList={staffList} />
                     </div>
 
@@ -2469,7 +2468,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     {hasOnboardingAccess && onNavigate && (
                         <button
                             onClick={() => onNavigate('onboarding')}
-                            className="w-full mb-4 flex items-center justify-between bg-gradient-to-r from-rose-50 to-amber-50 border-2 border-rose-200 rounded-xl p-4 hover:from-rose-100 hover:to-amber-100 active:scale-[0.99] transition shadow-sm group">
+                            className="glass-section-head group">
                             <div className="flex items-center gap-3 min-w-0">
                                 <span className="text-3xl flex-shrink-0">🪪</span>
                                 <div className="text-left min-w-0">
@@ -2495,7 +2494,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     {/* ── MAINTENANCE REQUESTS ── */}
                     <div className="mb-6">
                         <button onClick={() => setMaintenanceExpanded(!maintenanceExpanded)}
-                            className="w-full flex items-center justify-between bg-red-50 border-2 border-red-200 rounded-xl p-4 hover:bg-red-100 transition">
+                            className="glass-section-head">
                             <div className="flex items-center gap-2">
                                 <span className="text-2xl">🔧</span>
                                 <div className="text-left">
@@ -2527,7 +2526,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 {filteredMaintenance.some(r => r.status === "completed" || r.status === "declined") && (
                                     <div className="flex justify-center">
                                         <button onClick={clearOldMaintenanceRequests}
-                                            className="text-xs font-bold px-3 py-1 rounded-full border border-red-300 text-red-600 bg-white hover:bg-red-50">
+                                            className="glass-button-danger text-xs px-3 py-1 rounded-full">
                                             🗑️ {language === "es"
                                                 ? `Limpiar completadas/rechazadas (${filteredMaintenance.filter(r => r.status === "completed" || r.status === "declined").length})`
                                                 : `Clear completed/declined (${filteredMaintenance.filter(r => r.status === "completed" || r.status === "declined").length})`}
@@ -2607,7 +2606,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     {/* Permanent delete — separate row so it's not adjacent to "Done"
                                                         (avoids accidental misclick). Confirms via deleteMaintenanceRequest. */}
                                                     <button onClick={() => deleteMaintenanceRequest(req.id)}
-                                                        className="w-full py-1.5 bg-white border border-red-300 text-red-600 rounded text-xs font-bold hover:bg-red-50">
+                                                        className="glass-button-danger w-full py-1.5 text-xs">
                                                         🗑️ {language === "es" ? "Eliminar permanentemente" : "Delete permanently"}
                                                     </button>
                                                 </div>
@@ -2649,7 +2648,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     {/* ── STAFF LIST (collapsible) ── */}
                     <div className="mb-6" ref={staffSectionRef}>
                         <button onClick={() => setStaffExpanded(!staffExpanded)}
-                            className="w-full flex items-center justify-between bg-blue-50 border-2 border-blue-200 rounded-xl p-4 hover:bg-blue-100 transition">
+                            className="glass-section-head">
                             <div className="flex items-center gap-2">
                                 <span className="text-2xl">👥</span>
                                 <div className="text-left">
@@ -2683,7 +2682,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             </p>
                                         </div>
                                         <button onClick={() => setShowImportStaff(true)}
-                                            className="flex-shrink-0 px-4 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition text-sm">
+                                            className="glass-button-primary flex-shrink-0 px-4 py-2 text-sm">
                                             📥 {language === "es" ? "Importar Personal" : "Import Staff"}
                                         </button>
                                     </div>
@@ -2713,19 +2712,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 <div className="flex gap-1 justify-center mb-2 flex-wrap">
                                     {[{k:"all",en:"All",es:"Todos"},{k:"webster",en:"Webster",es:"Webster"},{k:"maryland",en:"MD Heights",es:"MD Heights"}].map(f => (
                                         <button key={f.k} onClick={() => setStaffFilter(f.k)}
-                                            className={`px-3 py-1 rounded-full text-xs font-bold border transition ${staffFilter === f.k ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-600 border-blue-300 hover:bg-blue-50"}`}>
+                                            className={`px-3 py-1 rounded-full text-xs font-bold border transition ${staffFilter === f.k ? "bg-dd-green text-white border-dd-green" : "bg-white/80 text-dd-text-2 border-dd-line hover:bg-white"}`}>
                                             {language === "es" ? f.es : f.en}
                                             {f.k !== "all" && <span className="ml-1 opacity-70">({staffList.filter(s => s.location === f.k || s.location === "both").length})</span>}
                                         </button>
                                     ))}
                                     <button onClick={() => setShowBulkTag(true)}
-                                        className="px-3 py-1 rounded-full text-xs font-bold border bg-purple-600 text-white border-purple-600 hover:bg-purple-700 transition ml-2">
+                                        className="glass-button-apple px-3 py-1.5 rounded-full text-xs ml-2">
                                         🏷 {language === "es" ? "Etiquetar en lote" : "Bulk Tag"}
                                     </button>
                                     {/* Import flow — paste names / upload CSV and pull
                                         in everyone not already on the staff list. */}
                                     <button onClick={() => setShowImportStaff(true)}
-                                        className="px-3 py-1 rounded-full text-xs font-bold border bg-blue-600 text-white border-blue-600 hover:bg-blue-700 transition">
+                                        className="glass-button-apple px-3 py-1.5 rounded-full text-xs">
                                         📥 {language === "es" ? "Importar Personal" : "Import Staff"}
                                     </button>
                                     {/* Export the full SMS opt-in/opt-out audit log as CSV.
@@ -2737,7 +2736,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         title={language === "es"
                                             ? "Exportar registro de aceptaciones de SMS (CSV)"
                                             : "Export SMS opt-in audit log (CSV)"}
-                                        className="px-3 py-1 rounded-full text-xs font-bold border bg-green-600 text-white border-green-600 hover:bg-green-700 transition">
+                                        className="glass-button-apple px-3 py-1.5 rounded-full text-xs">
                                         📋 {language === "es" ? "Exportar SMS" : "Export SMS log"}
                                     </button>
                                     {/* Required-task admin — push a task type (SMS opt-in,
@@ -2747,7 +2746,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         title={language === "es"
                                             ? "Pedir a personal que complete una acción (SMS opt-in, disponibilidad…)"
                                             : "Ask staff to complete an action (SMS opt-in, availability…)"}
-                                        className="px-3 py-1 rounded-full text-xs font-bold border bg-amber-600 text-white border-amber-600 hover:bg-amber-700 transition">
+                                        className="glass-button-apple px-3 py-1.5 rounded-full text-xs">
                                         📌 {language === "es" ? "Tareas requeridas" : "Required tasks"}
                                     </button>
                                 </div>
@@ -2792,12 +2791,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             input-zoom fix applied app-wide. */}
                                                         <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
                                                             placeholder={person.name}
-                                                            className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-base" />
+                                                            className="glass-input w-full text-base" />
                                                     </div>
                                                     <div>
                                                         <label className="text-xs text-gray-600 font-semibold">{t("staffRole", language)}</label>
                                                         <select value={editRole} onChange={(e) => setEditRole(e.target.value)}
-                                                            className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-sm">
+                                                            className="glass-select w-full text-sm">
                                                             {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
                                                         </select>
                                                         {/* Position template — one-tap fill of every access toggle below
@@ -2833,7 +2832,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                                     if (typeof t.homeView === 'string') setEditHomeView(t.homeView);
                                                                     if (Array.isArray(t.hiddenPages)) setEditHiddenPages([...t.hiddenPages]);
                                                                 }}
-                                                                className="mt-1.5 w-full py-1.5 rounded-lg text-[11px] font-bold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95 transition">
+                                                                className="glass-button-primary mt-1.5 w-full py-1.5 text-[11px]">
                                                                 ⚡ {language === "es"
                                                                     ? `Aplicar plantilla "${editRole}"`
                                                                     : `Apply "${editRole}" template`}
@@ -2849,7 +2848,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     <div>
                                                         <label className="text-xs text-gray-600 font-semibold">{language === "es" ? "Ubicación" : "Location"}</label>
                                                         <select value={editLocation} onChange={(e) => setEditLocation(e.target.value)}
-                                                            className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-sm">
+                                                            className="glass-select w-full text-sm">
                                                             <option value="webster">Webster</option>
                                                             <option value="maryland">Maryland Heights</option>
                                                             <option value="both">Both Locations</option>
@@ -2883,7 +2882,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                                     Maryland
                                                                 </button>
                                                                 <button onClick={() => setEditScheduleHome("both")}
-                                                                    className={`py-2 rounded-md text-xs font-bold ${editScheduleHome === "both" ? "bg-blue-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                    className={`py-2 rounded-md text-xs font-bold ${editScheduleHome === "both" ? "bg-dd-green text-white" : "bg-white/80 border border-dd-line text-dd-text-2"}`}>
                                                                     {language === "es" ? "Ambos" : "Both"}
                                                                 </button>
                                                             </div>
@@ -2894,7 +2893,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <input type="text" inputMode="numeric" maxLength={4} value={editPin}
                                                             onChange={(e) => setEditPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
                                                             placeholder="0000"
-                                                            className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:border-mint-700 focus:outline-none" />
+                                                            className="glass-input w-full text-center text-2xl tracking-widest font-mono" />
                                                     </div>
                                                     <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
                                                         <div>
@@ -3012,7 +3011,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             : "What this person sees when they open the app."}</p>
                                                         <select value={editHomeView}
                                                             onChange={(e) => setEditHomeView(e.target.value)}
-                                                            className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-sm bg-white">
+                                                            className="glass-select w-full text-sm">
                                                             <option value="auto">{language === "es" ? "🏠 Inicio (predeterminado)" : "🏠 Default Home"}</option>
                                                             <option value="schedule">{language === "es" ? "📅 Horario" : "📅 Schedule"}</option>
                                                             <option value="recipes">{language === "es" ? "🧑‍🍳 Recetas" : "🧑‍🍳 Recipes"}</option>
@@ -3095,11 +3094,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             : "Pushes and task messages will be sent in this language."}</p>
                                                         <div className="grid grid-cols-2 gap-2">
                                                             <button onClick={() => setEditPreferredLanguage("en")}
-                                                                className={`py-2 rounded-md text-xs font-bold ${editPreferredLanguage === "en" ? "bg-blue-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                className={`py-2 rounded-md text-xs font-bold ${editPreferredLanguage === "en" ? "bg-dd-green text-white" : "bg-white/80 border border-dd-line text-dd-text-2"}`}>
                                                                 English
                                                             </button>
                                                             <button onClick={() => setEditPreferredLanguage("es")}
-                                                                className={`py-2 rounded-md text-xs font-bold ${editPreferredLanguage === "es" ? "bg-blue-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                className={`py-2 rounded-md text-xs font-bold ${editPreferredLanguage === "es" ? "bg-dd-green text-white" : "bg-white/80 border border-dd-line text-dd-text-2"}`}>
                                                                 Español
                                                             </button>
                                                         </div>
@@ -3151,7 +3150,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </div>
                                                     </div>
                                                     <button onClick={() => setAvailabilityForId(person.id)}
-                                                        className="w-full py-2 rounded-lg bg-purple-100 text-purple-700 text-xs font-bold hover:bg-purple-200">
+                                                        className="glass-button-apple w-full py-2 text-xs">
                                                         🗓 {language === "es" ? "Editar disponibilidad" : "Edit Availability"}
                                                     </button>
                                                     <div className="flex gap-2">
@@ -3161,7 +3160,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             {t("save", language)}
                                                         </button>
                                                         <button onClick={resetEditForm}
-                                                            className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
+                                                            className="glass-button-apple flex-1 py-2">
                                                             {t("cancel", language)}
                                                         </button>
                                                     </div>
@@ -3203,20 +3202,20 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditCanCountMoney(canCountMoney(person)); setEditCanViewClockedIn(canViewClockedIn(person)); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
-                                                            className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
+                                                            className="glass-button-apple px-3 py-1.5 text-xs">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
                                                         {!ADMIN_IDS.includes(person.id) && (
                                                             confirmRemoveId === person.id ? (
                                                                 <div className="flex gap-1">
                                                                     <button onClick={() => handleRemoveStaff(person.id)}
-                                                                        className="px-2 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700">✓</button>
+                                                                        className="glass-button-danger is-solid px-2 py-1.5 text-xs">✓</button>
                                                                     <button onClick={() => setConfirmRemoveId(null)}
-                                                                        className="px-2 py-1.5 bg-gray-400 text-white rounded-lg text-xs font-bold hover:bg-gray-500">✕</button>
+                                                                        className="glass-button-apple px-2 py-1.5 text-xs">✕</button>
                                                                 </div>
                                                             ) : (
                                                                 <button onClick={() => setConfirmRemoveId(person.id)}
-                                                                    className="px-2 py-1.5 bg-mint-100 text-mint-700 rounded-lg text-xs font-bold hover:bg-mint-200 transition">
+                                                                    className="glass-button-apple px-2 py-1.5 text-xs">
                                                                     🗑️
                                                                 </button>
                                                             )
@@ -3235,12 +3234,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             <label className="text-xs text-gray-600 font-semibold">{t("staffName", language)}</label>
                                             <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
                                                 placeholder={language === "es" ? "Nombre completo" : "Full name"}
-                                                className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none" />
+                                                className="glass-input w-full" />
                                         </div>
                                         <div>
                                             <label className="text-xs text-gray-600 font-semibold">{t("staffRole", language)}</label>
                                             <select value={newRole} onChange={(e) => setNewRole(e.target.value)}
-                                                className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none text-sm">
+                                                className="glass-select w-full text-sm">
                                                 {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
                                             </select>
                                             {hasPositionTemplate(newRole) ? (
@@ -3260,7 +3259,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         <div>
                                             <label className="text-xs text-gray-600 font-semibold">{language === "es" ? "Ubicación" : "Location"}</label>
                                             <select value={newLocation} onChange={(e) => setNewLocation(e.target.value)}
-                                                className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none text-sm">
+                                                className="glass-select w-full text-sm">
                                                 <option value="webster">Webster</option>
                                                 <option value="maryland">Maryland Heights</option>
                                                 <option value="both">Both Locations</option>
@@ -3271,7 +3270,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             <input type="text" inputMode="numeric" maxLength={4} value={newPin}
                                                 onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
                                                 placeholder="0000"
-                                                className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:border-green-700 focus:outline-none" />
+                                                className="glass-input w-full text-center text-2xl tracking-widest font-mono" />
                                         </div>
                                         <div className="flex items-center justify-between bg-white rounded-lg p-3 border border-gray-200">
                                             <div>
@@ -3333,14 +3332,14 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 {t("addStaff", language)}
                                             </button>
                                             <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); setNewRecipesAccess(true); setNewShiftLead(false); setNewIsMinor(false); setNewScheduleSide("foh"); }}
-                                                className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
+                                                className="glass-button-apple flex-1 py-2">
                                                 {t("cancel", language)}
                                             </button>
                                         </div>
                                     </div>
                                 ) : (
                                     <button onClick={() => setShowAdd(true)}
-                                        className="w-full py-3 bg-green-700 text-white font-bold rounded-lg hover:bg-green-800 transition text-lg">
+                                        className="glass-button-primary w-full py-3 text-lg">
                                         + {t("addStaff", language)}
                                     </button>
                                 )}
@@ -3552,11 +3551,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 </div>
                                 <div className="border-t border-gray-200 p-3 flex gap-2">
                                     <button onClick={() => setPendingRename(null)}
-                                        className="flex-1 py-2.5 rounded-lg font-bold bg-gray-200 text-gray-700 hover:bg-gray-300 transition">
+                                        className="glass-button-apple flex-1 py-2.5">
                                         {t("cancel", language)}
                                     </button>
                                     <button onClick={confirmRename}
-                                        className="flex-1 py-2.5 rounded-lg font-bold bg-green-700 text-white hover:bg-green-800 transition">
+                                        className="glass-button-primary flex-1 py-2.5">
                                         {language === "es" ? "Renombrar" : "Rename"}
                                     </button>
                                 </div>
@@ -3700,7 +3699,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         <div className="flex items-center justify-between gap-2">
                                             <h3 className="text-base sm:text-lg font-bold text-purple-700 truncate">🏷 {language === "es" ? "Etiquetar Personal" : "Bulk Tag Staff"}</h3>
                                             <button onClick={() => { setShowBulkTag(false); setBulkSearch(""); }}
-                                                className="flex-shrink-0 px-4 py-2 rounded-full bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
+                                                className="glass-button-primary flex-shrink-0 px-4 py-2 rounded-full text-sm active:scale-95">
                                                 ✓ {language === "es" ? "Listo" : "Done"}
                                             </button>
                                         </div>
@@ -3721,7 +3720,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         {/* Auto-tag — one-shot fill of every untagged staff using role inference. */}
                                         {untagged > 0 && (
                                             <button onClick={autoTagUntagged}
-                                                className="w-full mb-2 py-2 rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700">
+                                                className="glass-button-primary w-full mb-2 py-2 text-sm">
                                                 ✨ {language === "es" ? `Auto-etiquetar ${untagged} pendientes (por rol)` : `Auto-tag ${untagged} untagged (from role)`}
                                             </button>
                                         )}
@@ -3729,7 +3728,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             opt-OUT recipes policy. Use after first deploy of the new
                                             policy or after onboarding a batch of new hires. */}
                                         <button onClick={grantRecipesToAll}
-                                            className="w-full mb-2 py-2 rounded-lg bg-green-600 text-white text-sm font-bold hover:bg-green-700">
+                                            className="glass-button-primary w-full mb-2 py-2 text-sm">
                                             🧑‍🍳 {language === "es" ? "Dar acceso a Recetas a TODO el personal" : "Grant Recipes access to ALL staff"}
                                         </button>
 
@@ -4124,7 +4123,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-dd-text-2">
                                                                 {language === "es" ? "Idioma:" : "Lang:"}
                                                                 <button onClick={() => handleBulkUpdate(s.id, { preferredLanguage: lng === "es" ? "en" : "es" })}
-                                                                    className="px-2.5 py-1 rounded-md text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition">
+                                                                    className="glass-button-apple px-2.5 py-1 text-xs">
                                                                     {lng.toUpperCase()}
                                                                 </button>
                                                             </label>
@@ -4950,7 +4949,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     (notify() didn't fire for some reason). */}
                                 <RecentNotificationsFeed staffName={staffName} language={language} />
                                 <button onClick={sendTestPush}
-                                    className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">
+                                    className="glass-button-primary w-full py-2 text-sm">
                                     🧪 {language === 'es' ? 'Enviar push de prueba a mí' : 'Send test push to myself'}
                                 </button>
                                 {/* Register-now — runs enableFcmPush on demand and
@@ -4987,7 +4986,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             toast((language === 'es' ? '❌ Error: ' : '❌ Error: ') + (e.message || e), { kind: 'error', duration: 6000 });
                                         }
                                     }}
-                                    className="w-full mt-2 py-2 rounded-lg bg-green-600 text-white text-sm font-bold hover:bg-green-700">
+                                    className="glass-button-primary w-full mt-2 text-sm">
                                     📲 {language === 'es' ? 'Registrar este dispositivo ahora' : 'Register this device now'}
                                 </button>
                                 {/* Reset push tokens — nukes ALL fcmTokens on this
@@ -5017,7 +5016,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 { kind: 'success', duration: 5000 });
                                         }
                                     }}
-                                    className="w-full mt-2 py-2 rounded-lg bg-white border-2 border-blue-300 text-blue-700 text-sm font-bold hover:bg-blue-100">
+                                    className="glass-button-apple w-full mt-2 text-sm">
                                     🔄 {language === 'es' ? 'Borrar mis tokens (resolver duplicados)' : 'Reset my push tokens (fix duplicates)'}
                                 </button>
                                 <p className="text-[10px] text-blue-800 mt-2 leading-relaxed">
@@ -5071,7 +5070,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     <button
                         type="button"
                         onClick={() => onNavigate?.('menuscreens')}
-                        className="w-full text-left mt-6 mb-4 bg-white border-2 border-sky-200 rounded-xl p-4 hover:bg-sky-50 active:bg-sky-100 transition flex items-center gap-3">
+                        className="glass-section-head mt-6 mb-4">
                         <span className="text-2xl shrink-0">📺</span>
                         <div className="min-w-0 flex-1">
                             <div className="text-sm font-black text-sky-900">
@@ -5107,7 +5106,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         </p>
                         {!confirmingRefresh ? (
                             <button onClick={() => setConfirmingRefresh(true)}
-                                className="w-full py-3 rounded-lg bg-red-600 text-white text-sm font-bold uppercase tracking-wide hover:bg-red-700 active:scale-[0.99] transition shadow-lg shadow-red-200">
+                                className="glass-button-danger is-solid w-full py-3 text-sm uppercase tracking-wide active:scale-[0.99]">
                                 🚨 {language === "es" ? "Refresco del Sistema" : "System Refresh"}
                             </button>
                         ) : (
@@ -5119,11 +5118,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     <button onClick={() => setConfirmingRefresh(false)}
-                                        className="py-3 rounded-lg bg-gray-200 text-gray-800 text-sm font-bold hover:bg-gray-300">
+                                        className="glass-button-apple py-3 text-sm">
                                         {language === "es" ? "Cancelar" : "Cancel"}
                                     </button>
                                     <button onClick={handleSystemRefresh}
-                                        className="py-3 rounded-lg bg-red-700 text-white text-sm font-bold uppercase tracking-wide hover:bg-red-800 shadow-lg">
+                                        className="glass-button-danger is-solid py-3 text-sm uppercase tracking-wide">
                                         ✓ {language === "es" ? "Confirmar Refresco" : "Confirm Refresh"}
                                     </button>
                                 </div>

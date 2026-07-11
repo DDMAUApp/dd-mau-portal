@@ -592,6 +592,108 @@
         }
     }
 
+    /* glass-button-danger — destructive tier (remove staff, danger
+       zone, clear-data). Red-tinted frosted chip so destructive
+       actions share the glass language but stay unmistakably red.
+       Same metrics/physics as glass-button-apple. (2026-07-11 admin
+       restyle — one visual system: primary / neutral / danger.) */
+    .glass-button-danger {
+        @apply inline-flex items-center justify-center gap-1.5
+               px-3.5 py-2 rounded-glass-md font-bold text-sm
+               text-red-700
+               transition-all duration-glass-fast ease-glass-out;
+        background-color: rgba(254, 242, 242, 0.82);
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        border: 1px solid rgba(220, 38, 38, 0.28);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.85),
+            0 1px 2px rgba(15, 23, 42, 0.05),
+            0 6px 16px -6px rgba(220, 38, 38, 0.16);
+        background-clip: padding-box;
+    }
+    .glass-button-danger:hover {
+        background-color: rgba(254, 226, 226, 0.92);
+        border-color: rgba(220, 38, 38, 0.40);
+    }
+    .glass-button-danger:active {
+        @apply scale-[0.97];
+    }
+    .glass-button-danger:focus-visible {
+        @apply outline-none ring-2 ring-red-500/40 ring-offset-2 ring-offset-glass-bg-light;
+    }
+    /* Filled variant — the final "yes, really" step of a two-tap
+       destructive flow. Solid red on purpose: the last click before
+       losing something should never be translucent. */
+    .glass-button-danger.is-solid {
+        @apply bg-red-600 text-white border-red-600;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+    .glass-button-danger.is-solid:hover {
+        @apply bg-red-700;
+    }
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass-button-danger {
+            background-color: rgba(254, 242, 242, 0.97);
+        }
+    }
+
+    /* glass-section-head — full-width tappable header for the Admin
+       page's expandable sections. One neutral frosted surface for
+       every section (the emoji disc carries identity), replacing the
+       six pastel border-2 boxes that made the page read as six
+       different apps. ≥48px tall by construction (p-4). */
+    .glass-section-head {
+        @apply w-full flex items-center justify-between gap-3 p-4
+               rounded-glass-lg text-left
+               transition-all duration-glass-fast ease-glass-out;
+        background-color: rgba(255, 255, 255, 0.72);
+        backdrop-filter: blur(20px) saturate(170%);
+        -webkit-backdrop-filter: blur(20px) saturate(170%);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.85),
+            0 1px 2px rgba(15, 23, 42, 0.04),
+            0 8px 20px -10px rgba(15, 23, 42, 0.12);
+        background-clip: padding-box;
+        min-height: 48px;
+    }
+    .glass-section-head:hover {
+        background-color: rgba(255, 255, 255, 0.86);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.95),
+            0 2px 4px rgba(15, 23, 42, 0.06),
+            0 12px 28px -12px rgba(15, 23, 42, 0.16);
+    }
+    .glass-section-head:active {
+        @apply scale-[0.995];
+    }
+    .glass-section-head:focus-visible {
+        @apply outline-none ring-2 ring-dd-green/35 ring-offset-2 ring-offset-glass-bg-light;
+    }
+    /* Chevron — rotates instead of swapping glyphs so the state
+       change animates (and collapses to 1ms under reduced motion). */
+    .glass-section-head .section-chevron {
+        @apply text-dd-text-2 shrink-0 transition-transform duration-glass-fast ease-glass-out;
+    }
+    .glass-section-head[aria-expanded="true"] .section-chevron {
+        transform: rotate(90deg);
+    }
+    /* Emoji identity disc — subtle per-section tint without letting
+       color take over the whole card again. */
+    .section-disc {
+        @apply w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0;
+        background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(241,245,249,0.75));
+        border: 1px solid rgba(15, 23, 42, 0.07);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 3px rgba(15,23,42,0.06);
+    }
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass-section-head {
+            background-color: rgba(250, 251, 253, 0.97);
+        }
+    }
+
     /* ── Inputs ─────────────────────────────────────────────────── */
 
     .glass-input {
@@ -738,6 +840,7 @@
     @media (pointer: coarse) {
         .glass-button,
         .glass-button-primary,
+        .glass-button-danger,
         .touch-target {
             min-height: 48px;
             min-width: 48px;
@@ -1023,6 +1126,31 @@
    animation. We don't disable transitions entirely (a 1ms duration
    keeps state changes ARIA-detectable and avoids janky "snap" feel
    in some browsers) — we just remove the perceived motion. */
+
+/* ── Reduced transparency ──────────────────────────────────────────
+   Some users (and Android battery-saver modes) request less
+   transparency. Swap every frosted surface to a near-opaque fill and
+   drop the blur — layout, borders and shadows stay identical, so the
+   design still reads as the same system. */
+@media (prefers-reduced-transparency: reduce) {
+    .glass-card,
+    .glass-button,
+    .glass-button-apple,
+    .glass-button-danger,
+    .glass-section-head,
+    .glass-input,
+    .glass-select,
+    .glass-textarea,
+    .glass-modal-content {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background-color: rgba(252, 253, 254, 0.98) !important;
+    }
+    .glass-button-danger {
+        background-color: rgba(254, 242, 242, 0.98) !important;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .glass-button,
     .glass-button-primary,
@@ -1032,6 +1160,9 @@
     .glass-textarea,
     .glass-table tbody tr,
     .glass-tabs > button,
+    .glass-button-danger,
+    .glass-section-head,
+    .glass-section-head .section-chevron,
     .glass-skeleton {
         transition-duration: 1ms !important;
         animation-duration: 1ms !important;
