@@ -19,6 +19,9 @@ import {
     serverTimestamp, query, orderBy, limit, getDoc, deleteField,
 } from 'firebase/firestore';
 import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
+import { appendStaffRecord } from '../data/staffDoc';
+import { getPositionTemplate } from '../data/positionTemplates';
+import { normalizeToE164 } from '../data/sms';
 import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata, deleteObject } from 'firebase/storage';
 import { downloadFile, printViaNative, publicAppBase } from '../capacitor-bridge';
 import {
@@ -758,6 +761,62 @@ function HireDetail({ hire, isEs, staffName, docOverrides, templates, onWriteAud
     // dead-end.
     const offerLetterInFlow = docs.some(d => d.id === 'offer_letter');
 
+    // ── Add this hire to the STAFF roster (Andrew 2026-07-11) ─────────
+    // One tap creates their staff record (next id, random unused PIN,
+    // position-template defaults, phone carried over) so the admin can
+    // finish permissions + set a real PIN on the Staff page. Race-safe:
+    // appendStaffRecord transacts against the live roster and bumps rev.
+    const [addingStaff, setAddingStaff] = useState(false);
+    const addToStaff = async () => {
+        if (addingStaff) return;
+        setAddingStaff(true);
+        try {
+            const name = String(hire.personal?.legalName || hire.name || '').trim();
+            const role = hire.position || 'FOH';
+            const template = getPositionTemplate(role) || {};
+            const location = hire.location || 'webster';
+            const phoneE164 = normalizeToE164(hire.phone);
+            const res = await appendStaffRecord({
+                name,
+                record: {
+                    ...template,
+                    role,
+                    location,
+                    scheduleHome: location,
+                    scheduleSide: template.scheduleSide || 'foh',
+                    recipesAccess: template.recipesAccess !== undefined ? template.recipesAccess : true,
+                    ...(phoneE164 ? { phoneE164 } : {}),
+                    onboardingHireId: hire.id,
+                },
+            });
+            if (!res.ok) {
+                if (res.error === 'name_exists') {
+                    // Already on the roster — settle the button so it
+                    // doesn't keep offering a duplicate add.
+                    try { await updateDoc(doc(db, 'onboarding_hires', hire.id), { staffCreatedAt: new Date().toISOString(), staffCreatedBy: staffName }); } catch {}
+                    toast(tx(`"${name}" is already on the staff list.`, `"${name}" ya está en el personal.`), { kind: 'warn' });
+                } else {
+                    toast(tx('Could not add to staff — try again.', 'No se pudo agregar al personal — intenta de nuevo.'), { kind: 'error' });
+                }
+                return;
+            }
+            try {
+                await updateDoc(doc(db, 'onboarding_hires', hire.id), {
+                    staffCreatedAt: new Date().toISOString(),
+                    staffCreatedBy: staffName,
+                    staffRecordId: res.id,
+                });
+            } catch {}
+            onWriteAudit('hire_added_to_staff', { hireId: hire.id, hireName: name, staffId: res.id });
+            toast(tx(
+                `${name} added to Staff — temporary PIN: ${res.pin}. Set their permissions + PIN in Admin → Staff.`,
+                `${name} agregado al personal — PIN temporal: ${res.pin}. Ajusta permisos y PIN en Admin → Personal.`,
+            ), { kind: 'success', duration: 12000 });
+        } finally {
+            setAddingStaff(false);
+        }
+    };
+
     const exportZip = async () => {
         setExporting(true);
         try {
@@ -908,6 +967,19 @@ function HireDetail({ hire, isEs, staffName, docOverrides, templates, onWriteAud
                         className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-green text-white font-bold hover:bg-dd-green/90 disabled:opacity-60">
                         {exporting ? tx('Building zip…', 'Creando zip…') : tx('📦 Export zip', '📦 Exportar zip')}
                     </button>
+                    {hire.staffCreatedAt ? (
+                        <span className="text-[11px] px-2.5 py-1.5 rounded-lg bg-green-100 text-green-800 font-bold"
+                            title={tx('A staff record was created for this hire', 'Ya se creó su registro de personal')}>
+                            ✓ {tx('On staff', 'En personal')}
+                        </span>
+                    ) : (
+                        <button onClick={addToStaff} disabled={addingStaff}
+                            title={tx('Creates their record on the Staff page with a temporary PIN so you can set permissions',
+                                'Crea su registro en Personal con un PIN temporal para asignar permisos')}
+                            className="text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-60">
+                            {addingStaff ? tx('Adding…', 'Agregando…') : tx('👥 Add to Staff', '👥 Agregar a Personal')}
+                        </button>
+                    )}
                     {/* Move to Complete — locks the hire's portal. Only
                         offered when the explicit hire.status isn't already
                         complete/archived. We DON'T gate this on "all docs

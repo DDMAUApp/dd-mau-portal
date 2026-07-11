@@ -36,3 +36,49 @@ export function nextStaffRev(data) {
     const cur = (data && typeof data.rev === 'number') ? data.rev : 0;
     return cur + 1;
 }
+
+// Append ONE new staff record to the roster, race-safely (Andrew
+// 2026-07-11: "in the onboarding make a button that moves the new hire
+// to the staff page"). Runs in a transaction per the roster-write rule:
+// read the server list, append, bump rev — never writes a list built
+// from client state. Assigns the next id (max+1, same as add-staff)
+// and a random UNUSED 4-digit PIN (saveStaffToFirestore's PIN gate
+// requires one; the admin changes it on the Staff page).
+//
+// Returns { ok:true, id, pin } or { ok:false, error } where error is
+// 'no_name' | 'name_exists' | 'no_doc' | <firestore message>.
+export async function appendStaffRecord({ name, record = {} }) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return { ok: false, error: 'no_name' };
+    try {
+        const { doc, runTransaction } = await import('firebase/firestore');
+        const { db } = await import('../firebase');
+        let assignedPin = null;
+        let assignedId = null;
+        await runTransaction(db, async (tx) => {
+            const ref = doc(db, 'config', 'staff');
+            const snap = await tx.get(ref);
+            if (!snap.exists()) {
+                const e = new Error('no_doc'); e.code = 'no_doc'; throw e;
+            }
+            const data = snap.data() || {};
+            const list = data.list || [];
+            if (list.some(s => String(s?.name || '').trim().toLowerCase() === trimmed.toLowerCase())) {
+                const e = new Error('name_exists'); e.code = 'name_exists'; throw e;
+            }
+            const maxId = list.reduce((m, s) => Math.max(m, Number(s?.id) || 0), 0);
+            const used = new Set(list.map(s => String(s?.pin ?? '').trim()));
+            let pin;
+            do { pin = String(Math.floor(1000 + Math.random() * 9000)); } while (used.has(pin));
+            assignedPin = pin;
+            assignedId = maxId + 1;
+            tx.set(ref, {
+                list: [...list, { ...record, name: trimmed, id: assignedId, pin }],
+                rev: nextStaffRev(data),
+            });
+        });
+        return { ok: true, id: assignedId, pin: assignedPin };
+    } catch (e) {
+        return { ok: false, error: e?.code || e?.message || 'failed' };
+    }
+}
