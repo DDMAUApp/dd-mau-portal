@@ -83,6 +83,38 @@ const MenuConfigEditor = reactLazy(() => import('./MenuConfigEditor'));
 // Why per-location: each restaurant has its own LAN + its own
 // printer with its own IP. Shared config would force both stores
 // onto the same printer.
+// Collapsed-by-default wrapper for admin sections that used to render
+// always-open (Andrew 2026-07-11: "make every tab in the admin page
+// collapsible — the push notifications is always open"). Children stay
+// UNMOUNTED while collapsed, matching the other admin sections, so a
+// heavy editor costs nothing until the header is tapped.
+function CollapsibleAdminSection({ emoji, title, subtitle, tone = 'gray', children }) {
+    const [open, setOpen] = useState(false);
+    const tones = {
+        gray:   'bg-gray-50 border-gray-200 hover:bg-gray-100 text-gray-800',
+        purple: 'bg-purple-50 border-purple-200 hover:bg-purple-100 text-purple-900',
+        blue:   'bg-blue-50 border-blue-200 hover:bg-blue-100 text-blue-900',
+        red:    'bg-red-50 border-red-300 hover:bg-red-100 text-red-900',
+        green:  'bg-emerald-50 border-emerald-200 hover:bg-emerald-100 text-emerald-900',
+    };
+    return (
+        <div className="mt-4 mb-6">
+            <button onClick={() => setOpen(v => !v)}
+                className={`w-full flex items-center justify-between border-2 rounded-xl p-4 transition ${tones[tone] || tones.gray}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-2xl shrink-0">{emoji}</span>
+                    <div className="text-left min-w-0">
+                        <h3 className="font-bold text-sm">{title}</h3>
+                        {subtitle && <p className="text-[11px] opacity-70 truncate">{subtitle}</p>}
+                    </div>
+                </div>
+                <span className="text-gray-400 text-xl shrink-0">{open ? '▼' : '▶'}</span>
+            </button>
+            {open && <div className="mt-2">{children}</div>}
+        </div>
+    );
+}
+
 function PrintersConfigSection({ language, byName }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
@@ -4917,6 +4949,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         isn't deployed (`firebase deploy --only functions`) or
                         background SW isn't registering (check console for
                         "FCM service worker register failed"). */}
+                    <CollapsibleAdminSection emoji="🔔" tone="blue"
+                        title={language === 'es' ? 'Notificaciones push — diagnóstico' : 'Push notifications — diagnostic'}
+                        subtitle={language === 'es' ? 'Estado de permisos/tokens + botón de prueba' : 'Permission/token state + test-push button'}>
                     {(() => {
                         const me = staffList.find(s => s.name === staffName);
                         const tokens = (me?.fcmTokens || []).length;
@@ -5107,6 +5142,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         );
                     })()}
+                    </CollapsibleAdminSection>
 
                     {/* ── LABEL PRINTERS — per-location Epson TM-L100 config ────────
                         Andrew 2026-05-20 — Vietnamese equivalent of Jolt's
@@ -5115,7 +5151,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         printer's local IP + lets admin send a test print. The
                         DD Mau app (browser) sends labels directly to the
                         printer's HTTP server — no middleware, no driver. */}
-                    <PrintersConfigSection language={language} byName={staffName} />
+                    <CollapsibleAdminSection emoji="🏷" tone="purple"
+                        title={language === 'es' ? 'Impresoras de etiquetas' : 'Label printers'}
+                        subtitle={language === 'es' ? 'Config Epson/Brother por ubicación + impresión de prueba' : 'Per-location Epson/Brother config + test print'}>
+                        <PrintersConfigSection language={language} byName={staffName} />
+                    </CollapsibleAdminSection>
 
                     <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading label format editor…</div>}>
                         <LabelFormatEditor language={language} byName={staffName} />
@@ -5128,9 +5168,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         + /config/brand + /config/build_sheet. Designed for
                         SaaS resale — every part of the menu is editable
                         from this single screen, no code push required. */}
-                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3 mt-6">Loading menu editor…</div>}>
-                        <MenuConfigEditor language={language} byName={staffName} />
-                    </ReactSuspense>
+                    <CollapsibleAdminSection emoji="🍜" tone="green"
+                        title={language === 'es' ? 'Editor de menú y marca' : 'Menu & brand editor'}
+                        subtitle={language === 'es' ? 'Platos, precios, categorías, build sheet — sin código' : 'Items, prices, categories, build sheet — no code push'}>
+                        <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3 mt-6">Loading menu editor…</div>}>
+                            <MenuConfigEditor language={language} byName={staffName} />
+                        </ReactSuspense>
+                    </CollapsibleAdminSection>
 
                     {/* ── TV displays — moved to its own page ────────────────────
                         Andrew 2026-05-23 promoted the TvConfigsEditor block out
@@ -5160,7 +5204,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         client subscribes to that doc in App.jsx and force-refreshes
                         on change. Use SPARINGLY — interrupts every staff member
                         mid-action. Reserved for production breakage / critical fixes. */}
-                    <div className="mt-8 mb-4 border-2 border-red-300 rounded-xl bg-red-50 p-4">
+                    <CollapsibleAdminSection emoji="⚠️" tone="red"
+                        title={language === 'es' ? 'Zona Peligrosa' : 'Danger Zone'}
+                        subtitle={language === 'es' ? 'Refresco forzado de todos los dispositivos' : 'Force-refresh every active device'}>
+                    <div className="mb-4 border-2 border-red-300 rounded-xl bg-red-50 p-4">
                         <div className="flex items-center gap-2 mb-2">
                             <span className="text-2xl">⚠️</span>
                             <h3 className="text-base font-bold text-red-900 uppercase tracking-wide">
@@ -5200,6 +5247,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         )}
                     </div>
+                    </CollapsibleAdminSection>
                 </div>
             );
         }
