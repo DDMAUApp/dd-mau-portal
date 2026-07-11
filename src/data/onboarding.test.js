@@ -59,3 +59,42 @@ describe('partitionTemplateFiles', () => {
         expect(partitionTemplateFiles(['', null, undefined])).toEqual({ keep: [], prune: [] });
     });
 });
+
+// pickSigStampBox pairs an admin-placed 🕒 Sig stamp box with a signature
+// field so the "Electronically signed by…" caption prints at a chosen
+// position instead of the legacy auto-offset (Andrew 2026-07-10: "the
+// signature time stamp is off again — make it a template edit").
+import { pickSigStampBox } from './onboarding';
+
+describe('pickSigStampBox', () => {
+    const sig = { id: 's1', type: 'signature', page: 1 };
+
+    it('returns null when no stamp box is placed (legacy auto position)', () => {
+        expect(pickSigStampBox([sig, { id: 't1', type: 'text', page: 1 }], sig)).toBeNull();
+        expect(pickSigStampBox([], sig)).toBeNull();
+        expect(pickSigStampBox(undefined, sig)).toBeNull();
+    });
+
+    it('an unpaired stamp on the same page auto-pairs', () => {
+        const stamp = { id: 'st1', type: 'sig_stamp', page: 1 };
+        expect(pickSigStampBox([sig, stamp], sig)).toBe(stamp);
+        // …but not one on a different page.
+        expect(pickSigStampBox([sig, { ...stamp, page: 0 }], sig)).toBeNull();
+    });
+
+    it('explicit stampFor wins over same-page proximity', () => {
+        const samePage = { id: 'st1', type: 'sig_stamp', page: 1 };
+        const pinned = { id: 'st2', type: 'sig_stamp', page: 3, stampFor: 's1' };
+        expect(pickSigStampBox([sig, samePage, pinned], sig)).toBe(pinned);
+    });
+
+    it('employer stamps only pair with employer signatures (and vice versa)', () => {
+        const empSig = { id: 'e1', type: 'signature', page: 2, filledBy: 'employer' };
+        const empStamp = { id: 'st1', type: 'sig_stamp', page: 2, filledBy: 'employer' };
+        const hireStamp = { id: 'st2', type: 'sig_stamp', page: 2 };
+        expect(pickSigStampBox([empSig, empStamp, hireStamp], empSig)).toBe(empStamp);
+        expect(pickSigStampBox([sig, empStamp], sig)).toBeNull();
+        const hireSigP2 = { id: 's2', type: 'signature', page: 2 };
+        expect(pickSigStampBox([hireSigP2, empStamp, hireStamp], hireSigP2)).toBe(hireStamp);
+    });
+});

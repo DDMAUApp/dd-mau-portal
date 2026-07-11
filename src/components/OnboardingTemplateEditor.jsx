@@ -705,6 +705,44 @@ export default function OnboardingTemplateEditor({
                                     className="w-full border border-gray-300 rounded px-2 py-1 text-xs" />
                             </div>
 
+                            {/* SIG STAMP — where the "Electronically signed by…"
+                                caption prints. Not an input: hires never see it.
+                                Pairing is automatic when the template has one
+                                signature; the dropdown pins it when there are
+                                several. */}
+                            {selected.type === 'sig_stamp' && (
+                                <div className="bg-sky-50 border border-sky-200 rounded p-2 space-y-1.5">
+                                    <p className="text-[10px] font-bold text-sky-900 uppercase">
+                                        🕒 {tx('E-sign caption position', 'Posición del sello de firma')}
+                                    </p>
+                                    <p className="text-[10px] text-sky-800">
+                                        {tx('The "Electronically signed by + date/time + ID" text prints exactly in this box (taller box = bigger text). Nobody fills it in.',
+                                            'El texto "Firmado electrónicamente + fecha/hora + ID" se imprime exactamente en esta caja (caja más alta = texto más grande). Nadie lo llena.')}
+                                    </p>
+                                    {(fields || []).filter(f => f.type === 'signature').length > 1 && (
+                                        <div>
+                                            <label className="text-[10px] font-bold text-sky-900">
+                                                {tx('For which signature?', '¿Para cuál firma?')}
+                                            </label>
+                                            <select value={selected.stampFor || ''}
+                                                onChange={e => updateField(selected.id, { stampFor: e.target.value })}
+                                                className="w-full border border-sky-300 rounded px-2 py-1 text-xs bg-white">
+                                                <option value="">{tx('Auto (same page)', 'Auto (misma página)')}</option>
+                                                {(fields || []).filter(f => f.type === 'signature').map((f, i) => (
+                                                    <option key={f.id} value={f.id}>
+                                                        {f.label || `${tx('Signature', 'Firma')} ${i + 1} · ${tx('page', 'pág.')} ${f.page + 1}${f.filledBy === 'employer' ? ' · 👔' : ''}`}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                    <p className="text-[10px] text-sky-700 italic">
+                                        {tx('Set "Who fills this?" to 👔 Employer to position the employer signature\'s caption instead.',
+                                            'Pon "¿Quién lo llena?" en 👔 Empleador para posicionar el sello de la firma del empleador.')}
+                                    </p>
+                                </div>
+                            )}
+
                             {/* STATIC value input — what gets baked into every
                                 hire's PDF. Different control per field type:
                                   • text/date/initials → text input
@@ -776,7 +814,7 @@ export default function OnboardingTemplateEditor({
                                 "if applicable" blanks; without this toggle
                                 the hire couldn't submit until every box was
                                 filled in. */}
-                            {(selected.filledBy || 'hire') === 'hire' && (
+                            {(selected.filledBy || 'hire') === 'hire' && selected.type !== 'sig_stamp' && (
                                 <div>
                                     <label className="text-[10px] font-bold text-gray-500 block mb-1">
                                         {tx('Required to submit?', '¿Obligatorio?')}

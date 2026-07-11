@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL, getBytes, listAll, deleteObject } from 'firebase/storage';
-import { LOCATION_INFO } from '../data/onboarding';
+import { LOCATION_INFO, pickSigStampBox } from '../data/onboarding';
 
 // Lazy loaders — keep pdfjs + pdf-lib out of the main bundle.
 async function loadPdfJs() {
@@ -348,6 +348,7 @@ export default function OnboardingFillablePdf({
         const missing = (template?.fields || []).filter(f => {
             if (f.filledBy === 'static') return false;
             if (f.filledBy === 'employer') return false;
+            if (f.type === 'sig_stamp') return false; // print position, not an input
             if (f.required !== true) return false;
             const v = values[f.id];
             if (f.type === 'checkbox') return false;
@@ -402,8 +403,11 @@ export default function OnboardingFillablePdf({
 
                 // Static fields use the admin-set staticValue; employer
                 // fields are skipped (admin completes them after submit);
-                // everything else reads from the hire's `values` map.
+                // sig_stamp boxes are print positions, drawn via their
+                // paired signature below; everything else reads from the
+                // hire's `values` map.
                 if (f.filledBy === 'employer') continue;
+                if (f.type === 'sig_stamp') continue;
                 const val = f.filledBy === 'static' ? f.staticValue : values[f.id];
 
                 if (f.type === 'signature' || f.type === 'initials') {
@@ -417,18 +421,34 @@ export default function OnboardingFillablePdf({
                     // audit caption. The full record also lives on the appended
                     // Certificate of Completion page.
                     if (f.type === 'signature') {
-                        const sz = 5.2;
                         const blue = rgb(0.13, 0.32, 0.55);
                         const grey = rgb(0.42, 0.45, 0.5);
                         const line1 = winAnsiSafe(helvBold, `Electronically signed by ${signerName}`);
                         const line2 = winAnsiSafe(helvetica, `${stampWhen}  -  ID ${signId}`);
-                        // Default just below the signature box; if it's too close to
-                        // the page bottom, stack it just above the box so it can never
-                        // fall off-page.
-                        let y1 = yPdf - 1.5 - sz;
-                        if (y1 - sz - 1 < 4) y1 = yPdf + h + 1.5 + 2 * sz + 1;
-                        page.drawText(line1, { x, y: y1, size: sz, font: helvBold, color: blue });
-                        page.drawText(line2, { x, y: y1 - sz - 1, size: sz, font: helvetica, color: grey });
+                        // If the admin placed a 🕒 Sig stamp box on the
+                        // template, the caption prints exactly there —
+                        // sized to the box, so a taller box = bigger text.
+                        // Otherwise fall back to the legacy auto position
+                        // (just below the signature, or above it near the
+                        // page bottom) which lands imperfectly on dense
+                        // forms — that's what the placeable box fixes.
+                        const stampBox = pickSigStampBox(template.fields, f);
+                        const sp = stampBox ? pages[stampBox.page] : null;
+                        if (stampBox && sp) {
+                            const { width: spw, height: sph } = sp.getSize();
+                            const sx = stampBox.x * spw + 1;
+                            const sh = stampBox.h * sph;
+                            const syPdf = sph - stampBox.y * sph - sh;
+                            const sz = Math.max(4, Math.min(9, (sh - 2) / 2.4));
+                            sp.drawText(line1, { x: sx, y: syPdf + sh - sz - 0.5, size: sz, font: helvBold, color: blue });
+                            sp.drawText(line2, { x: sx, y: syPdf + sh - 2 * sz - 1.5, size: sz, font: helvetica, color: grey });
+                        } else {
+                            const sz = 5.2;
+                            let y1 = yPdf - 1.5 - sz;
+                            if (y1 - sz - 1 < 4) y1 = yPdf + h + 1.5 + 2 * sz + 1;
+                            page.drawText(line1, { x, y: y1, size: sz, font: helvBold, color: blue });
+                            page.drawText(line2, { x, y: y1 - sz - 1, size: sz, font: helvetica, color: grey });
+                        }
                     }
                 } else if (f.type === 'checkbox') {
                     if (val) {
@@ -713,7 +733,8 @@ export default function OnboardingFillablePdf({
                             // Employer fields are hidden from the hire entirely —
                             // they don't even see the empty box. Admin completes
                             // them after the hire submits, in a separate flow.
-                            f.filledBy === 'employer' ? null
+                            // Sig-stamp boxes are print positions, never inputs.
+                            f.filledBy === 'employer' || f.type === 'sig_stamp' ? null
                             : f.filledBy === 'static' ? (
                                 <StaticOverlay key={f.id} field={f} isEs={isEs} />
                             ) : (

@@ -29,7 +29,7 @@ import { useEffect, useState } from 'react';
 import { db, storage } from '../firebase';
 import { collection, query, where, getDocs, updateDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getBytes, listAll, getMetadata } from 'firebase/storage';
-import { DOC_STATUS } from '../data/onboarding';
+import { DOC_STATUS, pickSigStampBox } from '../data/onboarding';
 import ModalPortal from './ModalPortal';
 import { SignatureModal } from './OnboardingFillablePdf';
 
@@ -162,8 +162,11 @@ export default function OnboardingEmployerFill({
         return () => { alive = false; };
     }, [docDef.id, hireId]);
 
-    // Restrict to fields actually marked employer-fill.
-    const employerFields = (template?.fields || []).filter(f => f.filledBy === 'employer');
+    // Restrict to fields actually marked employer-fill. Sig-stamp boxes
+    // are print positions (drawn via their paired signature at finalize),
+    // never inputs — exclude them from the form/validation entirely.
+    const employerFields = (template?.fields || [])
+        .filter(f => f.filledBy === 'employer' && f.type !== 'sig_stamp');
 
     const setValue = (fieldId, v) => setValues(prev => ({ ...prev, [fieldId]: v }));
 
@@ -242,17 +245,30 @@ export default function OnboardingEmployerFill({
                     // gets, so the employer signature line carries its own
                     // audit caption too — signer is the ADMIN's staff name.
                     if (f.type === 'signature') {
-                        const sz = 5.2;
                         const blue = rgb(0.13, 0.32, 0.55);
                         const grey = rgb(0.42, 0.45, 0.5);
                         const line1 = winAnsiSafe(helvBold, `Electronically signed by ${staffName}`);
                         const line2 = winAnsiSafe(helvetica, `${stampWhen}  -  ID ${signId}`);
-                        // Just below the box; if too close to the page bottom,
-                        // stack it just above so it can never fall off-page.
-                        let y1 = yPdf - 1.5 - sz;
-                        if (y1 - sz - 1 < 4) y1 = yPdf + h + 1.5 + 2 * sz + 1;
-                        page.drawText(line1, { x, y: y1, size: sz, font: helvBold, color: blue });
-                        page.drawText(line2, { x, y: y1 - sz - 1, size: sz, font: helvetica, color: grey });
+                        // Admin-placed 🕒 Sig stamp box (employer-side) wins;
+                        // legacy auto position below/above the box otherwise —
+                        // same behavior as the hire flatten.
+                        const stampBox = pickSigStampBox(template?.fields, f);
+                        const sp = stampBox ? pages[stampBox.page] : null;
+                        if (stampBox && sp) {
+                            const { width: spw, height: sph } = sp.getSize();
+                            const sx = stampBox.x * spw + 1;
+                            const sh = stampBox.h * sph;
+                            const syPdf = sph - stampBox.y * sph - sh;
+                            const sz = Math.max(4, Math.min(9, (sh - 2) / 2.4));
+                            sp.drawText(line1, { x: sx, y: syPdf + sh - sz - 0.5, size: sz, font: helvBold, color: blue });
+                            sp.drawText(line2, { x: sx, y: syPdf + sh - 2 * sz - 1.5, size: sz, font: helvetica, color: grey });
+                        } else {
+                            const sz = 5.2;
+                            let y1 = yPdf - 1.5 - sz;
+                            if (y1 - sz - 1 < 4) y1 = yPdf + h + 1.5 + 2 * sz + 1;
+                            page.drawText(line1, { x, y: y1, size: sz, font: helvBold, color: blue });
+                            page.drawText(line2, { x, y: y1 - sz - 1, size: sz, font: helvetica, color: grey });
+                        }
                     }
                 } else if (f.type === 'checkbox') {
                     if (val) {

@@ -277,7 +277,32 @@ export const TEMPLATE_FIELD_TYPES = [
     { id: 'checkbox',   en: 'Checkbox',   es: 'Casilla',     defaultW: 0.020, defaultH: 0.020 },
     { id: 'signature',  en: 'Signature',  es: 'Firma',       defaultW: 0.25, defaultH: 0.045 },
     { id: 'initials',   en: 'Initials',   es: 'Iniciales',   defaultW: 0.08, defaultH: 0.030 },
+    // Where the "Electronically signed by … + date/time + ID" caption
+    // prints. Without one placed, the caption auto-lands just below the
+    // signature box, which on dense forms (I-9) overlapped other content
+    // (Andrew 2026-07-10: "the signature time stamp is off again — make
+    // it a template edit so we have it in a perfect position"). Not an
+    // input — the hire never sees it; it's purely a print position.
+    { id: 'sig_stamp',  en: '🕒 Sig stamp', es: '🕒 Sello firma', defaultW: 0.30, defaultH: 0.022 },
 ];
+
+// Find the admin-placed sig_stamp box for a signature field, or null
+// (caller falls back to the legacy auto-position under the signature).
+// Pairing rules, in priority order:
+//   1. a stamp whose `stampFor` names this signature field's id
+//   2. an unpaired stamp on the same page (covers the common
+//      one-signature-per-template case with zero configuration)
+// Stamps are side-scoped: employer-filled stamps only pair with
+// employer signatures, everything else pairs with hire signatures.
+export function pickSigStampBox(fields, sigField) {
+    if (!sigField) return null;
+    const side = (f) => (f.filledBy === 'employer' ? 'employer' : 'hire');
+    const stamps = (fields || []).filter(f => f.type === 'sig_stamp' && side(f) === side(sigField));
+    if (!stamps.length) return null;
+    return stamps.find(s => s.stampFor === sigField.id)
+        || stamps.find(s => !s.stampFor && s.page === sigField.page)
+        || null;
+}
 
 // Auto-fill bindings — values that can pre-populate text fields on any
 // fillable template. Admin picks a binding when placing the field; fields
