@@ -27,6 +27,10 @@
 // next app open. No more "did you uninstall and reinstall?" support.
 async function selfHealIfStale() {
     try {
+        // Dev server: public/version.json is a stale placeholder (the real
+        // one is stamped into dist/ at deploy), so the version compare
+        // always mismatches and reloads the page every 30s. Skip entirely.
+        if (import.meta.env.DEV) return;
         // Loop-breaker: never run more than once per 30s.
         const last = Number(localStorage.getItem('ddmau:lastSelfHealAt') || 0);
         if (last && Date.now() - last < 30_000) return;

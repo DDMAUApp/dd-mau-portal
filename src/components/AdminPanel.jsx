@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { db } from '../firebase';
-import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
+import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES, canCountMoney, canViewClockedIn } from '../data/staff';
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
@@ -2091,15 +2091,35 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // runRosterMutation already toasted on bad PIN / duplicate
                 // name / write error. Bail before fanning out a rename.
                 if (!res.ok) return;
+                // A "successful" no-op where the person isn't on the server
+                // list means another admin deleted them while this form was
+                // open — say so instead of a phantom "Saved ✓" (and never
+                // fan a rename out for a record that no longer exists).
+                if (!res.list.some(s => s && s.id === id)) {
+                    toast(language === 'es'
+                        ? 'Esa persona ya no está en la lista (otro admin la eliminó).'
+                        : 'That person is no longer on the roster (another admin removed them).',
+                        { kind: 'error' });
+                    resetEditForm();
+                    return;
+                }
 
                 resetEditForm();
                 showSaved();
 
-                if (rename && rename.oldName && rename.oldName !== finalName) {
+                // Fan the rename out from the SERVER's before-name (the
+                // transaction's own diff), not the modal's client copy — if
+                // another admin renamed the same person while the confirm
+                // modal was open, the client oldName is stale and the
+                // fan-out would rewrite the wrong string. A noop write
+                // (changed empty) means the server already had finalName,
+                // so there is nothing to fan out.
+                const serverOldName = res.changed.find(c => c.after && c.after.id === id)?.before?.name;
+                if (rename && serverOldName && serverOldName !== finalName) {
                     setRenameBusy(true);
                     try {
                         const report = await renameStaffEverywhere({
-                            oldName: rename.oldName,
+                            oldName: serverOldName,
                             newName: finalName,
                             staffId: id,
                             by: staffName,
@@ -2107,7 +2127,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         // If the signed-in admin renamed THEMSELVES, push the
                         // new name up so App's session validation doesn't kick
                         // them to the lock screen on the next render.
-                        if (rename.oldName === staffName && typeof onSelfRenamed === 'function') {
+                        if (serverOldName === staffName && typeof onSelfRenamed === 'function') {
                             onSelfRenamed(finalName);
                         }
                         if (report.ok) {

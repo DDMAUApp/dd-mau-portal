@@ -441,14 +441,13 @@ export async function sendSetupReminderSms(staff, manager, opts = {}) {
         // edits of the staff doc — both writes had stale `list` data
         // and one silently won. Wrap in a transaction so the inner
         // read re-runs on conflict.
-        try {
-            // patchStaffRecordByName bumps `rev` — the old tx.set({list})
-            // here silently deleted the rev field on every stamp.
-            const { patchStaffRecordByName } = await import('./staffDoc');
-            await patchStaffRecordByName(staff.name, { setupReminderSentAt: Date.now() });
-        } catch (e) {
-            console.warn('setupReminderSentAt stamp failed (non-fatal):', e);
-        }
+        // patchStaffRecordByName bumps `rev` — the old tx.set({list})
+        // here silently deleted the rev field on every stamp. It reports
+        // failure via {ok:false} rather than throwing, so check it —
+        // a silent stamp failure means a possible duplicate reminder.
+        const { patchStaffRecordByName } = await import('./staffDoc');
+        const stampRes = await patchStaffRecordByName(staff.name, { setupReminderSentAt: Date.now() });
+        if (!stampRes.ok) console.warn('setupReminderSentAt stamp failed (non-fatal):', stampRes.error);
         return { ok: true, notificationId: ref.id };
     } catch (e) {
         console.warn(`sendSetupReminderSms write failed for ${staff.name}:`, e);
