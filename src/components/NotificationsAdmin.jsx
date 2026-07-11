@@ -23,8 +23,7 @@
 // data/notificationTypes.js.
 
 import { useState, useMemo } from 'react';
-import { db } from '../firebase';
-import { doc, runTransaction } from 'firebase/firestore';
+import { mutateStaffList } from '../data/staffDoc';
 import { toast } from '../toast';
 import { isAdminId } from '../data/staff';
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.
@@ -241,14 +240,11 @@ function ExpandedRecipientPicker({ type, activeStaff, committedReceivers, setSta
         if (saving || !dirty) return;
         setSaving(true);
         try {
-            await runTransaction(db, async (txn) => {
-                const ref = doc(db, 'config', 'staff');
-                const snap = await txn.get(ref);
-                if (!snap.exists()) throw new Error('staff doc missing');
-                const liveList = (snap.data() || {}).list || [];
-                const nextList = applyOptOutBulk(liveList, type.id, Array.from(receivers));
-                txn.set(ref, { list: nextList });
-            });
+            // Server-anchored roster mutation — bumps `rev` and runs the
+            // central invariants (the old txn.set({list}) here silently
+            // DELETED the rev field, disarming the concurrent-edit guard).
+            const res = await mutateStaffList(list => applyOptOutBulk(list, type.id, Array.from(receivers)));
+            if (!res.ok) throw new Error(res.error);
             // Mirror locally so the "X of N" badge updates without
             // waiting for the snapshot listener to catch up.
             if (setStaffList) {

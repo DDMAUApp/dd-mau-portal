@@ -807,7 +807,11 @@ exports.dispatchNotification = onDocumentCreated(
                     const nextList = liveList.map((s, i) =>
                         i === meIdx ? { ...s, fcmTokens: pruned } : s
                     );
-                    txn.update(liveSnap.ref, { list: nextList });
+                    // Bump `rev` — every roster writer must, or client
+                    // saves can silently resurrect the pruned tokens
+                    // (2026-07-11 roster-write protocol).
+                    const liveRev = Number((liveSnap.data() || {}).rev) || 0;
+                    txn.update(liveSnap.ref, { list: nextList, rev: liveRev + 1 });
                 });
             } catch (e) {
                 logger.warn(`dispatchNotification: token-prune txn failed for ${forStaff}:`, e?.message);

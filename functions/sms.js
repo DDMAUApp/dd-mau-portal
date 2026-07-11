@@ -268,7 +268,11 @@ async function updateStaffSmsState(db, staffName, updates) {
             return merged;
         });
         if (!didMatch) return;       // no matching staff — skip write
-        tx.set(ref, { list: newList });
+        // Bump `rev` — the old tx.set({list}) also DELETED the rev field,
+        // disarming the client concurrent-edit guard (2026-07-11 roster-
+        // write protocol: every writer bumps rev).
+        const rev = Number((snap.exists ? snap.data() : {}).rev) || 0;
+        tx.set(ref, { list: newList, rev: rev + 1 });
     });
     return found;
 }

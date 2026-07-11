@@ -18,7 +18,7 @@
 // underlying action (creating a hire, submitting a doc, etc.).
 
 import { db } from '../firebase';
-import { collection, addDoc, doc, getDoc, setDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { isAdminId } from './staff';
 
 // HF-6, 2026-05-30: stable fallback tag bucket. The fallback path for
@@ -442,16 +442,10 @@ export async function sendSetupReminderSms(staff, manager, opts = {}) {
         // and one silently won. Wrap in a transaction so the inner
         // read re-runs on conflict.
         try {
-            const stRef = doc(db, 'config', 'staff');
-            await runTransaction(db, async (tx) => {
-                const snap = await tx.get(stRef);
-                const list = (snap.exists() ? snap.data().list : []) || [];
-                const next = list.map((s) => s && s.name === staff.name
-                    ? { ...s, setupReminderSentAt: Date.now() }
-                    : s
-                );
-                tx.set(stRef, { list: next });
-            });
+            // patchStaffRecordByName bumps `rev` — the old tx.set({list})
+            // here silently deleted the rev field on every stamp.
+            const { patchStaffRecordByName } = await import('./staffDoc');
+            await patchStaffRecordByName(staff.name, { setupReminderSentAt: Date.now() });
         } catch (e) {
             console.warn('setupReminderSentAt stamp failed (non-fatal):', e);
         }
@@ -543,16 +537,11 @@ export async function stampSetupReminderSent(staffName) {
         // HF-1, 2026-05-30: transaction-wrapped to avoid silent clobber
         // when an admin is editing staff at the same time the manual SMS
         // send completes.
-        const stRef = doc(db, 'config', 'staff');
-        await runTransaction(db, async (tx) => {
-            const snap = await tx.get(stRef);
-            const list = (snap.exists() ? snap.data().list : []) || [];
-            const next = list.map((s) => s && s.name === staffName
-                ? { ...s, setupReminderSentAt: Date.now() }
-                : s
-            );
-            tx.set(stRef, { list: next });
-        });
+        // patchStaffRecordByName bumps `rev` — the old tx.set({list})
+        // here silently deleted the rev field on every stamp.
+        const { patchStaffRecordByName } = await import('./staffDoc');
+        const res = await patchStaffRecordByName(staffName, { setupReminderSentAt: Date.now() });
+        if (!res.ok) throw new Error(res.error);
         return { ok: true };
     } catch (e) {
         console.warn('stampSetupReminderSent failed:', e);

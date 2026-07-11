@@ -41,7 +41,7 @@
 
 import { db } from '../firebase';
 import {
-    collection, query, where, getDocs, writeBatch,
+    collection, query, where, getDocs, writeBatch, addDoc, serverTimestamp,
 } from 'firebase/firestore';
 
 // Replace oldName with newName everywhere it appears in a string array.
@@ -206,7 +206,10 @@ export async function removeStaffFromChats(name) {
 // Returns { ok, total, byCollection: {name: count}, errors: [{collection, message}] }.
 // `ok` is true only if every collection succeeded. A thrown collection is
 // recorded and skipped — the others still run.
-export async function renameStaffEverywhere({ oldName, newName, staffId } = {}) {
+//
+// `by` (optional) — the admin performing the rename, recorded in the
+// /staff_rename_log audit row written after the fan-out.
+export async function renameStaffEverywhere({ oldName, newName, staffId, by } = {}) {
     const o = String(oldName || '').trim();
     const n = String(newName || '').trim();
     if (!o || !n || o === n) {
@@ -247,5 +250,28 @@ export async function renameStaffEverywhere({ oldName, newName, staffId } = {}) 
     }
 
     const total = Object.values(byCollection).reduce((a, b) => a + b, 0);
-    return { ok: errors.length === 0, total, byCollection, errors };
+    const report = { ok: errors.length === 0, total, byCollection, errors };
+
+    // Audit row — /staff_rename_log, one per fan-out. Best-effort (a
+    // logging failure never fails the rename). The 2026-07-11 revert
+    // repair had to RECONSTRUCT the rename mapping by fuzzy-matching
+    // shift history because this trail didn't exist — and the fuzzy
+    // match misfired on Emma Castro. Never again: who/old/new/when +
+    // per-collection counts, permanently.
+    try {
+        await addDoc(collection(db, 'staff_rename_log'), {
+            oldName: o,
+            newName: n,
+            staffId: staffId ?? null,
+            by: by || null,
+            at: serverTimestamp(),
+            total,
+            byCollection,
+            ok: report.ok,
+            errors: errors.map(e => `${e.collection}: ${e.message}`),
+        });
+    } catch (e) {
+        console.warn('staff_rename_log write failed (rename itself succeeded):', e);
+    }
+    return report;
 }

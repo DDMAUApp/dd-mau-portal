@@ -31,8 +31,7 @@
 // the task on the next interceptor pass).
 
 import { useEffect, useState } from 'react';
-import { db } from '../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { patchStaffRecordByName } from '../data/staffDoc';
 import { toast } from '../toast';
 
 // Detect environment once per render. Cheap.
@@ -85,14 +84,15 @@ export default function RequiredTaskInstallPwa({
         if (confirming) return;
         setConfirming(true);
         try {
-            const ref = doc(db, 'config', 'staff');
-            const snap = await getDoc(ref);
-            const list = (snap.exists() ? snap.data().list : []) || [];
+            // Transactional single-record patch (staffDoc.js) — the old
+            // plain getDoc → setDoc of the whole list here was the exact
+            // read-modify-write race that reverted admin renames on
+            // 2026-07-11.
             const nowIso = new Date().toISOString();
-            const next = list.map(s => s.name === staffName
-                ? { ...s, pwaInstalled: true, pwaInstalledAt: nowIso, pwaInstalledMethod: method }
-                : s);
-            await setDoc(ref, { list: next });
+            const res = await patchStaffRecordByName(staffName, {
+                pwaInstalled: true, pwaInstalledAt: nowIso, pwaInstalledMethod: method,
+            });
+            if (!res.ok) throw new Error(res.error);
             await onComplete({
                 method,
                 userAgent: env.ua,

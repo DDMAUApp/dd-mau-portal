@@ -65,16 +65,36 @@ service cloud.firestore {
     // Firestore security rules do NOT support array iteration (no .where(),
     // no for-loops, no .map). We can't validate the structure of every
     // staff record server-side. Per-record validation lives in the CLIENT
-    // (saveStaffToFirestore in AdminPanel.jsx — the PIN integrity gate).
-    // Server-side defense here is bounded to size-shrink protection.
+    // (mutateStaffList in src/data/staffDoc.js — the central roster
+    // invariants). Server-side defense here: size-shrink protection +
+    // the `rev` monotonic-counter protocol.
 
     // Staff document — the high-value target.
+    //
+    // ⚠️ This doc is EXCLUDED from the {document=**} catch-all at the
+    // bottom of this file — overlapping matches are OR'd in Firestore
+    // rules, so without that carve-out everything below is decorative.
+    //
+    // `rev` protocol (2026-07-11, rename-revert + Emma Castro
+    // incidents): every legitimate writer runs a transaction that
+    // bumps the integer `rev`. Requiring rev to strictly INCREASE
+    // rejects, at the database:
+    //   • old app bundles doing plain getDoc→setDoc (no rev field) —
+    //     the write that resurrected a deleted staffer,
+    //   • writers that would wipe or replay a stale rev,
+    //   • any future code path that forgets the protocol (it fails
+    //     loudly in testing instead of corrupting silently).
+    // Cloud Functions and admin scripts bypass rules; they follow the
+    // same protocol voluntarily.
     match /config/staff {
       allow read: if true; // staff list is read by every signed-in device
-      allow create: if request.resource.data.list is list;
+      allow create: if request.resource.data.list is list
+                    && request.resource.data.rev is int;
       allow update: if
         request.resource.data.list is list &&
         request.resource.data.list.size() > 0 &&
+        request.resource.data.rev is int &&
+        request.resource.data.rev > resource.data.get('rev', 0) &&
         // Don't shrink the list by more than 5 in a single write.
         // Bulk-removing more than that should be a deliberate admin script,
         // not a runtime UI write.
@@ -84,6 +104,16 @@ service cloud.firestore {
         );
       // No deletes — the staff doc should never be deleted from a client.
       allow delete: if false;
+    }
+
+    // Rename audit trail — one row per renameStaffEverywhere fan-out
+    // (who/old/new/when + per-collection counts). Append-only from
+    // clients; the 2026-07-11 repair had to RECONSTRUCT the rename
+    // mapping by fuzzy-matching shift history because this didn't
+    // exist — and fuzzy-matching misfired on Emma Castro.
+    match /staff_rename_log/{logId} {
+      allow read, create: if true;
+      allow update, delete: if false;
     }
 
     // forceRefresh broadcast — admins write a timestamp to trigger reload
@@ -1133,10 +1163,16 @@ service cloud.firestore {
     // a payload-shape check would silently break all of them
     // (request.resource is null on delete, so `request.resource.data
     // is map` evaluates to false).
+    // config/staff is carved out of this catch-all entirely — Firestore
+    // ORs overlapping matches, so without the exclusion the catch-all
+    // would override every restriction in the /config/staff block above
+    // (including the rev protocol and delete:false). Its own match
+    // block is then the ONLY gate for the roster doc.
     match /{document=**} {
       allow read: if true;
-      allow create, update: if request.resource.data is map;
-      allow delete: if true;
+      allow create, update: if request.resource.data is map
+          && request.path != /databases/$(database)/documents/config/staff;
+      allow delete: if request.path != /databases/$(database)/documents/config/staff;
     }
   }
 }

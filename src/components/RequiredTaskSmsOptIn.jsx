@@ -12,8 +12,7 @@
 // see it again on next login.
 
 import { useState } from 'react';
-import { db } from '../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { patchStaffRecordByName } from '../data/staffDoc';
 import {
     normalizeToE164, isValidPhone, formatE164ForDisplay,
     writeClientOptInEvent, CONSENT_TEXT,
@@ -51,33 +50,23 @@ export default function RequiredTaskSmsOptIn({
         }
         setSubmitting(true);
         try {
-            // Update the staff record. We do a get+merge instead of
-            // touching parent state because RequiredTaskFlow doesn't
-            // own the staff list — App.jsx does. We write directly to
-            // Firestore + let the existing onSnapshot listener in
-            // App.jsx pick the update back up.
-            const ref = doc(db, 'config', 'staff');
-            const snap = await getDoc(ref);
-            const list = (snap.exists() ? snap.data().list : []) || [];
+            // Update the staff record via the transactional single-record
+            // patch (staffDoc.js) — this component's old plain getDoc →
+            // setDoc of the whole list was the exact read-modify-write
+            // race that reverted admin renames on 2026-07-11. App.jsx's
+            // onSnapshot picks the update back up.
             const nowIso = new Date().toISOString();
-            const nextList = list.map(s => {
-                if (s.name !== staffName) return s;
-                if (wantsOptIn) {
-                    return {
-                        ...s,
-                        phoneE164: normalized,
-                        smsOptIn: true,
-                        smsOptInAt: nowIso,
-                        smsOptInBy: staffName,
-                        smsOptInSource: 'self_app',
-                    };
-                }
-                return {
+            const res = await patchStaffRecordByName(staffName, s => wantsOptIn
+                ? {
                     ...s,
-                    smsOptIn: false,
-                };
-            });
-            await setDoc(ref, { list: nextList });
+                    phoneE164: normalized,
+                    smsOptIn: true,
+                    smsOptInAt: nowIso,
+                    smsOptInBy: staffName,
+                    smsOptInSource: 'self_app',
+                }
+                : { ...s, smsOptIn: false });
+            if (!res.ok) throw new Error(res.error);
 
             // Audit event — the legal evidence trail.
             await writeClientOptInEvent({

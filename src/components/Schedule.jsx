@@ -33,6 +33,7 @@ import {
     orderBy, limit, getDocs, deleteField,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
+import { patchStaffRecordByName } from '../data/staffDoc';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { auditAvailabilityChange, auditPtoChange, auditShiftChange, auditScheduleConfig } from '../data/audit';
@@ -4509,31 +4510,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             return;
         }
         // Optimistic local update.
-        const updatedLocal = staffList.map(s => s.name === staffName ? { ...s, birthday: clean } : s);
-        setStaffList(updatedLocal);
-        try {
-            // Audit 2026-05-22 fix: txn re-reads /config/staff so a
-            // concurrent admin edit (role change, etc.) isn't lost
-            // when we write back. PIN-integrity gate runs on the
-            // live list, not our stale local copy.
-            await runTransaction(db, async (tx) => {
-                const ref = doc(db, 'config', 'staff');
-                const snap = await tx.get(ref);
-                const liveList = (snap.exists() && Array.isArray(snap.data().list)) ? snap.data().list : updatedLocal;
-                const next = liveList.map(s => s.name === staffName ? { ...s, birthday: clean } : s);
-                const bad = next.find(s => {
-                    const p = String(s.pin ?? '').trim();
-                    return !p || !/^\d{4}$/.test(p);
-                });
-                if (bad) {
-                    throw new Error(`PIN integrity check failed on ${bad.name}`);
-                }
-                tx.set(ref, { list: next });
-            });
+        setStaffList(staffList.map(s => s.name === staffName ? { ...s, birthday: clean } : s));
+        // Server-anchored single-record patch — bumps `rev` and runs the
+        // central roster invariants (staffDoc.js), which subsume the old
+        // inline PIN-integrity gate.
+        const res = await patchStaffRecordByName(staffName, s => ({ ...s, birthday: clean }));
+        if (res.ok) {
             toast(tx('🎂 Birthday saved', '🎂 Cumpleaños guardado'), { kind: 'success', duration: 2500 });
-        } catch (e) {
-            console.error('Save birthday failed:', e);
-            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message, { kind: 'error' });
+        } else {
+            console.error('Save birthday failed:', res.error);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + res.error, { kind: 'error' });
         }
     };
 
@@ -4546,32 +4532,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // Optimistic local update for snappy UI.
         const updatedLocal = staffList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
         setStaffList(updatedLocal);
-        try {
-            // Audit 2026-05-22 fix: was a read-modify-write of
-            // /config/staff.list from local state. If an admin edited
-            // a different staffer's role in AdminPanel mid-save, the
-            // admin's edit got clobbered (last-writer-wins on the
-            // whole list). Transaction re-reads the live list, applies
-            // ONLY this staffer's availability change, writes back.
-            await runTransaction(db, async (tx) => {
-                const ref = doc(db, 'config', 'staff');
-                const snap = await tx.get(ref);
-                const liveList = (snap.exists() && Array.isArray(snap.data().list)) ? snap.data().list : updatedLocal;
-                const next = liveList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
-                // PIN integrity gate — same defense as before. Refuse
-                // the save if ANY row has a missing/invalid PIN. This
-                // catches the 2026-05-09 wipe pattern: stale React
-                // state writing empty PINs back. Run on the txn-read
-                // result so we check live data, not stale local.
-                const bad = next.find(s => {
-                    const p = String(s.pin ?? '').trim();
-                    return !p || !/^\d{4}$/.test(p);
-                });
-                if (bad) {
-                    throw new Error(`PIN integrity check failed on ${bad.name}`);
-                }
-                tx.set(ref, { list: next });
-            });
+        // Server-anchored single-record patch — applies ONLY this
+        // staffer's availability to the live list, bumps `rev`, and runs
+        // the central roster invariants (staffDoc.js), which subsume the
+        // old inline PIN-integrity gate.
+        const res = await patchStaffRecordByName(staffName, s => ({ ...s, availability: newAvailability }));
+        if (res.ok) {
             // Audit 2026-06-24: log every availability change (who / old /
             // new / where / how) for the Debug/QA change-history. Best-effort.
             auditAvailabilityChange({
@@ -4579,11 +4545,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 before: beforeAvail, after: newAvailability,
                 surface: 'self-serve',
             });
-        } catch (e) {
-            console.error('Save availability failed:', e);
-            toast(tx('Could not save availability: ', 'No se pudo guardar: ') + e.message,
+        } else {
+            console.error('Save availability failed:', res.error);
+            toast(tx('Could not save availability: ', 'No se pudo guardar: ') + res.error,
                   { kind: 'error', duration: 8000 });
-            // Roll back the optimistic local update — caller will see the snapshot fix it.
+            // The live snapshot corrects the optimistic local update.
         }
     };
 

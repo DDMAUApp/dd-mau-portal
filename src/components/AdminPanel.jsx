@@ -10,8 +10,7 @@ import { getPositionTemplate, hasPositionTemplate } from '../data/positionTempla
 // separate chunk that failed to load on a stale-cached PWA — the rename then
 // silently no-op'd while the staff record had already saved (orphaned data).
 import { renameStaffEverywhere, removeStaffFromChats } from '../data/renameStaff';
-import { archiveRemovedStaff, markArchiveRestored } from '../data/staffArchive';
-import { STAFF_DOC, nextStaffRev } from '../data/staffDoc';
+import { mutateStaffList, removeStaffRecord, appendStaffRecord } from '../data/staffDoc';
 import DeletedStaffSection from './DeletedStaffSection';
 import { auditAvailabilityChange } from '../data/audit';
 import {
@@ -1440,21 +1439,14 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // (whole-list setDoc) instead of N separate ones, so 60+ staff
             // get tagged in a fraction of a second.
             const autoTagUntagged = async () => {
-                let touched = 0;
-                let latest = null;
-                setStaffList(prev => {
-                    const next = prev.map(s => {
-                        if (s.scheduleSide === "foh" || s.scheduleSide === "boh") return s;
-                        touched += 1;
-                        return { ...s, scheduleSide: inferSide(s.role) };
-                    });
-                    latest = next;
-                    return next;
-                });
-                if (touched > 0 && latest) {
-                    await saveStaffToFirestore(latest);
-                    showSaved();
-                }
+                const res = await runRosterMutation(list => list.map(s =>
+                    (s.scheduleSide === "foh" || s.scheduleSide === "boh")
+                        ? s
+                        : { ...s, scheduleSide: inferSide(s.role) }
+                ));
+                if (!res.ok) return;
+                const touched = res.changed.length;
+                if (touched > 0) showSaved();
                 toast(language === "es"
                     ? `✓ Etiquetados automáticamente: ${touched}.`
                     : `✓ Auto-tagged ${touched} staff from role.`);
@@ -1470,21 +1462,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 if (!confirm(language === "es"
                     ? "¿Dar acceso a Recetas a TODO el personal? (Puedes quitárselo a alguien después.)"
                     : "Grant Recipes access to ALL staff? (You can revoke individuals later.)")) return;
-                let touched = 0;
-                let latest = null;
-                setStaffList(prev => {
-                    const next = prev.map(s => {
-                        if (s.recipesAccess === true) return s;
-                        touched += 1;
-                        return { ...s, recipesAccess: true };
-                    });
-                    latest = next;
-                    return next;
-                });
-                if (touched > 0 && latest) {
-                    await saveStaffToFirestore(latest);
-                    showSaved();
-                }
+                const res = await runRosterMutation(list => list.map(s =>
+                    s.recipesAccess === true ? s : { ...s, recipesAccess: true }
+                ));
+                if (!res.ok) return;
+                const touched = res.changed.length;
+                if (touched > 0) showSaved();
                 toast(language === "es"
                     ? `✓ Acceso a Recetas otorgado: ${touched}.`
                     : `✓ Recipes access granted to ${touched} staff.`);
@@ -1539,12 +1522,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const setSmsOptInForStaff = async (staff, value) => {
                 if (!staff || !staff.name) return false;
                 if (staff.smsOptIn === value) return false;
-                let latest = null;
-                setStaffList(prev => {
-                    latest = applyOptInToList(prev, staff.name, value);
-                    return latest;
+                const res = await runRosterMutation(list => {
+                    const next = applyOptInToList(list, staff.name, value);
+                    return next.some((s, i) => s !== list[i]) ? next : null;
                 });
-                if (latest) await saveStaffToFirestore(latest);
+                if (!res.ok || res.noop) return false;
                 // Log the consent change. The byName is the current admin
                 // — staffName is hoisted from the AdminPanelInner props.
                 await writeClientOptInEvent({
@@ -1567,23 +1549,20 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const bulkSmsOptIn = async (ids, value) => {
                 if (!ids || ids.length === 0) return;
                 const idSet = new Set(ids);
-                // Snapshot the targets BEFORE the state update so we can
-                // write per-staff audit rows after persistence.
-                const targets = staffList.filter(s => idSet.has(s.id) && s.smsOptIn !== value);
-                if (targets.length === 0) return;
-                let latest = null;
-                setStaffList(prev => {
-                    let next = prev;
-                    for (const t of targets) {
-                        next = applyOptInToList(next, t.name, value);
+                const res = await runRosterMutation(list => {
+                    let next = list;
+                    for (const s of list) {
+                        if (idSet.has(s.id) && s.smsOptIn !== value) {
+                            next = applyOptInToList(next, s.name, value);
+                        }
                     }
-                    latest = next;
-                    return next;
+                    return next === list ? null : next;
                 });
-                if (latest) await saveStaffToFirestore(latest);
-                // Write one audit row per staff. Done in parallel —
-                // writeClientOptInEvent is best-effort + handles its
-                // own error logging.
+                if (!res.ok || res.noop) return;
+                // One consent-audit row per staff whose flag actually
+                // flipped (per the transaction's own diff). Best-effort —
+                // writeClientOptInEvent handles its own error logging.
+                const targets = res.changed.filter(c => c.before && c.after).map(c => c.after);
                 await Promise.all(targets.map(s => writeClientOptInEvent({
                     staffId: s.id ?? null,
                     staffName: s.name,
@@ -1614,14 +1593,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     return null;
                 }
                 if (staff.phoneE164 === normalized) return normalized;
-                let latest = null;
-                setStaffList(prev => {
-                    latest = prev.map(s => s.name === staff.name
+                const res = await runRosterMutation(list => list.map(s =>
+                    s.name === staff.name && s.phoneE164 !== (normalized || null)
                         ? { ...s, phoneE164: normalized || null }
-                        : s);
-                    return latest;
-                });
-                if (latest) await saveStaffToFirestore(latest);
+                        : s));
+                if (!res.ok) return null;
                 // Number-change audit. We log this as a 'phone_change'
                 // event with the same shape as opt-in events — it's
                 // information the compliance reviewer needs in case the
@@ -1730,21 +1706,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const bulkSetField = async (ids, field, value) => {
                 if (!ids || ids.length === 0) return;
                 const idSet = new Set(ids);
-                let touched = 0;
-                let latest = null;
-                setStaffList(prev => {
-                    latest = prev.map(s => {
-                        if (!idSet.has(s.id)) return s;
-                        if (s[field] === value) return s; // skip no-ops
-                        touched += 1;
-                        return { ...s, [field]: value };
-                    });
-                    return latest;
-                });
-                if (touched > 0 && latest) {
-                    await saveStaffToFirestore(latest);
-                    showSaved();
-                }
+                const res = await runRosterMutation(list => list.map(s =>
+                    (idSet.has(s.id) && s[field] !== value) ? { ...s, [field]: value } : s
+                ));
+                if (res.ok && !res.noop) showSaved();
             };
 
             // Sweep a filtered subset to one side. Used by the "Tag all
@@ -1753,13 +1718,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const bulkSetSide = async (ids, side) => {
                 if (ids.length === 0) return;
                 const idSet = new Set(ids);
-                let latest = null;
-                setStaffList(prev => {
-                    latest = prev.map(s => idSet.has(s.id) ? { ...s, scheduleSide: side } : s);
-                    return latest;
-                });
-                if (latest) await saveStaffToFirestore(latest);
-                showSaved();
+                const res = await runRosterMutation(list => list.map(s =>
+                    (idSet.has(s.id) && s.scheduleSide !== side) ? { ...s, scheduleSide: side } : s
+                ));
+                if (res.ok) showSaved();
             };
             const [availabilityForId, setAvailabilityForId] = useState(null); // staff id whose availability we're editing
             const [showAdd, setShowAdd] = useState(false);
@@ -2007,130 +1969,71 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             //    that actually changed. Each entry: {id, name, oldPin, newPin,
             //    changedBy, changedAt}. So if a PIN ever changes again, we
             //    have a full forensic trail naming the actor.
-            const saveStaffToFirestore = async (updatedList) => {
-                // GATE: bail if any PIN is missing/blank/wrong-length.
-                const bad = updatedList.find(s => {
-                    const p = String(s.pin ?? '').trim();
-                    return !p || !/^\d{4}$/.test(p);
-                });
-                if (bad) {
-                    // Do NOT log bad.pin — even console.error breadcrumbs can
-                    // leak into Sentry / aiDebugReport exports. Name alone is
+            // The one admin write path (2026-07-11 rework, post rename-
+            // revert + Emma Castro incidents). Every handler describes its
+            // change as a pure list transform; mutateStaffList applies it
+            // to the SERVER list inside a transaction and bumps `rev` —
+            // client state is never written wholesale, so a stale screen
+            // can no longer clobber concurrent edits, stamps, or renames.
+            // Invariants (unique name/id/PIN, 4-digit PINs, non-empty
+            // names) are validated centrally in staffDoc.js on every write.
+            // Returns the mutateStaffList result; on success the local
+            // list is synced from the transaction's own output.
+            const runRosterMutation = async (mutate) => {
+                const res = await mutateStaffList(mutate);
+                if (!res.ok) {
+                    // Do NOT log PINs — even console.error breadcrumbs can
+                    // leak into Sentry / aiDebugReport exports. Names are
                     // enough to triage. Cap-readiness audit 2026-05-31.
-                    console.error('Refusing staff save — invalid PIN on:', bad.name);
-                    toast(language === 'es'
-                        ? `Guardado bloqueado: PIN inválido en ${bad.name}. No se hicieron cambios.`
-                        : `Save blocked: invalid PIN on ${bad.name}. No changes made.`,
+                    console.error('Staff save failed:', res.error);
+                    const msgs = {
+                        invalid_pin: language === 'es'
+                            ? `Guardado bloqueado: PIN inválido en ${res.detail || '?'}. No se hicieron cambios.`
+                            : `Save blocked: invalid PIN on ${res.detail || '?'}. No changes made.`,
+                        dup_pin: language === 'es'
+                            ? `Guardado bloqueado: PIN duplicado (${res.detail || '?'}). No se hicieron cambios.`
+                            : `Save blocked: duplicate PIN (${res.detail || '?'}). No changes made.`,
+                        name_exists: language === 'es'
+                            ? 'Ya existe un miembro con ese nombre.'
+                            : 'A staff member with that name already exists.',
+                        not_found: language === 'es'
+                            ? 'Esa persona ya no está en la lista (otro admin la cambió).'
+                            : 'That person is no longer on the roster (another admin changed it).',
+                    };
+                    toast(msgs[res.error] || (language === 'es' ? 'Error al guardar personal' : 'Staff save failed'),
                         { kind: 'error', duration: 8000 });
-                    return false;
+                    return res;
                 }
-                // AUDIT: read current Firestore + compute diff before write.
-                let oldByName = new Map();
-                let preReadSize = -1;
-                try {
-                    const cur = await getDoc(doc(db, 'config', 'staff'));
-                    if (cur.exists()) {
-                        const list = (cur.data() || {}).list || [];
-                        preReadSize = list.length;
-                        for (const s of list) oldByName.set(`${s.id}|${s.name}`, s.pin);
-                    }
-                } catch (e) {
-                    console.warn('audit: pre-read failed (proceeding anyway):', e);
-                }
-                // HF-7, 2026-05-30: concurrent-edit guard. Two admins
-                // editing the staff list at the same time used to silently
-                // clobber each other — last writer wins, the loser's
-                // changes vanish. Wrap the write in a transaction that
-                // re-reads inside the txn and aborts if the list SIZE
-                // changed since our pre-read (another admin added or
-                // removed a record). Doesn't catch same-size concurrent
-                // in-place edits, but catches the most common Andrew+Julie
-                // race. Anything tighter requires schema work (versioned
-                // staff doc).
-                try {
-                    const { runTransaction } = await import('firebase/firestore');
-                    await runTransaction(db, async (tx) => {
-                        const snap = await tx.get(doc(db, "config", "staff"));
-                        if (snap.exists() && preReadSize >= 0) {
-                            const currentSize = ((snap.data() || {}).list || []).length;
-                            if (currentSize !== preReadSize) {
-                                const err = new Error('CONCURRENT_STAFF_EDIT');
-                                err.code = 'CONCURRENT_STAFF_EDIT';
-                                throw err;
-                            }
+                if (!res.noop) {
+                    // Sync the UI from the transaction's authoritative
+                    // output (the live snapshot will confirm right after).
+                    setStaffList(res.list);
+                    // Log PIN changes to /pin_audits — WHO/WHEN only, never
+                    // the PIN values (QA audit AD1: pin_audits is world-
+                    // readable and the PIN is the entire auth mechanism).
+                    // Fire-and-forget so a logging failure never blocks.
+                    for (const { before, after } of res.changed) {
+                        if (before && after && before.pin !== after.pin) {
+                            addDoc(collection(db, 'pin_audits'), {
+                                staffId: after.id,
+                                staffName: after.name,
+                                changedBy: staffName,
+                                changedAt: serverTimestamp(),
+                                userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+                            }).catch(e => console.warn('pin audit write failed:', e));
                         }
-                        // Revision guard (2026-07-11, the rename-revert
-                        // incident): the size check above can't see SAME-
-                        // SIZE concurrent edits — exactly what a rename is.
-                        // Every roster writer now bumps `rev`; if the
-                        // server rev isn't the one our on-screen list was
-                        // built from (STAFF_DOC.rev tracks the App-level
-                        // snapshot), some other write landed that this
-                        // whole-list save would silently undo — abort and
-                        // let the admin retry on fresh data.
-                        if (snap.exists() && STAFF_DOC.rev !== undefined) {
-                            const serverRev = (snap.data() || {}).rev ?? null;
-                            if (serverRev !== STAFF_DOC.rev) {
-                                const err = new Error('CONCURRENT_STAFF_EDIT');
-                                err.code = 'CONCURRENT_STAFF_EDIT';
-                                throw err;
-                            }
-                        }
-                        tx.set(doc(db, "config", "staff"), {
-                            list: updatedList,
-                            rev: nextStaffRev(snap.exists() ? snap.data() : null),
-                        });
-                    });
-                } catch (err) {
-                    if (err && err.code === 'CONCURRENT_STAFF_EDIT') {
-                        console.warn('saveStaff: concurrent edit detected, asking user to retry');
-                        toast(language === 'es'
-                            ? 'La lista de personal acaba de cambiar — no se guardó. Intenta de nuevo.'
-                            : 'The staff list just changed — nothing was saved. Try again.',
-                            { kind: 'error' });
-                        return false;
-                    }
-                    console.error("Error saving staff:", err);
-                    toast(language === 'es' ? 'Error al guardar personal' : 'Staff save failed', { kind: 'error' });
-                    return false;
-                }
-                // Post-write: log every PIN change to /pin_audits.
-                // Fire-and-forget so a logging failure never blocks the save.
-                for (const s of updatedList) {
-                    const key = `${s.id}|${s.name}`;
-                    const oldPin = oldByName.get(key);
-                    if (oldPin != null && oldPin !== s.pin) {
-                        // 2026-06-20 (QA audit AD1) — log only THAT a PIN changed,
-                        // never the PIN values. pin_audits is world-readable
-                        // (rule: allow read: if true) and the 4-digit PIN is the
-                        // entire auth mechanism, so persisting old/new PINs here
-                        // was a credential-history leak — and it contradicted this
-                        // function's own "never log a PIN" policy above. Who/when
-                        // is enough to triage a change.
-                        addDoc(collection(db, 'pin_audits'), {
-                            staffId: s.id,
-                            staffName: s.name,
-                            changedBy: staffName,
-                            changedAt: serverTimestamp(),
-                            userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-                        }).catch(e => console.warn('pin audit write failed:', e));
                     }
                 }
-                return true;
+                return res;
             };
 
             // Tap-to-flip bulk tag handler — used by the Bulk Tag modal.
-            // BUG FIX: rapid taps were clobbering each other because the closed-over
-            // `staffList` could be stale between renders. Use the functional setter
-            // form so we always merge into the latest list, then persist outside the
-            // setter (idempotent — last save wins, matches the displayed state).
+            // Server-anchored patch, so rapid taps merge onto the live
+            // record instead of clobbering each other.
             const handleBulkUpdate = async (id, patch) => {
-                let latest = null;
-                setStaffList(prev => {
-                    latest = prev.map(s => s.id === id ? { ...s, ...patch } : s);
-                    return latest;
-                });
-                if (latest) await saveStaffToFirestore(latest);
+                await runRosterMutation(list => list.map(s =>
+                    s.id === id ? { ...s, ...patch } : s
+                ));
             };
 
             // Reset every edit-form field back to idle. Centralized so the
@@ -2169,35 +2072,25 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // record itself saves, so we never rewrite the schedule to a name
             // the record never took.
             const commitStaffEdit = async (id, finalName, rename = null) => {
-                // Functional setState avoids stale-closure clobber when a
-                // concurrent admin edit is in flight (same fix as bulk-tag).
-                let latest = null;
-                setStaffList(prev => {
-                    // 2026-05-24 audit fix: the finalLocation/finalBirthday
-                    // computation used to live OUT here referencing a bare
-                    // `s` that didn't exist in this scope — a guaranteed
-                    // ReferenceError if editLocation was ever empty (or
-                    // editBirthday was non-empty but malformed). Moving the
-                    // computation INSIDE the map() callback so `s` is the
-                    // matched record and the fallback works as intended.
-                    latest = prev.map(s => {
-                        if (s.id !== id) return s;
-                        const finalLocation = editLocation || s.location || "webster";
-                        const finalScheduleHome = finalLocation === 'both'
-                            ? (editScheduleHome || 'both')
-                            : finalLocation;
-                        const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
-                            ? editBirthday
-                            : (editBirthday === '' ? '' : (s.birthday || ''));
-                        return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, canViewClockedIn: editCanViewClockedIn, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
-                    });
-                    return latest;
-                });
-                const saved = latest ? await saveStaffToFirestore(latest) : false;
-                // saveStaffToFirestore returns false (and already toasted) on
-                // a bad PIN / concurrent-edit / write error. Bail before
-                // fanning out a rename in that case.
-                if (saved === false) return;
+                // The form's fields are merged onto the SERVER record inside
+                // the transaction — anything the form doesn't control
+                // (fcmTokens, sign-in stamps, phone, SMS consent, …) is
+                // preserved from the live record, so an open edit form can
+                // no longer revert changes that landed while it was open.
+                const res = await runRosterMutation(list => list.map(s => {
+                    if (s.id !== id) return s;
+                    const finalLocation = editLocation || s.location || "webster";
+                    const finalScheduleHome = finalLocation === 'both'
+                        ? (editScheduleHome || 'both')
+                        : finalLocation;
+                    const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
+                        ? editBirthday
+                        : (editBirthday === '' ? '' : (s.birthday || ''));
+                    return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, canViewClockedIn: editCanViewClockedIn, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
+                }));
+                // runRosterMutation already toasted on bad PIN / duplicate
+                // name / write error. Bail before fanning out a rename.
+                if (!res.ok) return;
 
                 resetEditForm();
                 showSaved();
@@ -2209,6 +2102,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             oldName: rename.oldName,
                             newName: finalName,
                             staffId: id,
+                            by: staffName,
                         });
                         // If the signed-in admin renamed THEMSELVES, push the
                         // new name up so App's session validation doesn't kick
@@ -2298,19 +2192,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // just means the field isn't set. smsOptIn is intentionally
                 // NOT set here; consent is a separate audited toggle.
                 const hirePhone = (await fetchHirePhoneMap()).get(hireNameKey(newName)) || null;
-                // Functional setState — read latest list from React state
-                // instead of closing over a stale snapshot. Otherwise two
-                // admins adding back-to-back can silently lose one entry
-                // (and the new id is computed off the stale max).
-                let latest = null;
-                setStaffList(prev => {
-                    const maxId = Math.max(...prev.map(s => s.id), 0);
-                    // Auto-apply the position template for this role so new
-                    // hires land with reasonable access defaults (homeView,
-                    // hiddenPages, viewLabor, scheduler flags). The visible
-                    // form toggles below intentionally take precedence so an
-                    // admin who flipped, say, opsAccess OFF gets that intent.
-                    const template = getPositionTemplate(newRole) || {};
+                // The new id is computed from the SERVER list inside the
+                // transaction, so two admins adding back-to-back can't
+                // collide or lose an entry. Auto-apply the position
+                // template for this role so new hires land with reasonable
+                // access defaults; the visible form toggles intentionally
+                // take precedence so an admin who flipped, say, opsAccess
+                // OFF gets that intent.
+                const template = getPositionTemplate(newRole) || {};
+                const res = await runRosterMutation(list => {
+                    const maxId = list.reduce((m, s) => Math.max(m, Number(s?.id) || 0), 0);
                     const newStaff = {
                         id: maxId + 1,
                         ...template,
@@ -2325,10 +2216,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         scheduleSide: newScheduleSide,
                         ...(hirePhone ? { phoneE164: hirePhone } : {}),
                     };
-                    latest = [...prev, newStaff];
-                    return latest;
+                    return [...list, { ...newStaff, id: maxId + 1 }];
                 });
-                if (latest) await saveStaffToFirestore(latest);
+                if (!res.ok) return;
                 setShowAdd(false);
                 setNewName("");
                 setNewRole("FOH");
@@ -2346,36 +2236,25 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // Block removal by ADMIN_ID (not name) so renaming an admin
                 // doesn't bypass this guard.
                 if (ADMIN_IDS.includes(id)) return;
-                // Capture the name BEFORE we drop them from the list — needed
-                // to clean up future-dated shifts so the schedule stops
-                // showing them as a ghost row (bug 2026-05-09).
-                const removedPerson = (staffList || []).find(s => s.id === id);
-                const removedName = removedPerson?.name;
-                // Archive the full record FIRST — and abort the removal if
-                // the archive write fails, so a deletion can never lose the
-                // person's info (Andrew 2026-07-10: "keep a list of deleted
-                // staff so we can look back"). The archive powers the
-                // "Deleted staff" section below the roster.
-                if (removedPerson) {
-                    try {
-                        await archiveRemovedStaff(removedPerson, staffName);
-                    } catch (e) {
-                        console.warn('staff archive failed — removal aborted:', e);
+                // Archive + removal happen in ONE transaction — either the
+                // full record lands in /staff_archive and they leave the
+                // roster, or neither happens (Andrew 2026-07-10: "keep a
+                // list of deleted staff so we can look back"). The archived
+                // record is the SERVER record, not a client copy.
+                const res = await removeStaffRecord({ id, byName: staffName });
+                if (!res.ok) {
+                    if (res.error !== 'not_found') {
+                        console.warn('staff removal failed:', res.error);
                         toast(language === 'es'
-                            ? `No se pudo archivar a ${removedName} — no se eliminó nada. Inténtalo de nuevo.`
-                            : `Couldn't archive ${removedName} — nothing was removed. Try again.`,
+                            ? 'No se pudo eliminar — no se cambió nada. Inténtalo de nuevo.'
+                            : "Couldn't remove — nothing was changed. Try again.",
                             { kind: 'error' });
-                        setConfirmRemoveId(null);
-                        return;
                     }
+                    setConfirmRemoveId(null);
+                    return;
                 }
-                // Functional setState avoids stale-closure clobber.
-                let latest = null;
-                setStaffList(prev => {
-                    latest = prev.filter(s => s.id !== id);
-                    return latest;
-                });
-                if (latest) await saveStaffToFirestore(latest);
+                setStaffList(res.list);
+                const removedName = res.removed?.name;
                 // Put the removed staffer's FUTURE shifts UP FOR GRABS (open
                 // offer) instead of deleting them — coverage isn't silently
                 // lost, and another staffer can claim them (a manager approves
@@ -2425,44 +2304,38 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             };
 
             // Re-add an archived (deleted) staff member to the roster.
-            // Fresh id (max+1, same as add-staff) so we never collide with
-            // an id handed out since; their old PIN is kept unless it's
-            // invalid or now belongs to someone else, in which case a new
-            // unused one is generated and shown to the admin. Chat
-            // membership is NOT auto-restored — the auto-channel sync picks
-            // them up like any new hire.
+            // Fresh id (max+1, computed server-side) so we never collide
+            // with an id handed out since; their old PIN is kept unless
+            // it's invalid or now belongs to someone else, in which case a
+            // new unused one is generated and shown to the admin. The
+            // roster append and the archive's restored-mark happen in ONE
+            // transaction. Chat membership is NOT auto-restored — the
+            // auto-channel sync picks them up like any new hire.
             const handleRestoreArchived = async (entry) => {
                 const rec = entry?.record || {};
                 const name = String(rec.name || entry?.name || '').trim();
                 if (!name) return;
-                if ((staffList || []).some(s => (s.name || '').trim().toLowerCase() === name.toLowerCase())) {
-                    toast(language === 'es'
-                        ? `Ya hay un "${name}" en el personal — cámbiale el nombre primero.`
-                        : `There's already a "${name}" on the roster — rename them first.`,
+                const { id: _oldId, pin: _oldPin, ...rest } = rec;
+                const res = await appendStaffRecord({
+                    name,
+                    record: rest,
+                    preferredPin: rec.pin,
+                    restoreArchiveId: entry.id,
+                    restoredBy: staffName,
+                });
+                if (!res.ok) {
+                    toast(res.error === 'name_exists'
+                        ? (language === 'es'
+                            ? `Ya hay un "${name}" en el personal — cámbiale el nombre primero.`
+                            : `There's already a "${name}" on the roster — rename them first.`)
+                        : (language === 'es' ? 'No se pudo restaurar. Inténtalo de nuevo.' : "Couldn't restore. Try again."),
                         { kind: 'error' });
                     return;
                 }
-                let latest = null;
-                let assignedPin = null;
-                setStaffList(prev => {
-                    const maxId = Math.max(...prev.map(s => s.id), 0);
-                    const usedPins = new Set(prev.map(s => String(s.pin ?? '').trim()));
-                    let pin = String(rec.pin ?? '').trim();
-                    if (!/^\d{4}$/.test(pin) || usedPins.has(pin)) {
-                        do { pin = String(Math.floor(1000 + Math.random() * 9000)); } while (usedPins.has(pin));
-                        assignedPin = pin;
-                    }
-                    const { id: _oldId, pin: _oldPin, ...rest } = rec;
-                    latest = [...prev, { ...rest, name, id: maxId + 1, pin }];
-                    return latest;
-                });
-                if (latest) await saveStaffToFirestore(latest);
-                try { await markArchiveRestored(entry.id, staffName); }
-                catch (e) { console.warn('archive restore-mark failed:', e); }
-                toast(assignedPin
+                toast(res.pinChanged
                     ? (language === 'es'
-                        ? `${name} restaurado — PIN nuevo: ${assignedPin} (el anterior estaba en uso)`
-                        : `${name} restored — new PIN: ${assignedPin} (their old one was taken)`)
+                        ? `${name} restaurado — PIN nuevo: ${res.pin} (el anterior estaba en uso)`
+                        : `${name} restored — new PIN: ${res.pin} (their old one was taken)`)
                     : (language === 'es' ? `${name} restaurado (mismo PIN).` : `${name} restored (same PIN).`),
                     { kind: 'success' });
                 showSaved();
@@ -3544,27 +3417,22 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         // availability stored as: { mon: { available: true, from: "09:00", to: "17:00" } | { available: false }, ... }
                         const avail = person.availability || {};
                         const updateDay = async (dayKey, patch) => {
-                            // Functional setState — avoids clobbering a sibling
-                            // edit that might land between snapshot and save.
-                            // Read fresh availability from `prev` rather than
-                            // closing over `avail` from the parent scope.
-                            let latest = null;
+                            // Server-anchored patch — reads availability from
+                            // the live record inside the transaction, so two
+                            // quick sibling edits merge instead of clobbering.
                             let auditDiff = null;
-                            setStaffList(prev => {
-                                const me = prev.find(s => s.id === person.id);
-                                const curAvail = (me && me.availability) || {};
+                            const res = await runRosterMutation(list => list.map(s => {
+                                if (s.id !== person.id) return s;
+                                const curAvail = s.availability || {};
                                 const cur = curAvail[dayKey] || { available: true, from: "09:00", to: "21:00" };
                                 const nextDay = { ...cur, ...patch };
-                                const nextAvail = { ...curAvail, [dayKey]: nextDay };
                                 auditDiff = { before: { [dayKey]: cur }, after: { [dayKey]: nextDay } };
-                                latest = prev.map(s => s.id === person.id ? { ...s, availability: nextAvail } : s);
-                                return latest;
-                            });
-                            if (latest) {
-                                await saveStaffToFirestore(latest);
+                                return { ...s, availability: { ...curAvail, [dayKey]: nextDay } };
+                            }));
+                            if (res.ok && !res.noop && auditDiff) {
                                 // Audit 2026-06-24: manager-edited availability →
                                 // Debug/QA change-history (who/old/new/where). Best-effort.
-                                if (auditDiff) auditAvailabilityChange({
+                                auditAvailabilityChange({
                                     staffId: person.id, staffName: person.name,
                                     before: auditDiff.before, after: auditDiff.after,
                                     surface: 'admin-dashboard',
@@ -3710,31 +3578,40 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         const phone = hirePhones.get(hireNameKey(r.name));
                                         return phone ? { ...r, phoneE164: phone } : r;
                                     });
-                                // Optimistic update + Firestore save. Functional
-                                // setState avoids stale-closure clobber if a
-                                // concurrent admin edit lands mid-import.
-                                let latest = null;
-                                setStaffList(prev => {
-                                    latest = [...(prev || []), ...toAdd];
-                                    return latest;
+                                // Appended to the SERVER list inside the
+                                // transaction: ids are reassigned from the live
+                                // max, rows whose name already exists are
+                                // skipped, and conflicting PINs get a fresh
+                                // unused one. No optimistic write, so there is
+                                // nothing to roll back on failure.
+                                const res = await runRosterMutation(list => {
+                                    const names = new Set(list.map(s => String(s?.name || '').trim().toLowerCase()));
+                                    const pins = new Set(list.map(s => String(s?.pin ?? '').trim()));
+                                    let nextId = list.reduce((m, s) => Math.max(m, Number(s?.id) || 0), 0) + 1;
+                                    const added = [];
+                                    let skipped = 0;
+                                    for (const r of toAdd) {
+                                        const key = String(r?.name || '').trim().toLowerCase();
+                                        if (!key || names.has(key)) { skipped += 1; continue; }
+                                        names.add(key);
+                                        let pin = String(r.pin ?? '').trim();
+                                        if (!/^\d{4}$/.test(pin) || pins.has(pin)) {
+                                            do { pin = String(Math.floor(1000 + Math.random() * 9000)); } while (pins.has(pin));
+                                        }
+                                        pins.add(pin);
+                                        added.push({ ...r, id: nextId++, pin });
+                                    }
+                                    if (added.length === 0) return null;
+                                    return { list: [...list, ...added], result: { added: added.length, skipped } };
                                 });
-                                try {
-                                    if (latest) await saveStaffToFirestore(latest);
+                                if (res.ok) {
+                                    const added = res.noop ? 0 : (res.result?.added ?? 0);
+                                    const skipped = res.noop ? toAdd.length : (res.result?.skipped ?? 0);
                                     toast(language === 'es'
-                                        ? `Importados ${toAdd.length} miembros del personal`
-                                        : `Imported ${toAdd.length} staff member${toAdd.length === 1 ? '' : 's'}`,
-                                        { kind: 'success', duration: 4000 });
+                                        ? `Importados ${added} miembros${skipped ? ` (${skipped} ya existían)` : ''}`
+                                        : `Imported ${added} staff member${added === 1 ? '' : 's'}${skipped ? ` (${skipped} already existed)` : ''}`,
+                                        { kind: added > 0 ? 'success' : 'error', duration: 4000 });
                                     setShowImportStaff(false);
-                                } catch (err) {
-                                    console.error('Import staff save failed:', err);
-                                    toast(language === 'es'
-                                        ? 'Error al guardar la importación. Vuelve a intentarlo.'
-                                        : 'Failed to save import. Try again.',
-                                        { kind: 'error', duration: 6000 });
-                                    // Roll back the optimistic add so the UI matches Firestore.
-                                    setStaffList(prev => (prev || []).filter(s =>
-                                        !toAdd.find(n => n.id === s.id)
-                                    ));
                                 }
                             }}
                         />
@@ -5108,27 +4985,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             ? '¿Borrar tus tokens de notificación y volver a registrar? Soluciona notificaciones duplicadas.'
                                             : 'Clear your push tokens and re-register? Fixes duplicate-notification issues.'
                                         )) return;
-                                        try {
-                                            const { runTransaction, doc } = await import('firebase/firestore');
-                                            await runTransaction(db, async (tx) => {
-                                                const ref = doc(db, 'config', 'staff');
-                                                const snap = await tx.get(ref);
-                                                if (!snap.exists()) return;
-                                                const liveList = (snap.data() || {}).list || [];
-                                                const next = liveList.map(s =>
-                                                    s.name === staffName
-                                                        ? { ...s, fcmTokens: [] }
-                                                        : s
-                                                );
-                                                tx.set(ref, { list: next });
-                                            });
+                                        const res = await runRosterMutation(list => list.map(s =>
+                                            s.name === staffName && (s.fcmTokens || []).length > 0
+                                                ? { ...s, fcmTokens: [] }
+                                                : s
+                                        ));
+                                        if (res.ok) {
                                             toast(language === 'es'
                                                 ? 'Tokens borrados. Recarga la página para re-registrar.'
                                                 : 'Tokens cleared. Reload the page to re-register a fresh single token.',
                                                 { kind: 'success', duration: 5000 });
-                                        } catch (e) {
-                                            console.error('reset push tokens failed:', e);
-                                            toast('Reset failed: ' + (e.message || e), { kind: 'error', duration: 6000 });
                                         }
                                     }}
                                     className="w-full mt-2 py-2 rounded-lg bg-white border-2 border-blue-300 text-blue-700 text-sm font-bold hover:bg-blue-100">

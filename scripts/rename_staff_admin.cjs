@@ -111,16 +111,24 @@ async function renameChats() {
 async function fixStaffRecord() {
     if (STAFF_ID == null) return 'skipped (no id)';
     const ref = db.doc('config/staff');
-    const snap = await ref.get();
-    if (!snap.exists) return 'no config/staff';
-    const list = (snap.data() || {}).list || [];
-    let changed = false;
-    const next = list.map((s) => {
-        if (s.id === STAFF_ID && s.name !== NEW) { changed = true; return { ...s, name: NEW }; }
-        return s;
+    // Transaction + rev bump per the 2026-07-11 roster-write protocol.
+    let out = 'already correct';
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) { out = 'no config/staff'; return; }
+        const data = snap.data() || {};
+        const list = data.list || [];
+        let changed = false;
+        const next = list.map((s) => {
+            if (s.id === STAFF_ID && s.name !== NEW) { changed = true; return { ...s, name: NEW }; }
+            return s;
+        });
+        if (changed) {
+            tx.set(ref, { list: next, rev: (Number(data.rev) || 0) + 1 }, { merge: true });
+            out = 'updated';
+        }
     });
-    if (changed) { await ref.set({ list: next }, { merge: true }); return 'updated'; }
-    return 'already correct';
+    return out;
 }
 
 (async () => {

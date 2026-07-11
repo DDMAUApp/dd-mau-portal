@@ -78,7 +78,7 @@ await db.runTransaction(async (tx) => {
     }
 
     const nextList = [...list, REVIEWER];
-    tx.set(ref, { list: nextList }, { merge: true });
+    tx.set(ref, { list: nextList, rev: (Number(data.rev) || 0) + 1 }, { merge: true });
     console.log(`✓ Reviewer staff record added at id=999`);
     console.log(`  Name : App Reviewer`);
     console.log(`  PIN  : 9999`);
