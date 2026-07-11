@@ -282,7 +282,9 @@ function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
 
     // Punctuality still computed for clocked-out people (their arrival was
     // still on-time/late). No-shows render their own red strike treatment.
-    const punct = isNoShow ? null : getPunctuality(entry.clockedInAt, entry.scheduledShift, isEs);
+    // Anchored to the FIRST clock-in of the day so a break clock-out/in
+    // never rewrites the arrival pill (firstClockInAt, 2026-07-11).
+    const punct = isNoShow ? null : getPunctuality(entry.firstClockInAt || entry.clockedInAt, entry.scheduledShift, isEs);
 
     const sched = entry.scheduledShift;
     const hasBreaks = Array.isArray(entry.breaksToday) && entry.breaksToday.length > 0;
@@ -324,12 +326,21 @@ function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
                                 {punct.label}
                             </span>
                         )}
+                        {!isNoShow && entry.notScheduled && (
+                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-1.5 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">
+                                <Calendar size={10} strokeWidth={2.5} />
+                                {tx('NOT SCHEDULED', 'SIN HORARIO')}
+                            </span>
+                        )}
                     </div>
                     {!isNoShow && (
                         <div className="text-[11px] text-dd-text-2 flex items-center gap-1.5 mt-0.5">
                             <Clock size={11} strokeWidth={2.25} className="shrink-0" />
                             <span>
-                                {tx('In at', 'Entró a las')} {fmtClockTime(entry.clockedInAt)}
+                                {tx('In at', 'Entró a las')} {fmtClockTime(entry.firstClockInAt || entry.clockedInAt)}
+                                {entry.isReturnFromBreak && (
+                                    <span className="text-amber-700"> · {tx('back from break', 'volvió del descanso')} {fmtClockTime(entry.clockedInAt)}</span>
+                                )}
                                 {isOut && entry.clockedOutAt && (
                                     <span className="text-dd-text-2"> · {tx('out', 'salió')} {fmtClockTime(entry.clockedOutAt)}</span>
                                 )}
@@ -576,8 +587,34 @@ export default function ClockedInPanel({
             const key = normName(e.employeeName);
             seenNames.add(key);
             const candidates = todaysShiftsByName.get(key) || [];
-            const scheduledShift = pickBestShift(candidates, e.clockedInAt);
-            out.push({ ...e, scheduledShift, isNoShow: false });
+            // Anchor punctuality + shift matching to the FIRST clock-in
+            // of the day, not the latest punch. Toast's clockedInAt is
+            // the CURRENT session's start — someone who clocked out for
+            // a break and back in used to get the lateness math re-run
+            // against the return time ("10m late" became "300m late",
+            // Andrew 2026-07-11). Earlier completed sessions come from
+            // the clock_sessions doc; the earliest clockIn wins.
+            let firstIn = e.clockedInAt || null;
+            for (const s of (e.earlierSessions || [])) {
+                if (s?.clockIn && (!firstIn || new Date(s.clockIn).getTime() < new Date(firstIn).getTime())) {
+                    firstIn = s.clockIn;
+                }
+            }
+            out.push({
+                ...e,
+                scheduledShift: pickBestShift(candidates, firstIn),
+                isNoShow: false,
+                firstClockInAt: firstIn,
+                // Current session started after an earlier one ended =
+                // they're back from a clock-out break; the row labels
+                // the re-entry as a break return instead of a fresh
+                // arrival.
+                isReturnFromBreak: (e.earlierSessions || []).length > 0
+                    && !!firstIn && firstIn !== e.clockedInAt,
+                // On the clock with NO shift on today's schedule —
+                // surfaced with its own pill + header count.
+                notScheduled: candidates.length === 0,
+            });
         }
         // Step 2 — add no-show ghosts for scheduled people who haven't
         // clocked in yet AND are 20+ min past their scheduled start.
@@ -648,6 +685,8 @@ export default function ClockedInPanel({
     const cardCount   = fedEntries.filter(e => !e.isNoShow && !e.clockedOut).length;  // on the clock now
     const outCount    = fedEntries.filter(e => e.clockedOut).length;                  // clocked out today
     const noShowCount = fedEntries.filter(e => e.isNoShow).length;
+    // On the clock right now with no shift on today's schedule.
+    const notSchedCount = fedEntries.filter(e => e.notScheduled && !e.isNoShow && !e.clockedOut).length;
 
     // ── CARD variant (desktop HomeV2 replacement for upcoming-shifts) ──
     if (variant === 'card') {
@@ -675,6 +714,11 @@ export default function ClockedInPanel({
                         {noShowCount > 0 && (
                             <span className="text-xs font-black text-red-700 bg-red-50 px-2.5 py-1 rounded-full border border-red-300">
                                 ⚠ {noShowCount} {tx('no-show', 'no llegó')}
+                            </span>
+                        )}
+                        {notSchedCount > 0 && (
+                            <span className="text-xs font-black text-amber-800 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-300">
+                                📋 {notSchedCount} {tx('not scheduled', 'sin horario')}
                             </span>
                         )}
                         <span className="text-xs font-black text-dd-green-700 bg-dd-green-50 px-2.5 py-1 rounded-full border border-dd-green/30">
