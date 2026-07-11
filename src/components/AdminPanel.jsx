@@ -10,6 +10,8 @@ import { getPositionTemplate, hasPositionTemplate } from '../data/positionTempla
 // separate chunk that failed to load on a stale-cached PWA — the rename then
 // silently no-op'd while the staff record had already saved (orphaned data).
 import { renameStaffEverywhere, removeStaffFromChats } from '../data/renameStaff';
+import { archiveRemovedStaff, markArchiveRestored } from '../data/staffArchive';
+import DeletedStaffSection from './DeletedStaffSection';
 import { auditAvailabilityChange } from '../data/audit';
 import {
     normalizeToE164,
@@ -2296,6 +2298,24 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // showing them as a ghost row (bug 2026-05-09).
                 const removedPerson = (staffList || []).find(s => s.id === id);
                 const removedName = removedPerson?.name;
+                // Archive the full record FIRST — and abort the removal if
+                // the archive write fails, so a deletion can never lose the
+                // person's info (Andrew 2026-07-10: "keep a list of deleted
+                // staff so we can look back"). The archive powers the
+                // "Deleted staff" section below the roster.
+                if (removedPerson) {
+                    try {
+                        await archiveRemovedStaff(removedPerson, staffName);
+                    } catch (e) {
+                        console.warn('staff archive failed — removal aborted:', e);
+                        toast(language === 'es'
+                            ? `No se pudo archivar a ${removedName} — no se eliminó nada. Inténtalo de nuevo.`
+                            : `Couldn't archive ${removedName} — nothing was removed. Try again.`,
+                            { kind: 'error' });
+                        setConfirmRemoveId(null);
+                        return;
+                    }
+                }
                 // Functional setState avoids stale-closure clobber.
                 let latest = null;
                 setStaffList(prev => {
@@ -2348,6 +2368,50 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     catch (e) { console.warn('chat membership cleanup failed:', e); }
                 }
                 setConfirmRemoveId(null);
+                showSaved();
+            };
+
+            // Re-add an archived (deleted) staff member to the roster.
+            // Fresh id (max+1, same as add-staff) so we never collide with
+            // an id handed out since; their old PIN is kept unless it's
+            // invalid or now belongs to someone else, in which case a new
+            // unused one is generated and shown to the admin. Chat
+            // membership is NOT auto-restored — the auto-channel sync picks
+            // them up like any new hire.
+            const handleRestoreArchived = async (entry) => {
+                const rec = entry?.record || {};
+                const name = String(rec.name || entry?.name || '').trim();
+                if (!name) return;
+                if ((staffList || []).some(s => (s.name || '').trim().toLowerCase() === name.toLowerCase())) {
+                    toast(language === 'es'
+                        ? `Ya hay un "${name}" en el personal — cámbiale el nombre primero.`
+                        : `There's already a "${name}" on the roster — rename them first.`,
+                        { kind: 'error' });
+                    return;
+                }
+                let latest = null;
+                let assignedPin = null;
+                setStaffList(prev => {
+                    const maxId = Math.max(...prev.map(s => s.id), 0);
+                    const usedPins = new Set(prev.map(s => String(s.pin ?? '').trim()));
+                    let pin = String(rec.pin ?? '').trim();
+                    if (!/^\d{4}$/.test(pin) || usedPins.has(pin)) {
+                        do { pin = String(Math.floor(1000 + Math.random() * 9000)); } while (usedPins.has(pin));
+                        assignedPin = pin;
+                    }
+                    const { id: _oldId, pin: _oldPin, ...rest } = rec;
+                    latest = [...prev, { ...rest, name, id: maxId + 1, pin }];
+                    return latest;
+                });
+                if (latest) await saveStaffToFirestore(latest);
+                try { await markArchiveRestored(entry.id, staffName); }
+                catch (e) { console.warn('archive restore-mark failed:', e); }
+                toast(assignedPin
+                    ? (language === 'es'
+                        ? `${name} restaurado — PIN nuevo: ${assignedPin} (el anterior estaba en uso)`
+                        : `${name} restored — new PIN: ${assignedPin} (their old one was taken)`)
+                    : (language === 'es' ? `${name} restaurado (mismo PIN).` : `${name} restored (same PIN).`),
+                    { kind: 'success' });
                 showSaved();
             };
 
@@ -3337,6 +3401,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         )}
                     </div>
+
+                    {/* ── DELETED STAFF (collapsible) ── */}
+                    <DeletedStaffSection language={language} onRestore={handleRestoreArchived} />
 
                     {/* Checklist History Section — collapsed by default. The
                         rendered list is hundreds of rows long; mounting it on

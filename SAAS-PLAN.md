@@ -701,3 +701,16 @@ on personal phones, biometric only as a fast local re-unlock, sessions the serve
 just picks who's acting). Card data stays with Stripe, integration keys stay in the encrypted vault,
 pay/PII stay owner/admin-only — and none of it is ever the *only* line of defense, because the
 Firestore rules enforce the tenant wall underneath all of it.
+
+## Domain strategy (decided 2026-07-10)
+**app.ddmaustl.com never moves.** It stays DD Mau's own portal exactly as it runs today — the
+domain is baked into hard-to-change places (native allowNavigation, Cloud Function origin
+allowlists, print-bridge CORS, push deep links, App Store listing, Twilio URLs, GitHub Pages),
+so migrating it mid-operation is all risk, no reward.
+
+The SaaS launches on its **own product domain — `teammanage.io`, purchased 2026-07-10** (keep
+auto-renew ON): `app.teammanage.io` for the platform, `<restaurant>.teammanage.io` per tenant
+(or a tenant picker after login). When the platform is real, DD Mau onboards as **tenant #1**, and
+per-tenant **custom-domain support** (CNAME + host-header tenant resolution) lets
+app.ddmaustl.com point at the DD Mau tenant — staff keep the URL/icon/login they already know
+and never notice the cutover.
