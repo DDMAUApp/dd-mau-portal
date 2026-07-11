@@ -61,6 +61,82 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ── Catch-all carve-out (2026-07-11) ────────────────────────────
+    // Firestore ORs overlapping match statements, so every restrictive
+    // block in this file was SILENTLY OVERRIDDEN by the permissive
+    // {document=**} catch-all at the bottom — /insurance said
+    // `allow delete: if false` but the catch-all's open delete won.
+    // Every collection listed here is EXCLUDED from the catch-all, so
+    // its own match block becomes the one and only gate.
+    //
+    // MAINTENANCE RULE: when you add a new match block whose rules are
+    // stricter than the catch-all (read true / map-shaped create+update
+    // / open delete), add its first path segment here too — otherwise
+    // the new block is decorative.
+    //
+    // Deliberately NOT carved out (their blocks equal the catch-all):
+    //   • /chats — the delete-chat flow also purges acks/pins/typing
+    //     subcollections that have no match block of their own; carving
+    //     out `chats` would brick those. See the /chats block.
+    //   • /tv_configs (+ versions subcollection) — open delete is the
+    //     documented admin workflow.
+    function isCarvedOut(docPath) {
+      return docPath[0] in [
+        'ai_logs',
+        'api_request_logs',
+        'attendance',
+        'audit',
+        'backup_history',
+        'bug_reports',
+        'cateringOrders',
+        'email_intel',
+        'email_intel_corrections',
+        'error_logs',
+        'insurance',
+        'inventory_audits_maryland',
+        'inventory_audits_webster',
+        'maintenanceRequests',
+        'needs_maryland',
+        'needs_webster',
+        'notifications',
+        'offsite_shifts',
+        'onboarding_applications',
+        'onboarding_audits',
+        'onboarding_hires',
+        'onboarding_invite_recovery_requests',
+        'onboarding_invites',
+        'onboarding_templates',
+        'pairing_codes',
+        'pin_audits',
+        'print_jobs',
+        'rate_limits',
+        'recipe_audits',
+        'security_logs',
+        'sms_delivery_logs',
+        'sms_inbound_events',
+        'sms_opt_in_events',
+        'staff_deletion_requests',
+        'staff_rename_log',
+        'system',
+        'tardies',
+        'time_off',
+        'tv_heartbeats'
+      ] || (docPath[0] == 'config' && docPath[1] in [
+        'staff',
+        'brand',
+        'build_sheet',
+        'forceRefresh',
+        'inbox_categories',
+        'inbox_routing_rules',
+        'insurance_index',
+        'menu_v2',
+        'onboarding_doc_text',
+        'recipes',
+        'toast_menu_items',
+        'training_overrides'
+      ]);
+    }
+
     // NOTE on per-record PIN validation:
     // Firestore security rules do NOT support array iteration (no .where(),
     // no for-loops, no .map). We can't validate the structure of every
@@ -431,10 +507,14 @@ service cloud.firestore {
     // overwrite a submitted payload. Real lifecycle:
     //   • Admin updates status / notes / interview state from the UI
     //     (kept open as map-shape — no Auth yet to pin to admin claim)
-    //   • Hard delete is owned by the expireAndPurgeApplications Cloud
-    //     Function (admin SDK bypasses rules). No client-side delete
-    //     path exists in the app today, so denying delete here doesn't
-    //     break any flow.
+    //   • 2026-07-11 catch-all carve-out: delete REOPENED. The CR-4
+    //     claim that "no client-side delete path exists" was wrong —
+    //     Onboarding.jsx has two live delete flows (admin Dismiss
+    //     button + cleanup of the source application after converting
+    //     an applicant to a hire), which only ever worked because the
+    //     old catch-all OR'd in an open delete. Closing delete for
+    //     real would break both. Phase 2 (Auth + admin claim) is the
+    //     right way to restrict this to admins.
     //
     // Hardened 2026-06-02 (Phase 1 audit). Previously `update: if
     // request.resource.data is map` let any apiKey holder rewrite a
@@ -469,7 +549,7 @@ service cloud.firestore {
                         || request.resource.data.name == resource.data.name)
                     && (!('createdAt' in resource.data)
                         || request.resource.data.createdAt == resource.data.createdAt);
-      allow delete: if false;
+      allow delete: if true;   // live flows: admin Dismiss + convert-cleanup (see above)
     }
 
     // Onboarding audit trail — every admin view/download/approve/reject.
@@ -485,22 +565,20 @@ service cloud.firestore {
     // template in-browser. Templates are not PII themselves; the PDF
     // bytes live in Storage at onboarding_templates/{templateId}.pdf.
     //
-    // Hardened 2026-06-02 (Phase 1 audit). Previously `delete: if true`
-    // let any apiKey holder wipe the entire template library — every
-    // hire's W-4 / MO W-4 / Direct Deposit fillable would break until
-    // an admin re-uploaded them. Templates are recoverable but not
-    // routinely deleted (admin uploads each one ONCE). The
-    // OnboardingTemplateEditor.removeTemplate path now fails fast at
-    // the rules layer; the legitimate workflow for removing an old
-    // template is via Firebase Console (or a future admin-callable
-    // Cloud Function). The trade-off is intentional: the rare admin-
-    // delete moves out of the client UI; the common abuse vector
-    // (mass-wipe via tampered client) closes.
+    // Hardened 2026-06-02 (Phase 1 audit) with `delete: if false`, but
+    // that never actually took effect — the old catch-all OR'd in an
+    // open delete, and OnboardingTemplateEditor's Delete button (
+    // removeTemplate) has been a live, working admin flow the whole
+    // time. 2026-07-11 catch-all carve-out: rather than silently brick
+    // that button, delete is REOPENED to match reality. Templates are
+    // not PII and are recoverable (admin re-uploads the PDF); the
+    // create/update shape check still blocks garbage writes. Phase 2
+    // (Auth + admin claim) is the right lock for delete.
     match /onboarding_templates/{templateId} {
       allow read: if true;
       allow create, update: if request.resource.data.name is string
                             && request.resource.data.forDocId is string;
-      allow delete: if false;
+      allow delete: if true;   // live admin flow: OnboardingTemplateEditor.removeTemplate
     }
 
     // Training content overrides — admins edit lesson title + bullets
@@ -589,27 +667,29 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── Chats — tombstone deletes only ─────────────────────────────────
-    // Chat documents (group/DM metadata) and their messages should never
-    // be hard-deleted from clients. The chat surface deletes via tombstone
-    // (set `deletedAt` and `deletedReason`); the rules enforce that the
-    // doc itself stays around so audit replay can reconstruct who sent
-    // what and when. This was always the app's intent — the rule just
-    // makes it server-enforceable. (Andrew 2026-05-23.)
-    //
-    // Message-level: same posture — the existing client code only updates
-    // a message's `deleted: true` tombstone field, never calls deleteDoc.
-    // Codifying that here closes the gap where a buggy or hostile client
-    // could permanently erase chat history.
+    // ── Chats ──────────────────────────────────────────────────────────
+    // 2026-05-23 intent was tombstone-only deletes, but the app moved
+    // on: ChatSettingsModal's delete-chat flow batch-deletes the
+    // messages/acks/pins/typing subcollections then deletes the chat
+    // doc itself, and ChatPhotoIssueModal hard-deletes just-created
+    // messages when rolling back a failed photo-issue post. Both only
+    // ever worked because the old catch-all OR'd in an open delete.
+    // 2026-07-11 catch-all carve-out: rather than brick those flows,
+    // delete is open here to match reality — and this collection is
+    // deliberately NOT in isCarvedOut() because the acks/pins/typing
+    // subcollections have no match block of their own and rely on the
+    // catch-all for their reads/writes. (With delete open, this block
+    // is identical to the catch-all anyway.) Phase 2 (Auth) is the
+    // right place to restrict chat deletion to members/admins.
     match /chats/{chatId} {
       allow read: if true;
       allow create, update: if request.resource.data is map;
-      allow delete: if false;
+      allow delete: if true;   // live flow: ChatSettingsModal delete-chat
 
       match /messages/{messageId} {
         allow read: if true;
         allow create, update: if request.resource.data is map;
-        allow delete: if false;
+        allow delete: if true; // live flows: chat purge + photo-issue rollback
       }
     }
 
@@ -698,11 +778,20 @@ service cloud.firestore {
     // 30 as few-shot examples in the classification prompt so the
     // model picks up the owner's preferences over time. No updates
     // or deletes — corrections are immutable history.
+    //
+    // 2026-07-11 — newCategory relaxed from a hardcoded 6-value enum
+    // to "any short string": the category taxonomy lives in
+    // /config/inbox_categories and is OWNER-EDITABLE (InboxTriage lets
+    // owners add/remove categories), so enforcing the seed list here
+    // would break corrections into any custom category the moment the
+    // carve-out makes this block real. The property that matters is
+    // append-only, which stands.
     match /email_intel_corrections/{id} {
       allow read: if true;
       allow create: if request.resource.data is map
-                    && request.resource.data.newCategory in
-                       ['catering','complaint','vendor','bill','toast','other'];
+                    && request.resource.data.newCategory is string
+                    && request.resource.data.newCategory.size() > 0
+                    && request.resource.data.newCategory.size() <= 100;
       allow update, delete: if false;
     }
 
@@ -1140,19 +1229,21 @@ service cloud.firestore {
     }
 
     // ── Catch-all ──────────────────────────────────────────────────────
-    // Every other collection inherits a permissive default. KNOWN GAP
-    // (re-affirmed 2026-06-02, Phase 1 audit): this is the single
-    // biggest remaining security weakness in the rules. Any collection
-    // not explicitly listed above (shifts, vendor_*, staff_todos,
-    // swap_requests, scheduled_messages, required_tasks,
-    // calendar_events, etc.) is fully writable by anyone holding the
+    // Every collection NOT carved out via isCarvedOut() (see the top of
+    // this file) inherits this permissive default: shifts, date_blocks,
+    // vendor_*, staff_todos, swap_requests, scheduled_messages,
+    // calendar_events, chats, tv_configs, config/payroll*, etc.
+    // KNOWN GAP: those remain fully writable by anyone holding the
     // public Firebase apiKey. The Phase 2 roadmap at the top of this
     // file is the correct fix — Firebase Auth + custom claims + App
     // Check. Until that lands, casual abuse is mitigated by: (a) the
     // audit logs on each meaningful action, (b) the PIN screen +
-    // idle relock keeping random walkup access out, and (c) write-
-    // shape validation on the highest-PII paths immediately above
-    // this rule.
+    // idle relock keeping random walkup access out, and (c) the
+    // carved-out blocks above, which as of 2026-07-11 are actually
+    // ENFORCED — Firestore ORs overlapping matches, so before the
+    // isCarvedOut() exclusion every restriction above (insurance
+    // delete:false, append-only audit trails, CF-only collections,
+    // the /config/staff rev protocol …) was decorative.
     //
     // The narrowing applied here: every catch-all CREATE/UPDATE must
     // be a map payload. Rejects the kind of raw-string or null
@@ -1163,16 +1254,15 @@ service cloud.firestore {
     // a payload-shape check would silently break all of them
     // (request.resource is null on delete, so `request.resource.data
     // is map` evaluates to false).
-    // config/staff is carved out of this catch-all entirely — Firestore
-    // ORs overlapping matches, so without the exclusion the catch-all
-    // would override every restriction in the /config/staff block above
-    // (including the rev protocol and delete:false). Its own match
-    // block is then the ONLY gate for the roster doc.
+    //
+    // Read is also excluded for carved-out paths so each block's read
+    // rule is authoritative — today that only changes /rate_limits
+    // (read: false; every other carved-out block allows read).
     match /{document=**} {
-      allow read: if true;
+      allow read: if !isCarvedOut(document);
       allow create, update: if request.resource.data is map
-          && request.path != /databases/$(database)/documents/config/staff;
-      allow delete: if request.path != /databases/$(database)/documents/config/staff;
+          && !isCarvedOut(document);
+      allow delete: if !isCarvedOut(document);
     }
   }
 }
