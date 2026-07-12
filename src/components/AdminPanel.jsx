@@ -3328,7 +3328,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         <div className="flex gap-2">
                                             <button onClick={handleAddStaff}
                                                 disabled={!newName.trim() || newPin.length !== 4}
-                                                className={`flex-1 py-2 rounded-lg font-bold text-white transition ${newName.trim() && newPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
+                                                className="glass-button-primary flex-1 py-2 disabled:opacity-45 disabled:saturate-50 disabled:cursor-not-allowed">
                                                 {t("addStaff", language)}
                                             </button>
                                             <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); setNewRecipesAccess(true); setNewShiftLead(false); setNewIsMinor(false); setNewScheduleSide("foh"); }}
