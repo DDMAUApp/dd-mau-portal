@@ -883,17 +883,56 @@ export function isSharedDevice() {
     try {
         if (isSharedDeviceModeEnabled()) return true; // explicit mode wins
         if (!Capacitor.isNativePlatform()) return true; // web/PWA/kiosk
-        const ua = navigator.userAgent || '';
-        // iPad WKWebView usually says "iPad"; newer iPadOS can
-        // masquerade as "Macintosh" but keeps multi-touch.
-        const isIpad = /iPad/i.test(ua)
-            || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1);
-        if (isIpad) return true;
-        // Android: phones carry "Mobile" in the UA; tablets don't.
-        if (Capacitor.getPlatform() === 'android' && !/Mobile/i.test(ua)) return true;
-        return false; // iPhone or Android phone → personal
+        // 2026-07-12 (Andrew: "some staff have their own iPad they do the
+        // schedule on — I only want to designate iPads I want to"): the
+        // old form-factor rule treated EVERY native iPad / Android tablet
+        // as shared, which dropped personal iPads' push tokens on each
+        // relock. Native devices are now PERSONAL unless the explicit
+        // shared-iPad mode above is turned on (secret 10s hold on the
+        // login-screen logo or the home greeting).
+        return false;
     } catch {
         return true; // unsure → shared (fail toward privacy)
+    }
+}
+
+// Remove THIS device's push-token entries from EVERY staff record.
+// Used when shared-iPad mode is turned on from the LOGIN screen (nobody
+// signed in): the iPad may hold tokens for several past users — a
+// per-staff disableFcmPush can't reach them all. Same transaction + rev
+// protocol as disableFcmPush.
+export async function purgeDeviceTokensAllStaff() {
+    const deviceId = (() => {
+        try { return localStorage.getItem(DEVICE_ID_KEY); } catch { return null; }
+    })();
+    if (!deviceId) return;
+    try {
+        const messaging = await getMessagingSafely();
+        if (messaging) {
+            const mod = await loadFirebaseMessagingMod();
+            if (mod) await mod.deleteToken(messaging);
+        }
+    } catch { /* best-effort SW-side delete */ }
+    try {
+        await runTransaction(db, async (tx) => {
+            const ref = doc(db, "config", "staff");
+            const snap = await tx.get(ref);
+            if (!snap.exists()) return;
+            const list = (snap.data() || {}).list || [];
+            let changed = false;
+            const nextList = list.map((s) => {
+                const existing = Array.isArray(s?.fcmTokens) ? s.fcmTokens : null;
+                if (!existing || existing.length === 0) return s;
+                const filtered = existing.filter((t) => !(t?.deviceId && t.deviceId === deviceId));
+                if (filtered.length === existing.length) return s;
+                changed = true;
+                return { ...s, fcmTokens: filtered };
+            });
+            if (!changed) return;
+            tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
+        });
+    } catch (e) {
+        console.warn("[FCM] purgeDeviceTokensAllStaff failed (non-fatal):", e?.message);
     }
 }
 

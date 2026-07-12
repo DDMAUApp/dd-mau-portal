@@ -4,6 +4,8 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { notifyAdmins } from '../data/notify';
 import { t } from '../data/translations';
 import InstallAppButton from './InstallAppButton';
+import { isSharedDeviceModeEnabled, setSharedDeviceMode, purgeDeviceTokensAllStaff } from '../messaging';
+import useSecretHold from '../data/useSecretHold';
 import {
     isBiometricAvailable, getEnrolledStaff, wasBiometricDeclined,
     enableBiometric, tryBiometricLogin, markBiometricDeclined,
@@ -60,6 +62,31 @@ function writeLockUntil(ts) {
 // older App.jsx paths still mount cleanly during the deploy transition.
 export default function HomePage({ onSelectStaff, language, staffList, staffListReady = true, onApplyClick }) {
     const [pin, setPin] = useState("");
+    // ── Shared-iPad settings (2026-07-12, Andrew) ─────────────────────
+    // Secret: hold the LOGO 10s → settings sheet with the mode toggle +
+    // "return to login after" idle time. Device-local, survives restarts.
+    const [sharedSheetOpen, setSharedSheetOpen] = useState(false);
+    const [sharedOn, setSharedOn] = useState(() => isSharedDeviceModeEnabled());
+    const [idleMinutes, setIdleMinutes] = useState(() => {
+        try { return parseInt(localStorage.getItem('ddmau:sharedIdleMinutes'), 10) || 5; } catch { return 5; }
+    });
+    const logoHold = useSecretHold(() => {
+        try { navigator.vibrate?.(200); } catch { /* no haptics on iOS web */ }
+        setSharedSheetOpen(true);
+    }, 10000);
+    const toggleSharedMode = () => {
+        const next = !isSharedDeviceModeEnabled();
+        setSharedDeviceMode(next);
+        setSharedOn(next);
+        // Turning ON from the lock screen: sweep EVERY staff's tokens for
+        // this device — past users' tokens must stop ringing the counter
+        // iPad immediately, not at their next relock.
+        if (next) purgeDeviceTokensAllStaff();
+    };
+    const pickIdleMinutes = (m) => {
+        setIdleMinutes(m);
+        try { localStorage.setItem('ddmau:sharedIdleMinutes', String(m)); } catch { /* non-fatal */ }
+    };
     const [error, setError] = useState("");
     const [collisionMatches, setCollisionMatches] = useState([]); // multi-staff PIN collision
     const [lockedUntil, setLockedUntil] = useState(() => readLockUntil());
@@ -398,17 +425,74 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                     presence on the lock screen. Width/height attrs also
                     bumped so layout reservation matches the rendered size
                     (the perf intent of the explicit dims still holds). */}
+                {/* Holding the logo 10s opens the shared-iPad settings
+                    sheet (pointer-events restored for that; the keypad
+                    hit-tester on the container ignores this area). */}
                 <img
+                    {...logoHold}
                     src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
                     alt="DD Mau Vietnamese Eatery"
                     width="128"
                     height="128"
-                    style={{ aspectRatio: '1 / 1' }}
-                    className="mx-auto h-32 w-32 object-contain mb-2 select-none pointer-events-none"
+                    style={{ ...logoHold.style, aspectRatio: '1 / 1' }}
+                    className="mx-auto h-32 w-32 object-contain mb-2 select-none"
                     draggable={false}
                 />
                 <p className="text-headline text-dd-text-2">{t("staffPortal", language)}</p>
+                {sharedOn && (
+                    <span className="inline-flex items-center gap-1 mt-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-white/70 border border-dd-line text-dd-text-2">
+                        🖥️ {language === 'es' ? 'iPad compartido · sin notificaciones' : 'Shared iPad · notifications off'}
+                    </span>
+                )}
             </div>
+
+            {/* Shared-iPad settings sheet — reached ONLY by the secret
+                10s logo hold. Device-level settings, no login needed. */}
+            {sharedSheetOpen && (
+                <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+                    onClick={() => setSharedSheetOpen(false)} role="dialog" aria-modal="true"
+                    onPointerDown={(e) => e.stopPropagation()}>
+                    <div className="glass-sheet w-full max-w-xs rounded-2xl p-5 shadow-2xl bg-white" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-base font-bold text-dd-text mb-1">
+                            🖥️ {language === 'es' ? 'iPad compartido' : 'Shared iPad'}
+                        </h3>
+                        <p className="text-xs text-dd-text-2 mb-4">
+                            {language === 'es'
+                                ? 'Este dispositivo no recibirá notificaciones y volverá a la pantalla de inicio de sesión tras inactividad.'
+                                : 'This device gets no notifications and returns to the login screen after sitting idle.'}
+                        </p>
+                        <button onClick={toggleSharedMode}
+                            className={`w-full px-4 py-3 rounded-xl font-bold text-sm mb-3 border transition ${sharedOn
+                                ? 'bg-dd-green text-white border-dd-green'
+                                : 'bg-white text-dd-text border-dd-line'}`}>
+                            {sharedOn
+                                ? (language === 'es' ? 'Modo compartido: ACTIVADO' : 'Shared mode: ON')
+                                : (language === 'es' ? 'Modo compartido: desactivado' : 'Shared mode: off')}
+                        </button>
+                        {sharedOn && (
+                            <div className="mb-3">
+                                <p className="text-xs font-semibold text-dd-text-2 mb-2">
+                                    {language === 'es' ? 'Volver al inicio de sesión tras' : 'Return to login after'}
+                                </p>
+                                <div className="flex gap-2">
+                                    {[1, 2, 5, 10].map((m) => (
+                                        <button key={m} onClick={() => pickIdleMinutes(m)}
+                                            className={`flex-1 px-2 py-2 rounded-lg text-sm font-bold border transition ${idleMinutes === m
+                                                ? 'bg-dd-green text-white border-dd-green'
+                                                : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                                            {m} min
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        <button onClick={() => setSharedSheetOpen(false)}
+                            className="w-full px-4 py-2.5 rounded-xl text-sm font-semibold bg-dd-bg text-dd-text-2 border border-dd-line">
+                            {language === 'es' ? 'Cerrar' : 'Done'}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Old-native-build banner — 2026-07-08, Andrew: "some staff
                 dont have the face id prompt". Face ID lives in the NATIVE

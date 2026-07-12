@@ -493,6 +493,21 @@ const SS = {
 // localStorage key directly — no special handling needed.
 const IDLE_LOCK_MS = 5 * 60 * 1000;   // 5 minutes of being hidden = relock
 
+// Shared-iPad override (2026-07-12): the secret lock-screen settings
+// sheet lets Andrew pick how long a designated shared iPad stays signed
+// in before returning to the login screen (ddmau:sharedIdleMinutes).
+// Read at CHECK time (not module load) so a settings change applies
+// without a reload. Personal devices keep the 5-minute default.
+function idleLockMs() {
+    try {
+        if (localStorage.getItem('ddmau:sharedDeviceMode') === '1') {
+            const m = parseInt(localStorage.getItem('ddmau:sharedIdleMinutes'), 10);
+            if (Number.isFinite(m) && m >= 1 && m <= 60) return m * 60 * 1000;
+        }
+    } catch { /* storage unavailable → default */ }
+    return IDLE_LOCK_MS;
+}
+
 // PullToRefreshIndicator — visible feedback during the pull-down
 // gesture. The hook (usePullToRefresh) was already wired and force-
 // reloading correctly, but its return values were going nowhere on
@@ -961,7 +976,7 @@ export default function App() {
             // visibilityState === 'visible' — coming back. Compare gap.
             let lastActive = 0;
             try { lastActive = parseInt(localStorage.getItem('ddmau:lastActive') || '0', 10) || 0; } catch {}
-            if (lastActive && Date.now() - lastActive > IDLE_LOCK_MS) {
+            if (lastActive && Date.now() - lastActive > idleLockMs()) {
                 // 2026-05-24 audit fix: FCM cleanup on relock — drop this
                 // device's token so push for the prior staff doesn't keep
                 // firing on the locked screen. 2026-07-09: SHARED devices
@@ -991,6 +1006,24 @@ export default function App() {
         // keeps these cheap.
         document.addEventListener('touchmove',  resetActive, { passive: true });
         window.addEventListener('scroll',       resetActive, { passive: true, capture: true });
+
+        // ── Shared-iPad foreground relock (2026-07-12, Andrew) ─────────
+        // A counter iPad sits VISIBLE all day, so the visibility/appState
+        // handlers above never fire and the configured "return to login
+        // after N minutes" would never happen. Poll every 30s; armed ONLY
+        // in shared-iPad mode so personal devices keep today's behavior
+        // (relock only on hide → return).
+        const fgRelockInterval = setInterval(() => {
+            if (!isSharedDeviceModeEnabled()) return;
+            let lastActive = 0;
+            try { lastActive = parseInt(localStorage.getItem('ddmau:lastActive') || '0', 10) || 0; } catch { /* default 0 */ }
+            const lastSeen = Math.max(lastActive, lastInteractionBump);
+            if (lastSeen && Date.now() - lastSeen > idleLockMs()) {
+                try { disableFcmPush(staffName); } catch { /* best-effort */ }
+                setStaffName(null);
+                setActiveTab('home');
+            }
+        }, 30 * 1000);
 
         // 2026-06-02 — Capacitor appStateChange listener.
         // The browser-tab visibilitychange handler above doesn't fire
@@ -1029,11 +1062,11 @@ export default function App() {
                         // Defensive timer — if the resume event ever
                         // fires very late we'd still relock cleanly.
                         if (bgTimerId) clearTimeout(bgTimerId);
-                        bgTimerId = setTimeout(() => { bgTimerId = null; }, IDLE_LOCK_MS);
+                        bgTimerId = setTimeout(() => { bgTimerId = null; }, idleLockMs());
                         return;
                     }
                     // isActive === true — coming back to the foreground.
-                    const expired = bgStartedAt > 0 && Date.now() - bgStartedAt > IDLE_LOCK_MS;
+                    const expired = bgStartedAt > 0 && Date.now() - bgStartedAt > idleLockMs();
                     if (bgTimerId) { clearTimeout(bgTimerId); bgTimerId = null; }
                     if (expired) {
                         // 2026-07-09: shared devices only — personal phones
@@ -1067,6 +1100,7 @@ export default function App() {
             document.removeEventListener('mousedown',  resetActive);
             document.removeEventListener('touchmove',  resetActive);
             window.removeEventListener('scroll',       resetActive, { capture: true });
+            clearInterval(fgRelockInterval);
             if (bgTimerId) clearTimeout(bgTimerId);
             bridgeCancelled = true;
             if (capAppCleanup) capAppCleanup();
