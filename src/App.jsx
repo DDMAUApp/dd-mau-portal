@@ -22,6 +22,7 @@ import AppVersion from './components/AppVersion';
 import OffsiteClockPrompt from './components/OffsiteClockPrompt';
 // v2 design preview — gated by ?v2=1 query param.
 const AppShellV2 = lazy(() => import('./v2/AppShellV2'));
+const DownloadAppGate = lazy(() => import('./components/DownloadAppGate'));
 const HomeV2 = lazy(() => import('./v2/HomeV2'));
 const MobileHome = lazy(() => import('./v2/MobileHome'));
 import useIsMobile from './v2/useIsMobile';
@@ -1831,6 +1832,33 @@ export default function App() {
             staffList={staffList}
             staffListReady={staffListReady}
         />;
+    }
+
+    // ── Phone-browser gate (2026-07-12, Andrew) ─────────────────────────
+    // Staff who log in from a PHONE browser get the app download page
+    // instead of the app — phones must use the native app (push, OTA,
+    // no stale-web issues). Desktop/laptop browsers pass through
+    // untouched, TVs never log in (MenuDisplay renders on ?tv= before
+    // this), the public apply/onboarding links return earlier, and the
+    // native app returns false for isNativePlatform-less checks below.
+    // iPads deliberately NOT gated (report desktop-class UAs; store
+    // iPads run the native app anyway).
+    if (!window.Capacitor?.isNativePlatform?.()
+        && (/iPhone|iPod/.test(navigator.userAgent)
+            || (/Android/.test(navigator.userAgent) && /Mobile/.test(navigator.userAgent)))) {
+        return (
+            <Suspense fallback={<TabLoading language={language} />}>
+                <DownloadAppGate
+                    language={language}
+                    staffName={staffName}
+                    onSignOut={() => {
+                        try { disableFcmPush(staffName); } catch {}
+                        setStaffName(null);
+                        setActiveTab('home');
+                    }}
+                />
+            </Suspense>
+        );
     }
 
     // ── Required-task gate ──────────────────────────────────────────────

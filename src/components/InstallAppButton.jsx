@@ -12,8 +12,8 @@ import { openExternalUrl } from '../capacitor-bridge';
 //     internal track uses the /apps/internaltest/<id> form below).
 //     NOTE: the opt-in only resolves once the staffer's email is on the
 //     internal tester list; until then Play shows "not available".
-const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
-const ANDROID_APP_URL = 'https://play.google.com/apps/internaltest/4701656348790704265';
+export const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
+export const ANDROID_APP_URL = 'https://play.google.com/apps/internaltest/4701656348790704265';
 
 export default function InstallAppButton({ language, compact = false }) {
     const isEs = language === 'es';
