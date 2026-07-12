@@ -154,6 +154,17 @@ service firebase.storage {
       allow delete: if true;
     }
 
+    // Health Department records — vaccine cards, food-handler certs
+    // (HealthDepartment.jsx, 2026-07-12). Images + PDFs; no delete
+    // (compliance artifacts are retained; replace by uploading anew).
+    match /health/{staffId}/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 15 * 1024 * 1024
+                   && (request.resource.contentType.matches('image/.*')
+                       || request.resource.contentType == 'application/pdf');
+      allow delete: if false;
+    }
+
     // Menu item photos — MenuEditor uploads.
     //
     // Hardened 2026-05-30 (CR-6, was bleeding through the catch-all).

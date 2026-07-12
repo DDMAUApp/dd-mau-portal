@@ -4,7 +4,7 @@ import { PageHeader } from '../v2/PageShell';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
-import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES, canCountMoney, canViewClockedIn } from '../data/staff';
+import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES, canCountMoney, canViewClockedIn, canManageHealth } from '../data/staff';
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
 // Static (not dynamic) import on purpose: AdminPanel is already lazy-loaded,
 // so renameStaff rides in the admin chunk. A dynamic import() spun it into a
@@ -1200,6 +1200,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editRecipesAccess, setEditRecipesAccess] = useState(false);
             const [editViewLabor, setEditViewLabor] = useState(false);
             const [editCanCountMoney, setEditCanCountMoney] = useState(false);
+            const [editHealthAccess, setEditHealthAccess] = useState(false);
             const [editCanViewClockedIn, setEditCanViewClockedIn] = useState(false);
             const [editShiftLead, setEditShiftLead] = useState(false);
             const [editIsMinor, setEditIsMinor] = useState(false);
@@ -2091,7 +2092,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
                         ? editBirthday
                         : (editBirthday === '' ? '' : (s.birthday || ''));
-                    return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, canViewClockedIn: editCanViewClockedIn, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
+                    return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, healthAccess: editHealthAccess, canViewClockedIn: editCanViewClockedIn, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
                 }));
                 // runRosterMutation already toasted on bad PIN / duplicate
                 // name / write error. Bail before fanning out a rename.
@@ -2948,6 +2949,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editCanCountMoney ? "translate-x-7" : "translate-x-1"}`} />
                                                         </button>
                                                     </div>
+                                                    {/* Health Department MANAGE — roster of all staff's shot dates +
+                                                        signed docs. Default ON for managers/owners; everyone always
+                                                        sees their OWN records regardless of this toggle. */}
+                                                    <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                                                        <div>
+                                                            <p className="text-sm font-bold text-gray-700">{language === "es" ? "Depto. de Salud (gestión)" : "Health Department (manage)"}</p>
+                                                            <p className="text-xs text-gray-500">{language === "es" ? "Ver y editar los registros de salud de todo el personal" : "View & edit every staff member's health records"}</p>
+                                                        </div>
+                                                        <button onClick={() => setEditHealthAccess(!editHealthAccess)}
+                                                            className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${editHealthAccess ? "bg-green-600" : "bg-gray-300"}`}>
+                                                            <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editHealthAccess ? "translate-x-7" : "translate-x-1"}`} />
+                                                        </button>
+                                                    </div>
                                                     {/* Who's clocked in — live clock-in list. Default OFF for staff
                                                         (owners only); flip ON to grant a manager. */}
                                                     <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
@@ -3210,7 +3224,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditCanCountMoney(canCountMoney(person)); setEditCanViewClockedIn(canViewClockedIn(person)); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditCanCountMoney(canCountMoney(person)); setEditHealthAccess(canManageHealth(person)); setEditCanViewClockedIn(canViewClockedIn(person)); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
                                                             className="glass-button-apple px-3 py-1.5 text-xs">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>

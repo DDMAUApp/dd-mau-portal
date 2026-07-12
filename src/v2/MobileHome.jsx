@@ -320,6 +320,7 @@ export default function MobileHome({
         { tab: 'training',   Icon: GraduationCap,   en: 'Training',     es: 'Capacitación' },
         { tab: 'catering',   Icon: ChefHat,         en: 'Orders',       es: 'Pedidos' },
         ...(canMoney  ? [{ tab: 'moneycount', Icon: Wallet, en: 'Money Count', es: 'Conteo de Dinero', primary: true }] : []),
+        { tab: 'healthdept', Icon: HeartPulse, en: 'Health Dept', es: 'Depto. de Salud' },
         ...(isManager ? [{ tab: 'tardies', Icon: Clock,     en: 'Tardies', es: 'Tardanzas' }] : []),
         ...(isManager ? [{ tab: 'handoff', Icon: Handshake, en: 'Handoff', es: 'Entrega' }] : []),
         ...(isAdmin   ? [{ tab: 'labor',   Icon: BarChart3, en: 'Labor',   es: 'Mano Obra' }] : []),

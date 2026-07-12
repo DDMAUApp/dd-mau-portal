@@ -103,6 +103,7 @@ service cloud.firestore {
         'email_intel',
         'email_intel_corrections',
         'error_logs',
+        'health_records',
         'insurance',
         'inventory_audits_maryland',
         'inventory_audits_webster',
@@ -1024,6 +1025,22 @@ service cloud.firestore {
       allow update: if request.resource.data is map
                     && request.resource.data.staffName is string
                     && request.resource.data.staffName == resource.data.staffName;
+      allow delete: if false;
+    }
+
+    // ── /health_records — Health Department compliance (2026-07-12) ─────
+    // One doc per staff, keyed by staff id (rename-safe). Holds Hep A
+    // shot dates, signed required-doc receipts, and uploaded file refs
+    // (vaccine cards / certs live in Storage under health/{staffId}/).
+    // Same posture as /insurance: map-shaped writes, staffId immutable,
+    // NEVER deletable (compliance artifacts are retained).
+    match /health_records/{staffId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.staffId is string;
+      allow update: if request.resource.data is map
+                    && request.resource.data.staffId is string
+                    && request.resource.data.staffId == resource.data.staffId;
       allow delete: if false;
     }
 

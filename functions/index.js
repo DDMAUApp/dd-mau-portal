@@ -4053,6 +4053,160 @@ exports.aiExtractMenu = onCall(
     }
 );
 
+// ── 2026-07-12 — aiExtractHealthDoc: vaccine card / cert → dates ──
+// Health Department module (HealthDepartment.jsx). Staff photograph
+// their Hep A vaccination card (or food-handler cert); this reads it
+// with Claude vision and returns structured dates so the record
+// self-fills. Same SSRF allowlist + rate-limit posture as
+// aiExtractMenu. Cost: ~$0.003 per card — pennies.
+exports.aiExtractHealthDoc = onCall(
+    {
+        region: "us-central1",
+        cors: true,
+        maxInstances: 5,
+        timeoutSeconds: 60,
+        memory: "512MiB",
+        secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
+    },
+    async (request) => {
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await enforceRateLimit({
+            ip,
+            namespace: "aiExtractHealthDoc",
+            limit: 15,
+            windowMs: 5 * 60_000,
+        });
+
+        const data = request.data || {};
+        const imageUrls = Array.isArray(data.imageUrls) ? data.imageUrls : [];
+        if (imageUrls.length === 0 || imageUrls.length > 4) {
+            throw new HttpsError("invalid-argument", "1-4 imageUrls required");
+        }
+        const STORAGE_HOST_ALLOWLIST = new Set([
+            "firebasestorage.googleapis.com",
+            "storage.googleapis.com",
+            "dd-mau-staff-app.firebasestorage.app",
+            "dd-mau-staff-app.appspot.com",
+        ]);
+        const imageBlocks = [];
+        for (const url of imageUrls) {
+            if (typeof url !== "string" || !/^https:\/\//.test(url)) {
+                throw new HttpsError("invalid-argument", "imageUrls must be https URLs");
+            }
+            try {
+                const host = new URL(url).hostname.toLowerCase();
+                if (!STORAGE_HOST_ALLOWLIST.has(host)) {
+                    throw new HttpsError("permission-denied", `imageUrls host not allowed: ${host}`);
+                }
+            } catch (e) {
+                if (e instanceof HttpsError) throw e;
+                throw new HttpsError("invalid-argument", "imageUrls must be valid URLs");
+            }
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) throw new HttpsError("invalid-argument", `fetch failed: ${resp.status}`);
+                const buf = await resp.arrayBuffer();
+                if (buf.byteLength > 10 * 1024 * 1024) {
+                    throw new HttpsError("invalid-argument", "image too large (cap 10 MB)");
+                }
+                let mediaType = (resp.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
+                if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(mediaType)) {
+                    mediaType = "image/jpeg";
+                }
+                imageBlocks.push({
+                    type: "image",
+                    source: { type: "base64", media_type: mediaType, data: Buffer.from(buf).toString("base64") },
+                });
+            } catch (e) {
+                if (e instanceof HttpsError) throw e;
+                logger.error("aiExtractHealthDoc fetch image failed:", e?.message);
+                throw new HttpsError("internal", "could not fetch the uploaded image");
+            }
+        }
+
+        const system = [
+            "You read photos of employee health-compliance documents for a restaurant: vaccination record cards (especially Hepatitis A), immunization printouts, and food handler / food protection manager certificates.",
+            "Extract ONLY what is clearly printed or handwritten. Never guess or invent dates.",
+            "",
+            "Respond with ONLY a JSON object, no prose, no markdown fences, exactly this shape:",
+            '{ "docType": "hepA_card" | "food_handler_cert" | "food_manager_cert" | "other" | "unreadable",',
+            '  "personName": "name printed on the document, or empty string",',
+            '  "hepAShot1Date": "YYYY-MM-DD or empty string",',
+            '  "hepAShot2Date": "YYYY-MM-DD or empty string",',
+            '  "certIssueDate": "YYYY-MM-DD or empty string",',
+            '  "certExpirationDate": "YYYY-MM-DD or empty string",',
+            '  "confidence": "high" | "medium" | "low",',
+            '  "notes": "one short line about anything ambiguous, or empty string" }',
+            "",
+            "Rules:",
+            "- Hepatitis A is a 2-dose series. Dose 1 = the earlier date, dose 2 = the later. If only one Hep A date is visible, fill hepAShot1Date only.",
+            "- Vaccination cards often list several vaccines — extract ONLY Hepatitis A rows (HepA, Hep-A, Havrix, Vaqta, Twinrix count as Hep A).",
+            "- Dates may be handwritten like 3/14/24 or 03-14-2024 — normalize to YYYY-MM-DD, assume 20xx for 2-digit years.",
+            "- If the image is not a health document or is unreadable, docType is 'other' or 'unreadable' with all dates empty.",
+        ].join("\n");
+
+        let body;
+        try {
+            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                    "x-api-key": ANTHROPIC_API_KEY.value(),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                    model: "claude-haiku-4-5",
+                    max_tokens: 1024,
+                    system,
+                    messages: [{
+                        role: "user",
+                        content: [
+                            ...imageBlocks,
+                            { type: "text", text: "Extract the health-document fields into the JSON shape from the system prompt." },
+                        ],
+                    }],
+                }),
+            });
+            if (!resp.ok) {
+                const errText = await resp.text();
+                logger.error("aiExtractHealthDoc anthropic error", resp.status, errText.slice(0, 300));
+                throw new HttpsError("internal", `anthropic failed: ${resp.status}`);
+            }
+            body = await resp.json();
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            logger.error("aiExtractHealthDoc fetch failed:", e?.message || e);
+            throw new HttpsError("unavailable", "document reading unavailable");
+        }
+
+        const textBlock = (body?.content || []).find(c => c?.type === "text");
+        const raw = textBlock?.text || "";
+        let parsed = null;
+        try {
+            parsed = JSON.parse(raw.trim().replace(/^```(?:json)?\n?/i, "").replace(/```$/i, "").trim());
+        } catch {
+            const m = raw.match(/\{[\s\S]*\}/);
+            if (m) { try { parsed = JSON.parse(m[0]); } catch { /* fall through */ } }
+        }
+        if (!parsed || typeof parsed !== "object") {
+            return { docType: "unreadable", confidence: "low", hepAShot1Date: "", hepAShot2Date: "", certIssueDate: "", certExpirationDate: "", personName: "", notes: "could not parse" };
+        }
+        const dateOk = (s) => (typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s)) ? s : "";
+        return {
+            docType: ["hepA_card", "food_handler_cert", "food_manager_cert", "other", "unreadable"].includes(parsed.docType) ? parsed.docType : "other",
+            personName: typeof parsed.personName === "string" ? parsed.personName.slice(0, 80) : "",
+            hepAShot1Date: dateOk(parsed.hepAShot1Date),
+            hepAShot2Date: dateOk(parsed.hepAShot2Date),
+            certIssueDate: dateOk(parsed.certIssueDate),
+            certExpirationDate: dateOk(parsed.certExpirationDate),
+            confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "low",
+            notes: typeof parsed.notes === "string" ? parsed.notes.slice(0, 200) : "",
+        };
+    }
+);
+
 // ── 2026-05-20 — aiGeneratePromo: AI banner copy for menu TVs ─────
 // Andrew Wave 5 of "match the SaaS leaders, beat them where we can".
 // None of Raydiant / ScreenCloud / Samsung VXT offer AI-generated

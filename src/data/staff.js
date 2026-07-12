@@ -197,6 +197,19 @@ export function canCountMoney(staff) {
   return isAdminId(staff.id) || isManagerRoleTitle(staff.role) || staff.shiftLead === true;
 }
 
+// Health Department MANAGE access (Andrew 2026-07-12). Every staff
+// member can open the Health Department tab and complete their OWN
+// records; this gates the roster view (all staff's shot dates + signed
+// docs + manual edits + reminders). Default ON for owners + manager-
+// titled staff; the per-record `healthAccess` toggle (Admin Panel)
+// overrides either way. Same tri-state pattern as canCountMoney.
+export function canManageHealth(staff) {
+  if (!staff) return false;
+  if (staff.healthAccess === true) return true;
+  if (staff.healthAccess === false) return false;
+  return isAdminId(staff.id) || isManagerRoleTitle(staff.role);
+}
+
 export const LOCATION_LABELS = {
   webster: "Webster",
   maryland: "Maryland Heights",

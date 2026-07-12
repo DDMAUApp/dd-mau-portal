@@ -102,6 +102,7 @@ const NAV_GROUPS = [
         labelEn: 'PEOPLE', labelEs: 'PERSONAL',
         items: [
             { tab: 'training', Icon: GraduationCap, en: 'Training', es: 'Capacitación' },
+            { tab: 'healthdept', Icon: HeartPulse,    en: 'Health Department', es: 'Depto. de Salud' },
             { tab: 'tardies',  Icon: Clock,         en: 'Tardies',  es: 'Tardanzas',  requires: 'manager' },
             { tab: 'handoff',  Icon: Handshake,     en: 'Handoff',  es: 'Entrega',    requires: 'manager' },
         ],
