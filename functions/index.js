@@ -4075,7 +4075,10 @@ exports.aiExtractHealthDoc = onCall(
         await enforceRateLimit({
             ip,
             namespace: "aiExtractHealthDoc",
-            limit: 15,
+            // 2026-07-12: raised 15 → 60 for the admin MASS import (a
+            // one-time batch of every staff member's paper records reads
+            // one file per call). Still cheap: 60 × ~$0.003 ≈ $0.18.
+            limit: 60,
             windowMs: 5 * 60_000,
         });
 

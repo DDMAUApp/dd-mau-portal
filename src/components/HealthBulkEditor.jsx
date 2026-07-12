@@ -10,7 +10,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { upsertHealthRecord } from '../data/health';
+import { upsertHealthRecord, extractHealthDoc, loadHealthDocsConfig } from '../data/health';
+import { storage } from '../firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { toast } from '../toast';
 
 // Accepts 2026-01-15, 1/15/26, 01-15-2026, 1.15.26 → 'YYYY-MM-DD' | ''.
@@ -64,6 +66,132 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
     const [pasteText, setPasteText] = useState('');
     const [pasteResult, setPasteResult] = useState(null);
     const [saving, setSaving] = useState(false);
+
+    // ── Mass document import (Andrew 2026-07-12) ──────────────────────
+    // Select MANY files at once; each is uploaded, AI-read (name + shot
+    // dates come off the card), auto-matched to a staff member, and
+    // classified. Admin reviews the table, fixes any assignment, and
+    // one Apply files everything — including marking paper-signed
+    // required docs as signed so existing staff never re-sign.
+    const [massRows, setMassRows] = useState([]);   // {id,fileName,url,path,extracted,staffId,kind,status}
+    const [massBusy, setMassBusy] = useState('');   // '' | 'reading 3/12' | 'applying 3/12'
+    const [docsConfig, setDocsConfig] = useState([]);
+    useEffect(() => {
+        if (!open) return;
+        loadHealthDocsConfig().then(setDocsConfig).catch(() => setDocsConfig([]));
+    }, [open]);
+
+    const guessStaffId = (personName) => {
+        const norm = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!personName) return '';
+        const n = norm(personName);
+        const hit = rows.find(p => norm(p.name) === n)
+            || rows.find(p => norm(p.name).includes(n) || n.includes(norm(p.name)))
+            || rows.find(p => {
+                const toks = n.split(' ').filter(Boolean);
+                const hay = norm(p.name);
+                return toks.length >= 2 && toks.every(t => hay.includes(t));
+            });
+        return hit ? String(hit.id) : '';
+    };
+
+    const onMassFiles = async (e) => {
+        const files = [...(e.target.files || [])];
+        e.target.value = '';
+        if (files.length === 0) return;
+        const staged = [];
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            setMassBusy(`${tx('Uploading', 'Subiendo')} ${i + 1}/${files.length}…`);
+            try {
+                const path = `health/_import/${Date.now()}-${i}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+                const sref = storageRef(storage, path);
+                await uploadBytes(sref, file, { contentType: file.type || 'image/jpeg' });
+                const url = await getDownloadURL(sref);
+                staged.push({ id: `${Date.now()}-${i}`, fileName: file.name, url, path, isImage: (file.type || '').startsWith('image/'), extracted: null, staffId: '', kind: 'record', status: 'pending' });
+            } catch (err) {
+                console.error('mass upload failed:', file.name, err?.message);
+            }
+        }
+        setMassRows(prev => [...prev, ...staged]);
+        // AI-read sequentially (rate limit is 60/5min server-side).
+        for (let i = 0; i < staged.length; i++) {
+            const row = staged[i];
+            if (!row.isImage) continue;
+            setMassBusy(`🤖 ${tx('Reading', 'Leyendo')} ${i + 1}/${staged.length}…`);
+            try {
+                const ex = await extractHealthDoc([row.url]);
+                const staffId = guessStaffId(ex.personName);
+                const kind = ex.docType === 'hepA_card' ? 'vaccine' : 'record';
+                setMassRows(prev => prev.map(r => r.id === row.id ? { ...r, extracted: ex, staffId: r.staffId || staffId, kind } : r));
+            } catch (err) {
+                console.warn('mass extract failed:', err?.message);
+                setMassRows(prev => prev.map(r => r.id === row.id ? { ...r, extracted: { docType: 'other', notes: 'AI read failed — assign manually' } } : r));
+            }
+        }
+        setMassBusy('');
+    };
+
+    const setMassRow = (id, patch) => setMassRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+
+    const applyMass = async () => {
+        const assigned = massRows.filter(r => r.staffId && r.status === 'pending');
+        if (assigned.length === 0 || massBusy) return;
+        let done = 0;
+        for (const row of assigned) {
+            setMassBusy(`${tx('Filing', 'Archivando')} ${++done}/${assigned.length}…`);
+            const person = rows.find(p => String(p.id) === row.staffId);
+            if (!person) continue;
+            try {
+                // Copy the file into the staff's own folder (tidy paths;
+                // originals in _import stay too — versioned, never lost).
+                let finalUrl = row.url, finalPath = row.path;
+                try {
+                    const blob = await (await fetch(row.url)).blob();
+                    finalPath = `health/${row.staffId}/${Date.now()}-${row.fileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+                    const dref = storageRef(storage, finalPath);
+                    await uploadBytes(dref, blob, { contentType: blob.type || 'image/jpeg' });
+                    finalUrl = await getDownloadURL(dref);
+                } catch { /* copy failed — reference the _import path instead */ }
+                await upsertHealthRecord(row.staffId, person.name, (rec) => {
+                    rec.files = [...(rec.files || []), {
+                        url: finalUrl, path: finalPath, label: row.fileName,
+                        kind: row.kind === 'vaccine' ? 'hepA_card' : row.kind.startsWith('doc:') ? 'signed_paper_doc' : (row.extracted?.docType || 'other'),
+                        uploadedAt: new Date().toISOString(), uploadedBy: byName,
+                        extracted: row.extracted || null, importedBatch: true,
+                    }];
+                    if (row.kind === 'vaccine') {
+                        rec.hepA = { ...(rec.hepA || {}) };
+                        if (row.extracted?.hepAShot1Date && !rec.hepA.shot1Date) rec.hepA.shot1Date = row.extracted.hepAShot1Date;
+                        if (row.extracted?.hepAShot2Date && !rec.hepA.shot2Date) rec.hepA.shot2Date = row.extracted.hepAShot2Date;
+                        rec.hepA.verifiedBy = byName;
+                        rec.hepA.verifiedAt = new Date().toISOString();
+                    } else if (row.kind.startsWith('doc:')) {
+                        const key = row.kind.slice(4);
+                        const def = (docsConfig || []).find(d => d.key === key);
+                        rec.docs = { ...(rec.docs || {}), [key]: {
+                            signedAt: new Date().toISOString(),
+                            signedName: person.name,
+                            docTitle: def?.title || key,
+                            version: def?.version || 1,
+                            method: 'paper',
+                            note: `Paper copy on file — imported by ${byName}`,
+                        } };
+                    }
+                    return rec;
+                }, byName);
+                setMassRow(row.id, { status: 'done' });
+            } catch (err) {
+                console.error('mass apply failed:', person?.name, err?.message);
+                setMassRow(row.id, { status: 'error' });
+            }
+        }
+        setMassBusy('');
+        const failed = massRows.filter(r => r.status === 'error').length;
+        toast(failed
+            ? tx(`Filed ${done - failed}, ${failed} failed`, `${done - failed} archivados, ${failed} fallaron`)
+            : tx(`✅ ${done} document${done === 1 ? '' : 's'} filed`, `✅ ${done} documento${done === 1 ? '' : 's'} archivados`));
+    };
 
     useEffect(() => {
         if (!open) return;
@@ -163,6 +291,87 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
 
             {open && (
                 <div className="glass-card p-3 mt-2">
+                    {/* Mass document import */}
+                    <details className="mb-3" open={massRows.length > 0}>
+                        <summary className="text-sm font-semibold text-dd-text cursor-pointer">
+                            📂 {tx('Mass import documents (vaccine cards + signed paper docs)', 'Importación masiva de documentos')}
+                        </summary>
+                        <p className="text-[11px] text-dd-text-2 mt-1 mb-1.5">
+                            {tx('Select many files at once. Each is read automatically and matched to a staff member by the name on the document — review, fix any, pick what each file is, then Apply. Marking a file as a signed paper agreement counts that document as signed (no re-signing).',
+                                'Selecciona muchos archivos a la vez. Cada uno se lee automáticamente y se asigna por el nombre en el documento — revisa, corrige, elige qué es cada archivo y Aplica.')}
+                        </p>
+                        <label className="glass-button-primary inline-flex items-center px-4 py-2 rounded-full text-sm font-bold cursor-pointer">
+                            {tx('Choose files…', 'Elegir archivos…')}
+                            <input type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={onMassFiles} disabled={!!massBusy} />
+                        </label>
+                        {massBusy && <span className="ml-3 text-sm text-dd-text-2">{massBusy}</span>}
+                        {massRows.length > 0 && (
+                            <div className="overflow-x-auto mt-2">
+                                <table className="w-full text-sm min-w-[680px]">
+                                    <thead>
+                                        <tr className="text-left text-[11px] uppercase text-dd-text-2 border-b border-dd-line">
+                                            <th className="py-1.5 px-1.5">{tx('File', 'Archivo')}</th>
+                                            <th className="py-1.5 px-1.5">{tx('AI read', 'Lectura IA')}</th>
+                                            <th className="py-1.5 px-1.5">{tx('Assign to', 'Asignar a')}</th>
+                                            <th className="py-1.5 px-1.5">{tx('This file is', 'Este archivo es')}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {massRows.map((r) => (
+                                            <tr key={r.id} className={`border-b border-dd-line/60 ${r.status === 'done' ? 'opacity-50' : r.status === 'error' ? 'bg-red-50' : ''}`}>
+                                                <td className="py-1.5 px-1.5 max-w-[160px]">
+                                                    <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-dd-green-700 underline underline-offset-2 truncate block">{r.fileName}</a>
+                                                    {r.status === 'done' && <span className="text-[10px] text-dd-green-700 font-bold">✓ {tx('filed', 'archivado')}</span>}
+                                                    {r.status === 'error' && <span className="text-[10px] text-red-600 font-bold">{tx('failed — retry Apply', 'falló')}</span>}
+                                                </td>
+                                                <td className="py-1.5 px-1.5 text-xs text-dd-text-2 max-w-[200px]">
+                                                    {r.extracted
+                                                        ? <>{r.extracted.personName && <b className="text-dd-text">{r.extracted.personName}</b>}
+                                                            {r.extracted.hepAShot1Date && <> · 💉1 {r.extracted.hepAShot1Date}</>}
+                                                            {r.extracted.hepAShot2Date && <> · 💉2 {r.extracted.hepAShot2Date}</>}
+                                                            {!r.extracted.personName && !r.extracted.hepAShot1Date && (r.extracted.notes || r.extracted.docType)}</>
+                                                        : tx('reading…', 'leyendo…')}
+                                                </td>
+                                                <td className="py-1.5 px-1.5">
+                                                    <select value={r.staffId} onChange={(e) => setMassRow(r.id, { staffId: e.target.value })}
+                                                        disabled={r.status === 'done'}
+                                                        className={`glass-select text-sm py-1 ${!r.staffId ? 'border-amber-400' : ''}`}>
+                                                        <option value="">{tx('— pick staff —', '— elegir —')}</option>
+                                                        {rows.map(p => <option key={p.id} value={String(p.id)}>{p.name}</option>)}
+                                                    </select>
+                                                </td>
+                                                <td className="py-1.5 px-1.5">
+                                                    <select value={r.kind} onChange={(e) => setMassRow(r.id, { kind: e.target.value })}
+                                                        disabled={r.status === 'done'}
+                                                        className="glass-select text-sm py-1">
+                                                        <option value="vaccine">{tx('Vaccine card (fills shot dates)', 'Tarjeta de vacunas')}</option>
+                                                        {(docsConfig || []).map(d => (
+                                                            <option key={d.key} value={`doc:${d.key}`}>{tx('Signed paper:', 'Papel firmado:')} {d.title}</option>
+                                                        ))}
+                                                        <option value="record">{tx('Other record (file only)', 'Otro registro')}</option>
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                <div className="flex items-center justify-between mt-2">
+                                    <p className="text-xs text-dd-text-2">
+                                        {massRows.filter(r => r.status === 'pending' && r.staffId).length} {tx('ready', 'listos')} · {massRows.filter(r => r.status === 'pending' && !r.staffId).length} {tx('need a staff pick', 'sin asignar')}
+                                    </p>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setMassRows(prev => prev.filter(r => r.status !== 'done'))}
+                                            className="glass-button-apple px-3 py-2 rounded-full text-sm">{tx('Clear done', 'Quitar listos')}</button>
+                                        <button onClick={applyMass} disabled={!!massBusy || massRows.every(r => !(r.status === 'pending' && r.staffId))}
+                                            className="glass-button-primary px-5 py-2 rounded-full text-sm font-bold disabled:opacity-50">
+                                            {tx('Apply assigned', 'Aplicar asignados')}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </details>
+
                     {/* Paste import */}
                     <details className="mb-3">
                         <summary className="text-sm font-semibold text-dd-text cursor-pointer">
