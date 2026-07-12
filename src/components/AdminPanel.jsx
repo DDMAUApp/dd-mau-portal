@@ -34,6 +34,7 @@ import StaffTodosAdmin from './StaffTodosAdmin';
 // page. i want to know which staff has used the app?" Self-contained
 // read-only card; reads staffList in-place, no new Firestore writes.
 import StaffUsageAudit from './StaffUsageAudit';
+import HealthBulkEditor from './HealthBulkEditor';
 import ScheduleAuditLog from './ScheduleAuditLog';
 import AttendanceLog from './AttendanceLog';
 import { toast } from '../toast';
@@ -1806,7 +1807,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         return tokens.every(t => hay.includes(t));
                     });
                 }
-                return out;
+                // 2026-07-12 Andrew: staff list in alphabetical order.
+                // Display-only sort — every save path keys by name/id, so
+                // ordering the view can't affect writes.
+                return [...out].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             })();
 
             // Load maintenance requests
@@ -2451,6 +2455,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         currentManagerId={(staffList || []).find(s => s.name === staffName)?.id ?? null}
                         onSetPhone={setPhoneForStaff}
                     />
+
+                    {/* ── HEALTH RECORDS BULK IMPORT & EDIT ── Andrew 2026-07-12:
+                        spreadsheet-style grid + paste-import for hire dates and
+                        Hep A shots across the whole roster. Writes the same
+                        /health_records docs the Health Department tab uses. */}
+                    <HealthBulkEditor staffList={staffList} language={language} byName={staffName} />
 
                     {/* ── SCHEDULE AUDIT LOG ── Andrew 2026-06-25: "every shift
                         move, every time-off request, everything in the schedule

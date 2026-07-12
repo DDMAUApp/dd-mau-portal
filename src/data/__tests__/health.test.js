@@ -115,3 +115,36 @@ describe('buildAttentionQueue', () => {
         expect(q[0]).toMatchObject({ kind: 'hepA2', overdue: false, severity: 2, dueDate: '2026-11-01' });
     });
 });
+
+import { normalizeDateInput, parsePastedRows } from '../../components/HealthBulkEditor';
+
+describe('normalizeDateInput', () => {
+    it('accepts common spreadsheet formats', () => {
+        expect(normalizeDateInput('2026-01-15')).toBe('2026-01-15');
+        expect(normalizeDateInput('1/15/26')).toBe('2026-01-15');
+        expect(normalizeDateInput('01-15-2026')).toBe('2026-01-15');
+        expect(normalizeDateInput('3.2.24')).toBe('2024-03-02');
+    });
+    it('rejects garbage', () => {
+        expect(normalizeDateInput('')).toBe('');
+        expect(normalizeDateInput('yes')).toBe('');
+        expect(normalizeDateInput('13/45/26')).toBe('');
+    });
+});
+
+describe('parsePastedRows', () => {
+    const STAFF = [{ id: 6, name: 'Blanca Salgado' }, { id: 21, name: 'Isa Davis' }];
+    it('matches names (exact + prefix, case-insensitive) and normalizes dates', () => {
+        const text = 'blanca salgado\t3/2/24\t4/1/24\t10/5/24\nIsa,2024-05-01,5/15/24\nGhost Person\t1/1/24\t2/2/24';
+        const { matched, unmatched } = parsePastedRows(text, STAFF);
+        expect(matched).toHaveLength(2);
+        expect(matched[0]).toMatchObject({ staffId: '6', patch: { hiredDate: '2024-03-02', shot1Date: '2024-04-01', shot2Date: '2024-10-05' } });
+        expect(matched[1]).toMatchObject({ staffId: '21', patch: { hiredDate: '2024-05-01', shot1Date: '2024-05-15' } });
+        expect(unmatched).toHaveLength(1);
+    });
+    it('skips rows with no readable dates', () => {
+        const { matched, unmatched } = parsePastedRows('Isa Davis\tsoon\tmaybe', STAFF);
+        expect(matched).toHaveLength(0);
+        expect(unmatched).toHaveLength(1);
+    });
+});
