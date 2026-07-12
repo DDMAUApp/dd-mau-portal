@@ -167,6 +167,40 @@ function UploadCard({ staffId, staffName, byName, language, onSaved }) {
     );
 }
 
+// ── PaperDoc — renders agreement text as a real paper document ──────
+// Andrew 2026-07-12: "make it form a real doc that is in a real doc
+// form or feel." Letterhead, serif body, and a signature block where
+// the typed name renders in script over a signature line.
+function PaperDoc({ title, body, signedName, dateStr, sigLabel, bodyRef, onScroll }) {
+    return (
+        <div ref={bodyRef} onScroll={onScroll}
+            className="flex-1 overflow-y-auto rounded-md mb-3 border border-gray-300 shadow-inner px-5 py-6"
+            style={{ fontFamily: "Georgia, 'Times New Roman', serif", background: '#fdfcf7' }}>
+            <div className="text-center mb-4">
+                <p className="text-[10px] tracking-[0.3em] text-gray-500 uppercase">DD Mau Vietnamese Eatery</p>
+                <h4 className="text-lg font-bold text-gray-900 mt-1 leading-snug">{title}</h4>
+                <div className="mt-2.5 border-b-2 border-gray-800 w-24 mx-auto" />
+            </div>
+            <div className="text-[13.5px] leading-relaxed text-gray-900 whitespace-pre-wrap">{body}</div>
+            <div className="mt-8 flex items-end gap-6">
+                <div className="flex-1 min-w-0">
+                    <p className="h-9 text-[26px] text-gray-900 truncate"
+                        style={{ fontFamily: "'Snell Roundhand', 'Segoe Script', 'Brush Script MT', cursive" }}>
+                        {signedName || '\u00A0'}
+                    </p>
+                    <div className="border-t border-gray-700" />
+                    <p className="text-[9px] text-gray-500 uppercase tracking-widest mt-1">{sigLabel}</p>
+                </div>
+                <div className="w-24 flex-shrink-0">
+                    <p className="h-9 text-sm text-gray-900 flex items-end justify-center">{dateStr}</p>
+                    <div className="border-t border-gray-700" />
+                    <p className="text-[9px] text-gray-500 uppercase tracking-widest mt-1 text-center">Date</p>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // ── Read-and-sign modal for a required doc ──────────────────────────
 function SignDocModal({ docDef, staffId, staffName, language, onClose, onSigned }) {
     const isEs = language === 'es';
@@ -203,11 +237,12 @@ function SignDocModal({ docDef, staffId, staffName, language, onClose, onSigned 
         <ModalPortal>
             <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-3" onClick={onClose} role="dialog" aria-modal="true">
                 <div className="glass-sheet bg-white w-full max-w-md rounded-2xl p-4 shadow-2xl flex flex-col" style={{ maxHeight: '85dvh' }} onClick={(e) => e.stopPropagation()}>
-                    <h3 className="font-bold text-dd-text mb-2">{isEs ? (docDef.titleEs || docDef.title) : docDef.title}</h3>
-                    <div ref={bodyRef} onScroll={onScroll}
-                        className="flex-1 overflow-y-auto text-sm text-dd-text whitespace-pre-wrap border border-dd-line rounded-xl p-3 bg-dd-bg mb-3">
-                        {isEs ? (docDef.bodyEs || docDef.body) : docDef.body}
-                    </div>
+                    <PaperDoc bodyRef={bodyRef} onScroll={onScroll}
+                        title={isEs ? (docDef.titleEs || docDef.title) : docDef.title}
+                        body={isEs ? (docDef.bodyEs || docDef.body) : docDef.body}
+                        signedName={typedName.trim()}
+                        dateStr={new Date().toLocaleDateString(isEs ? 'es' : 'en', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        sigLabel={tx('Employee signature', 'Firma del empleado')} />
                     {!scrolledToEnd && <p className="text-[11px] text-amber-700 mb-2">{tx('Scroll to the end to sign', 'Desplázate hasta el final para firmar')}</p>}
                     <input value={typedName} onChange={(e) => setTypedName(e.target.value)}
                         placeholder={tx(`Type your full name: ${staffName}`, `Escribe tu nombre completo: ${staffName}`)}
@@ -264,7 +299,6 @@ function ExemptionModal({ staffId, staffName, language, onClose, onSigned }) {
         <ModalPortal>
             <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-3" onClick={onClose} role="dialog" aria-modal="true">
                 <div className="glass-sheet bg-white w-full max-w-md rounded-2xl p-4 shadow-2xl flex flex-col" style={{ maxHeight: '85dvh' }} onClick={(e) => e.stopPropagation()}>
-                    <h3 className="font-bold text-dd-text mb-2">{isEs ? EXEMPTION_WAIVER.titleEs : EXEMPTION_WAIVER.title}</h3>
                     <div className="flex gap-2 mb-2">
                         {[['medical', tx('Medical / titer', 'Médica / títulos')], ['religious', tx('Religious', 'Religiosa')]].map(([k, label]) => (
                             <button key={k} onClick={() => setExType(k)}
@@ -273,10 +307,12 @@ function ExemptionModal({ staffId, staffName, language, onClose, onSigned }) {
                             </button>
                         ))}
                     </div>
-                    <div ref={bodyRef} onScroll={onScroll}
-                        className="flex-1 overflow-y-auto text-sm text-dd-text whitespace-pre-wrap border border-dd-line rounded-xl p-3 bg-dd-bg mb-3">
-                        {isEs ? EXEMPTION_WAIVER.bodyEs : EXEMPTION_WAIVER.body}
-                    </div>
+                    <PaperDoc bodyRef={bodyRef} onScroll={onScroll}
+                        title={isEs ? EXEMPTION_WAIVER.titleEs : EXEMPTION_WAIVER.title}
+                        body={isEs ? EXEMPTION_WAIVER.bodyEs : EXEMPTION_WAIVER.body}
+                        signedName={typedName.trim()}
+                        dateStr={new Date().toLocaleDateString(isEs ? 'es' : 'en', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        sigLabel={tx('Employee signature', 'Firma del empleado')} />
                     {!scrolledToEnd && <p className="text-[11px] text-amber-700 mb-2">{tx('Scroll to the end to sign', 'Desplázate hasta el final para firmar')}</p>}
                     <input value={typedName} onChange={(e) => setTypedName(e.target.value)}
                         placeholder={tx(`Type your full name: ${staffName}`, `Escribe tu nombre completo: ${staffName}`)}
@@ -644,7 +680,8 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
                             <th className="py-1.5 pr-2">Illness policy signed</th></tr></thead>
                         <tbody>
                             {rows.map(({ person, rec, status }) => (
-                                <tr key={person.id} className="border-b border-dd-line/60">
+                                <tr key={person.id} onClick={() => setOpenPerson(person)}
+                                    className="border-b border-dd-line/60 cursor-pointer hover:bg-dd-sage-50/60 print:cursor-auto">
                                     <td className="py-1.5 pr-2 font-semibold">{person.name}</td>
                                     <td className="py-1.5 pr-2">{fmtDate(rec?.hiredDate, false)}</td>
                                     <td className="py-1.5 pr-2">{rec?.hepA?.exempt ? 'Exempt' : fmtDate(rec?.hepA?.shot1Date, false)}</td>

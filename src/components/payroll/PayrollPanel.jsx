@@ -59,7 +59,7 @@ function guessPeriod(names) {
 }
 
 // ───────────────────────────── password gate ─────────────────────────────
-function PayrollGate({ onUnlock, staffName }) {
+function PayrollGate({ onUnlock, onClose, staffName }) {
     const [meta, setMeta] = useState(undefined); // undefined=loading, null=none, obj=set
     const [pw, setPw] = useState('');
     const [pw2, setPw2] = useState('');
@@ -112,7 +112,11 @@ function PayrollGate({ onUnlock, staffName }) {
                 <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl border border-dd-line p-5">
                     <div className="flex items-center gap-2 mb-1">
                         <span className="text-2xl">🔒</span>
-                        <h3 className="text-base font-bold text-dd-text">Payroll</h3>
+                        <h3 className="text-base font-bold text-dd-text flex-1">Payroll</h3>
+                        {/* 2026-07-12 Andrew: "that window needs a close button" —
+                            without it the gate trapped you until a correct password. */}
+                        <button onClick={onClose} aria-label="Close"
+                            className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 text-lg flex-shrink-0">×</button>
                     </div>
                     {meta === undefined ? (
                         <p className="text-sm text-dd-text-2 py-4">Checking…</p>
@@ -156,7 +160,7 @@ function PayrollGate({ onUnlock, staffName }) {
 }
 
 // ───────────────────────────── main wizard ─────────────────────────────
-export default function PayrollPanel({ language, staffName, staffList }) {
+export default function PayrollPanel({ language, staffName, staffList, onClose }) {
     const owner = isAdmin(staffName, staffList);
     const [unlocked, setUnlocked] = useState(() => {
         try { return sessionStorage.getItem(UNLOCK_KEY) === '1'; } catch { return false; }
@@ -207,7 +211,7 @@ export default function PayrollPanel({ language, staffName, staffList }) {
     }, [unlocked]);
 
     if (!owner) return <p className="text-sm text-dd-text-2 px-1 py-2">Payroll is owner-only.</p>;
-    if (!unlocked) return <PayrollGate staffName={staffName} onUnlock={() => setUnlocked(true)} />;
+    if (!unlocked) return <PayrollGate staffName={staffName} onUnlock={() => setUnlocked(true)} onClose={onClose} />;
     if (!rosterRef.current) return <p className="text-sm text-dd-text-2 px-1 py-2">Loading payroll…</p>;
 
     const roster = rosterRef.current;

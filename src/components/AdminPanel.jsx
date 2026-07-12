@@ -4879,7 +4879,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         {language === 'es' ? 'Cargando…' : 'Loading…'}
                                     </p>
                                 }>
-                                    <PayrollPanel language={language} staffName={staffName} staffList={staffList} />
+                                    <PayrollPanel language={language} staffName={staffName} staffList={staffList} onClose={() => setPayrollExpanded(false)} />
                                 </ReactSuspense>
                             )}
                         </div>
