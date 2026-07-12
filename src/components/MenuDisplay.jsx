@@ -329,12 +329,24 @@ function MenuDisplayInner({ tvId = 'webster' }) {
     // comparison — so a TV with a skewed clock can never reload-loop.
     // The first observed value (from cache or the first snapshot) is
     // the baseline; only a LATER change triggers.
+    // 2026-07-11 RELOAD-LOOP FIX (TV1 + Menu Screens preview "kept
+    // flashing"): the old version baselined on the FIRST effect run —
+    // which fires with tvConfig still null when there's no local cache
+    // (fresh browser, or a cache older than the 7-day expiry, exactly
+    // TV1 after 34 days offline). The baseline landed as null, then the
+    // server config arrived carrying the last reloadRequestedAt stamp
+    // (July 7) → "changed!" → reload → repeat forever. Two more traps
+    // fixed while here: live Timestamps carry FRACTIONAL ms from
+    // toMillis() while cache-hydrated ones don't (compare integers), and
+    // `!==` let an older/removed stamp trigger too (require strictly
+    // newer).
     const reloadSeenRef = useRef(undefined);
     useEffect(() => {
-        const ts = tvConfig?.reloadRequestedAt;
-        const ms = ts?.toMillis?.() ?? (ts?.seconds ? ts.seconds * 1000 : null);
+        if (!tvConfig) return; // config not loaded yet — never baseline on nothing
+        const ts = tvConfig.reloadRequestedAt;
+        const ms = Math.floor(ts?.toMillis?.() ?? (ts?.seconds ? ts.seconds * 1000 : 0)) || 0;
         if (reloadSeenRef.current === undefined) { reloadSeenRef.current = ms; return; }
-        if (ms && ms !== reloadSeenRef.current) {
+        if (ms > reloadSeenRef.current) {
             reloadSeenRef.current = ms;
             try { window.location.reload(); } catch { /* ignore */ }
         }
