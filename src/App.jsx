@@ -1713,6 +1713,10 @@ export default function App() {
                             lastSignInPlatform: platform,
                             lastSignInStandalone: standalone,
                             lastSignInNative: isNative,
+                            // Bundle version at sign-in — on native this is the OTA
+                            // bundle actually running, so the usage audit can spot
+                            // devices stuck on old versions.
+                            lastSignInVersion: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '',
                         }
                         : s);
                     tx.set(ref, { list: next, rev: nextStaffRev(data) });

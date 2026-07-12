@@ -219,6 +219,7 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                 signInMs,
                 lastSeenMs,
                 platform: s.lastSignInPlatform || '',
+                version: s.lastSignInVersion || '',
                 standalone: s.lastSignInStandalone === true,
                 // TRUE = last opened the DOWNLOADED native app (iOS/Android).
                 // Undefined on staff who haven't signed in since this shipped →
@@ -410,6 +411,11 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                                     {s.native
                                                         ? `${s.platform || ''} ${tx('App', 'App')}`.trim()
                                                         : `${tx('Web', 'Web')}${s.standalone ? ' · PWA' : (s.platform ? ` · ${s.platform}` : '')}`}
+                                                </span>
+                                            )}
+                                            {s.version && (
+                                                <span className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded-full border bg-dd-bg/80 text-dd-text-2 border-dd-line">
+                                                    v{s.version}
                                                 </span>
                                             )}
                                         </div>
