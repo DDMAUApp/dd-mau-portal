@@ -3448,11 +3448,20 @@ function Composer({
                 Hidden file inputs sit OUTSIDE the drawer block so a
                 hide/show transition doesn't unmount the inputs (which
                 would drop the in-flight file selection on iOS). */}
+            {/* 2026-07-12 — Andrew: "there's no way to add from the
+                phone's photo/video library." We previously set
+                capture="environment" on the photo input, which on iOS
+                Safari + Android Chrome forces the CAMERA to open
+                directly and REMOVES the "Photo Library" / "Choose File"
+                options from the native chooser. Dropping `capture` lets
+                the OS show its full action sheet (Take Photo, Photo
+                Library, Browse) so staff can attach an existing photo
+                *or* shoot a new one. The video input intentionally has
+                no capture for the same reason — keep them symmetric. */}
             <input
                 ref={imageInputRef}
                 type="file"
                 accept="image/*"
-                capture="environment"
                 onChange={onPickImage}
                 className="hidden"
             />
