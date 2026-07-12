@@ -59,19 +59,19 @@ export default function DeletedStaffSection({ language, onRestore }) {
 
     return (
         <div className="mb-6">
-            <button onClick={() => setExpanded(!expanded)}
-                className="w-full flex items-center justify-between bg-gray-50 border-2 border-gray-200 rounded-xl p-4 hover:bg-gray-100 transition">
-                <div className="flex items-center gap-2">
-                    <span className="text-2xl">🗂️</span>
-                    <div className="text-left">
-                        <h3 className="font-bold text-gray-700">{tx('Deleted staff', 'Personal eliminado')}</h3>
-                        <p className="text-xs text-gray-500">
+            <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded}
+                className="glass-section-head tint-slate">
+                <div className="flex items-center gap-3 min-w-0">
+                    <span className="glass-icon-tile" aria-hidden="true">🗂️</span>
+                    <div className="text-left min-w-0">
+                        <h3 className="font-bold text-[15px] text-dd-text">{tx('Deleted staff', 'Personal eliminado')}</h3>
+                        <p className="text-[11px] text-dd-text-2 truncate">
                             {tx('Records kept from removed staff — view or restore',
                                 'Registros del personal eliminado — ver o restaurar')}
                         </p>
                     </div>
                 </div>
-                <span className="text-gray-400 text-xl">{expanded ? '▼' : '▶'}</span>
+                <span className="section-chevron text-xl" aria-hidden="true">›</span>
             </button>
 
             {expanded && (

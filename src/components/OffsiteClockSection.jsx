@@ -203,20 +203,21 @@ export default function OffsiteClockSection({
     const [editingShift, setEditingShift] = useState(null);
 
     return (
-        <div className="mb-6">
+        <div className="mb-3">
             {/* Collapsible header — same shape as Maintenance + Staff sections so
                 the admin page reads as a single rhythm. */}
             <button
                 onClick={() => setExpanded(e => !e)}
-                className="w-full flex items-center justify-between bg-purple-50 border-2 border-purple-200 rounded-xl p-4 hover:bg-purple-100 transition"
+                aria-expanded={expanded}
+                className="glass-section-head tint-purple"
             >
-                <div className="flex items-center gap-2">
-                    <span className="text-2xl">🚐</span>
-                    <div className="text-left">
-                        <h3 className="font-bold text-purple-700">
+                <div className="flex items-center gap-3 min-w-0">
+                    <span className="glass-icon-tile" aria-hidden="true">🚐</span>
+                    <div className="text-left min-w-0">
+                        <h3 className="font-bold text-[15px] text-dd-text">
                             {tx('Off-Site Clock-In', 'Fichaje Fuera de Sitio')}
                         </h3>
-                        <p className="text-xs text-purple-600/80">
+                        <p className="text-[11px] text-dd-text-2 truncate">
                             {active.length > 0
                                 ? tx(
                                     `${active.length} ${active.length === 1 ? 'assignment' : 'assignments'} open`,
@@ -226,7 +227,7 @@ export default function OffsiteClockSection({
                         </p>
                     </div>
                 </div>
-                <span className="text-gray-400 text-xl">{expanded ? '▼' : '▶'}</span>
+                <span className="section-chevron text-xl" aria-hidden="true">›</span>
             </button>
 
             {expanded && (

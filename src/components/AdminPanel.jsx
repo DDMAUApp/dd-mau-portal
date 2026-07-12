@@ -88,26 +88,33 @@ const MenuConfigEditor = reactLazy(() => import('./MenuConfigEditor'));
 // collapsible — the push notifications is always open"). Children stay
 // UNMOUNTED while collapsed, matching the other admin sections, so a
 // heavy editor costs nothing until the header is tapped.
-// 2026-07-11 admin restyle: one frosted-glass header per section (the
-// emoji disc carries identity) instead of six pastel border-2 boxes.
-// The `tone` prop is kept for call-site compatibility but only tints
-// the danger section's disc — everything else is the neutral system.
+// 2026-07-11 admin restyle round 2 (Andrew: "make the tabs all have
+// some color… same size, spaced the same"): iOS-Settings model —
+// every section is an identical 76px glass row with a vivid colored
+// icon tile + accent wash. `tone` maps to a .tint-* accent.
+const SECTION_TINTS = {
+    gray: 'tint-slate', slate: 'tint-slate', purple: 'tint-purple',
+    blue: 'tint-blue', red: 'tint-red', green: 'tint-green',
+    teal: 'tint-teal', sky: 'tint-sky', rose: 'tint-rose',
+    orange: 'tint-orange', amber: 'tint-amber', indigo: 'tint-indigo',
+    cyan: 'tint-cyan',
+};
 function CollapsibleAdminSection({ emoji, title, subtitle, tone = 'gray', children }) {
     const [open, setOpen] = useState(false);
     return (
-        <div className="mt-4 mb-6">
+        <div className="mb-3">
             <button onClick={() => setOpen(v => !v)} aria-expanded={open}
-                className="glass-section-head">
+                className={`glass-section-head ${SECTION_TINTS[tone] || 'tint-slate'}`}>
                 <div className="flex items-center gap-3 min-w-0">
-                    <span className="section-disc" aria-hidden="true">{emoji}</span>
+                    <span className="glass-icon-tile" aria-hidden="true">{emoji}</span>
                     <div className="text-left min-w-0">
-                        <h3 className={`font-bold text-sm ${tone === 'red' ? 'text-red-800' : 'text-dd-text'}`}>{title}</h3>
+                        <h3 className="font-bold text-[15px] text-dd-text">{title}</h3>
                         {subtitle && <p className="text-[11px] text-dd-text-2 truncate">{subtitle}</p>}
                     </div>
                 </div>
                 <span className="section-chevron text-xl" aria-hidden="true">›</span>
             </button>
-            {open && <div className="mt-2">{children}</div>}
+            {open && <div className="mt-2 mb-4">{children}</div>}
         </div>
     );
 }
@@ -2448,14 +2455,14 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         move, every time-off request, everything in the schedule
                         page so we can see what's happening." Reads the
                         append-only /audit collection (schedule features). */}
-                    <div className="glass-card mt-4 p-4">
+                    <div>
                         <ScheduleAuditLog language={language} />
                     </div>
 
                     {/* ── ATTENDANCE LOG ── Andrew 2026-06-25: who's clocked in —
                         on-time/late/no-show + shifts worked per staff (4 weeks),
                         click for a month/week drill-down. Reads /attendance. */}
-                    <div className="glass-card mt-4 p-4">
+                    <div>
                         <AttendanceLog language={language} staffList={staffList} />
                     </div>
 
@@ -2468,11 +2475,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     {hasOnboardingAccess && onNavigate && (
                         <button
                             onClick={() => onNavigate('onboarding')}
-                            className="glass-section-head group">
+                            className="glass-section-head tint-rose group mb-3">
                             <div className="flex items-center gap-3 min-w-0">
-                                <span className="text-3xl flex-shrink-0">🪪</span>
+                                <span className="glass-icon-tile" aria-hidden="true">🪪</span>
                                 <div className="text-left min-w-0">
-                                    <h3 className="font-black text-rose-800 text-base flex items-center gap-2 flex-wrap">
+                                    <h3 className="font-bold text-[15px] text-dd-text flex items-center gap-2 flex-wrap">
                                         {language === "es" ? "Onboarding" : "Onboarding"}
                                         {onboardingPendingApps > 0 && (
                                             <span className="text-[10px] font-bold bg-amber-200 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded-full">
@@ -2480,7 +2487,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             </span>
                                         )}
                                     </h3>
-                                    <p className="text-[11px] text-rose-700/80 truncate">
+                                    <p className="text-[11px] text-dd-text-2 truncate">
                                         {language === "es"
                                             ? `${onboardingActiveHires} contrataciones activas · papeleo W-4/I-9/DL · PII solo dueños`
                                             : `${onboardingActiveHires} active hires · W-4/I-9/DL paperwork · owners-only PII`}
@@ -2492,14 +2499,15 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     )}
 
                     {/* ── MAINTENANCE REQUESTS ── */}
-                    <div className="mb-6">
+                    <div className="mb-3">
                         <button onClick={() => setMaintenanceExpanded(!maintenanceExpanded)}
-                            className="glass-section-head">
-                            <div className="flex items-center gap-2">
-                                <span className="text-2xl">🔧</span>
-                                <div className="text-left">
-                                    <h3 className="font-bold text-red-700">{language === "es" ? "Solicitudes de Mantenimiento" : "Maintenance Requests"}</h3>
-                                    <p className="text-xs text-red-500">
+                            aria-expanded={maintenanceExpanded}
+                            className="glass-section-head tint-orange">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="glass-icon-tile" aria-hidden="true">🔧</span>
+                                <div className="text-left min-w-0">
+                                    <h3 className="font-bold text-[15px] text-dd-text">{language === "es" ? "Solicitudes de Mantenimiento" : "Maintenance Requests"}</h3>
+                                    <p className="text-[11px] text-dd-text-2 truncate">
                                         {filteredMaintenance.filter(r => r.status === "open").length} {language === "es" ? "abiertos" : "open"}
                                         {filteredMaintenance.filter(r => r.status === "in-progress").length > 0 && (
                                             ` • ${filteredMaintenance.filter(r => r.status === "in-progress").length} ${language === "es" ? "en progreso" : "in progress"}`
@@ -2507,7 +2515,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     </p>
                                 </div>
                             </div>
-                            <span className="text-gray-400 text-xl">{maintenanceExpanded ? "▼" : "▶"}</span>
+                            <span className="section-chevron text-xl" aria-hidden="true">›</span>
                         </button>
 
                         {maintenanceExpanded && (
@@ -2646,17 +2654,18 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     />
 
                     {/* ── STAFF LIST (collapsible) ── */}
-                    <div className="mb-6" ref={staffSectionRef}>
+                    <div className="mb-3" ref={staffSectionRef}>
                         <button onClick={() => setStaffExpanded(!staffExpanded)}
-                            className="glass-section-head">
-                            <div className="flex items-center gap-2">
-                                <span className="text-2xl">👥</span>
-                                <div className="text-left">
-                                    <h3 className="font-bold text-blue-700">{language === "es" ? "Personal" : "Staff"}</h3>
-                                    <p className="text-xs text-blue-500">{filteredStaff.length} {language === "es" ? "empleados" : "members"}</p>
+                            aria-expanded={staffExpanded}
+                            className="glass-section-head tint-green">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="glass-icon-tile" aria-hidden="true">👥</span>
+                                <div className="text-left min-w-0">
+                                    <h3 className="font-bold text-[15px] text-dd-text">{language === "es" ? "Personal" : "Staff"}</h3>
+                                    <p className="text-[11px] text-dd-text-2 truncate">{filteredStaff.length} {language === "es" ? "empleados" : "members"}</p>
                                 </div>
                             </div>
-                            <span className="text-gray-400 text-xl">{staffExpanded ? "▼" : "▶"}</span>
+                            <span className="section-chevron text-xl" aria-hidden="true">›</span>
                         </button>
 
                         {staffExpanded && (
@@ -2718,13 +2727,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         </button>
                                     ))}
                                     <button onClick={() => setShowBulkTag(true)}
-                                        className="glass-button-apple px-3 py-1.5 rounded-full text-xs ml-2">
+                                        className="glass-button-tint tint-purple">
                                         🏷 {language === "es" ? "Etiquetar en lote" : "Bulk Tag"}
                                     </button>
                                     {/* Import flow — paste names / upload CSV and pull
                                         in everyone not already on the staff list. */}
                                     <button onClick={() => setShowImportStaff(true)}
-                                        className="glass-button-apple px-3 py-1.5 rounded-full text-xs">
+                                        className="glass-button-tint tint-blue">
                                         📥 {language === "es" ? "Importar Personal" : "Import Staff"}
                                     </button>
                                     {/* Export the full SMS opt-in/opt-out audit log as CSV.
@@ -2736,7 +2745,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         title={language === "es"
                                             ? "Exportar registro de aceptaciones de SMS (CSV)"
                                             : "Export SMS opt-in audit log (CSV)"}
-                                        className="glass-button-apple px-3 py-1.5 rounded-full text-xs">
+                                        className="glass-button-tint tint-teal">
                                         📋 {language === "es" ? "Exportar SMS" : "Export SMS log"}
                                     </button>
                                     {/* Required-task admin — push a task type (SMS opt-in,
@@ -2746,7 +2755,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         title={language === "es"
                                             ? "Pedir a personal que complete una acción (SMS opt-in, disponibilidad…)"
                                             : "Ask staff to complete an action (SMS opt-in, availability…)"}
-                                        className="glass-button-apple px-3 py-1.5 rounded-full text-xs">
+                                        className="glass-button-tint tint-amber">
                                         📌 {language === "es" ? "Tareas requeridas" : "Required tasks"}
                                     </button>
                                 </div>
@@ -3356,16 +3365,20 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         below the fold. Now: header bar opens / closes; the
                         component itself is unmounted while collapsed so its
                         Firestore subscription doesn't run when nobody's looking. */}
-                    <div className="mt-8 pt-6 border-t-2 border-gray-200">
+                    <div className="mb-3">
                         <button onClick={() => setChecklistHistoryExpanded(v => !v)}
-                            className="w-full flex items-center justify-between text-left">
-                            <div>
-                                <h3 className="text-xl font-bold text-mint-700 mb-1">📋 {language === "es" ? "Historial de Listas" : "Checklist History"}</h3>
-                                <p className="text-xs text-gray-500">{language === "es"
-                                    ? "Revisa las listas de apertura y cierre de días anteriores"
-                                    : "Review opening and closing checklists from previous days"}</p>
+                            aria-expanded={checklistHistoryExpanded}
+                            className="glass-section-head tint-green">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="glass-icon-tile" aria-hidden="true">📋</span>
+                                <div className="text-left min-w-0">
+                                    <h3 className="font-bold text-[15px] text-dd-text">{language === "es" ? "Historial de Listas" : "Checklist History"}</h3>
+                                    <p className="text-[11px] text-dd-text-2 truncate">{language === "es"
+                                        ? "Revisa las listas de apertura y cierre de días anteriores"
+                                        : "Review opening and closing checklists from previous days"}</p>
+                                </div>
                             </div>
-                            <span className="text-gray-400 text-xl ml-2">{checklistHistoryExpanded ? "▼" : "▶"}</span>
+                            <span className="section-chevron text-xl" aria-hidden="true">›</span>
                         </button>
                         {checklistHistoryExpanded && (
                             <div className="mt-3"><ChecklistHistory language={language} storeLocation={storeLocation} /></div>
@@ -3374,16 +3387,20 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
                     {/* Inventory History Section — collapsed by default for the
                         same reason as Checklist History. */}
-                    <div className="mt-8 pt-6 border-t-2 border-gray-200">
+                    <div className="mb-3">
                         <button onClick={() => setInventoryHistoryExpanded(v => !v)}
-                            className="w-full flex items-center justify-between text-left">
-                            <div>
-                                <h3 className="text-xl font-bold text-mint-700 mb-1">📦 {language === "es" ? "Historial de Inventario" : "Inventory History"}</h3>
-                                <p className="text-xs text-gray-500">{language === "es"
-                                    ? "Revisa los conteos de inventario de días anteriores. Los cambios vs el día anterior se muestran en verde/rojo."
-                                    : "Review inventory counts from previous days. Changes vs the prior day are shown in green/red."}</p>
+                            aria-expanded={inventoryHistoryExpanded}
+                            className="glass-section-head tint-amber">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="glass-icon-tile" aria-hidden="true">📦</span>
+                                <div className="text-left min-w-0">
+                                    <h3 className="font-bold text-[15px] text-dd-text">{language === "es" ? "Historial de Inventario" : "Inventory History"}</h3>
+                                    <p className="text-[11px] text-dd-text-2 truncate">{language === "es"
+                                        ? "Revisa los conteos de inventario de días anteriores. Cambios vs el día anterior en verde/rojo."
+                                        : "Review inventory counts from previous days. Changes vs prior day in green/red."}</p>
+                                </div>
                             </div>
-                            <span className="text-gray-400 text-xl ml-2">{inventoryHistoryExpanded ? "▼" : "▶"}</span>
+                            <span className="section-chevron text-xl" aria-hidden="true">›</span>
                         </button>
                         {inventoryHistoryExpanded && (
                             <div className="mt-3"><InventoryHistory language={language} customInventory={null} storeLocation={storeLocation} /></div>
@@ -3394,18 +3411,21 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         activate alternate inventory lists ("Produce day",
                         "Quick prep", etc.) that swap what staff sees in
                         the Inventory tab. */}
-                    <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="mb-3">
                         <button onClick={() => setShowInventoryLists(true)}
-                            className="w-full flex items-center justify-between text-left p-3 rounded-xl bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200 hover:from-amber-100 hover:to-yellow-100 transition">
-                            <div>
-                                <h3 className="text-base font-bold text-amber-800 mb-0.5">
-                                    📋 {language === "es" ? "Listas de inventario" : "Inventory lists"}
-                                </h3>
-                                <p className="text-xs text-amber-700">{language === "es"
-                                    ? "Crea variaciones (\"Día de verduras\", \"Prep rápida\") · activa la que el inventario muestra"
-                                    : 'Build named variations ("Produce day", "Quick prep") · activate the one shown in the inventory tab'}</p>
+                            className="glass-section-head tint-orange">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="glass-icon-tile" aria-hidden="true">🗒️</span>
+                                <div className="text-left min-w-0">
+                                    <h3 className="font-bold text-[15px] text-dd-text">
+                                        {language === "es" ? "Listas de inventario" : "Inventory lists"}
+                                    </h3>
+                                    <p className="text-[11px] text-dd-text-2 truncate">{language === "es"
+                                        ? "Crea variaciones (\"Día de verduras\", \"Prep rápida\") · activa la que se muestra"
+                                        : 'Build named variations ("Produce day", "Quick prep") · activate the one shown'}</p>
+                                </div>
                             </div>
-                            <span className="text-amber-600 text-2xl">→</span>
+                            <span className="text-orange-600 text-2xl shrink-0">→</span>
                         </button>
                     </div>
 
@@ -4267,18 +4287,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             return { c: 'bg-gray-100 text-gray-600', t: '—' };
                         };
                         return (
-                            <div className="mt-6 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                            <div className="mb-3">
                                 <button onClick={() => setRecipeAuditExpanded(s => !s)}
-                                    className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xl">🔍</span>
-                                        <h3 className="text-base font-bold text-gray-800">
+                                    aria-expanded={recipeAuditExpanded}
+                                    className="glass-section-head tint-purple">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <span className="glass-icon-tile" aria-hidden="true">🔍</span>
+                                        <h3 className="font-bold text-[15px] text-dd-text">
                                             {language === 'es' ? 'Auditoría de recetas' : 'Recipe view audit'}
                                         </h3>
                                     </div>
-                                    <span className="text-gray-400 text-sm">{recipeAuditExpanded ? '▼' : '▶'}</span>
+                                    <span className="section-chevron text-xl" aria-hidden="true">›</span>
                                 </button>
-                                {recipeAuditExpanded && (<>
+                                {recipeAuditExpanded && (<div className="glass-card p-4 mt-2">
                                 <p className="text-[11px] text-gray-500 mb-3">
                                     {language === 'es'
                                         ? 'Cada vez que alguien abre una receta queda registrado: quién, qué, cuándo y desde dónde. Las impresiones se marcan con 🖨 y el multiplicador (ej. 3×).'
@@ -4359,7 +4380,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             : (language === 'es' ? `Ver todas (${recipeViews.length})` : `View all (${recipeViews.length})`)}
                                     </button>
                                 )}
-                                </>)}
+                                </div>)}
                             </div>
                         );
                     })()}
@@ -4440,18 +4461,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         };
 
                         return (
-                            <div className="mt-4 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                            <div className="mb-3">
                                 <button onClick={() => setInventoryAuditExpanded(s => !s)}
-                                    className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xl">📋</span>
-                                        <h3 className="text-base font-bold text-gray-800">
+                                    aria-expanded={inventoryAuditExpanded}
+                                    className="glass-section-head tint-teal">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <span className="glass-icon-tile" aria-hidden="true">📋</span>
+                                        <h3 className="font-bold text-[15px] text-dd-text">
                                             {language === 'es' ? 'Auditoría de inventario' : 'Inventory audit'}
                                         </h3>
                                     </div>
-                                    <span className="text-gray-400 text-sm">{inventoryAuditExpanded ? '▼' : '▶'}</span>
+                                    <span className="section-chevron text-xl" aria-hidden="true">›</span>
                                 </button>
-                                {inventoryAuditExpanded && (<>
+                                {inventoryAuditExpanded && (<div className="glass-card p-4 mt-2">
                                     <p className="text-[11px] text-gray-500 mb-3">
                                         {language === 'es'
                                             ? 'Cada vez que alguien sube o baja una cantidad queda registrado: quién, qué, cuándo, cuánto. Útil para "¿por qué bajaron los huevos ayer?".'
@@ -4574,7 +4596,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 : (language === 'es' ? `Ver todas (${filtered.length})` : `View all (${filtered.length})`)}
                                         </button>
                                     )}
-                                </>)}
+                                </div>)}
                             </div>
                         );
                     })()}
@@ -4627,18 +4649,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         };
 
                         return (
-                            <div className="mt-4 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                            <div className="mb-3">
                                 <button onClick={() => setOrderLogExpanded(s => !s)}
-                                    className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xl">📞</span>
-                                        <h3 className="text-base font-bold text-gray-800">
+                                    aria-expanded={orderLogExpanded}
+                                    className="glass-section-head tint-sky">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <span className="glass-icon-tile" aria-hidden="true">📞</span>
+                                        <h3 className="font-bold text-[15px] text-dd-text">
                                             {language === 'es' ? 'Historial de pedidos' : 'Order log'}
                                         </h3>
                                     </div>
-                                    <span className="text-gray-400 text-sm">{orderLogExpanded ? '▼' : '▶'}</span>
+                                    <span className="section-chevron text-xl" aria-hidden="true">›</span>
                                 </button>
-                                {orderLogExpanded && (<>
+                                {orderLogExpanded && (<div className="glass-card p-4 mt-2">
                                     <p className="text-[11px] text-gray-500 mb-3">
                                         {language === 'es'
                                             ? 'Cada pedido enviado desde Modo Pedido queda registrado: quién, qué, cuándo, a qué proveedor y con qué notas.'
@@ -4766,7 +4789,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             })}
                                         </div>
                                     )}
-                                </>)}
+                                </div>)}
                             </div>
                         );
                     })()}
@@ -4784,16 +4807,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         is technically already readable to any client (catch-all
                         Firestore rule allows reads) but the UI didn't surface it
                         previously. */}
-                    <div className="mt-4 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                    <div className="mb-3">
                         <button onClick={() => setChatHistoryExpanded(s => !s)}
-                            className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
-                            <div className="flex items-center gap-2">
-                                <span className="text-xl">💬</span>
-                                <h3 className="text-base font-bold text-gray-800">
+                            aria-expanded={chatHistoryExpanded}
+                            className="glass-section-head tint-cyan">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="glass-icon-tile" aria-hidden="true">💬</span>
+                                <h3 className="font-bold text-[15px] text-dd-text">
                                     {language === 'es' ? 'Historial de chats' : 'Chat history'}
                                 </h3>
                             </div>
-                            <span className="text-gray-400 text-sm">{chatHistoryExpanded ? '▼' : '▶'}</span>
+                            <span className="section-chevron text-xl" aria-hidden="true">›</span>
                         </button>
                         {chatHistoryExpanded && (
                             <ReactSuspense fallback={
@@ -4813,16 +4837,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         exceljs only download when this section is expanded + unlocked,
                         so it costs admins who never run payroll nothing. */}
                     {isAdmin(staffName, staffList) && (
-                        <div className="mt-4 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                        <div className="mb-3">
                             <button onClick={() => setPayrollExpanded(s => !s)}
-                                className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xl">💵</span>
-                                    <h3 className="text-base font-bold text-gray-800">
+                                aria-expanded={payrollExpanded}
+                                className="glass-section-head tint-green">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <span className="glass-icon-tile" aria-hidden="true">💵</span>
+                                    <h3 className="font-bold text-[15px] text-dd-text">
                                         {language === 'es' ? 'Nómina' : 'Payroll'}
                                     </h3>
                                 </div>
-                                <span className="text-gray-400 text-sm">{payrollExpanded ? '▼' : '▶'}</span>
+                                <span className="section-chevron text-xl" aria-hidden="true">›</span>
                             </button>
                             {payrollExpanded && (
                                 <ReactSuspense fallback={
@@ -5070,16 +5095,18 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     <button
                         type="button"
                         onClick={() => onNavigate?.('menuscreens')}
-                        className="glass-section-head mt-6 mb-4">
-                        <span className="text-2xl shrink-0">📺</span>
-                        <div className="min-w-0 flex-1">
-                            <div className="text-sm font-black text-sky-900">
-                                {language === 'es' ? 'Pantallas de menú' : 'Menu TV displays'}
-                            </div>
-                            <div className="text-[11px] text-sky-700 leading-snug mt-0.5">
-                                {language === 'es'
-                                    ? 'Ahora tiene su propia página con un panel de control. Toca para abrir.'
-                                    : 'Now has its own page with a dashboard view (status pills, live previews, per-screen actions). Tap to open.'}
+                        className="glass-section-head tint-sky mb-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                            <span className="glass-icon-tile" aria-hidden="true">📺</span>
+                            <div className="text-left min-w-0">
+                                <h3 className="font-bold text-[15px] text-dd-text">
+                                    {language === 'es' ? 'Pantallas de menú' : 'Menu TV displays'}
+                                </h3>
+                                <p className="text-[11px] text-dd-text-2 truncate">
+                                    {language === 'es'
+                                        ? 'Ahora tiene su propia página con un panel de control. Toca para abrir.'
+                                        : 'Status pills, live previews, per-screen actions. Tap to open.'}
+                                </p>
                             </div>
                         </div>
                         <span className="text-sky-700 text-lg shrink-0">→</span>

@@ -102,18 +102,19 @@ export default function StaffTodosAdmin({ language = 'en', staffName, staffList 
     };
 
     return (
-        <div className="mb-6">
+        <div className="mb-3">
             <button
                 onClick={() => setExpanded(e => !e)}
-                className="w-full flex items-center justify-between bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 hover:bg-emerald-100 transition"
+                aria-expanded={expanded}
+                className="glass-section-head tint-amber"
             >
-                <div className="flex items-center gap-2">
-                    <span className="text-2xl">✅</span>
-                    <div className="text-left">
-                        <h3 className="font-bold text-emerald-700">
+                <div className="flex items-center gap-3 min-w-0">
+                    <span className="glass-icon-tile" aria-hidden="true">✅</span>
+                    <div className="text-left min-w-0">
+                        <h3 className="font-bold text-[15px] text-dd-text">
                             {tx('Staff To-do List', 'Lista de Pendientes del Personal')}
                         </h3>
-                        <p className="text-xs text-emerald-600/80">
+                        <p className="text-[11px] text-dd-text-2 truncate">
                             {active.length} {tx('active', 'activos')}
                             {archived.length > 0 && ` • ${archived.length} ${tx('archived', 'archivados')}`}
                             {' • '}
@@ -124,7 +125,7 @@ export default function StaffTodosAdmin({ language = 'en', staffName, staffList 
                         </p>
                     </div>
                 </div>
-                <span className="text-gray-400 text-xl">{expanded ? '▼' : '▶'}</span>
+                <span className="section-chevron text-xl" aria-hidden="true">›</span>
             </button>
 
             {expanded && (

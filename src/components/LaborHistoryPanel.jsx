@@ -151,19 +151,19 @@ export default function LaborHistoryPanel({ language = 'en', storeLocation = 'we
     const maxBar = Math.max(peak || 0, TARGET_REF * 1.4, 1);
 
     return (
-        <div className="mt-6 mb-4 border border-gray-200 rounded-xl bg-white p-4">
-            <button onClick={() => setExpanded(s => !s)}
-                className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
-                <div className="flex items-center gap-2">
-                    <span className="text-xl">📈</span>
-                    <h3 className="text-base font-bold text-gray-800">
+        <div className="mb-3">
+            <button onClick={() => setExpanded(s => !s)} aria-expanded={expanded}
+                className="glass-section-head tint-indigo">
+                <div className="flex items-center gap-3 min-w-0">
+                    <span className="glass-icon-tile" aria-hidden="true">📈</span>
+                    <h3 className="font-bold text-[15px] text-dd-text">
                         {tx('Labor history (by hour)', 'Historial de mano de obra (por hora)')}
                     </h3>
                 </div>
-                <span className="text-gray-400 text-sm">{expanded ? '▼' : '▶'}</span>
+                <span className="section-chevron text-xl" aria-hidden="true">›</span>
             </button>
 
-            {expanded && (<>
+            {expanded && (<div className="glass-card p-4 mt-2">
                 <p className="text-[11px] text-gray-500 mb-3">
                     {tx(
                         'Each past day’s labor % broken out by hour (the running labor % at the end of each hour, from Toast).',
@@ -245,7 +245,7 @@ export default function LaborHistoryPanel({ language = 'en', storeLocation = 'we
                         </div>
                     </div>
                 )}
-            </>)}
+            </div>)}
         </div>
     );
 }

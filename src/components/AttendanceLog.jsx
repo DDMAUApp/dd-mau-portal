@@ -316,14 +316,17 @@ export default function AttendanceLog({ language, staffList, startExpanded = fal
     const totals = useMemo(() => tally(records), [records]);
 
     return (
-        <div className="mt-3 pt-3 border-t border-dd-line">
-            <button onClick={() => setExpanded(v => !v)}
-                className="w-full flex items-center justify-between text-dd-text text-xs font-bold hover:bg-dd-bg rounded-md px-2 py-1.5 transition">
-                <span>🕐 {tx("Attendance — who's clocked in", 'Asistencia — quién fichó')}</span>
-                <span className="text-dd-text-2">{expanded ? '▼' : '▶'}</span>
+        <div className="mb-3">
+            <button onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
+                className="glass-section-head tint-cyan">
+                <div className="flex items-center gap-3 min-w-0">
+                    <span className="glass-icon-tile" aria-hidden="true">🕐</span>
+                    <h3 className="font-bold text-[15px] text-dd-text">{tx("Attendance — who's clocked in", 'Asistencia — quién fichó')}</h3>
+                </div>
+                <span className="section-chevron text-xl" aria-hidden="true">›</span>
             </button>
             {expanded && (
-                <div className="mt-2">
+                <div className="glass-card p-3 mt-2">
                     <p className="text-[11px] text-dd-text-2 mb-2 px-1">
                         {tx('On-time / late / no-show + shifts worked over the past 4 weeks (from clock-ins vs the schedule). Tap a name for the month or week view.',
                             'A tiempo / tarde / faltas + turnos trabajados en las últimas 4 semanas (fichajes vs el horario). Toca un nombre para ver el mes o la semana.')}

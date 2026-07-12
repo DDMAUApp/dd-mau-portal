@@ -680,13 +680,115 @@
     .glass-section-head[aria-expanded="true"] .section-chevron {
         transform: rotate(90deg);
     }
-    /* Emoji identity disc — subtle per-section tint without letting
-       color take over the whole card again. */
+    /* ── Accent tints (2026-07-11 round 2 — Andrew: "make the tabs
+       all have some color… do better, way better").
+       One RGB triplet variable drives a section's whole identity:
+       its icon tile gradient, the card's wash + border, and any
+       tinted buttons inside. iOS-Settings model: color lives in the
+       ICON TILE and accents, the row surface stays glass. */
+    .tint-green  { --acc: 22 133 82; }
+    .tint-teal   { --acc: 13 148 136; }
+    .tint-blue   { --acc: 37 99 235; }
+    .tint-sky    { --acc: 2 132 199; }
+    .tint-indigo { --acc: 79 70 229; }
+    .tint-purple { --acc: 124 58 237; }
+    .tint-rose   { --acc: 225 29 72; }
+    .tint-orange { --acc: 234 88 12; }
+    .tint-amber  { --acc: 202 104 2; }
+    .tint-red    { --acc: 220 38 38; }
+    .tint-slate  { --acc: 71 85 105; }
+    .tint-cyan   { --acc: 8 145 178; }
+
+    /* Colored icon tile — the iOS-Settings squircle. Vivid gradient,
+       top highlight, soft colored drop shadow. Fixed 44px so every
+       section row lines up perfectly. */
+    .glass-icon-tile {
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        line-height: 1;
+        color: #fff;
+        background: linear-gradient(180deg,
+            color-mix(in srgb, rgb(var(--acc, 22 133 82)) 72%, white) 0%,
+            rgb(var(--acc, 22 133 82)) 100%);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.45),
+            0 2px 6px rgb(var(--acc, 22 133 82) / 0.35);
+    }
+
+    /* Emoji identity disc (legacy neutral variant — kept for callers
+       that don't pass a tint). */
     .section-disc {
         @apply w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0;
         background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(241,245,249,0.75));
         border: 1px solid rgba(15, 23, 42, 0.07);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 3px rgba(15,23,42,0.06);
+    }
+
+    /* Tinted section row — pair .glass-section-head with a .tint-*:
+       the card picks up a diagonal accent wash + colored hairline so
+       each section has real color identity without losing the glass. */
+    .glass-section-head[class*="tint-"] {
+        border: 1px solid rgb(var(--acc) / 0.22);
+        background-image: linear-gradient(120deg,
+            rgb(var(--acc) / 0.10) 0%,
+            rgb(var(--acc) / 0.03) 45%,
+            rgba(255, 255, 255, 0) 70%);
+        min-height: 76px;
+    }
+    .glass-section-head[class*="tint-"]:hover {
+        background-image: linear-gradient(120deg,
+            rgb(var(--acc) / 0.16) 0%,
+            rgb(var(--acc) / 0.05) 45%,
+            rgba(255, 255, 255, 0) 70%);
+        border-color: rgb(var(--acc) / 0.32);
+    }
+    .glass-section-head[class*="tint-"]:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px rgb(var(--acc) / 0.45);
+    }
+    .glass-section-head[class*="tint-"] .section-chevron {
+        color: rgb(var(--acc) / 0.75);
+    }
+
+    /* Tinted action chip — same metrics as glass-button-apple but
+       colored: soft accent fill, accent text, accent hairline. Every
+       tool pill uses ONE size (h-10, rounded-full) so the row reads
+       as a deliberate set. */
+    .glass-button-tint {
+        @apply inline-flex items-center justify-center gap-1.5
+               h-10 px-4 rounded-full font-bold text-xs
+               transition-all duration-glass-fast ease-glass-out;
+        color: rgb(var(--acc, 22 133 82));
+        background-color: rgb(var(--acc, 22 133 82) / 0.10);
+        backdrop-filter: blur(20px) saturate(170%);
+        -webkit-backdrop-filter: blur(20px) saturate(170%);
+        border: 1px solid rgb(var(--acc, 22 133 82) / 0.28);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.6),
+            0 1px 3px rgb(var(--acc, 22 133 82) / 0.12);
+        background-clip: padding-box;
+    }
+    .glass-button-tint:hover {
+        background-color: rgb(var(--acc, 22 133 82) / 0.16);
+        border-color: rgb(var(--acc, 22 133 82) / 0.40);
+    }
+    .glass-button-tint:active {
+        @apply scale-[0.97];
+    }
+    .glass-button-tint:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px rgb(var(--acc, 22 133 82) / 0.45);
+    }
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass-button-tint {
+            background-color: rgb(var(--acc, 22 133 82) / 0.14);
+        }
     }
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
         .glass-section-head {
@@ -841,6 +943,7 @@
         .glass-button,
         .glass-button-primary,
         .glass-button-danger,
+        .glass-button-tint,
         .touch-target {
             min-height: 48px;
             min-width: 48px;
@@ -1137,6 +1240,7 @@
     .glass-button,
     .glass-button-apple,
     .glass-button-danger,
+    .glass-button-tint,
     .glass-section-head,
     .glass-input,
     .glass-select,

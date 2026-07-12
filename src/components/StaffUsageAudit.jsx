@@ -282,8 +282,8 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                 aria-expanded={expanded}
             >
                 <div className="flex items-center gap-3 min-w-0">
-                    <span className="shrink-0 w-10 h-10 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center">
-                        <Users size={20} strokeWidth={2.25} aria-hidden="true" />
+                    <span className="glass-icon-tile tint-teal shrink-0">
+                        <Users size={22} strokeWidth={2.25} aria-hidden="true" />
                     </span>
                     <div className="text-left min-w-0">
                         <h3 className="text-headline text-dd-text">

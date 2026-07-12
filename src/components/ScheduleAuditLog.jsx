@@ -159,14 +159,17 @@ export default function ScheduleAuditLog({ language }) {
     });
 
     return (
-        <div className="mt-3 pt-3 border-t border-dd-line">
-            <button onClick={() => setExpanded(v => !v)}
-                className="w-full flex items-center justify-between text-dd-text text-xs font-bold hover:bg-dd-bg rounded-md px-2 py-1.5 transition">
-                <span>🗓 {tx('Schedule audit log', 'Registro del horario')}</span>
-                <span className="text-dd-text-2">{expanded ? '▼' : '▶'}</span>
+        <div className="mb-3">
+            <button onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
+                className="glass-section-head tint-indigo">
+                <div className="flex items-center gap-3 min-w-0">
+                    <span className="glass-icon-tile" aria-hidden="true">🗓</span>
+                    <h3 className="font-bold text-[15px] text-dd-text">{tx('Schedule audit log', 'Registro del horario')}</h3>
+                </div>
+                <span className="section-chevron text-xl" aria-hidden="true">›</span>
             </button>
             {expanded && (
-                <div className="mt-2">
+                <div className="glass-card p-3 mt-2">
                     <p className="text-[11px] text-dd-text-2 mb-2 px-1">
                         {tx('Every shift add/move/delete, time-off request, and availability change — who, what, old→new, and when.',
                             'Cada turno agregado/movido/eliminado, solicitud de tiempo libre y cambio de disponibilidad — quién, qué, antes→después y cuándo.')}
