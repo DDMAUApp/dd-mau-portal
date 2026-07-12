@@ -13,6 +13,9 @@ import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor, canViewClockedIn, isAdmin as isAdminFn } from '../data/staff';
+import { isSharedDeviceModeEnabled, setSharedDeviceMode } from '../messaging';
+import useSecretHold from '../data/useSecretHold';
+import { toast } from '../toast';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
@@ -238,6 +241,21 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
         return tx('Good evening', 'Buenas noches');
     })();
 
+    // ── Shared-iPad mode (2026-07-12, Andrew) ─────────────────────────
+    // Same secret hold as MobileHome — this dashboard is what an iPad
+    // in landscape actually renders, so the affordance must exist here
+    // too. Hold the greeting 10s to toggle; persists across restarts.
+    const [sharedMode, setSharedModeUi] = useState(() => isSharedDeviceModeEnabled());
+    const sharedHold = useSecretHold(() => {
+        const next = !isSharedDeviceModeEnabled();
+        setSharedDeviceMode(next, staffName);
+        setSharedModeUi(next);
+        try { navigator.vibrate?.(200); } catch { /* no haptics on iOS web */ }
+        toast(next
+            ? tx('🖥️ Shared iPad mode ON — this device will not get notifications', '🖥️ Modo iPad compartido ACTIVADO — este dispositivo no recibirá notificaciones')
+            : tx('Shared iPad mode OFF — sign out and back in to re-enable notifications', 'Modo iPad compartido DESACTIVADO — cierra sesión y vuelve a entrar para reactivar notificaciones'));
+    }, 10000);
+
     // Labor color by % vs target (same thresholds as LaborDashboard).
     // 2026-05-26 — route through getLaborStatus() so a "scraper broke"
     // doc (laborCost: 0 with real netSales) renders "—" instead of a
@@ -265,13 +283,19 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                 action to the right of the greeting. */}
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <h1 className="text-2xl font-black text-dd-text tracking-tight">
+                    {/* Holding the greeting 10s toggles shared-iPad mode. */}
+                    <h1 {...sharedHold} className="text-2xl font-black text-dd-text tracking-tight">
                         {greeting}, {staffName?.split(' ')[0] || tx('there', 'hola')}
                     </h1>
                     <p className="text-sm text-dd-text-2 mt-1 capitalize">
                         {todayLong} <span className="text-dd-text-2/50 mx-1">·</span>
                         <span className="text-dd-text font-semibold normal-case">DD Mau {locName}</span>
                     </p>
+                    {sharedMode && (
+                        <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-dd-bg border border-dd-line text-dd-text-2">
+                            {tx('Shared iPad · notifications off', 'iPad compartido · sin notificaciones')}
+                        </span>
+                    )}
                 </div>
                 {/* 2026-05-27 — Andrew: "change all buttons to a
                     light gray glass." The old loud purple pill is

@@ -28,6 +28,9 @@ import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { canViewLabor, canViewClockedIn } from '../data/staff';
+import { isSharedDeviceModeEnabled, setSharedDeviceMode } from '../messaging';
+import useSecretHold from '../data/useSecretHold';
+import { toast } from '../toast';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
@@ -183,6 +186,21 @@ export default function MobileHome({
         return () => unsub();
     }, [hasOnboardingAccess]);
 
+    // ── Shared-iPad mode (2026-07-12, Andrew) ─────────────────────────
+    // Secret button: hold the greeting for 10s to toggle. Persists in
+    // localStorage across app restarts; while ON this device never
+    // registers for push (see setSharedDeviceMode in messaging.js).
+    const [sharedMode, setSharedModeUi] = useState(() => isSharedDeviceModeEnabled());
+    const sharedHold = useSecretHold(() => {
+        const next = !isSharedDeviceModeEnabled();
+        setSharedDeviceMode(next, staffName);
+        setSharedModeUi(next);
+        try { navigator.vibrate?.(200); } catch { /* no haptics on iOS web */ }
+        toast(next
+            ? tx('🖥️ Shared iPad mode ON — this device will not get notifications', '🖥️ Modo iPad compartido ACTIVADO — este dispositivo no recibirá notificaciones')
+            : tx('Shared iPad mode OFF — sign out and back in to re-enable notifications', 'Modo iPad compartido DESACTIVADO — cierra sesión y vuelve a entrar para reactivar notificaciones'));
+    }, 10000);
+
     // ── Derived ────────────────────────────────────────────────────────
     const greeting = (() => {
         const h = new Date().getHours();
@@ -327,12 +345,19 @@ export default function MobileHome({
                 Subtle: greeting on top, full date below in muted color.
                 No question-mark copy — feels like a tool, not a chat. */}
             <header className="px-1">
-                <h1 className="text-[26px] leading-tight font-black text-dd-text tracking-tight">
+                {/* Holding the greeting 10s toggles shared-iPad mode. */}
+                <h1 {...sharedHold} className="text-[26px] leading-tight font-black text-dd-text tracking-tight">
                     {greeting}, {firstName}
                 </h1>
                 <p className="text-[13px] text-dd-text-2 mt-0.5 capitalize">
                     {todayDateLabel}
                 </p>
+                {sharedMode && (
+                    <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-dd-bg border border-dd-line text-dd-text-2">
+                        <Monitor size={11} strokeWidth={2.5} aria-hidden="true" />
+                        {tx('Shared iPad · notifications off', 'iPad compartido · sin notificaciones')}
+                    </span>
+                )}
             </header>
 
             {/* 2026-05-30 — Andrew "Who's clocked in" compact strip.

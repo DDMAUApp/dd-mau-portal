@@ -466,6 +466,14 @@ async function getMessagingSafely() {
  * @returns {Promise<{ok: boolean, reason?: string, token?: string}>}
  */
 export async function enableFcmPush(staffName, staffList, setStaffList) {
+    // Explicit shared-iPad mode (see setSharedDeviceMode): this device
+    // must NEVER hold a push token — the counter iPad chiming with one
+    // staffer's personal notifications is the whole problem. Checked
+    // before any plugin/permission work so the OS permission prompt
+    // never even appears on a shared device.
+    if (isSharedDeviceModeEnabled()) {
+        return { ok: false, reason: 'shared-device-mode' };
+    }
     // Native short-circuit. On iOS / Android via Capacitor we use the
     // native push plugin instead of the web FCM SDK + service worker.
     // The plugin emits an FCM token (Android) or APNs token (iOS) that
@@ -842,8 +850,38 @@ export async function onPushTapNavigate(handler) {
 // build): the user agent distinguishes these reliably in WKWebView /
 // Android WebView. Anything ambiguous defaults to SHARED — the safe
 // side is dropping a token too eagerly, never leaking one.
+// ── Explicit shared-iPad mode (2026-07-12) ──────────────────────────
+// Andrew: "in the home screen there is a secret button that when held
+// for 10 secs it activates shared iPad mode and stays there every
+// reopen of the app." A device-local flag that OVERRIDES the form-
+// factor heuristic below. While on: enableFcmPush refuses to register
+// (no token, no OS permission prompt), any existing token for the
+// signed-in staff is purged at activation, and the relock token-drop
+// guard applies. Persisted in localStorage — survives app close,
+// relaunch, and reboot on both WKWebView and Android WebView; cleared
+// only by holding the same secret button again (or app reinstall).
+const SHARED_MODE_KEY = 'ddmau:sharedDeviceMode';
+
+export function isSharedDeviceModeEnabled() {
+    try { return localStorage.getItem(SHARED_MODE_KEY) === '1'; } catch { return false; }
+}
+
+// Toggle the mode. On enable, purge this device's push token for the
+// currently signed-in staff so notifications stop immediately (not
+// just at the next relock).
+export async function setSharedDeviceMode(on, staffName) {
+    try {
+        if (on) localStorage.setItem(SHARED_MODE_KEY, '1');
+        else localStorage.removeItem(SHARED_MODE_KEY);
+    } catch { /* private-mode storage failure — mode just won't stick */ }
+    if (on && staffName) {
+        try { await disableFcmPush(staffName); } catch { /* best-effort purge */ }
+    }
+}
+
 export function isSharedDevice() {
     try {
+        if (isSharedDeviceModeEnabled()) return true; // explicit mode wins
         if (!Capacitor.isNativePlatform()) return true; // web/PWA/kiosk
         const ua = navigator.userAgent || '';
         // iPad WKWebView usually says "iPad"; newer iPadOS can

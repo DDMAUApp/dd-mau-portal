@@ -6,7 +6,7 @@ import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney } from './data/staff';
 import { noteStaffSnapshot, nextStaffRev } from './data/staffDoc';
 import { toast } from './toast';
-import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate, isSharedDevice } from './messaging';
+import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate, isSharedDevice, isSharedDeviceModeEnabled } from './messaging';
 import { playKitchenBell } from './data/bell';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
@@ -1717,6 +1717,10 @@ export default function App() {
                             // bundle actually running, so the usage audit can spot
                             // devices stuck on old versions.
                             lastSignInVersion: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '',
+                            // Explicit shared-iPad mode flag (secret 10s hold on the
+                            // home greeting) — lets the usage audit identify sign-ins
+                            // from the counter iPads.
+                            lastSignInShared: isSharedDeviceModeEnabled(),
                         }
                         : s);
                     tx.set(ref, { list: next, rev: nextStaffRev(data) });

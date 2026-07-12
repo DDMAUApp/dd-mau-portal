@@ -23,7 +23,7 @@
 // without the Notification API.
 
 import { useState, useEffect } from 'react';
-import { enableFcmPush } from '../messaging';
+import { enableFcmPush, isSharedDeviceModeEnabled } from '../messaging';
 
 const DEVICE_ID_KEY = 'ddmau:fcmDeviceId';
 
@@ -75,6 +75,9 @@ export default function EnableNotificationsBanner({
     // Hide on:
     //   • browsers / WebView wrappers without the Notification API
     //   • granted-AND-token-registered (the happy path — no banner needed)
+    //   • explicit shared-iPad mode — this device must never register for
+    //     push, so nudging staff to enable it would be a dead end.
+    if (isSharedDeviceModeEnabled()) return null;
     if (permission === 'unsupported') return null;
     const hasToken = deviceHasToken(staffName, staffList);
     const needsRefresh = permission === 'granted' && !hasToken;

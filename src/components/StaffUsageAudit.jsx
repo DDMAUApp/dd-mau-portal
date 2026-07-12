@@ -220,6 +220,7 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                 lastSeenMs,
                 platform: s.lastSignInPlatform || '',
                 version: s.lastSignInVersion || '',
+                sharedDevice: s.lastSignInShared === true,
                 standalone: s.lastSignInStandalone === true,
                 // TRUE = last opened the DOWNLOADED native app (iOS/Android).
                 // Undefined on staff who haven't signed in since this shipped →
@@ -416,6 +417,11 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                             {s.version && (
                                                 <span className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded-full border bg-dd-bg/80 text-dd-text-2 border-dd-line">
                                                     v{s.version}
+                                                </span>
+                                            )}
+                                            {s.sharedDevice && (
+                                                <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
+                                                    {tx('Shared iPad', 'iPad compartido')}
                                                 </span>
                                             )}
                                         </div>
