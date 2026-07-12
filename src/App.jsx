@@ -841,23 +841,64 @@ export default function App() {
     }, [activeTab, language]);
 
     // ── Force-refresh broadcast ──────────────────────────────────────
-    // Subscribes to /config/forceRefresh. When admin clicks the
-    // "System Refresh" button, that doc's `triggeredAt` timestamp jumps.
-    // Every active client sees the change in <1s and force-refreshes,
-    // pulling the newest deployed build. Devices that are CLOSED pick
-    // up the new build via the static service worker on next open.
+    // Subscribes to /config/forceRefresh. The deploy script flips this
+    // doc automatically after every ship (2026-07-11, Andrew: "no more
+    // manually pressing refresh") — the Danger Zone button writes the
+    // same doc as a manual backup. Every OPEN client updates itself
+    // within seconds; closed devices still pick the build up on next
+    // open (service worker on web, Capgo autoUpdate on native).
+    //
+    //   • Native: pull + apply the freshly-uploaded Capgo bundle
+    //     in-session (applyNativeOtaWhenReady polls until the CDN
+    //     serves it, then swaps the WebView onto it).
+    //   • Web / PWA / TVs: verify version.json actually serves a NEW
+    //     build first (GitHub Pages takes ~1-2 min to propagate — a
+    //     blind reload would land on the old build and stay there),
+    //     then cache-bust reload.
+    //   • Both paths wait (max 60s) if the user is mid-typing so a
+    //     draft never vanishes under their thumbs.
     //
     // Baseline-stamp pattern prevents an infinite loop: the FIRST time
     // we see a value (page load), we just remember it. Only LATER
     // changes trigger the refresh.
     useEffect(() => {
-        // 2026-06-16 (#16): native devices update via Capgo OTA. On native,
-        // forceRefresh() just reloads the local bundle back to the PIN screen
-        // (it can't fetch a newer build) — useless and disruptive. Web / PWA /
-        // TVs still honor the broadcast.
-        if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true) return;
         const ref = doc(db, 'config', 'forceRefresh');
         let baseline = null;
+        let cancelled = false;
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const waitInputIdle = async () => {
+            const cap = Date.now() + 60_000;
+            while (!cancelled && Date.now() < cap) {
+                const el = document.activeElement;
+                const busy = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+                if (!busy) return;
+                await sleep(3000);
+            }
+        };
+        const handleBroadcast = async (targetVersion) => {
+            if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true) {
+                try {
+                    const { applyNativeOtaWhenReady } = await import('./capacitor-bridge');
+                    await applyNativeOtaWhenReady(targetVersion);
+                } catch (e) { console.warn('native ota-when-ready failed:', e?.message); }
+                return;
+            }
+            // Web/TV: wait until the server actually serves a build that
+            // differs from the one we're running (max 4 min), then reload.
+            const local = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
+            const deadline = Date.now() + 4 * 60 * 1000;
+            while (!cancelled && Date.now() < deadline) {
+                try {
+                    const resp = await fetch((import.meta.env.BASE_URL || '/') + 'version.json?t=' + Date.now(), { cache: 'no-store' });
+                    const served = resp.ok ? (await resp.json())?.v : null;
+                    if (served && (!local || served !== local)) break;
+                } catch { /* offline blip — keep polling */ }
+                await sleep(5000);
+            }
+            if (cancelled) return;
+            await waitInputIdle();
+            if (!cancelled) forceRefresh();
+        };
         const unsub = onSnapshot(ref, (snap) => {
             const data = snap.exists() ? snap.data() : null;
             const ts = data?.triggeredAt;
@@ -868,11 +909,11 @@ export default function App() {
             }
             if (ms > baseline) {
                 baseline = ms;
-                console.warn('System refresh broadcast received — refreshing.');
-                forceRefresh();
+                console.warn('System refresh broadcast received — updating to', data?.version || 'latest');
+                handleBroadcast(data?.version || null);
             }
         }, (err) => { console.warn('forceRefresh listener error:', err); });
-        return () => unsub();
+        return () => { cancelled = true; unsub(); };
     }, []);
 
     // ── Idle-timeout relock ──────────────────────────────────────────

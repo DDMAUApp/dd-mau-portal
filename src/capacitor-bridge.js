@@ -355,6 +355,61 @@ export async function initCapacitor() {
 // unapplied one). reload() swaps the WebView onto the latest bundle Capgo has
 // set. Returns true if a native reload was attempted (caller skips the web
 // path), false on web so the caller falls back to the cache-bust reload.
+// 2026-07-11 — instant-update broadcast (Andrew: "no more manually
+// pressing refresh"). Called from App.jsx when config/forceRefresh
+// flips after a deploy. Polls Capgo until the freshly-uploaded bundle
+// is available, downloads it, and swaps the WebView onto it — so a
+// running phone updates within seconds of `npm run deploy` finishing,
+// no reopen, no toast tap. Respects active typing (waits up to 60s
+// for the field to blur before reloading). Returns true once a reload
+// onto a new bundle was performed (or we're already on the target).
+export async function applyNativeOtaWhenReady(targetVersion, { timeoutMs = 5 * 60 * 1000 } = {}) {
+    try {
+        if (!window?.Capacitor?.isNativePlatform?.()) return false;
+    } catch { return false; }
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const inputBusy = () => {
+        const el = document.activeElement;
+        return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+    };
+    const waitInputIdle = async () => {
+        const cap = Date.now() + 60_000;
+        while (inputBusy() && Date.now() < cap) await sleep(3000);
+    };
+    try {
+        const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            try {
+                // autoUpdate already downloaded it → just swap onto it.
+                if (_otaPending) {
+                    await waitInputIdle();
+                    await CapacitorUpdater.reload();
+                    return true;
+                }
+                const cur = (await CapacitorUpdater.current().catch(() => null))?.bundle?.version || '';
+                if (targetVersion && cur === targetVersion) return true; // already there
+                const latest = await CapacitorUpdater.getLatest().catch(() => null);
+                if (latest?.url && latest.version && latest.version !== cur
+                    && (!targetVersion || latest.version === targetVersion)) {
+                    const bundle = await CapacitorUpdater.download({ url: latest.url, version: latest.version });
+                    await waitInputIdle();
+                    await CapacitorUpdater.set(bundle); // applies + reloads the WebView
+                    return true;
+                }
+            } catch (e) {
+                // Transient (CDN not propagated yet / autoUpdate racing the
+                // same download) — keep polling until the deadline.
+                console.warn('[cap] ota-when-ready attempt failed:', e?.message);
+            }
+            await sleep(10_000);
+        }
+    } catch (e) {
+        console.warn('[cap] applyNativeOtaWhenReady failed:', e?.message);
+    }
+    return false;
+}
+
 export async function applyNativeOtaRefresh() {
     try {
         if (!window?.Capacitor?.isNativePlatform?.()) return false;

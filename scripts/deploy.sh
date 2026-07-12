@@ -67,7 +67,7 @@ if [ -z "${CAPGO_TOKEN:-}" ]; then
   exit 1
 fi
 npx @capgo/cli@latest bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION"
-echo "  ✓ OTA v$VERSION uploaded to channel '$CHANNEL' — phones update on next open."
+echo "  ✓ OTA v$VERSION uploaded to channel '$CHANNEL' — open phones apply it via the broadcast below."
 
 # 5) Post-deploy verification (Debug/QA automation). Calls the read-only
 #    healthCheck Cloud Function, which records the deploy to /deploys + runs
@@ -89,4 +89,39 @@ else
   echo "  ⚠ Health check endpoint unreachable (deploy still shipped; the scheduled check will catch up)."
 fi
 
-echo "✅ Deploy complete — web live; apps on v$VERSION."
+# 6) Auto-refresh broadcast (2026-07-11 — Andrew: "no more manually
+#    pressing refresh"). Wait until GitHub Pages actually serves THIS
+#    build (clients verify too, but broadcasting after propagation means
+#    even devices on pre-broadcast-aware bundles reload into the new
+#    version), then flip /config/forceRefresh. Every open phone, browser,
+#    and TV updates itself within seconds; closed devices update on next
+#    open as before. The Danger Zone button remains as a manual backup.
+echo "▸ Waiting for web propagation, then broadcasting auto-refresh…"
+PROPAGATED=""
+WAIT_DEADLINE=$((SECONDS + 240))
+while [ $SECONDS -lt $WAIT_DEADLINE ]; do
+  SERVED="$(curl -fsS --max-time 10 "https://app.ddmaustl.com/version.json?t=$(date +%s)" 2>/dev/null || true)"
+  case "$SERVED" in
+    *"$SHA"*) PROPAGATED="yes"; break ;;
+  esac
+  sleep 10
+done
+if [ -n "$PROPAGATED" ]; then
+  # Shaped client-style write (rules require triggeredBy string +
+  # triggeredAt == request.time, satisfied via the REQUEST_TIME
+  # transform). The apiKey is the public client key from src/firebase.js.
+  FS_API_KEY="$(grep -o 'apiKey: *"[^"]*"' src/firebase.js | cut -d'"' -f2)"
+  BROADCAST_BODY='{"writes":[{"update":{"name":"projects/dd-mau-staff-app/databases/(default)/documents/config/forceRefresh","fields":{"triggeredBy":{"stringValue":"auto-deploy v'"$VERSION"'"},"version":{"stringValue":"'"$VERSION"'"}}},"updateTransforms":[{"fieldPath":"triggeredAt","setToServerValue":"REQUEST_TIME"}]}]}'
+  if curl -fsS --max-time 20 -X POST \
+       "https://firestore.googleapis.com/v1/projects/dd-mau-staff-app/databases/(default)/documents:commit?key=$FS_API_KEY" \
+       -H 'Content-Type: application/json' -d "$BROADCAST_BODY" -o /dev/null; then
+    echo "  ✓ Auto-refresh broadcast sent — every open device is updating to v$VERSION now."
+  else
+    echo "  ⚠ Broadcast write failed — press 🚨 System Refresh in Admin → Danger Zone to push it manually."
+  fi
+else
+  echo "  ⚠ Web didn't propagate within 4 min — broadcast skipped so devices can't reload onto the OLD build."
+  echo "    Once https://app.ddmaustl.com/version.json shows $SHA, press 🚨 System Refresh in Admin → Danger Zone."
+fi
+
+echo "✅ Deploy complete — web live, all open devices auto-updating; apps on v$VERSION."
