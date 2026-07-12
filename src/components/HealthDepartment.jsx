@@ -18,7 +18,8 @@ import { collection, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { canManageHealth } from '../data/staff';
 import {
-    complianceStatus, hepA2Due, upsertHealthRecord, loadHealthDocsConfig,
+    complianceStatus, hepA2Due, hepA2DueDateStr, buildAttentionQueue,
+    EXEMPTION_WAIVER, upsertHealthRecord, loadHealthDocsConfig,
     extractHealthDoc,
 } from '../data/health';
 import { notifyStaff } from '../data/notify';
@@ -224,11 +225,81 @@ function SignDocModal({ docDef, staffId, staffName, language, onClose, onSigned 
     );
 }
 
+// ── Hep A exemption / declination waiver modal ──────────────────────
+// E-signed alternative to the two-dose record (Immuware-style
+// declination): pick medical or religious, read the waiver, type your
+// name. Writes hepA.exempt with a full audit payload.
+function ExemptionModal({ staffId, staffName, language, onClose, onSigned }) {
+    const isEs = language === 'es';
+    const tx = (en, es) => (isEs ? es : en);
+    const [exType, setExType] = useState('');
+    const [typedName, setTypedName] = useState('');
+    const [scrolledToEnd, setScrolledToEnd] = useState(false);
+    const bodyRef = useRef(null);
+    const onScroll = () => {
+        const el = bodyRef.current;
+        if (el && el.scrollTop + el.clientHeight >= el.scrollHeight - 24) setScrolledToEnd(true);
+    };
+    useEffect(() => {
+        const el = bodyRef.current;
+        if (el && el.scrollHeight <= el.clientHeight + 8) setScrolledToEnd(true);
+    }, []);
+    const canSign = exType && scrolledToEnd && typedName.trim().toLowerCase() === staffName.trim().toLowerCase();
+    const sign = async () => {
+        try {
+            await upsertHealthRecord(staffId, staffName, (rec) => {
+                rec.hepA = { ...(rec.hepA || {}), exempt: true, exemption: {
+                    type: exType,
+                    signedAt: new Date().toISOString(),
+                    signedName: typedName.trim(),
+                    waiverVersion: EXEMPTION_WAIVER.version,
+                } };
+                return rec;
+            }, staffName);
+            toast(tx('✍️ Exemption signed', '✍️ Exención firmada'));
+            onSigned?.(); onClose();
+        } catch { toast(tx('Sign failed — try again', 'Error al firmar')); }
+    };
+    return (
+        <ModalPortal>
+            <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-3" onClick={onClose} role="dialog" aria-modal="true">
+                <div className="glass-sheet bg-white w-full max-w-md rounded-2xl p-4 shadow-2xl flex flex-col" style={{ maxHeight: '85dvh' }} onClick={(e) => e.stopPropagation()}>
+                    <h3 className="font-bold text-dd-text mb-2">{isEs ? EXEMPTION_WAIVER.titleEs : EXEMPTION_WAIVER.title}</h3>
+                    <div className="flex gap-2 mb-2">
+                        {[['medical', tx('Medical / titer', 'Médica / títulos')], ['religious', tx('Religious', 'Religiosa')]].map(([k, label]) => (
+                            <button key={k} onClick={() => setExType(k)}
+                                className={`flex-1 px-3 py-2 rounded-lg text-sm font-bold border transition ${exType === k ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    <div ref={bodyRef} onScroll={onScroll}
+                        className="flex-1 overflow-y-auto text-sm text-dd-text whitespace-pre-wrap border border-dd-line rounded-xl p-3 bg-dd-bg mb-3">
+                        {isEs ? EXEMPTION_WAIVER.bodyEs : EXEMPTION_WAIVER.body}
+                    </div>
+                    {!scrolledToEnd && <p className="text-[11px] text-amber-700 mb-2">{tx('Scroll to the end to sign', 'Desplázate hasta el final para firmar')}</p>}
+                    <input value={typedName} onChange={(e) => setTypedName(e.target.value)}
+                        placeholder={tx(`Type your full name: ${staffName}`, `Escribe tu nombre completo: ${staffName}`)}
+                        className="glass-input w-full mb-2 text-base" />
+                    <div className="flex gap-2">
+                        <button onClick={sign} disabled={!canSign}
+                            className="glass-button-primary flex-1 py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
+                            {tx('Sign exemption', 'Firmar exención')}
+                        </button>
+                        <button onClick={onClose} className="glass-button-apple px-4 py-2.5 rounded-xl text-sm">{tx('Close', 'Cerrar')}</button>
+                    </div>
+                </div>
+            </div>
+        </ModalPortal>
+    );
+}
+
 // ── Staff self-view ──────────────────────────────────────────────────
 function MyHealth({ me, myRecord, docsConfig, language, refresh }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [signingDoc, setSigningDoc] = useState(null);
+    const [showExemption, setShowExemption] = useState(false);
     const status = complianceStatus(myRecord, docsConfig);
     const shot2Due = hepA2Due(myRecord);
     const rec = myRecord || {};
@@ -253,6 +324,18 @@ function MyHealth({ me, myRecord, docsConfig, language, refresh }) {
                             : rec.hepA?.shot1Date ? <span className="text-dd-text-2">{tx('Due 6 months after shot 1', '6 meses después de la dosis 1')}</span>
                             : <span className="text-amber-700 font-bold">{tx('Needed', 'Falta')}</span>}
                     </div>
+                    {rec.hepA?.exempt ? (
+                        <p className="text-[11px] text-dd-text-2 pt-1">
+                            ✍️ {tx('Exemption on file', 'Exención registrada')}
+                            {rec.hepA?.exemption?.type ? ` (${rec.hepA.exemption.type === 'medical' ? tx('medical', 'médica') : tx('religious', 'religiosa')})` : ''}
+                            {rec.hepA?.exemption?.signedAt ? ` · ${fmtDate(rec.hepA.exemption.signedAt.slice(0, 10), isEs)}` : ''}
+                        </p>
+                    ) : (!status.hepA1 || !status.hepA2) && (
+                        <button onClick={() => setShowExemption(true)}
+                            className="text-[11px] text-dd-text-2 underline underline-offset-2 pt-1">
+                            {tx("Can't be vaccinated? Sign an exemption", '¿No puedes vacunarte? Firma una exención')}
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -283,6 +366,10 @@ function MyHealth({ me, myRecord, docsConfig, language, refresh }) {
             {signingDoc && (
                 <SignDocModal docDef={signingDoc} staffId={me.id} staffName={me.name} language={language}
                     onClose={() => setSigningDoc(null)} onSigned={refresh} />
+            )}
+            {showExemption && (
+                <ExemptionModal staffId={me.id} staffName={me.name} language={language}
+                    onClose={() => setShowExemption(false)} onSigned={refresh} />
             )}
         </div>
     );
@@ -342,6 +429,9 @@ function StaffRecordModal({ person, record, docsConfig, language, byName, onClos
                             <input type="checkbox" checked={exempt} onChange={(e) => setExempt(e.target.checked)} className="w-4 h-4" />
                             {tx('Exempt (titer / medical)', 'Exento (títulos / médico)')}</label>
                     </div>
+                    {rec.hepA?.exemption?.signedAt && (
+                        <p className="text-[11px] text-dd-text-2 mb-1">✍️ {tx('Exemption signed', 'Exención firmada')} ({rec.hepA.exemption.type}) · {rec.hepA.exemption.signedName} · {fmtDate(rec.hepA.exemption.signedAt.slice(0, 10), isEs)}</p>
+                    )}
                     {rec.hepA?.verifiedBy && (
                         <p className="text-[11px] text-dd-text-2 mb-2">✓ {tx('Last verified by', 'Verificado por')} {rec.hepA.verifiedBy} · {fmtDate((rec.hepA.verifiedAt || '').slice(0, 10), isEs)}</p>
                     )}
@@ -431,6 +521,20 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
         return { person: s, rec, status: complianceStatus(rec, docsConfig || []), shot2Due: hepA2Due(rec) };
     }), [activeStaff, records, docsConfig]);
     const compliantCount = rows.filter(r => r.status.complete).length;
+    const attention = useMemo(() => buildAttentionQueue(rows), [rows]);
+    // Per-location compliance (staff with location 'both' count toward each).
+    const locStats = useMemo(() => {
+        const out = {};
+        for (const { person, status } of rows) {
+            const locs = person.location === 'both' ? ['webster', 'maryland'] : [person.location || 'webster'];
+            for (const l of locs) {
+                out[l] = out[l] || { total: 0, ok: 0 };
+                out[l].total += 1;
+                if (status.complete) out[l].ok += 1;
+            }
+        }
+        return out;
+    }, [rows]);
 
     const myRecord = me ? (records[String(me.id)] || null) : null;
 
@@ -459,6 +563,40 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
             )}
 
             {canManage && view === 'roster' && (
+                <>
+                <div className="flex flex-wrap gap-2 mb-3">
+                    {Object.entries(locStats).map(([loc, st]) => (
+                        <span key={loc} className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border ${st.ok === st.total ? 'bg-dd-sage-50 text-dd-green-700 border-dd-green/40' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {loc === 'webster' ? 'Webster' : loc === 'maryland' ? 'Maryland Heights' : loc}
+                            <span className="font-mono">{st.ok}/{st.total}</span>
+                            <span className="font-normal">({Math.round((st.ok / Math.max(1, st.total)) * 100)}%)</span>
+                        </span>
+                    ))}
+                </div>
+                {attention.length > 0 && (
+                    <div className="glass-card p-3 mb-3">
+                        <h3 className="text-xs font-bold text-dd-text-2 uppercase mb-2 flex items-center gap-1.5">
+                            <Bell size={13} /> {tx('Needs attention', 'Requiere atención')} ({attention.length})
+                        </h3>
+                        <div className="space-y-1 max-h-56 overflow-y-auto">
+                            {attention.map((it, i) => {
+                                const person = activeStaff.find(s => s.id === it.id);
+                                const label = it.kind === 'hepA1' ? tx('Hep A shot 1 record missing', 'Falta registro de Hep A dosis 1')
+                                    : it.kind === 'hepA2' ? (it.overdue
+                                        ? tx(`Hep A shot 2 OVERDUE (was due ${fmtDate(it.dueDate, isEs)})`, `Hep A dosis 2 VENCIDA (venció ${fmtDate(it.dueDate, isEs)})`)
+                                        : tx(`Hep A shot 2 due ${fmtDate(it.dueDate, isEs)}`, `Hep A dosis 2 vence ${fmtDate(it.dueDate, isEs)}`))
+                                    : tx('Required document unsigned', 'Documento requerido sin firmar');
+                                return (
+                                    <button key={i} onClick={() => person && setOpenPerson(person)}
+                                        className="w-full flex items-center justify-between gap-2 text-left text-sm p-2 rounded-lg bg-dd-bg border border-dd-line hover:bg-dd-sage-50">
+                                        <span className="font-semibold text-dd-text truncate">{it.name}</span>
+                                        <span className={`text-xs flex-shrink-0 ${it.severity === 0 ? 'text-red-600 font-bold' : it.severity === 2 ? 'text-dd-text-2' : 'text-amber-700 font-semibold'}`}>{label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
                 <div className="glass-card p-2 sm:p-3 overflow-x-auto">
                     <table className="w-full text-sm min-w-[560px]">
                         <thead>
@@ -487,6 +625,7 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
                         </tbody>
                     </table>
                 </div>
+                </>
             )}
 
             {canManage && view === 'inspection' && (

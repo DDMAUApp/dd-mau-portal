@@ -144,16 +144,73 @@ export function complianceStatus(record, docsConfig) {
     };
 }
 
-// Hep A dose-2 window: CDC schedule is ≥6 months after dose 1. Flags
-// records where dose 2 is DUE (>6 months since dose 1, no dose 2).
-export function hepA2Due(record, todayStr) {
+// Hep A dose-2 due date: CDC schedule is ≥6 months after dose 1.
+// Returns 'YYYY-MM-DD' when a dose-2 deadline exists, else ''.
+export function hepA2DueDateStr(record) {
     const s1 = record?.hepA?.shot1Date;
-    if (!s1 || record?.hepA?.shot2Date || record?.hepA?.exempt) return false;
-    const today = todayStr || new Date().toISOString().slice(0, 10);
+    if (!s1 || record?.hepA?.shot2Date || record?.hepA?.exempt) return '';
     const due = new Date(s1 + 'T00:00:00');
     due.setMonth(due.getMonth() + 6);
-    return today >= due.toISOString().slice(0, 10);
+    return due.toISOString().slice(0, 10);
 }
+
+// Flags records where dose 2 is DUE (>6 months since dose 1, no dose 2).
+export function hepA2Due(record, todayStr) {
+    const due = hepA2DueDateStr(record);
+    if (!due) return false;
+    const today = todayStr || new Date().toISOString().slice(0, 10);
+    return today >= due;
+}
+
+// ── Needs-attention queue (pure — unit-tested) ──────────────────────
+// One flat, severity-sorted list across ALL staff of what to chase:
+//   0 = Hep A shot 2 OVERDUE   1 = shot 1 missing (no record at all)
+//   2 = shot 2 upcoming (dated) 3 = required doc unsigned
+// rows: [{ person: {id,name}, rec, status }] (as built by the page).
+export function buildAttentionQueue(rows, todayStr) {
+    const today = todayStr || new Date().toISOString().slice(0, 10);
+    const items = [];
+    for (const { person, rec, status } of rows || []) {
+        if (!person || status?.complete) continue;
+        for (const m of status.missing) {
+            if (m === 'hepA1') {
+                items.push({ id: person.id, name: person.name, kind: 'hepA1', severity: 1 });
+            } else if (m === 'hepA2') {
+                const due = hepA2DueDateStr(rec);
+                if (!due) continue; // no shot 1 yet — the hepA1 item covers it
+                items.push({ id: person.id, name: person.name, kind: 'hepA2', dueDate: due, overdue: today >= due, severity: today >= due ? 0 : 2 });
+            } else if (m.startsWith('doc:')) {
+                items.push({ id: person.id, name: person.name, kind: 'doc', docKey: m.slice(4), severity: 3 });
+            }
+        }
+    }
+    return items.sort((a, b) => a.severity - b.severity || String(a.name).localeCompare(String(b.name)));
+}
+
+// Hep A exemption/declination waiver — the e-signed alternative to the
+// two-dose record (medical or religious). Signing it sets hepA.exempt
+// with a full audit payload instead of a bare manager checkbox.
+export const EXEMPTION_WAIVER = {
+    version: 1,
+    title: 'Hepatitis A Vaccination Exemption / Declination',
+    titleEs: 'Exención / Rechazo de la Vacuna contra la Hepatitis A',
+    body: `I am requesting an exemption from the Hepatitis A vaccination requirement for one of the following reasons: a medical condition documented by a licensed physician (including existing immunity shown by a titer/blood test), or a sincerely held religious belief.
+
+I understand that:
+• Hepatitis A is a serious, vaccine-preventable liver infection that food employees can transmit through food.
+• By declining vaccination I accept heightened responsibility for illness reporting — I will report ANY gastrointestinal symptoms or jaundice to my manager BEFORE working.
+• If a Hepatitis A exposure or outbreak occurs, I may be excluded from food handling per the health department until cleared.
+• I may revoke this declination and complete the vaccination series at any time.
+• Supporting documentation (physician note or titer result) should be uploaded to my health record where applicable.`,
+    bodyEs: `Solicito una exención del requisito de vacunación contra la Hepatitis A por una de las siguientes razones: una condición médica documentada por un médico licenciado (incluida inmunidad existente demostrada por un examen de títulos/sangre), o una creencia religiosa sincera.
+
+Entiendo que:
+• La Hepatitis A es una infección hepática grave y prevenible por vacuna que los empleados de alimentos pueden transmitir a través de la comida.
+• Al rechazar la vacunación acepto una mayor responsabilidad de reportar enfermedades — reportaré CUALQUIER síntoma gastrointestinal o ictericia a mi gerente ANTES de trabajar.
+• Si ocurre una exposición o brote de Hepatitis A, puedo ser excluido del manejo de alimentos según el departamento de salud hasta ser autorizado.
+• Puedo revocar este rechazo y completar la serie de vacunación en cualquier momento.
+• La documentación de respaldo (nota médica o resultado de títulos) debe subirse a mi registro de salud cuando aplique.`,
+};
 
 // ── AI extraction (aiExtractHealthDoc Cloud Function) ───────────────
 let _callable = null;

@@ -77,3 +77,41 @@ describe('hepA2Due', () => {
         expect(hepA2Due(null, '2026-07-12')).toBe(false);
     });
 });
+
+import { hepA2DueDateStr, buildAttentionQueue } from '../health';
+
+describe('hepA2DueDateStr', () => {
+    it('is 6 months after shot 1', () => {
+        expect(hepA2DueDateStr({ hepA: { shot1Date: '2026-01-15' } })).toBe('2026-07-15');
+    });
+    it('empty when no shot 1, shot 2 done, or exempt', () => {
+        expect(hepA2DueDateStr({ hepA: {} })).toBe('');
+        expect(hepA2DueDateStr({ hepA: { shot1Date: '2026-01-15', shot2Date: '2026-07-20' } })).toBe('');
+        expect(hepA2DueDateStr({ hepA: { shot1Date: '2026-01-15', exempt: true } })).toBe('');
+    });
+});
+
+describe('buildAttentionQueue', () => {
+    const DOCS = [{ key: 'illness_reporting', required: true, title: 'X' }];
+    const row = (id, name, rec) => ({ person: { id, name }, rec, status: complianceStatus(rec, DOCS) });
+    it('sorts overdue shot-2 first, docs last; skips complete staff', () => {
+        const rows = [
+            row(1, 'Amy', { hepA: { shot1Date: '2025-11-01' }, docs: { illness_reporting: { signedAt: 'x' } } }),   // shot2 overdue
+            row(2, 'Bob', { hepA: { shot1Date: '2026-01-01', shot2Date: '2026-07-05' }, docs: {} }),                // doc only
+            row(3, 'Cal', null),                                                                                    // everything
+            row(4, 'Dee', { hepA: { shot1Date: '2026-01-01', shot2Date: '2026-07-05' }, docs: { illness_reporting: { signedAt: 'x' } } }), // complete
+        ];
+        const q = buildAttentionQueue(rows, '2026-07-12');
+        expect(q[0]).toMatchObject({ name: 'Amy', kind: 'hepA2', overdue: true, severity: 0, dueDate: '2026-05-01' });
+        expect(q.find(i => i.name === 'Cal' && i.kind === 'hepA1')).toBeTruthy();
+        // Cal has no shot 1 → NO hepA2 item (hepA1 covers it)
+        expect(q.find(i => i.name === 'Cal' && i.kind === 'hepA2')).toBeFalsy();
+        expect(q[q.length - 1].kind).toBe('doc');
+        expect(q.find(i => i.name === 'Dee')).toBeFalsy();
+    });
+    it('upcoming (not overdue) shot 2 gets severity 2 with the due date', () => {
+        const rows = [row(1, 'Amy', { hepA: { shot1Date: '2026-05-01' }, docs: { illness_reporting: { signedAt: 'x' } } })];
+        const q = buildAttentionQueue(rows, '2026-07-12');
+        expect(q[0]).toMatchObject({ kind: 'hepA2', overdue: false, severity: 2, dueDate: '2026-11-01' });
+    });
+});

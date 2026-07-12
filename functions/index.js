@@ -4207,6 +4207,77 @@ exports.aiExtractHealthDoc = onCall(
     }
 );
 
+// ── 2026-07-12 — healthComplianceReminders: daily compliance nudges ──
+// Health Department module. Every day at 10am Central, staff with
+// missing Hep A records or unsigned required docs get a push
+// notification (throttled to one nudge per 3 days per person, stamped
+// on the health record). Turns the compliance roster self-enforcing —
+// nobody has to chase anyone.
+exports.healthComplianceReminders = onSchedule(
+    {
+        schedule: "0 10 * * *",           // 10:00am every day
+        timeZone: "America/Chicago",
+        retryCount: 1,
+        memory: "256MiB",
+    },
+    async () => {
+        const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+        const now = Date.now();
+
+        // Required doc keys (same defaults the client seeds).
+        let requiredDocKeys = ["illness_reporting", "hygiene_policy"];
+        try {
+            const cfg = await db.collection("config").doc("health_docs").get();
+            const docs = (cfg.data() || {}).docs;
+            if (Array.isArray(docs) && docs.length) {
+                requiredDocKeys = docs.filter((d) => d && d.required !== false).map((d) => d.key);
+            }
+        } catch { /* fall back to defaults */ }
+
+        const staffSnap = await db.collection("config").doc("staff").get();
+        const staffList = ((staffSnap.data() || {}).list || []).filter((p) => p && p.name && p.active !== false);
+
+        const recSnap = await db.collection("health_records").get();
+        const records = {};
+        recSnap.forEach((d) => { records[d.id] = d.data(); });
+
+        let nudged = 0;
+        for (const person of staffList) {
+            const rec = records[String(person.id)] || null;
+            const hepA = rec?.hepA || {};
+            const missing = [];
+            if (!hepA.shot1Date && hepA.exempt !== true) missing.push("Hep A shot 1 record");
+            if (!hepA.shot2Date && hepA.exempt !== true) missing.push("Hep A shot 2 record");
+            const signed = rec?.docs || {};
+            const unsigned = requiredDocKeys.filter((k) => !signed[k]?.signedAt);
+            if (unsigned.length) missing.push(unsigned.length === 1 ? "1 document signature" : `${unsigned.length} document signatures`);
+            if (missing.length === 0) continue;
+
+            // Throttle: one nudge per 3 days per person.
+            const last = Number(rec?.lastReminderAt || 0);
+            if (last && now - last < THREE_DAYS) continue;
+
+            await db.collection("notifications").add({
+                forStaff: person.name,
+                type: "health_reminder",
+                title: "🏥 Health Department — action needed",
+                body: `Still needed: ${missing.join(", ")}. Open the Health Department tab to finish (takes ~2 minutes).`,
+                deepLink: "healthdept",
+                createdAt: FieldValue.serverTimestamp(),
+                read: false,
+                createdBy: "system",
+            });
+            // Admin SDK bypasses rules; keep staffId so the doc stays shaped.
+            await db.collection("health_records").doc(String(person.id)).set(
+                { staffId: String(person.id), staffName: person.name, lastReminderAt: now },
+                { merge: true }
+            );
+            nudged++;
+        }
+        logger.info(`healthComplianceReminders: nudged ${nudged}/${staffList.length} staff`);
+    }
+);
+
 // ── 2026-05-20 — aiGeneratePromo: AI banner copy for menu TVs ─────
 // Andrew Wave 5 of "match the SaaS leaders, beat them where we can".
 // None of Raydiant / ScreenCloud / Samsung VXT offer AI-generated
