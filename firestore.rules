@@ -80,8 +80,19 @@ service cloud.firestore {
     //     out `chats` would brick those. See the /chats block.
     //   • /tv_configs (+ versions subcollection) — open delete is the
     //     documented admin workflow.
-    function isCarvedOut(docPath) {
-      return docPath[0] in [
+    //
+    // ⚠️ 2026-07-12 PROD OUTAGE FIX: these were one isCarvedOut(docPath)
+    // function indexing into the {document=**} binding (docPath[0]).
+    // In PRODUCTION (the emulator is more lenient) path-indexing into a
+    // recursive wildcard is not statically provable for QUERIES, so every
+    // list/query on a catch-all collection returned PERMISSION_DENIED
+    // (shifts, date_blocks, vendor_*, chat acks…) while single-doc gets
+    // still worked — web schedule showed empty from 18:36 to ~00:30 CT.
+    // Split into string-typed helpers fed by bounded single-segment
+    // wildcards (see the catch-all matches at the bottom), which queries
+    // CAN prove. Never index into a ** binding in a rule condition.
+    function isCarvedTop(collection) {
+      return collection in [
         'ai_logs',
         'api_request_logs',
         'attendance',
@@ -121,7 +132,11 @@ service cloud.firestore {
         'tardies',
         'time_off',
         'tv_heartbeats'
-      ] || (docPath[0] == 'config' && docPath[1] in [
+      ];
+    }
+    // config/* is carved out per-DOC (each listed doc has its own block).
+    function isCarvedConfigDoc(docId) {
+      return docId in [
         'staff',
         'brand',
         'build_sheet',
@@ -134,7 +149,7 @@ service cloud.firestore {
         'recipes',
         'toast_menu_items',
         'training_overrides'
-      ]);
+      ];
     }
 
     // NOTE on per-record PIN validation:
@@ -676,7 +691,7 @@ service cloud.firestore {
     // ever worked because the old catch-all OR'd in an open delete.
     // 2026-07-11 catch-all carve-out: rather than brick those flows,
     // delete is open here to match reality — and this collection is
-    // deliberately NOT in isCarvedOut() because the acks/pins/typing
+    // deliberately NOT in isCarvedTop() because the acks/pins/typing
     // subcollections have no match block of their own and rely on the
     // catch-all for their reads/writes. (With delete open, this block
     // is identical to the catch-all anyway.) Phase 2 (Auth) is the
@@ -1229,7 +1244,7 @@ service cloud.firestore {
     }
 
     // ── Catch-all ──────────────────────────────────────────────────────
-    // Every collection NOT carved out via isCarvedOut() (see the top of
+    // Every collection NOT carved out via isCarvedTop() (see the top of
     // this file) inherits this permissive default: shifts, date_blocks,
     // vendor_*, staff_todos, swap_requests, scheduled_messages,
     // calendar_events, chats, tv_configs, config/payroll*, etc.
@@ -1241,7 +1256,7 @@ service cloud.firestore {
     // idle relock keeping random walkup access out, and (c) the
     // carved-out blocks above, which as of 2026-07-11 are actually
     // ENFORCED — Firestore ORs overlapping matches, so before the
-    // isCarvedOut() exclusion every restriction above (insurance
+    // isCarvedTop() exclusion every restriction above (insurance
     // delete:false, append-only audit trails, CF-only collections,
     // the /config/staff rev protocol …) was decorative.
     //
@@ -1258,11 +1273,39 @@ service cloud.firestore {
     // Read is also excluded for carved-out paths so each block's read
     // rule is authoritative — today that only changes /rate_limits
     // (read: false; every other carved-out block allows read).
-    match /{document=**} {
-      allow read: if !isCarvedOut(document);
+    // ⚠️ 2026-07-12: split from one `match /{document=**}` calling
+    // isCarvedOut(document). Path-indexing into a ** binding is not
+    // provable for QUERIES in production, so every list on a catch-all
+    // collection was PERMISSION_DENIED (empty web schedule outage).
+    // Bounded single-segment wildcards are provable. Depth 2/4/6 covers
+    // every path shape the app uses (deepest live: chats/{id}/acks/{id}).
+    // Collection-group queries would need their own match — none exist.
+    match /{collection}/{doc} {
+      allow read: if !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
       allow create, update: if request.resource.data is map
-          && !isCarvedOut(document);
-      allow delete: if !isCarvedOut(document);
+          && !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
+      allow delete: if !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
+    }
+    match /{collection}/{doc}/{sub}/{subdoc} {
+      allow read: if !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
+      allow create, update: if request.resource.data is map
+          && !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
+      allow delete: if !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
+    }
+    match /{collection}/{doc}/{sub}/{subdoc}/{sub2}/{subdoc2} {
+      allow read: if !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
+      allow create, update: if request.resource.data is map
+          && !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
+      allow delete: if !isCarvedTop(collection)
+          && !(collection == 'config' && isCarvedConfigDoc(doc));
     }
   }
 }
