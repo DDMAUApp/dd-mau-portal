@@ -26,7 +26,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
-import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs } from '../data/labelPrinting';
+import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs, subscribePrinterWarmState } from '../data/labelPrinting';
 
 const RECENTS_KEY = 'ddmau:printCenter:recents';
 const MAX_RECENTS = 6;
@@ -66,6 +66,7 @@ export default function PrintCenter({
     };
 
     const [printer, setPrinter] = useState(null);
+    const [warmState, setWarmState] = useState('connecting');
     useEffect(() => {
         // Pre-warm the print hot path (see PrintLabelModal) so the
         // free-text Print tap fires at the printer immediately. Also
@@ -75,7 +76,8 @@ export default function PrintCenter({
         warmPrintConfigs(printLocation, printSlot);
         const keepAlive = setInterval(() => warmPrintConfigs(printLocation, printSlot), 25000);
         const unsub = subscribePrinterConfig(printLocation, setPrinter, printSlot);
-        return () => { clearInterval(keepAlive); unsub(); };
+        const unsubWarm = subscribePrinterWarmState(printLocation, printSlot, setWarmState);
+        return () => { clearInterval(keepAlive); unsub(); unsubWarm(); };
     }, [printLocation, printSlot]);
 
     const [text, setText] = useState('');
@@ -499,13 +501,30 @@ export default function PrintCenter({
                             </p>
                         </div>
 
-                        {/* Printer state strip */}
-                        <div className={`rounded-lg p-2.5 text-[11px] ${
-                            printerReady
-                                ? 'bg-dd-sage-50 border border-dd-green/40 text-dd-green-700'
-                                : 'bg-amber-50 border border-amber-300 text-amber-800'
-                        }`}>
-                            {printerReady ? (
+                        {/* Printer state strip — "ready" = connection open, not
+                            just config loaded; shows "Printer loading…" while the
+                            device wakes (Andrew 2026-07-13). */}
+                        {(() => {
+                            const connecting = printerReady && warmState === 'connecting';
+                            const offline = printerReady && warmState === 'offline';
+                            const tone = (!printerReady || connecting || offline)
+                                ? 'bg-amber-50 border border-amber-300 text-amber-800'
+                                : 'bg-dd-sage-50 border border-dd-green/40 text-dd-green-700';
+                            return (
+                        <div className={`rounded-lg p-2.5 text-[11px] ${tone}`}>
+                            {!printerReady ? (
+                                <>⚠ {tx(
+                                    'No printer at this location. Admin → 🏷 Label printers.',
+                                    'Sin impresora aquí. Admin → 🏷 Impresoras.',
+                                )}</>
+                            ) : connecting ? (
+                                <span className="font-bold inline-flex items-center gap-1.5">
+                                    <span className="inline-block w-3 h-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" aria-hidden="true" />
+                                    {tx('Printer loading…', 'Cargando impresora…')}
+                                </span>
+                            ) : offline ? (
+                                <span className="font-bold">⚠ {tx('Printer not responding — check it’s on', 'Impresora sin responder — verifica que esté encendida')}</span>
+                            ) : (
                                 <>
                                     <span className="font-bold">🖨 {printer.name || tx('Printer ready', 'Lista')}</span>
                                     {isBrotherPrinter ? (
@@ -514,15 +533,10 @@ export default function PrintCenter({
                                         <span className="ml-1.5 opacity-70">— {printer.ip}</span>
                                     )}
                                 </>
-                            ) : (
-                                <>
-                                    ⚠ {tx(
-                                        'No printer at this location. Admin → 🏷 Label printers.',
-                                        'Sin impresora aquí. Admin → 🏷 Impresoras.',
-                                    )}
-                                </>
                             )}
                         </div>
+                            );
+                        })()}
                     </div>
                 </div>
 

@@ -442,40 +442,108 @@ function getPrinterConfigFast(location, slot = DEFAULT_PRINTER_SLOT) {
 export function warmPrintConfigs(location, slot = DEFAULT_PRINTER_SLOT) {
     try {
         getLabelFormatFast().catch(() => {});
-        // Resolve THIS location's printer config, then wake whatever it
-        // actually uses. Andrew 2026-07-13: both stores print direct-to-Wi-Fi
-        // (Epson `ip` + Brother `brotherIp`), NOT via the Pi bridge — so warm
-        // those real targets, not just the (dormant) bridge. The QL-820NWB
-        // sleeps hard; waking it here while the user picks copies is what
-        // makes the actual Print instant. All calls are throttled + silent
-        // no-ops off-network / on web.
-        getPrinterConfigFast(location, slot).then((cfg) => {
-            if (!cfg) return;
-            if (cfg.brotherIp) warmBrotherDirect(cfg.brotherIp);
-            if (cfg.ip && cfg.type !== PRINTER_TYPES.BROTHER_QL) warmEpsonConnection(cfg);
-        }).catch(() => {});
+        warmPrinterConnection(location, slot);
         // Keep warming the Pi bridge too — harmless no-op unless a slot is
         // ever configured as brother_ql (bridge path).
         warmPrintBridge();
     } catch { /* warming is best-effort */ }
 }
 
+// ── Live printer WARM STATE (2026-07-13) ────────────────────────────
+// "Printer ready" in the modals used to mean only "config loaded" — it
+// lit green before we'd ever touched the printer. Now we track the real
+// connection: 'connecting' while a wake is in flight, 'ready' once the
+// printer answers, 'offline' if it doesn't, 'idle' if none is configured.
+// The print modals subscribe so the status strip shows "Printer loading…"
+// until the device is genuinely reachable (Andrew 2026-07-13).
+//
+// MULTI-DEVICE NOTE: this state is PER-DEVICE — every phone/tablet warms
+// and tracks its own connection independently (there is no shared server
+// print queue yet). The wake ping is a read-only IPP Get-Printer-Attributes
+// / HTTP GET, so many devices warming the same printer can't collide the
+// way concurrent PRINT jobs can. See the printPrepLabel comment on the
+// QL-820NWB dropping a job that lands mid-print — that cross-device
+// collision is the real scaling limit and wants a server queue at SaaS scale.
+const _warmState = new Map();            // `${location}_${slot}` -> { status, at }
+const _warmSubs = new Map();             // key -> Set<cb>
+function _setWarm(key, status) {
+    const prev = _warmState.get(key);
+    _warmState.set(key, { status, at: Date.now() });
+    if (prev?.status !== status) {
+        const subs = _warmSubs.get(key);
+        if (subs) subs.forEach((cb) => { try { cb(status); } catch { /* subscriber threw */ } });
+    }
+}
+export function getPrinterWarmState(location, slot = DEFAULT_PRINTER_SLOT) {
+    return _warmState.get(`${location}_${slot}`)?.status || 'connecting';
+}
+// Subscribe to warm-state changes for a (location, slot). Fires the current
+// state immediately. Returns an unsubscribe fn.
+export function subscribePrinterWarmState(location, slot, cb) {
+    const key = `${location}_${PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT}`;
+    let set = _warmSubs.get(key);
+    if (!set) { set = new Set(); _warmSubs.set(key, set); }
+    set.add(cb);
+    try { cb(_warmState.get(key)?.status || 'connecting'); } catch { /* subscriber threw */ }
+    return () => { set.delete(cb); };
+}
+
+// Resolve THIS location's config and wake whatever it actually uses (Epson
+// `ip` + Brother `brotherIp`, direct-to-Wi-Fi — NOT the dormant Pi bridge),
+// updating warm state as it goes. Throttled + silent no-ops off-network.
+async function warmPrinterConnection(location, slot = DEFAULT_PRINTER_SLOT) {
+    const key = `${location}_${PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT}`;
+    // Web can't reach a LAN printer directly (mixed content) — nothing to
+    // warm, so don't strand the UI on "loading". Treat as ready.
+    if (!Capacitor.isNativePlatform()) { _setWarm(key, 'ready'); return; }
+    // Only show "connecting" if we don't already have a fresh green — avoids
+    // the strip flickering to "loading" on every 25s keep-alive tick.
+    const cur = _warmState.get(key);
+    if (!(cur?.status === 'ready' && (Date.now() - cur.at) < 30000)) {
+        _setWarm(key, 'connecting');
+    }
+    try {
+        const cfg = await getPrinterConfigFast(location, slot);
+        if (!cfg) { _setWarm(key, 'idle'); return; }
+        const checks = [];
+        if (cfg.brotherIp) checks.push(warmBrotherDirect(cfg.brotherIp));
+        if (cfg.ip && cfg.type !== PRINTER_TYPES.BROTHER_QL) checks.push(warmEpsonConnection(cfg));
+        if (checks.length === 0) { _setWarm(key, 'ready'); return; }
+        const results = await Promise.all(checks);
+        _setWarm(key, results.some(Boolean) ? 'ready' : 'offline');
+    } catch {
+        _setWarm(key, 'offline');
+    }
+}
+
 // Wake the Epson TM-L100 ahead of a print by opening its network path.
 // A GET to the ePOS endpoint spins up the NIC without submitting a job
-// (a GET can't print). Native + LAN only; throttled; never throws.
+// (a GET can't print). Returns true if the printer answered. Native + LAN
+// only; throttled; never throws.
 const _epsonWarmAt = new Map();          // `${ip}:${port}` -> last warm ms
-function warmEpsonConnection(printer) {
-    if (!printer?.ip || !Capacitor.isNativePlatform()) return;
+const _epsonReachable = new Map();       // `${ip}:${port}` -> bool
+async function warmEpsonConnection(printer) {
+    if (!printer?.ip || !Capacitor.isNativePlatform()) return false;
     const port = printer.port || DEFAULT_PRINTER_PORT;
     const key = `${printer.ip}:${port}`;
     const now = Date.now();
-    if (now - (_epsonWarmAt.get(key) || 0) < 8000) return;
+    if (now - (_epsonWarmAt.get(key) || 0) < 8000) {
+        return _epsonReachable.get(key) ?? true;          // recently warmed
+    }
     _epsonWarmAt.set(key, now);
-    CapacitorHttp.get({
-        url: `http://${printer.ip}:${port}/`,
-        connectTimeout: 3000,
-        readTimeout: 3000,
-    }).catch(() => { /* warming is best-effort */ });
+    try {
+        const res = await CapacitorHttp.get({
+            url: `http://${printer.ip}:${port}/`,
+            connectTimeout: 3000,
+            readTimeout: 3000,
+        });
+        const ok = Number(res?.status) > 0;               // any reply (even 404) = NIC awake
+        _epsonReachable.set(key, ok);
+        return ok;
+    } catch {
+        _epsonReachable.set(key, false);
+        return false;
+    }
 }
 
 export async function savePrinterConfig({

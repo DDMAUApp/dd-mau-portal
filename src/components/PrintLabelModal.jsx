@@ -35,6 +35,7 @@ import {
     subscribePrinterConfig,
     printPrepLabel,
     warmPrintConfigs,
+    subscribePrinterWarmState,
 } from '../data/labelPrinting';
 import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
@@ -84,6 +85,8 @@ export default function PrintLabelModal({
     };
     const [printer, setPrinter] = useState(null);
     const [printing, setPrinting] = useState(false);
+    // Live printer connection state: 'connecting' | 'ready' | 'offline' | 'idle'.
+    const [warmState, setWarmState] = useState('connecting');
     // Per-print "Brother (permanent)" toggle. Default OFF → Epson self-stick
     // (the default printer). Only offered when a Brother direct IP is configured.
     const [printOnBrother, setPrintOnBrother] = useState(false);
@@ -158,10 +161,12 @@ export default function PrintLabelModal({
         // 2026-06-11; connection warm-up 2026-06-30.)
         warmPrintConfigs(location, slot);
         const unsub = subscribePrinterConfig(location, setPrinter, slot);
+        // Live connection state → drives the "Printer loading… / ready" strip.
+        const unsubWarm = subscribePrinterWarmState(location, slot, setWarmState);
         // Keep the connection warm while the modal stays open so the Brother
         // can't re-sleep between opening the sticker and tapping Print.
         const keepAlive = setInterval(() => warmPrintConfigs(location, slot), 25000);
-        return () => { clearInterval(keepAlive); unsub(); };
+        return () => { clearInterval(keepAlive); unsub(); unsubWarm(); };
     }, [location, slot]);
 
     // Subscribe to the global label format so the preview reflects
@@ -378,13 +383,36 @@ export default function PrintLabelModal({
                         still exists in case admin re-enables office
                         later without a code change. */}
 
-                    {/* Printer state strip */}
-                    <div className={`rounded-lg p-2.5 text-[11px] ${
-                        printerReady
-                            ? 'bg-dd-sage-50 border border-dd-green/40 text-dd-green-700'
-                            : 'bg-amber-50 border border-amber-300 text-amber-800'
-                    }`}>
-                        {printerReady ? (
+                    {/* Printer state strip. "Ready" now means the connection is
+                        actually open, not just that the config loaded — while the
+                        printer wakes we show "Printer loading…" so the button
+                        doesn't look armed before the device answers (Andrew
+                        2026-07-13). Colors: green ready, amber loading/not-set,
+                        red offline. */}
+                    {(() => {
+                        // Connecting only matters once a printer is configured.
+                        const connecting = printerReady && warmState === 'connecting';
+                        const offline = printerReady && warmState === 'offline';
+                        const tone = !printerReady || offline
+                            ? 'bg-amber-50 border border-amber-300 text-amber-800'
+                            : connecting
+                                ? 'bg-amber-50 border border-amber-300 text-amber-800'
+                                : 'bg-dd-sage-50 border border-dd-green/40 text-dd-green-700';
+                        return (
+                    <div className={`rounded-lg p-2.5 text-[11px] ${tone}`}>
+                        {!printerReady ? (
+                            <>⚠ {tx(
+                                `No ${slot} printer set up for this location. Ask admin to configure it.`,
+                                `Sin impresora de ${slot === 'kitchen' ? 'cocina' : 'oficina'}. Pídele a un admin.`,
+                            )}</>
+                        ) : connecting ? (
+                            <span className="font-bold inline-flex items-center gap-1.5">
+                                <span className="inline-block w-3 h-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" aria-hidden="true" />
+                                {tx('Printer loading…', 'Cargando impresora…')}
+                            </span>
+                        ) : offline ? (
+                            <span className="font-bold">⚠ {tx('Printer not responding — check it’s on', 'Impresora sin responder — verifica que esté encendida')}</span>
+                        ) : (
                             <>
                                 <span className="font-bold">🖨 {printer.name || tx('Printer ready', 'Impresora lista')}</span>
                                 {isBrotherPrinter ? (
@@ -393,15 +421,10 @@ export default function PrintLabelModal({
                                     <span className="ml-1.5 opacity-70">— {printer.ip}</span>
                                 )}
                             </>
-                        ) : (
-                            <>
-                                ⚠ {tx(
-                                    `No ${slot} printer set up for this location. Ask admin to configure it.`,
-                                    `Sin impresora de ${slot === 'kitchen' ? 'cocina' : 'oficina'}. Pídele a un admin.`,
-                                )}
-                            </>
                         )}
                     </div>
+                        );
+                    })()}
                 </div>
 
                 {/* Per-print Brother toggle — only when a Brother direct IP is set.

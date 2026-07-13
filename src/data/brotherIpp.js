@@ -276,15 +276,20 @@ function buildIppGetPrinterAttributes(host, port = BROTHER_PORT) {
     return Uint8Array.from(out);
 }
 
-// Fire-and-forget: wake the Brother ahead of a print. Never throws.
+// Wake the Brother ahead of a print. Returns true if the printer answered
+// (reachable/awake), false otherwise. Never throws. A throttled call
+// returns the last known reachability so the caller's UI stays stable.
+const _brotherReachable = new Map();    // ip -> bool (last result)
 export async function warmBrotherDirect(ip) {
-    if (!ip || !Capacitor.isNativePlatform()) return;
+    if (!ip || !Capacitor.isNativePlatform()) return false;
     const now = Date.now();
     const last = _brotherWarmAt.get(ip) || 0;
-    if (now - last < BROTHER_WARM_THROTTLE_MS) return;    // recently warmed
+    if (now - last < BROTHER_WARM_THROTTLE_MS) {
+        return _brotherReachable.get(ip) ?? true;         // recently warmed — trust it
+    }
     _brotherWarmAt.set(ip, now);
     try {
-        await CapacitorHttp.post({
+        const res = await CapacitorHttp.post({
             url: `http://${ip}:${BROTHER_PORT}/ipp/print`,
             headers: { 'Content-Type': 'application/ipp' },
             data: bytesToBase64(buildIppGetPrinterAttributes(ip)),
@@ -293,7 +298,13 @@ export async function warmBrotherDirect(ip) {
             connectTimeout: 4000,
             readTimeout: 4000,
         });
-    } catch { /* warming is best-effort — the real print still probes */ }
+        const ok = Number(res?.status) > 0;               // any HTTP reply = printer is up
+        _brotherReachable.set(ip, ok);
+        return ok;
+    } catch {
+        _brotherReachable.set(ip, false);
+        return false;                                     // best-effort — real print still tries
+    }
 }
 
 // ── Top-level: render + send one label (copies = repeat the job; the
