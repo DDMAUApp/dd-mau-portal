@@ -107,6 +107,27 @@ export async function upsertHealthRecord(staffId, staffName, mutate, updatedBy) 
     });
 }
 
+// Flip whether one signing doc is required (Andrew 2026-07-13: "we have
+// only been signing the 1-B so make that the only doc required — make a
+// toggle if i need to turn it back on one day"). required:false docs stay
+// in the config (and in the mass-import assign dropdown, and any existing
+// signatures remain on records) — they just stop counting toward
+// compliance, stop appearing on the staff sign list, and stop triggering
+// reminders (complianceStatus + the healthComplianceReminders CF already
+// filter on `required !== false`).
+export async function setHealthDocRequired(key, required, byName) {
+    const ref = doc(db, ...HEALTH_DOCS_CONFIG);
+    const snap = await getDoc(ref);
+    const docs = (snap.exists() ? snap.data()?.docs : null) || DEFAULT_HEALTH_DOCS;
+    const next = docs.map(d => d.key === key ? { ...d, required: required !== false } : d);
+    await setDoc(ref, {
+        docs: next,
+        updatedAt: new Date().toISOString(),
+        updatedBy: byName || '',
+    }, { merge: true });
+    return next;
+}
+
 // Load the required-docs config, seeding defaults on first use.
 export async function loadHealthDocsConfig({ seedIfMissing = false } = {}) {
     const ref = doc(db, ...HEALTH_DOCS_CONFIG);

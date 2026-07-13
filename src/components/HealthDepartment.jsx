@@ -382,7 +382,10 @@ function MyHealth({ me, myRecord, docsConfig, language, refresh }) {
             <div className="glass-card p-4">
                 <h3 className="font-bold text-dd-text text-sm flex items-center gap-1.5 mb-2"><FileSignature size={16} className="text-dd-green-700" /> {tx('Required documents', 'Documentos requeridos')}</h3>
                 <div className="space-y-2">
-                    {(docsConfig || []).map((d) => {
+                    {/* Only currently-required docs are offered for signing;
+                        a doc toggled off in Admin still shows here if this
+                        person already signed it (historical record). */}
+                    {(docsConfig || []).filter((d) => d.required !== false || rec.docs?.[d.key]?.signedAt).map((d) => {
                         const signed = rec.docs?.[d.key]?.signedAt;
                         return (
                             <div key={d.key} className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-dd-bg border border-dd-line">
@@ -477,7 +480,7 @@ function StaffRecordModal({ person, record, docsConfig, language, byName, onClos
                     {/* Signed docs */}
                     <h4 className="text-xs font-bold text-dd-text-2 uppercase mb-1.5">{tx('Signed documents', 'Documentos firmados')}</h4>
                     <div className="space-y-1.5 mb-3">
-                        {(docsConfig || []).map((d) => {
+                        {(docsConfig || []).filter((d) => d.required !== false || rec.docs?.[d.key]?.signedAt).map((d) => {
                             const sig = rec.docs?.[d.key];
                             return (
                                 <div key={d.key} className="flex items-center justify-between text-sm p-2 rounded-lg bg-dd-bg border border-dd-line">

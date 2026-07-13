@@ -10,7 +10,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { upsertHealthRecord, extractHealthDoc, loadHealthDocsConfig } from '../data/health';
+import { upsertHealthRecord, extractHealthDoc, loadHealthDocsConfig, setHealthDocRequired } from '../data/health';
 import { storage } from '../firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { toast } from '../toast';
@@ -374,6 +374,30 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
 
             {open && (
                 <div className="glass-card p-3 mt-2">
+                    {/* Required-doc toggles (Andrew 2026-07-13: only the 1-B is
+                        signed today — toggle others off, flip back on any day).
+                        Off = doesn't count toward compliance, hidden from the
+                        staff sign list, no reminders; existing signatures and
+                        the mass-import assign option are untouched. */}
+                    <div className="mb-3 p-2.5 rounded-xl bg-dd-bg border border-dd-line">
+                        <p className="text-xs font-bold text-dd-text-2 uppercase mb-1.5">
+                            {tx('Documents staff must sign', 'Documentos que el personal debe firmar')}
+                        </p>
+                        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                            {(docsConfig || []).map((d) => (
+                                <label key={d.key} className="flex items-center gap-2 text-sm text-dd-text cursor-pointer">
+                                    <input type="checkbox" checked={d.required !== false}
+                                        onChange={async (e) => {
+                                            const next = await setHealthDocRequired(d.key, e.target.checked, byName)
+                                                .catch(() => null);
+                                            if (next) setDocsConfig(next);
+                                        }} />
+                                    <span>{d.title}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
                     {/* Mass document import */}
                     <details className="mb-3" open={massRows.length > 0}>
                         <summary className="text-sm font-semibold text-dd-text cursor-pointer">
