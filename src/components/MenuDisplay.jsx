@@ -534,6 +534,23 @@ function MenuDisplayInner({ tvId = 'webster' }) {
         return () => clearInterval(id);
     }, [tvId]);
 
+    // Andrew 2026-07-13 "make the blacks a little more black" — the menu
+    // artwork's darkest ink is near-black, not #000, so the panel never
+    // reaches true black even with a full-range signal. A small CSS
+    // contrast lift crushes those tones to black. Stored per-TV as
+    // tv_configs/{tvId}.contrastBoost (e.g. 1.07) so it's tunable live
+    // from Firestore with no deploy; absent/1 = no filter, other TVs
+    // unchanged. Document-level so image/built/split modes all get it —
+    // safe because ?tv= is a dedicated full-page render (admin previews
+    // embed via iframe = separate document). Capped at 1.5: past that
+    // the mint background visibly shifts.
+    const contrastBoost = Number(tvConfig?.contrastBoost);
+    useEffect(() => {
+        const on = Number.isFinite(contrastBoost) && contrastBoost > 1 && contrastBoost <= 1.5;
+        document.documentElement.style.filter = on ? `contrast(${contrastBoost})` : '';
+        return () => { document.documentElement.style.filter = ''; };
+    }, [contrastBoost]);
+
     // Andrew 2026-05-30 Phase 1.E — base menu now comes from the
     // Firestore-backed useMenuConfigLegacy hook, with MENU_DATA as
     // cold-boot fallback (the hook handles that internally). The
