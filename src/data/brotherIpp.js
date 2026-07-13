@@ -251,6 +251,51 @@ export function renderLabelCanvas(lines, { width = BROTHER_IMAGEABLE_W, rightShi
     return { rgba: img.data, width, height };
 }
 
+// ── Connection warm-up (2026-07-13, Andrew: "sticker print takes a long
+// time to connect"). The QL-820NWB sleeps aggressively; the FIRST IPP
+// connection after sleep pays the wake cost (radio + engine spin-up),
+// which is the visible stall at Print time. So when a print surface OPENS
+// we fire a cheap Get-Printer-Attributes (IPP operation 0x000B) — it wakes
+// the printer WITHOUT printing anything — then the real print lands on an
+// already-awake printer. Throttled per-IP so a mount + 25s keep-alive
+// interval doesn't hammer it. Native + LAN only; silent no-op otherwise.
+const _brotherWarmAt = new Map();       // ip -> last warm ms
+const BROTHER_WARM_THROTTLE_MS = 8000;
+
+function buildIppGetPrinterAttributes(host, port = BROTHER_PORT) {
+    const uri = `ipp://${host}:${port}/ipp/print`;
+    const out = [];
+    out.push(0x02, 0x00, ...u16(0x000b));                 // version 2.0, Get-Printer-Attributes
+    pushU32(out, 1);                                       // request-id
+    out.push(0x01);                                       // operation-attributes
+    attrStr(out, 0x47, 'attributes-charset', 'utf-8');
+    attrStr(out, 0x48, 'attributes-natural-language', 'en-us');
+    attrStr(out, 0x45, 'printer-uri', uri);
+    attrStr(out, 0x44, 'requested-attributes', 'printer-state');
+    out.push(0x03);                                       // end-of-attributes
+    return Uint8Array.from(out);
+}
+
+// Fire-and-forget: wake the Brother ahead of a print. Never throws.
+export async function warmBrotherDirect(ip) {
+    if (!ip || !Capacitor.isNativePlatform()) return;
+    const now = Date.now();
+    const last = _brotherWarmAt.get(ip) || 0;
+    if (now - last < BROTHER_WARM_THROTTLE_MS) return;    // recently warmed
+    _brotherWarmAt.set(ip, now);
+    try {
+        await CapacitorHttp.post({
+            url: `http://${ip}:${BROTHER_PORT}/ipp/print`,
+            headers: { 'Content-Type': 'application/ipp' },
+            data: bytesToBase64(buildIppGetPrinterAttributes(ip)),
+            dataType: 'file',
+            responseType: 'arraybuffer',
+            connectTimeout: 4000,
+            readTimeout: 4000,
+        });
+    } catch { /* warming is best-effort — the real print still probes */ }
+}
+
 // ── Top-level: render + send one label (copies = repeat the job; the
 // QL-820NWB does NOT support the IPP `copies` attribute, so we loop). ──
 export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightShift, jobName }) {

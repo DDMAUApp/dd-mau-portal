@@ -69,7 +69,7 @@ import { getLabelFormat, getLabelFormatFast } from './labelFormat';
 // through to the existing PDF + Web Share Sheet path so date stickers
 // still work. See src/data/printBridge.js + /pi5-print-bridge/.
 import { tryPrintViaBridge, payloadToBridgeFormat, warmPrintBridge } from './printBridge';
-import { printBrotherDirect } from './brotherIpp';
+import { printBrotherDirect, warmBrotherDirect } from './brotherIpp';
 
 // ── Public types ──────────────────────────────────────────────
 // PrinterConfig shape — see header. Defaults applied at print time
@@ -441,16 +441,41 @@ function getPrinterConfigFast(location, slot = DEFAULT_PRINTER_SLOT) {
 // seconds picking size/copies anyway). Safe to call repeatedly.
 export function warmPrintConfigs(location, slot = DEFAULT_PRINTER_SLOT) {
     try {
-        getPrinterConfigFast(location, slot).catch(() => {});
         getLabelFormatFast().catch(() => {});
-        // Also OPEN THE PRINTER CONNECTION now (Tailscale tunnel + wake the
-        // Brother), not just the Firestore config — that network handshake is
-        // the real "takes a while to connect" latency. Warming it here while
-        // the user picks size/copies means the actual Print skips the probe
-        // and prints immediately. No-op when the bridge is disabled (config
-        // resolves null → no network). Andrew 2026-06-30.
+        // Resolve THIS location's printer config, then wake whatever it
+        // actually uses. Andrew 2026-07-13: both stores print direct-to-Wi-Fi
+        // (Epson `ip` + Brother `brotherIp`), NOT via the Pi bridge — so warm
+        // those real targets, not just the (dormant) bridge. The QL-820NWB
+        // sleeps hard; waking it here while the user picks copies is what
+        // makes the actual Print instant. All calls are throttled + silent
+        // no-ops off-network / on web.
+        getPrinterConfigFast(location, slot).then((cfg) => {
+            if (!cfg) return;
+            if (cfg.brotherIp) warmBrotherDirect(cfg.brotherIp);
+            if (cfg.ip && cfg.type !== PRINTER_TYPES.BROTHER_QL) warmEpsonConnection(cfg);
+        }).catch(() => {});
+        // Keep warming the Pi bridge too — harmless no-op unless a slot is
+        // ever configured as brother_ql (bridge path).
         warmPrintBridge();
     } catch { /* warming is best-effort */ }
+}
+
+// Wake the Epson TM-L100 ahead of a print by opening its network path.
+// A GET to the ePOS endpoint spins up the NIC without submitting a job
+// (a GET can't print). Native + LAN only; throttled; never throws.
+const _epsonWarmAt = new Map();          // `${ip}:${port}` -> last warm ms
+function warmEpsonConnection(printer) {
+    if (!printer?.ip || !Capacitor.isNativePlatform()) return;
+    const port = printer.port || DEFAULT_PRINTER_PORT;
+    const key = `${printer.ip}:${port}`;
+    const now = Date.now();
+    if (now - (_epsonWarmAt.get(key) || 0) < 8000) return;
+    _epsonWarmAt.set(key, now);
+    CapacitorHttp.get({
+        url: `http://${printer.ip}:${port}/`,
+        connectTimeout: 3000,
+        readTimeout: 3000,
+    }).catch(() => { /* warming is best-effort */ });
 }
 
 export async function savePrinterConfig({

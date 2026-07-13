@@ -68,9 +68,14 @@ export default function PrintCenter({
     const [printer, setPrinter] = useState(null);
     useEffect(() => {
         // Pre-warm the print hot path (see PrintLabelModal) so the
-        // free-text Print tap fires at the printer immediately.
+        // free-text Print tap fires at the printer immediately. Also
+        // re-warm every 25s while the panel is open — the Brother sleeps
+        // in under a minute, so a mount-only warm goes cold if the user
+        // lingers (this interval was missing here vs PrintLabelModal).
         warmPrintConfigs(printLocation, printSlot);
-        return subscribePrinterConfig(printLocation, setPrinter, printSlot);
+        const keepAlive = setInterval(() => warmPrintConfigs(printLocation, printSlot), 25000);
+        const unsub = subscribePrinterConfig(printLocation, setPrinter, printSlot);
+        return () => { clearInterval(keepAlive); unsub(); };
     }, [printLocation, printSlot]);
 
     const [text, setText] = useState('');
