@@ -808,6 +808,18 @@ export default function App() {
     // The PIN screen still gets the instant cold-launch render
     // because it reads `staffList` directly, not `staffListReady`.
     const [staffListReady, setStaffListReady] = useState(false);
+    // Phone-browser download gate kill switch (2026-07-13, Andrew) —
+    // config/app_flags.phoneWebGate. Currently false (gate PAUSED) while
+    // the Play Store transfer makes the Android install link unreliable;
+    // flip the Firestore flag back to true when the app is publicly
+    // searchable — no deploy needed. Missing doc/field or a failed read
+    // defaults to true (the gate's original always-on behavior).
+    const [phoneWebGateEnabled, setPhoneWebGateEnabled] = useState(true);
+    useEffect(() => {
+        getDoc(doc(db, 'config', 'app_flags'))
+            .then(snap => setPhoneWebGateEnabled(snap.data()?.phoneWebGate !== false))
+            .catch(() => { /* keep default true */ });
+    }, []);
     // Persist session-level state on every change. Logout (setStaffName(null))
     // also clears the stored value via SS.set's null branch.
     useEffect(() => { SS.set("staffName", staffName); }, [staffName]);
@@ -1886,7 +1898,14 @@ export default function App() {
     // native app returns false for isNativePlatform-less checks below.
     // iPads deliberately NOT gated (report desktop-class UAs; store
     // iPads run the native app anyway).
-    if (!window.Capacitor?.isNativePlatform?.()
+    // 2026-07-13 (Andrew): PAUSED while the Play Store transfer is in
+    // flight — the Android install link is unreliable mid-transfer, so
+    // gating phone browsers would strand Android staff with no way in.
+    // Controlled by config/app_flags.phoneWebGate (no deploy to flip):
+    // currently FALSE; set it back to true once the app is public and
+    // searchable on the Play Store.
+    if (phoneWebGateEnabled
+        && !window.Capacitor?.isNativePlatform?.()
         && (/iPhone|iPod/.test(navigator.userAgent)
             || (/Android/.test(navigator.userAgent) && /Mobile/.test(navigator.userAgent)))) {
         return (
