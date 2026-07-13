@@ -25,6 +25,7 @@
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, runTransaction } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 export const HEALTH_DOCS_CONFIG = ['config', 'health_docs'];
 
@@ -234,22 +235,66 @@ Entiendo que:
 };
 
 // ── AI extraction (aiExtractHealthDoc Cloud Function) ───────────────
+// The aiExtractHealthDoc callable's public HTTP endpoint. On NATIVE we POST
+// here directly via CapacitorHttp (see below).
+const AI_EXTRACT_URL = 'https://us-central1-dd-mau-staff-app.cloudfunctions.net/aiExtractHealthDoc';
+
+// ROOT-CAUSE FIX (Andrew 2026-07-13, "all timed out", deep dive): the mass
+// import's reads NEVER REACHED the function from the native iPad app — the
+// Firebase callable SDK uses the WebView's fetch(), and from capacitor://
+// localhost those requests hung until the 120s timeout ("all timed out")
+// while the Storage uploads (a different SDK) went through fine, and every
+// browser test I ran worked. So on native we bypass the WebView entirely and
+// POST the callable's own wire format ({data} in, {result}/{error} out) via
+// CapacitorHttp — the OS network stack, the same transport that made
+// printing reliable. Web keeps the normal callable SDK.
+const isNativeApp = () => !!Capacitor?.isNativePlatform?.();
+
+async function extractViaNativeHttp(imageUrls) {
+    const res = await CapacitorHttp.post({
+        url: AI_EXTRACT_URL,
+        headers: { 'Content-Type': 'application/json' },
+        data: { data: { imageUrls } },        // callable wire format
+        connectTimeout: 20_000,
+        readTimeout: 120_000,
+    });
+    let body = res?.data;
+    if (typeof body === 'string') { try { body = JSON.parse(body); } catch { /* leave as string */ } }
+    const status = Number(res?.status) || 0;
+    if (status < 200 || status >= 300 || body?.error) {
+        const err = new Error(body?.error?.message || `http_${status}`);
+        err.code = body?.error?.status === 'RESOURCE_EXHAUSTED' ? 'functions/resource-exhausted' : `http_${status}`;
+        throw err;
+    }
+    return body?.result || { docType: 'unreadable' };
+}
+
 let _callable = null;
-export async function extractHealthDoc(imageUrls) {
+function callViaSdk(imageUrls) {
     if (!_callable) {
-        // 120s to match the function's own ceiling + server-side Anthropic
-        // retries — the old 60s cut off reads while the CF was still
-        // (successfully) retrying a slow/overloaded Anthropic call, which
-        // surfaced as "read timed out" on every row during a big import.
         _callable = httpsCallable(getFunctions(undefined, 'us-central1'), 'aiExtractHealthDoc', { timeout: 120_000 });
     }
+    return _callable({ imageUrls }).then((r) => r?.data || { docType: 'unreadable' });
+}
+
+export async function extractHealthDoc(imageUrls) {
     // A big mass import fires these back-to-back; if it trips the server
     // rate limit, wait and retry ONCE rather than surfacing "AI read
     // failed" — the window drains fast and the retry usually lands.
     for (let attempt = 0; attempt < 2; attempt++) {
         try {
-            const res = await _callable({ imageUrls });
-            return res?.data || { docType: 'unreadable' };
+            if (isNativeApp()) {
+                try {
+                    return await extractViaNativeHttp(imageUrls);
+                } catch (e) {
+                    // If the native HTTP path itself fails (not a rate limit),
+                    // fall back to the callable SDK once before giving up.
+                    const rl = /resource.exhausted|rate.?limit/i.test(e?.message + (e?.code || ''));
+                    if (rl) throw e;
+                    return await callViaSdk(imageUrls);
+                }
+            }
+            return await callViaSdk(imageUrls);
         } catch (e) {
             const rateLimited = e?.code === 'functions/resource-exhausted'
                 || /resource.exhausted|rate.?limit/i.test(e?.message || '');
