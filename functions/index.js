@@ -4075,10 +4075,13 @@ exports.aiExtractHealthDoc = onCall(
         await enforceRateLimit({
             ip,
             namespace: "aiExtractHealthDoc",
-            // 2026-07-12: raised 15 → 60 for the admin MASS import (a
-            // one-time batch of every staff member's paper records reads
-            // one file per call). Still cheap: 60 × ~$0.003 ≈ $0.18.
-            limit: 60,
+            // 2026-07-13: raised 60 → 200. A full-roster mass import (every
+            // staff member's vaccine card + 1-B, one file per AI call) can
+            // exceed 60 reads inside the 5-min window and the tail was
+            // failing with resource-exhausted → rows showed "AI read
+            // failed". Still cheap: 200 × ~$0.003 ≈ $0.60. The client also
+            // now backs off + retries once on resource-exhausted.
+            limit: 200,
             windowMs: 5 * 60_000,
         });
 
@@ -4130,22 +4133,24 @@ exports.aiExtractHealthDoc = onCall(
         }
 
         const system = [
-            "You read photos of employee health-compliance documents for a restaurant: vaccination record cards (especially Hepatitis A), immunization printouts, and food handler / food protection manager certificates.",
+            "You read photos of employee health-compliance documents for a restaurant: vaccination record cards (especially Hepatitis A), immunization printouts, food handler / food protection manager certificates, AND signed employee illness-reporting agreements (FDA Food Code Form 1-B, also titled 'Conditional Employee or Food Employee Reporting Agreement').",
             "Extract ONLY what is clearly printed or handwritten. Never guess or invent dates.",
             "",
             "Respond with ONLY a JSON object, no prose, no markdown fences, exactly this shape:",
-            '{ "docType": "hepA_card" | "food_handler_cert" | "food_manager_cert" | "other" | "unreadable",',
-            '  "personName": "name printed on the document, or empty string",',
+            '{ "docType": "hepA_card" | "food_handler_cert" | "food_manager_cert" | "illness_agreement" | "other" | "unreadable",',
+            '  "personName": "employee name printed on the document, or empty string",',
             '  "hepAShot1Date": "YYYY-MM-DD or empty string",',
             '  "hepAShot2Date": "YYYY-MM-DD or empty string",',
             '  "certIssueDate": "YYYY-MM-DD or empty string",',
             '  "certExpirationDate": "YYYY-MM-DD or empty string",',
+            '  "signedDate": "YYYY-MM-DD the employee signed/dated the form, or empty string",',
             '  "confidence": "high" | "medium" | "low",',
             '  "notes": "one short line about anything ambiguous, or empty string" }',
             "",
             "Rules:",
             "- Hepatitis A is a 2-dose series. Dose 1 = the earlier date, dose 2 = the later. If only one Hep A date is visible, fill hepAShot1Date only.",
             "- Vaccination cards often list several vaccines — extract ONLY Hepatitis A rows (HepA, Hep-A, Havrix, Vaqta, Twinrix count as Hep A).",
+            "- docType 'illness_agreement' = the FDA Form 1-B employee illness/symptom reporting agreement (mentions reporting diarrhea, vomiting, jaundice, sore throat with fever, or exposure to Salmonella/Norovirus/Shigella/E. coli/Hepatitis A). For these, fill personName (the employee) and signedDate (the date they signed); leave all vaccine/cert dates empty.",
             "- Dates may be handwritten like 3/14/24 or 03-14-2024 — normalize to YYYY-MM-DD, assume 20xx for 2-digit years.",
             "- If the image is not a health document or is unreadable, docType is 'other' or 'unreadable' with all dates empty.",
         ].join("\n");
@@ -4194,16 +4199,17 @@ exports.aiExtractHealthDoc = onCall(
             if (m) { try { parsed = JSON.parse(m[0]); } catch { /* fall through */ } }
         }
         if (!parsed || typeof parsed !== "object") {
-            return { docType: "unreadable", confidence: "low", hepAShot1Date: "", hepAShot2Date: "", certIssueDate: "", certExpirationDate: "", personName: "", notes: "could not parse" };
+            return { docType: "unreadable", confidence: "low", hepAShot1Date: "", hepAShot2Date: "", certIssueDate: "", certExpirationDate: "", signedDate: "", personName: "", notes: "could not parse" };
         }
         const dateOk = (s) => (typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s)) ? s : "";
         return {
-            docType: ["hepA_card", "food_handler_cert", "food_manager_cert", "other", "unreadable"].includes(parsed.docType) ? parsed.docType : "other",
+            docType: ["hepA_card", "food_handler_cert", "food_manager_cert", "illness_agreement", "other", "unreadable"].includes(parsed.docType) ? parsed.docType : "other",
             personName: typeof parsed.personName === "string" ? parsed.personName.slice(0, 80) : "",
             hepAShot1Date: dateOk(parsed.hepAShot1Date),
             hepAShot2Date: dateOk(parsed.hepAShot2Date),
             certIssueDate: dateOk(parsed.certIssueDate),
             certExpirationDate: dateOk(parsed.certExpirationDate),
+            signedDate: dateOk(parsed.signedDate),
             confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "low",
             notes: typeof parsed.notes === "string" ? parsed.notes.slice(0, 200) : "",
         };

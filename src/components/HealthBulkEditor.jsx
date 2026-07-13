@@ -191,7 +191,18 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
             try {
                 const ex = await extractHealthDoc([row.url]);
                 const staffId = guessStaffId(ex.personName);
-                const kind = ex.docType === 'hepA_card' ? 'vaccine' : 'record';
+                // Auto-route by what the AI recognized: Hep A card → fills
+                // shots; FDA Form 1-B (illness_agreement) → marks the
+                // Employee Illness Reporting Agreement signed on paper, IF
+                // that doc key exists in the config; anything else → plain
+                // file. (Andrew 2026-07-13: the AI reads the 1-B but had no
+                // type for it, so it landed as a generic record.)
+                const hasIllnessDoc = (docsConfig || []).some(d => d.key === 'illness_reporting');
+                const kind = ex.docType === 'hepA_card'
+                    ? 'vaccine'
+                    : (ex.docType === 'illness_agreement' && hasIllnessDoc)
+                        ? 'doc:illness_reporting'
+                        : 'record';
                 // Seed the editable per-row shot dates from the AI read —
                 // Andrew reviews/corrects them in the table and Apply writes
                 // exactly these into the staff record (no post-import fixup).
@@ -252,8 +263,14 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                     } else if (row.kind.startsWith('doc:')) {
                         const key = row.kind.slice(4);
                         const def = (docsConfig || []).find(d => d.key === key);
+                        // Prefer the date the employee actually signed the paper
+                        // (AI-read off the 1-B) over the import timestamp, so the
+                        // record shows when it was really signed.
+                        const signedIso = row.extracted?.signedDate
+                            ? new Date(`${row.extracted.signedDate}T12:00:00`).toISOString()
+                            : new Date().toISOString();
                         rec.docs = { ...(rec.docs || {}), [key]: {
-                            signedAt: new Date().toISOString(),
+                            signedAt: signedIso,
                             signedName: person.name,
                             docTitle: def?.title || key,
                             version: def?.version || 1,
@@ -437,7 +454,8 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                                                         ? <>{r.extracted.personName && <b className="text-dd-text">{r.extracted.personName}</b>}
                                                             {r.extracted.hepAShot1Date && <> · 💉1 {r.extracted.hepAShot1Date}</>}
                                                             {r.extracted.hepAShot2Date && <> · 💉2 {r.extracted.hepAShot2Date}</>}
-                                                            {!r.extracted.personName && !r.extracted.hepAShot1Date && (r.extracted.notes || r.extracted.docType)}</>
+                                                            {r.extracted.docType === 'illness_agreement' && <> · 📝 {tx('Form 1-B', 'Formulario 1-B')}{r.extracted.signedDate ? ` ${r.extracted.signedDate}` : ''}</>}
+                                                            {!r.extracted.personName && !r.extracted.hepAShot1Date && r.extracted.docType !== 'illness_agreement' && (r.extracted.notes || r.extracted.docType)}</>
                                                         : tx('reading…', 'leyendo…')}
                                                 </td>
                                                 <td className="py-1.5 px-1.5">

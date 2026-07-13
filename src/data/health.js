@@ -239,6 +239,22 @@ export async function extractHealthDoc(imageUrls) {
     if (!_callable) {
         _callable = httpsCallable(getFunctions(undefined, 'us-central1'), 'aiExtractHealthDoc', { timeout: 60_000 });
     }
-    const res = await _callable({ imageUrls });
-    return res?.data || { docType: 'unreadable' };
+    // A big mass import fires these back-to-back; if it trips the server
+    // rate limit, wait and retry ONCE rather than surfacing "AI read
+    // failed" — the window drains fast and the retry usually lands.
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const res = await _callable({ imageUrls });
+            return res?.data || { docType: 'unreadable' };
+        } catch (e) {
+            const rateLimited = e?.code === 'functions/resource-exhausted'
+                || /resource.exhausted|rate.?limit/i.test(e?.message || '');
+            if (rateLimited && attempt === 0) {
+                await new Promise((r) => setTimeout(r, 6000));
+                continue;
+            }
+            throw e;
+        }
+    }
+    return { docType: 'unreadable' };
 }
