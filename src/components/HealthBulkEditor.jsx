@@ -95,22 +95,86 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
         return hit ? String(hit.id) : '';
     };
 
+    // Andrew 2026-07-13: "i have 38 files in one doc … assign the doc that
+    // has 38 pages to 38 different [staff]". A multi-page PDF is really N
+    // separate records scanned into one file, so each page becomes its OWN
+    // import row: rendered to a JPEG (pdfjs, same lazy pattern as
+    // OnboardingFillablePdf), AI-read individually, and assignable to a
+    // different staff member. Single-page PDFs go through the same path —
+    // a bonus, since the AI reader only accepts images, so pages of PDFs
+    // become readable where the raw PDF wasn't. The original PDF is also
+    // parked in _import for archive (not a row).
+    const pdfToPageBlobs = async (file, onProgress) => {
+        const pdfjs = await import('pdfjs-dist');
+        if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+            const workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+            pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+        }
+        const data = await file.arrayBuffer();
+        const doc = await pdfjs.getDocument({ data }).promise;
+        const base = file.name.replace(/\.pdf$/i, '');
+        const out = [];
+        for (let p = 1; p <= doc.numPages; p++) {
+            onProgress?.(p, doc.numPages);
+            const page = await doc.getPage(p);
+            // ~2000px on the long edge — plenty for the AI to read
+            // handwriting on a vaccine card without huge uploads.
+            const v1 = page.getViewport({ scale: 1 });
+            const scale = Math.min(3, 2000 / Math.max(v1.width, v1.height));
+            const viewport = page.getViewport({ scale });
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.ceil(viewport.width);
+            canvas.height = Math.ceil(viewport.height);
+            // intent:'print' — the default 'display' intent schedules canvas
+            // work on requestAnimationFrame, which browsers FREEZE in
+            // background/occluded tabs, so a 38-page import would stall the
+            // moment the admin switches tabs. Print intent renders straight
+            // through (verified: hung forever on 'display', 14ms on 'print'
+            // in an occluded tab).
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport, intent: 'print' }).promise;
+            const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+            if (blob) out.push({ blob, name: `${base}-page${String(p).padStart(2, '0')}.jpg`, type: 'image/jpeg' });
+        }
+        doc.destroy?.();
+        return out;
+    };
+
     const onMassFiles = async (e) => {
         const files = [...(e.target.files || [])];
         e.target.value = '';
         if (files.length === 0) return;
-        const staged = [];
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            setMassBusy(`${tx('Uploading', 'Subiendo')} ${i + 1}/${files.length}…`);
+        // Expand: images pass through; PDFs explode into one item per page.
+        const items = [];
+        for (const file of files) {
+            const isPdf = (file.type || '').includes('pdf') || /\.pdf$/i.test(file.name);
+            if (!isPdf) { items.push({ blob: file, name: file.name, type: file.type || 'image/jpeg' }); continue; }
             try {
-                const path = `health/_import/${Date.now()}-${i}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-                const sref = storageRef(storage, path);
-                await uploadBytes(sref, file, { contentType: file.type || 'image/jpeg' });
-                const url = await getDownloadURL(sref);
-                staged.push({ id: `${Date.now()}-${i}`, fileName: file.name, url, path, isImage: (file.type || '').startsWith('image/'), extracted: null, staffId: '', kind: 'record', status: 'pending' });
+                const pages = await pdfToPageBlobs(file, (p, n) =>
+                    setMassBusy(`${tx('Splitting PDF page', 'Separando página')} ${p}/${n}…`));
+                items.push(...pages);
+                // Archive the original multi-page PDF alongside (best-effort).
+                try {
+                    const apath = `health/_import/${Date.now()}-original-${file.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+                    await uploadBytes(storageRef(storage, apath), file, { contentType: 'application/pdf' });
+                } catch { /* archive is best-effort */ }
             } catch (err) {
-                console.error('mass upload failed:', file.name, err?.message);
+                console.error('pdf split failed:', file.name, err?.message);
+                // Fall back to the old behavior: store the PDF whole (no AI).
+                items.push({ blob: file, name: file.name, type: 'application/pdf' });
+            }
+        }
+        const staged = [];
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            setMassBusy(`${tx('Uploading', 'Subiendo')} ${i + 1}/${items.length}…`);
+            try {
+                const path = `health/_import/${Date.now()}-${i}-${item.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+                const sref = storageRef(storage, path);
+                await uploadBytes(sref, item.blob, { contentType: item.type });
+                const url = await getDownloadURL(sref);
+                staged.push({ id: `${Date.now()}-${i}`, fileName: item.name, url, path, isImage: (item.type || '').startsWith('image/'), extracted: null, staffId: '', kind: 'record', status: 'pending' });
+            } catch (err) {
+                console.error('mass upload failed:', item.name, err?.message);
             }
         }
         setMassRows(prev => [...prev, ...staged]);
