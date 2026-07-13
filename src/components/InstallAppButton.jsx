@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import ModalPortal from './ModalPortal';
 import { openExternalUrl } from '../capacitor-bridge';
+import { db } from '../firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { notifyManagement } from '../data/notify';
 
 // Native-app store links.
 //   • iOS — the unlisted App Store build (only reachable via this direct link).
@@ -15,10 +18,22 @@ import { openExternalUrl } from '../capacitor-bridge';
 export const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
 export const ANDROID_APP_URL = 'https://play.google.com/apps/internaltest/4701656348790704265';
 
+// Loose email shape check — we only need to reject obvious typos / empty
+// submits before writing. Play Console does the authoritative validation
+// when Andrew pastes the address into the tester list.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function InstallAppButton({ language, compact = false }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [open, setOpen] = useState(false);
+
+    // Android tester-email capture (Andrew 2026-06-25). See the comment
+    // block on the form below for why this exists.
+    const [email, setEmail] = useState('');
+    const [sending, setSending] = useState(false);
+    const [sent, setSent] = useState(false);
+    const [error, setError] = useState('');
 
     // Nothing to install if we're already the installed app (PWA standalone or
     // the native shell — both report false for the display-mode/navigator
@@ -26,9 +41,72 @@ export default function InstallAppButton({ language, compact = false }) {
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
     if (isStandalone || window.Capacitor?.isNativePlatform?.()) return null;
 
-    const close = () => setOpen(false);
+    // Reset the form alongside the sheet so a shared restaurant phone doesn't
+    // show the previous staffer's "Sent!" confirmation to the next person.
+    const close = () => {
+        setOpen(false);
+        setEmail('');
+        setError('');
+        setSent(false);
+        setSending(false);
+    };
     // Open the store, then dismiss the sheet.
     const go = (url) => { close(); openExternalUrl(url); };
+
+    // ── Android tester self-service ────────────────────────────────────────
+    // Andrew 2026-06-25: replaces the old "text Andrew your Google email"
+    // copy with an in-app capture form. The closed-test opt-in only resolves
+    // once the staffer's Google email is on the Play Console tester list, and
+    // asking them to text it was easy to miss / fat-finger. Now they type it
+    // right here and submit:
+    //   1. The address lands in /tester_requests (durable record).
+    //   2. notifyManagement pushes every owner/manager a bell + FCM ping with
+    //      the email in the body, so Andrew can paste it into Play Console →
+    //      Closed testing → Testers right away.
+    // Best-effort: the Firestore doc is the source of truth; if the push
+    // write fails we still treat the submit as sent. No PIN / lock-screen
+    // logic is touched — this is additive UI on the install helper only.
+    const submitEmail = async () => {
+        const value = email.trim();
+        if (!EMAIL_RE.test(value)) {
+            setError(tx('Enter a valid email address.', 'Ingresa un correo válido.'));
+            return;
+        }
+        setSending(true);
+        setError('');
+        try {
+            await addDoc(collection(db, 'tester_requests'), {
+                email: value,
+                platform: 'android',
+                status: 'pending',
+                createdAt: serverTimestamp(),
+                userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+            });
+            // Push owners + managers so the request surfaces immediately.
+            // Non-fatal: the /tester_requests doc above is the record of truth.
+            try {
+                await notifyManagement({
+                    type: 'tester_email_request',
+                    title: { en: 'New Android tester request', es: 'Nueva solicitud de probador Android' },
+                    body: {
+                        en: `${value} — add to Play Console testers.`,
+                        es: `${value} — agregar a probadores de Play Console.`,
+                    },
+                    tag: `tester_email_request:${value}`,
+                    createdBy: 'install_button',
+                });
+            } catch (e) {
+                console.warn('tester_email_request notify failed (non-fatal):', e);
+            }
+            setSent(true);
+        } catch (e) {
+            console.warn('tester_request write failed:', e);
+            setError(tx('Could not send — check your connection and try again.',
+                'No se pudo enviar — revisa tu conexión e inténtalo de nuevo.'));
+        } finally {
+            setSending(false);
+        }
+    };
 
     const sheet = open && (
         <ModalPortal>
@@ -60,14 +138,46 @@ export default function InstallAppButton({ language, compact = false }) {
                     </div>
                     {/* Android tester onboarding — Andrew 2026-06-25: closed-test
                         opt-in only resolves once the staffer's Google email is on
-                        the tester list, so route them straight to Andrew. Tell
-                        Android users to TEXT Andrew their Google email and he adds
-                        them as a tester (replaces the generic "ask a manager"
-                        copy). iPhone path is unaffected. */}
-                    <p className="text-[11px] text-dd-text-2 mt-3 leading-tight">
-                        {tx('Android: if Google Play says “not available,” text Andrew your Google email and he’ll add you as a tester.',
-                            'Android: si Google Play dice “no disponible”, envíale a Andrew un mensaje de texto con tu correo de Google y él te agregará como probador.')}
-                    </p>
+                        the tester list. Instead of telling them to text Andrew,
+                        capture the email in-app and ping the owners so Andrew can
+                        add it in Play Console right away. iPhone path is
+                        unaffected. See submitEmail() above for the write path. */}
+                    <div className="mt-3 rounded-xl border border-dd-line bg-dd-bg/60 p-3">
+                        {sent ? (
+                            <p className="text-[12px] text-green-700 leading-snug">
+                                ✅ {tx("Sent! Andrew will add you as a tester shortly — reopen Google Play once he gives you the OK.",
+                                    "¡Enviado! Andrew te agregará como probador pronto — vuelve a abrir Google Play cuando te avise.")}
+                            </p>
+                        ) : (
+                            <>
+                                <p className="text-[11px] text-dd-text-2 mb-2 leading-tight">
+                                    🤖 {tx('Android: if Google Play says “not available,” enter your Google email and Andrew will add you as a tester.',
+                                        'Android: si Google Play dice “no disponible”, ingresa tu correo de Google y Andrew te agregará como probador.')}
+                                </p>
+                                <input
+                                    type="email"
+                                    inputMode="email"
+                                    autoCapitalize="off"
+                                    autoCorrect="off"
+                                    spellCheck={false}
+                                    value={email}
+                                    onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                                    placeholder={tx('you@gmail.com', 'tu@gmail.com')}
+                                    className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm text-dd-text bg-white focus:outline-none focus:ring-2 focus:ring-cyan-300"
+                                />
+                                {error && <p className="text-[11px] text-red-600 mt-1">{error}</p>}
+                                <button
+                                    onClick={submitEmail}
+                                    disabled={sending}
+                                    className="mt-2 w-full px-3 py-2 rounded-lg bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition disabled:opacity-60"
+                                >
+                                    {sending
+                                        ? tx('Sending…', 'Enviando…')
+                                        : tx('Send my email to Andrew', 'Enviar mi correo a Andrew')}
+                                </button>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
         </ModalPortal>
