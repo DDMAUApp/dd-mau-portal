@@ -144,15 +144,46 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
         return out;
     };
 
+    // Shrink a full-size phone photo (often 4–12 MB) to a ~2000px JPEG
+    // before upload. Andrew 2026-07-13 "reading… just slow" — the slow part
+    // is uploading + AI-reading multi-MB originals; a card is perfectly
+    // legible at 2000px, and this cuts each file to a few hundred KB, so
+    // both the upload AND the Claude read get much faster. PDF pages are
+    // already rendered at ~2000px by pdfToPageBlobs, so they skip this.
+    const downscaleImage = async (file) => {
+        try {
+            const MAX = 2000;
+            const bmp = await createImageBitmap(file);
+            if (Math.max(bmp.width, bmp.height) <= MAX && file.size < 1_200_000) {
+                bmp.close?.(); return file;               // already small — leave it
+            }
+            const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+            const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+            bmp.close?.();
+            const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
+            return blob || file;                          // encode failed — fall back to original
+        } catch {
+            return file;                                  // not a decodable image — upload as-is
+        }
+    };
+
     const onMassFiles = async (e) => {
         const files = [...(e.target.files || [])];
         e.target.value = '';
         if (files.length === 0) return;
-        // Expand: images pass through; PDFs explode into one item per page.
+        // Expand: images pass through (down-sized); PDFs explode into one
+        // item per page.
         const items = [];
         for (const file of files) {
             const isPdf = (file.type || '').includes('pdf') || /\.pdf$/i.test(file.name);
-            if (!isPdf) { items.push({ blob: file, name: file.name, type: file.type || 'image/jpeg' }); continue; }
+            if (!isPdf) {
+                const small = await downscaleImage(file);
+                items.push({ blob: small, name: file.name.replace(/\.(png|webp|heic|heif)$/i, '.jpg'), type: small.type || 'image/jpeg' });
+                continue;
+            }
             try {
                 const pages = await pdfToPageBlobs(file, (p, n) =>
                     setMassBusy(`${tx('Splitting PDF page', 'Separando página')} ${p}/${n}…`));
