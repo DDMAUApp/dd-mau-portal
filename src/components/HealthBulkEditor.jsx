@@ -150,24 +150,51 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
     // legible at 2000px, and this cuts each file to a few hundred KB, so
     // both the upload AND the Claude read get much faster. PDF pages are
     // already rendered at ~2000px by pdfToPageBlobs, so they skip this.
+    // Draw an already-decoded source (ImageBitmap or <img>) to a ~2000px
+    // JPEG. Returns { blob, type } always jpeg. Claude vision only accepts
+    // jpeg/png/webp/gif, so this ALSO guarantees an iPhone HEIC becomes a
+    // readable jpeg.
+    const drawToJpeg = async (src, sw, sh) => {
+        const MAX = 2000;
+        const scale = Math.min(1, MAX / Math.max(sw, sh));
+        const w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(src, 0, 0, w, h);
+        const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
+        return blob ? { blob, type: 'image/jpeg' } : null;
+    };
+
+    // Shrink + re-encode a phone photo to a ~2000px JPEG before upload.
+    // Andrew 2026-07-13: full-size originals were slow (upload + AI read),
+    // and on iOS large/HEIC photos could fail to decode via createImageBitmap
+    // — leaving the app to upload a huge or HEIC original that the AI reader
+    // then choked on ("AI read failed"). So: try createImageBitmap, then fall
+    // back to an <img> decode (iOS handles HEIC + large images that way), and
+    // ALWAYS re-encode to jpeg. Returns { blob, type, ok }. ok:false means we
+    // truly couldn't decode it (caller marks the row so it's never sent to the
+    // AI as unreadable bytes).
     const downscaleImage = async (file) => {
+        // Path 1: createImageBitmap (fast, works on most platforms).
         try {
-            const MAX = 2000;
             const bmp = await createImageBitmap(file);
-            if (Math.max(bmp.width, bmp.height) <= MAX && file.size < 1_200_000) {
-                bmp.close?.(); return file;               // already small — leave it
-            }
-            const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
-            const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
-            const canvas = document.createElement('canvas');
-            canvas.width = w; canvas.height = h;
-            canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+            const out = await drawToJpeg(bmp, bmp.width, bmp.height);
             bmp.close?.();
-            const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
-            return blob || file;                          // encode failed — fall back to original
-        } catch {
-            return file;                                  // not a decodable image — upload as-is
-        }
+            if (out) return { ...out, ok: true };
+        } catch { /* fall through to <img> */ }
+        // Path 2: HTMLImageElement decode — iOS Safari/WKWebView decodes HEIC
+        // and very large images here even when createImageBitmap throws.
+        try {
+            const url = URL.createObjectURL(file);
+            try {
+                const img = new Image();
+                img.src = url;
+                await img.decode();
+                const out = await drawToJpeg(img, img.naturalWidth, img.naturalHeight);
+                if (out) return { ...out, ok: true };
+            } finally { URL.revokeObjectURL(url); }
+        } catch { /* both paths failed */ }
+        return { blob: file, type: file.type || 'image/jpeg', ok: false };
     };
 
     const onMassFiles = async (e) => {
@@ -181,7 +208,16 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
             const isPdf = (file.type || '').includes('pdf') || /\.pdf$/i.test(file.name);
             if (!isPdf) {
                 const small = await downscaleImage(file);
-                items.push({ blob: small, name: file.name.replace(/\.(png|webp|heic|heif)$/i, '.jpg'), type: small.type || 'image/jpeg' });
+                items.push({
+                    blob: small.blob,
+                    name: file.name.replace(/\.(png|webp|heic|heif)$/i, '.jpg'),
+                    // If we couldn't decode/re-encode it, keep the original
+                    // type and flag it — the read loop won't hand un-decodable
+                    // bytes to the AI (they'd just fail), it'll surface a clear
+                    // "couldn't read this photo" instead.
+                    type: small.ok ? 'image/jpeg' : (small.type || 'image/jpeg'),
+                    decodeFailed: !small.ok,
+                });
                 continue;
             }
             try {
@@ -208,12 +244,22 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                 const sref = storageRef(storage, path);
                 await uploadBytes(sref, item.blob, { contentType: item.type });
                 const url = await getDownloadURL(sref);
-                staged.push({ id: `${Date.now()}-${i}`, fileName: item.name, url, path, isImage: (item.type || '').startsWith('image/'), extracted: null, staffId: '', kind: 'record', status: 'pending', shot1: '', shot2: '' });
+                staged.push({ id: `${Date.now()}-${i}`, fileName: item.name, url, path, isImage: (item.type || '').startsWith('image/') && !item.decodeFailed, decodeFailed: !!item.decodeFailed, extracted: null, staffId: '', kind: 'record', status: 'pending', shot1: '', shot2: '' });
             } catch (err) {
                 console.error('mass upload failed:', item.name, err?.message);
             }
         }
         setMassRows(prev => [...prev, ...staged]);
+
+        // Photos we couldn't decode to a readable JPEG (rare — an exotic
+        // format) get a CLEAR message and are left for manual assignment,
+        // rather than being sent to the AI as bytes it can't read.
+        const undecodable = staged.filter(r => r.decodeFailed);
+        if (undecodable.length) {
+            setMassRows(prev => prev.map(r => r.decodeFailed
+                ? { ...r, extracted: { docType: 'other', notes: tx('Could not read this photo format — assign manually', 'No se pudo leer el formato — asigna manualmente') } }
+                : r));
+        }
 
         // AI-read in a small CONCURRENCY POOL, not one-at-a-time (Andrew
         // 2026-07-13 "it's still reading" — a 38-page doc read sequentially
@@ -249,8 +295,15 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                     shot2: normalizeDateInput(ex.hepAShot2Date || '') || '',
                 } : r));
             } catch (err) {
-                console.warn('mass extract failed:', row.fileName, err?.message);
-                setMassRows(prev => prev.map(r => r.id === row.id ? { ...r, extracted: { docType: 'other', notes: 'AI read failed — assign manually' } } : r));
+                // Surface WHY it failed so it's diagnosable, not a black box.
+                const msg = err?.message || '';
+                const code = err?.code || '';
+                const reason = /timeout|deadline/i.test(msg + code) ? tx('read timed out', 'tiempo agotado')
+                    : /resource.exhausted|rate/i.test(msg + code) ? tx('rate limited — try again', 'límite alcanzado')
+                    : /unavailable|network|fetch/i.test(msg + code) ? tx('network error', 'error de red')
+                    : tx('AI read failed', 'lectura falló');
+                console.warn('mass extract failed:', row.fileName, code, msg);
+                setMassRows(prev => prev.map(r => r.id === row.id ? { ...r, extracted: { docType: 'other', notes: `${reason} — ${tx('assign manually', 'asigna manualmente')}` } } : r));
             } finally {
                 done += 1;
                 setMassBusy(done < total ? `🤖 ${tx('Reading', 'Leyendo')} ${done}/${total}…` : '');
