@@ -10,8 +10,8 @@
 // the page. When the app is fully closed (or PWA killed), the browser delivers
 // the push to this SW, which displays the notification.
 
-importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js");
-importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/11.10.0/firebase-app-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/11.10.0/firebase-messaging-compat.js");
 
 firebase.initializeApp({
     apiKey: "AIzaSyDTJccmQHzvbgwW_9_1aDDkAgK0B4PJfkQ",
