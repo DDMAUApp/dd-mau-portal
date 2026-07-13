@@ -31,6 +31,22 @@
 
 import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
+
+// Native app? Then we can use CapacitorHttp (the OS network stack) instead
+// of WebView fetch(). That matters twice over (Andrew 2026-07-13, "taking a
+// long time to connect to the printer… android app users are not connecting
+// at all"):
+//   1. SPEED — phones and the Pi share the store Wi-Fi, so we can hit the
+//      bridge DIRECTLY at its LAN address (~35ms) instead of hairpinning
+//      through the Tailscale Funnel relay on the internet (300ms-3s+ cold).
+//      WebView fetch can't do that (mixed content: https app → http LAN is
+//      blocked, and CORS applies) — native HTTP has neither restriction.
+//   2. OLD ANDROIDS — WebView fetch to the *.ts.net funnel needs the
+//      Let's Encrypt ISRG root, missing on old Android trust stores, so
+//      those phones could never reach the bridge at all. The LAN URL is
+//      plain http — no TLS, no root store, no CORS. API key still applies.
+const isNativeApp = () => !!Capacitor?.isNativePlatform?.();
 
 const CONFIG_PATH = ['config', 'print_bridge'];
 const CACHE_TTL_MS = 30 * 1000; // 30s — long enough to skip Firestore on rapid prints
@@ -67,6 +83,11 @@ export async function getPrintBridgeConfig({ force = false } = {}) {
         }
         cachedConfig = {
             url: String(data.url).replace(/\/+$/, ''), // strip trailing slash
+            // Optional direct LAN address of the Pi (e.g. http://192.168.1.32:8443).
+            // Native apps probe it FIRST; if the phone isn't on the store Wi-Fi
+            // (or the Pi's IP drifted) the probe fails and the funnel URL wins,
+            // so this only ever ADDS speed, never breaks printing.
+            lanUrl: data.lanUrl ? String(data.lanUrl).replace(/\/+$/, '') : null,
             apiKey: String(data.apiKey),
             healthCheckTimeoutMs: Number(data.healthCheckTimeoutMs) || 800,
         };
@@ -85,12 +106,45 @@ export async function getPrintBridgeConfig({ force = false } = {}) {
 export function invalidatePrintBridgeCache() {
     cachedConfig = null;
     cachedAt = 0;
+    activeBase = null;
+    lastProbe = { ok: false, at: 0 };
 }
 
 // Fetch with a timeout. AbortController-based; native fetch doesn't
 // accept a timeout option directly. Returns either { ok, status, body }
 // or { ok: false, error: 'timeout' | 'network' | ... }.
 async function fetchWithTimeout(url, options, timeoutMs) {
+    // Native path — CapacitorHttp goes through the OS network stack:
+    // no CORS preflight, no mixed-content block (so plain-http LAN URLs
+    // work), no dependence on the WebView's TLS root store.
+    if (isNativeApp()) {
+        try {
+            const req = {
+                url,
+                method: options?.method || 'GET',
+                headers: options?.headers || {},
+                connectTimeout: timeoutMs,
+                readTimeout: timeoutMs,
+            };
+            if (options?.body) {
+                // CapacitorHttp serializes `data` itself from an object.
+                try { req.data = JSON.parse(options.body); }
+                catch { req.data = options.body; }
+            }
+            const race = await Promise.race([
+                CapacitorHttp.request(req),
+                // Belt-and-braces: some platform/plugin combos ignore the
+                // native timeouts; never hang the print UI past timeoutMs+1s.
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeoutMs + 1000)),
+            ]);
+            let body = race.data ?? null;
+            if (typeof body === 'string') { try { body = JSON.parse(body); } catch { /* keep string */ } }
+            return { ok: race.status >= 200 && race.status < 300, status: race.status, body };
+        } catch (e) {
+            const msg = e?.message || String(e);
+            return { ok: false, error: /timeout/i.test(msg) ? 'timeout' : 'network', detail: msg };
+        }
+    }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
@@ -121,9 +175,52 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 let lastProbe = { ok: false, at: 0 };
 let warmInFlight = null;          // de-dupe concurrent warms (rapid re-renders)
 const PROBE_FRESH_MS = 8000;      // a green probe is trusted for 8s
+// Which base URL won the last probe race (LAN or funnel). Sticky so every
+// call in a session reuses the fast path; cleared when a probe/POST fails.
+let activeBase = null;
 
 function probeIsFresh() {
-    return lastProbe.ok && (Date.now() - lastProbe.at) < PROBE_FRESH_MS;
+    return lastProbe.ok && activeBase && (Date.now() - lastProbe.at) < PROBE_FRESH_MS;
+}
+
+// The URLs worth trying, fastest first. Native apps on the store Wi-Fi
+// try the Pi's LAN address before the Tailscale Funnel; web (HTTPS page)
+// can't call a plain-http LAN address (mixed content), so it's funnel-only.
+function candidateBases(config) {
+    const bases = [];
+    if (isNativeApp() && config.lanUrl) bases.push(config.lanUrl);
+    if (config.url) bases.push(config.url);
+    return bases;
+}
+
+async function probeBase(base, timeoutMs) {
+    const res = await fetchWithTimeout(
+        `${base}/healthz`,
+        { method: 'GET', headers: { Accept: 'application/json' } },
+        timeoutMs
+    );
+    if (!res.ok) return { ok: false, error: res.error || 'http_' + res.status };
+    const brotherReachable = res.body?.brother?.reachable === true;
+    if (!brotherReachable) return { ok: false, error: 'brother_unreachable', body: res.body };
+    return { ok: true, body: res.body };
+}
+
+// Probe every candidate base IN PARALLEL and adopt the best one (LAN wins
+// over funnel whenever both answer). One round-trip decides the session's
+// path — a phone off the store Wi-Fi just ends up on the funnel like before.
+async function pickBase(config) {
+    const bases = candidateBases(config);
+    if (bases.length === 0) return { ok: false, error: 'no_config' };
+    const timeoutMs = config.healthCheckTimeoutMs || 800;
+    const results = await Promise.all(bases.map(b => probeBase(b, timeoutMs)));
+    for (let i = 0; i < bases.length; i++) {
+        if (results[i].ok) {
+            activeBase = bases[i];
+            return { ok: true, base: bases[i], body: results[i].body };
+        }
+    }
+    activeBase = null;
+    return { ok: false, error: results[results.length - 1]?.error || 'unreachable' };
 }
 
 // Fire-and-forget: open the tunnel + wake the printer ahead of the print.
@@ -133,9 +230,9 @@ export async function warmPrintBridge() {
     warmInFlight = (async () => {
         try {
             const config = await getPrintBridgeConfig();
-            if (!config) { lastProbe = { ok: false, at: Date.now() }; return; }
-            const probe = await probePrintBridge(config);
-            lastProbe = { ok: probe.ok, at: Date.now() };
+            if (!config) { lastProbe = { ok: false, at: Date.now() }; activeBase = null; return; }
+            const picked = await pickBase(config);
+            lastProbe = { ok: picked.ok, at: Date.now() };
         } catch { /* warming is best-effort */ }
         finally { warmInFlight = null; }
     })();
@@ -144,18 +241,11 @@ export async function warmPrintBridge() {
 
 // Probe /healthz with a short timeout. Used by the caller to decide
 // whether to attempt the bridge or skip straight to the share-sheet
-// fallback. Returns { ok, body? }.
+// fallback. Returns { ok, body? }. (Kept for AdminPanel "Test connection";
+// races LAN + funnel like the warm path.)
 export async function probePrintBridge(config) {
     if (!config) return { ok: false, error: 'no_config' };
-    const res = await fetchWithTimeout(
-        `${config.url}/healthz`,
-        { method: 'GET', headers: { Accept: 'application/json' } },
-        config.healthCheckTimeoutMs || 800
-    );
-    if (!res.ok) return { ok: false, error: res.error || 'http_' + res.status };
-    const brotherReachable = res.body?.brother?.reachable === true;
-    if (!brotherReachable) return { ok: false, error: 'brother_unreachable', body: res.body };
-    return { ok: true, body: res.body };
+    return pickBase(config);
 }
 
 // Send a label payload (in the bridge's clean format — see below).
@@ -163,7 +253,7 @@ export async function probePrintBridge(config) {
 export async function sendLabelToBridge(config, payload) {
     if (!config) return { ok: false, error: 'no_config' };
     const res = await fetchWithTimeout(
-        `${config.url}/print/label`,
+        `${activeBase || config.url}/print/label`,
         {
             method: 'POST',
             headers: {
@@ -187,7 +277,7 @@ export async function sendLabelToBridge(config, payload) {
 export async function sendFreeTextToBridge(config, { text, sizeMm, copies = 1 }) {
     if (!config) return { ok: false, error: 'no_config' };
     const res = await fetchWithTimeout(
-        `${config.url}/print/free-text`,
+        `${activeBase || config.url}/print/free-text`,
         {
             method: 'POST',
             headers: {
@@ -309,19 +399,24 @@ export async function tryPrintViaBridge({ payload, copies = 1, freeText = null }
     // awake, so go straight to the POST. This is what makes the actual Print
     // feel instant after opening the sticker.
     if (!probeIsFresh()) {
-        const probe = await probePrintBridge(config);
+        const probe = await pickBase(config);
         lastProbe = { ok: probe.ok, at: Date.now() };
         if (!probe.ok) {
             return { ok: false, fallback: true, reason: `probe_${probe.error}` };
         }
     }
 
-    let res;
-    if (freeText) {
-        res = await sendFreeTextToBridge(config, freeText);
-    } else {
-        const bridgePayload = payloadToBridgeFormat(payload, { copies });
-        res = await sendLabelToBridge(config, bridgePayload);
+    const doSend = () => freeText
+        ? sendFreeTextToBridge(config, freeText)
+        : sendLabelToBridge(config, payloadToBridgeFormat(payload, { copies }));
+
+    let res = await doSend();
+
+    // If the fast LAN path died between probe and POST (Wi-Fi blip, Pi IP
+    // drift), fall back to the funnel once before giving up on the bridge.
+    if (!res.ok && activeBase && activeBase !== config.url) {
+        activeBase = config.url;
+        res = await doSend();
     }
 
     if (res.ok) {
