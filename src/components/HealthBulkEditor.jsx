@@ -183,39 +183,59 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
             }
         }
         setMassRows(prev => [...prev, ...staged]);
-        // AI-read sequentially (rate limit is 60/5min server-side).
-        for (let i = 0; i < staged.length; i++) {
-            const row = staged[i];
-            if (!row.isImage) continue;
-            setMassBusy(`🤖 ${tx('Reading', 'Leyendo')} ${i + 1}/${staged.length}…`);
+
+        // AI-read in a small CONCURRENCY POOL, not one-at-a-time (Andrew
+        // 2026-07-13 "it's still reading" — a 38-page doc read sequentially
+        // at ~7s each was ~4.5 min of watching a counter crawl). The server
+        // rate limit is 200/5min so 4 in flight is safe; a full-roster batch
+        // now finishes in roughly a quarter of the time. Each read has a hard
+        // wall-clock guard so one slow/huge photo can't wedge the whole batch.
+        const toRead = staged.filter(r => r.isImage);
+        const READ_CONCURRENCY = 4;
+        const READ_TIMEOUT_MS = 75_000;
+        let done = 0;
+        const total = toRead.length;
+        const readOne = async (row) => {
             try {
-                const ex = await extractHealthDoc([row.url]);
+                const ex = await Promise.race([
+                    extractHealthDoc([row.url]),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('read timeout')), READ_TIMEOUT_MS)),
+                ]);
                 const staffId = guessStaffId(ex.personName);
                 // Auto-route by what the AI recognized: Hep A card → fills
                 // shots; FDA Form 1-B (illness_agreement) → marks the
                 // Employee Illness Reporting Agreement signed on paper, IF
-                // that doc key exists in the config; anything else → plain
-                // file. (Andrew 2026-07-13: the AI reads the 1-B but had no
-                // type for it, so it landed as a generic record.)
+                // that doc key exists in the config; anything else → plain file.
                 const hasIllnessDoc = (docsConfig || []).some(d => d.key === 'illness_reporting');
                 const kind = ex.docType === 'hepA_card'
                     ? 'vaccine'
                     : (ex.docType === 'illness_agreement' && hasIllnessDoc)
                         ? 'doc:illness_reporting'
                         : 'record';
-                // Seed the editable per-row shot dates from the AI read —
-                // Andrew reviews/corrects them in the table and Apply writes
-                // exactly these into the staff record (no post-import fixup).
                 setMassRows(prev => prev.map(r => r.id === row.id ? {
                     ...r, extracted: ex, staffId: r.staffId || staffId, kind,
                     shot1: normalizeDateInput(ex.hepAShot1Date || '') || '',
                     shot2: normalizeDateInput(ex.hepAShot2Date || '') || '',
                 } : r));
             } catch (err) {
-                console.warn('mass extract failed:', err?.message);
+                console.warn('mass extract failed:', row.fileName, err?.message);
                 setMassRows(prev => prev.map(r => r.id === row.id ? { ...r, extracted: { docType: 'other', notes: 'AI read failed — assign manually' } } : r));
+            } finally {
+                done += 1;
+                setMassBusy(done < total ? `🤖 ${tx('Reading', 'Leyendo')} ${done}/${total}…` : '');
             }
-        }
+        };
+        // Worker pool: N workers each pull the next unread row until the
+        // queue drains.
+        setMassBusy(total ? `🤖 ${tx('Reading', 'Leyendo')} 0/${total}…` : '');
+        let cursor = 0;
+        const worker = async () => {
+            while (cursor < toRead.length) {
+                const row = toRead[cursor++];
+                await readOne(row);
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, toRead.length) }, worker));
         setMassBusy('');
     };
 
