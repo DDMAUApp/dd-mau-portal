@@ -268,8 +268,13 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
         // now finishes in roughly a quarter of the time. Each read has a hard
         // wall-clock guard so one slow/huge photo can't wedge the whole batch.
         const toRead = staged.filter(r => r.isImage);
-        const READ_CONCURRENCY = 4;
-        const READ_TIMEOUT_MS = 75_000;
+        // 3 concurrent (was 4): lighter simultaneous load on the Anthropic
+        // API so it's less likely to throttle/slow under a big batch, while
+        // still ~3× faster than sequential. Per-read guard 110s > the CF's
+        // 120s ceiling minus transport, so the client waits for the server's
+        // own retry to finish rather than giving up first.
+        const READ_CONCURRENCY = 3;
+        const READ_TIMEOUT_MS = 110_000;
         let done = 0;
         const total = toRead.length;
         const readOne = async (row) => {

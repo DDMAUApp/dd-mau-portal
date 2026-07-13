@@ -237,7 +237,11 @@ Entiendo que:
 let _callable = null;
 export async function extractHealthDoc(imageUrls) {
     if (!_callable) {
-        _callable = httpsCallable(getFunctions(undefined, 'us-central1'), 'aiExtractHealthDoc', { timeout: 60_000 });
+        // 120s to match the function's own ceiling + server-side Anthropic
+        // retries — the old 60s cut off reads while the CF was still
+        // (successfully) retrying a slow/overloaded Anthropic call, which
+        // surfaced as "read timed out" on every row during a big import.
+        _callable = httpsCallable(getFunctions(undefined, 'us-central1'), 'aiExtractHealthDoc', { timeout: 120_000 });
     }
     // A big mass import fires these back-to-back; if it trips the server
     // rate limit, wait and retry ONCE rather than surfacing "AI read

@@ -4063,8 +4063,13 @@ exports.aiExtractHealthDoc = onCall(
     {
         region: "us-central1",
         cors: true,
-        maxInstances: 5,
-        timeoutSeconds: 60,
+        // 2026-07-13: mass import fired 4 concurrent reads → Anthropic
+        // occasionally slow/overloaded → each CF instance sat waiting past
+        // the 60s ceiling and got hard-killed with no error, surfacing as
+        // "read timed out" on every row. Raise the ceiling AND retry the
+        // Anthropic call on overload (see below); give room to scale.
+        maxInstances: 10,
+        timeoutSeconds: 120,
         memory: "512MiB",
         secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
     },
@@ -4155,37 +4160,68 @@ exports.aiExtractHealthDoc = onCall(
             "- If the image is not a health document or is unreadable, docType is 'other' or 'unreadable' with all dates empty.",
         ].join("\n");
 
+        const reqBody = JSON.stringify({
+            model: "claude-haiku-4-5",
+            max_tokens: 1024,
+            system,
+            messages: [{
+                role: "user",
+                content: [
+                    ...imageBlocks,
+                    { type: "text", text: "Extract the health-document fields into the JSON shape from the system prompt." },
+                ],
+            }],
+        });
+        // Call Anthropic with a bounded per-attempt timeout + retry on
+        // overload/slowness. Under a concurrent mass import the API can
+        // return 429/529 or just be slow; a naive single call left the CF
+        // hanging to its own hard timeout. Each attempt is capped at 35s
+        // (AbortController) and we retry 429/500/529/timeout up to 3 times
+        // with backoff — comfortably inside the 120s function ceiling.
         let body;
-        try {
-            const resp = await fetch("https://api.anthropic.com/v1/messages", {
-                method: "POST",
-                headers: {
-                    "x-api-key": ANTHROPIC_API_KEY.value(),
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                body: JSON.stringify({
-                    model: "claude-haiku-4-5",
-                    max_tokens: 1024,
-                    system,
-                    messages: [{
-                        role: "user",
-                        content: [
-                            ...imageBlocks,
-                            { type: "text", text: "Extract the health-document fields into the JSON shape from the system prompt." },
-                        ],
-                    }],
-                }),
-            });
-            if (!resp.ok) {
+        const ANTHROPIC_ATTEMPTS = 3;
+        let lastErr = null;
+        for (let attempt = 1; attempt <= ANTHROPIC_ATTEMPTS; attempt++) {
+            const ctrl = new AbortController();
+            const killer = setTimeout(() => ctrl.abort(), 35_000);
+            try {
+                const t0 = Date.now();
+                const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                    method: "POST",
+                    headers: {
+                        "x-api-key": ANTHROPIC_API_KEY.value(),
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    body: reqBody,
+                    signal: ctrl.signal,
+                });
+                clearTimeout(killer);
+                if (resp.ok) {
+                    body = await resp.json();
+                    logger.info("aiExtractHealthDoc ok", { attempt, ms: Date.now() - t0 });
+                    break;
+                }
                 const errText = await resp.text();
-                logger.error("aiExtractHealthDoc anthropic error", resp.status, errText.slice(0, 300));
-                throw new HttpsError("internal", `anthropic failed: ${resp.status}`);
+                logger.warn("aiExtractHealthDoc anthropic non-200", { status: resp.status, attempt, ms: Date.now() - t0, body: errText.slice(0, 200) });
+                // Retry transient statuses; give up immediately on 4xx (bad request/auth).
+                if (![429, 500, 503, 529].includes(resp.status) || attempt === ANTHROPIC_ATTEMPTS) {
+                    throw new HttpsError("internal", `anthropic failed: ${resp.status}`);
+                }
+            } catch (e) {
+                clearTimeout(killer);
+                if (e instanceof HttpsError) throw e;
+                lastErr = e;
+                const aborted = e?.name === "AbortError";
+                logger.warn("aiExtractHealthDoc anthropic attempt failed", { attempt, aborted, msg: e?.message });
+                if (attempt === ANTHROPIC_ATTEMPTS) {
+                    throw new HttpsError("unavailable", aborted ? "document reading timed out" : "document reading unavailable");
+                }
             }
-            body = await resp.json();
-        } catch (e) {
-            if (e instanceof HttpsError) throw e;
-            logger.error("aiExtractHealthDoc fetch failed:", e?.message || e);
+            // Backoff before the next attempt: 1.5s, 3s.
+            await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+        if (!body) {
             throw new HttpsError("unavailable", "document reading unavailable");
         }
 
