@@ -85,8 +85,13 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
         const norm = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim();
         if (!personName) return '';
         const n = norm(personName);
+        // Substring matches require a REAL full name (two words) on the
+        // roster side — a one-word roster entry ("Test", a first name)
+        // inside the document's name is coincidence, not identity, and a
+        // silent wrong auto-assign files the doc to the wrong person.
+        const full = (p) => norm(p.name).includes(' ');
         const hit = rows.find(p => norm(p.name) === n)
-            || rows.find(p => norm(p.name).includes(n) || n.includes(norm(p.name)))
+            || rows.find(p => full(p) && (norm(p.name).includes(n) || n.includes(norm(p.name))))
             || rows.find(p => {
                 const toks = n.split(' ').filter(Boolean);
                 const hay = norm(p.name);
@@ -172,7 +177,7 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                 const sref = storageRef(storage, path);
                 await uploadBytes(sref, item.blob, { contentType: item.type });
                 const url = await getDownloadURL(sref);
-                staged.push({ id: `${Date.now()}-${i}`, fileName: item.name, url, path, isImage: (item.type || '').startsWith('image/'), extracted: null, staffId: '', kind: 'record', status: 'pending' });
+                staged.push({ id: `${Date.now()}-${i}`, fileName: item.name, url, path, isImage: (item.type || '').startsWith('image/'), extracted: null, staffId: '', kind: 'record', status: 'pending', shot1: '', shot2: '' });
             } catch (err) {
                 console.error('mass upload failed:', item.name, err?.message);
             }
@@ -187,7 +192,14 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                 const ex = await extractHealthDoc([row.url]);
                 const staffId = guessStaffId(ex.personName);
                 const kind = ex.docType === 'hepA_card' ? 'vaccine' : 'record';
-                setMassRows(prev => prev.map(r => r.id === row.id ? { ...r, extracted: ex, staffId: r.staffId || staffId, kind } : r));
+                // Seed the editable per-row shot dates from the AI read —
+                // Andrew reviews/corrects them in the table and Apply writes
+                // exactly these into the staff record (no post-import fixup).
+                setMassRows(prev => prev.map(r => r.id === row.id ? {
+                    ...r, extracted: ex, staffId: r.staffId || staffId, kind,
+                    shot1: normalizeDateInput(ex.hepAShot1Date || '') || '',
+                    shot2: normalizeDateInput(ex.hepAShot2Date || '') || '',
+                } : r));
             } catch (err) {
                 console.warn('mass extract failed:', err?.message);
                 setMassRows(prev => prev.map(r => r.id === row.id ? { ...r, extracted: { docType: 'other', notes: 'AI read failed — assign manually' } } : r));
@@ -226,8 +238,15 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                     }];
                     if (row.kind === 'vaccine') {
                         rec.hepA = { ...(rec.hepA || {}) };
-                        if (row.extracted?.hepAShot1Date && !rec.hepA.shot1Date) rec.hepA.shot1Date = row.extracted.hepAShot1Date;
-                        if (row.extracted?.hepAShot2Date && !rec.hepA.shot2Date) rec.hepA.shot2Date = row.extracted.hepAShot2Date;
+                        // The per-row date boxes (seeded from the AI read,
+                        // corrected by the admin) are authoritative — Apply
+                        // writes them straight into the record so nobody has
+                        // to re-enter dates after the import. A blank box
+                        // leaves whatever the record already has.
+                        const s1 = normalizeDateInput(row.shot1 || '') || row.extracted?.hepAShot1Date;
+                        const s2 = normalizeDateInput(row.shot2 || '') || row.extracted?.hepAShot2Date;
+                        if (s1) rec.hepA.shot1Date = s1;
+                        if (s2) rec.hepA.shot2Date = s2;
                         rec.hepA.verifiedBy = byName;
                         rec.hepA.verifiedAt = new Date().toISOString();
                     } else if (row.kind.startsWith('doc:')) {
@@ -378,6 +397,7 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                                             <th className="py-1.5 px-1.5">{tx('AI read', 'Lectura IA')}</th>
                                             <th className="py-1.5 px-1.5">{tx('Assign to', 'Asignar a')}</th>
                                             <th className="py-1.5 px-1.5">{tx('This file is', 'Este archivo es')}</th>
+                                            <th className="py-1.5 px-1.5">{tx('Shot 1 / Shot 2', 'Dosis 1 / Dosis 2')}</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -414,6 +434,20 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                                                         ))}
                                                         <option value="record">{tx('Other record (file only)', 'Otro registro')}</option>
                                                     </select>
+                                                </td>
+                                                <td className="py-1.5 px-1.5">
+                                                    {r.kind === 'vaccine' ? (
+                                                        <div className="flex flex-col gap-1">
+                                                            <input type="date" value={r.shot1 || ''} disabled={r.status === 'done'}
+                                                                onChange={(e) => setMassRow(r.id, { shot1: e.target.value })}
+                                                                className={`glass-input text-xs py-0.5 px-1 w-[130px] ${!r.shot1 ? 'border-amber-400' : ''}`}
+                                                                aria-label={tx('Shot 1 date', 'Fecha dosis 1')} />
+                                                            <input type="date" value={r.shot2 || ''} disabled={r.status === 'done'}
+                                                                onChange={(e) => setMassRow(r.id, { shot2: e.target.value })}
+                                                                className="glass-input text-xs py-0.5 px-1 w-[130px]"
+                                                                aria-label={tx('Shot 2 date', 'Fecha dosis 2')} />
+                                                        </div>
+                                                    ) : <span className="text-[11px] text-dd-text-2">—</span>}
                                                 </td>
                                             </tr>
                                         ))}
