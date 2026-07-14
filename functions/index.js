@@ -398,6 +398,12 @@ exports.dispatchNotification = onDocumentCreated(
             // specific channel.
             "chat_message",            // group / DM message
             "chat_mention",            // @-tagged, directly addressed
+            // 2026-07-13 audit — compliance nudges were silently eaten by
+            // this gate for any non-manager not on shift (the 10am daily
+            // reminder rarely lands mid-shift), while lastReminderAt was
+            // stamped as if the nudge arrived. These are deliberate,
+            // throttled (1 per 3 days) health-department pushes.
+            "health_reminder",
             "chat_reply",              // replied to YOUR message (Andrew 2026-05-28)
             "chat_nudge",              // manager explicitly reminding YOU to read
             "eighty_six_alert",        // operational emergency
@@ -4090,8 +4096,16 @@ exports.aiExtractHealthDoc = onCall(
             windowMs: 5 * 60_000,
         });
 
-        const data = request.data || {};
-        const imageUrls = Array.isArray(data.imageUrls) ? data.imageUrls : [];
+        return await runHealthDocExtraction(request.data?.imageUrls);
+    }
+);
+
+// Shared extraction core (image fetch → Claude vision → parse), reused by the
+// aiExtractHealthDoc callable (web) AND the processHealthImportJob Firestore
+// trigger (native path). Throws HttpsError on failure; returns the normalized
+// health-doc field object on success.
+async function runHealthDocExtraction(imageUrlsIn) {
+        const imageUrls = Array.isArray(imageUrlsIn) ? imageUrlsIn : [];
         if (imageUrls.length === 0 || imageUrls.length > 4) {
             throw new HttpsError("invalid-argument", "1-4 imageUrls required");
         }
@@ -4116,7 +4130,15 @@ exports.aiExtractHealthDoc = onCall(
                 throw new HttpsError("invalid-argument", "imageUrls must be valid URLs");
             }
             try {
-                const resp = await fetch(url);
+                // 20s cap per image fetch (2026-07-13 audit): a bare fetch
+                // with no timeout let one hung storage connection stall the
+                // CF to its 120s hard kill — the client then saw a silent
+                // "read timeout" with nothing in the logs.
+                const fetchCtrl = new AbortController();
+                const fetchKiller = setTimeout(() => fetchCtrl.abort(), 20_000);
+                let resp;
+                try { resp = await fetch(url, { signal: fetchCtrl.signal }); }
+                finally { clearTimeout(fetchKiller); }
                 if (!resp.ok) throw new HttpsError("invalid-argument", `fetch failed: ${resp.status}`);
                 const buf = await resp.arrayBuffer();
                 if (buf.byteLength > 10 * 1024 * 1024) {
@@ -4249,6 +4271,59 @@ exports.aiExtractHealthDoc = onCall(
             confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "low",
             notes: typeof parsed.notes === "string" ? parsed.notes.slice(0, 200) : "",
         };
+}
+
+// ── 2026-07-13 — processHealthImportJob: the reliable NATIVE read path ──
+// Root cause of the recurring "AI timed out" on the iPad: the app was holding
+// an HTTP request open (callable-over-WebView-fetch, then CapacitorHttp) for a
+// slow, batched AI job over mobile network — a shape that is inherently fragile
+// on a native WebView. The Cloud Function itself was always healthy (every
+// request that reached it returned in ~1.5s, zero errors ever). So instead of
+// holding a connection, the app now writes health_import_jobs/{id} =
+// {imageUrls, status:'pending'} and LISTENS on that doc; this trigger runs the
+// SAME extraction and writes the result back. It rides Firestore's realtime
+// channel — the one transport the entire app already depends on every day.
+exports.processHealthImportJob = onDocumentCreated(
+    {
+        document: "health_import_jobs/{jobId}",
+        region: "us-central1",
+        timeoutSeconds: 120,
+        memory: "512MiB",
+        maxInstances: 5,
+        secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
+    },
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return;
+        const d = snap.data() || {};
+        if (d.status && d.status !== "pending") return; // already handled
+        const t0 = Date.now();
+        try {
+            // Global rate limit (2026-07-13): the collection is writable with
+            // the public API key and every doc triggers a paid vision call —
+            // the onCall path had enforceRateLimit but this trigger didn't.
+            // A constant key gives one shared 200-per-5-min bucket, matching
+            // the mass-import ceiling the callable already allows.
+            await enforceRateLimit({
+                ip: "health-import-global",
+                namespace: "processHealthImportJob",
+                limit: 200,
+                windowMs: 5 * 60_000,
+            });
+            const result = await runHealthDocExtraction(d.imageUrls);
+            // update() (not set/merge): if the client already timed out and
+            // DELETED its job doc, a merge would resurrect it without
+            // createdAt — invisible to the daily prune, orphaned forever.
+            // update() on a deleted doc rejects NOT_FOUND, which we swallow.
+            await snap.ref.update(
+                { status: "done", result, finishedAt: FieldValue.serverTimestamp(), ms: Date.now() - t0 },
+            ).catch((e) => { if (e?.code !== 5 && !/NOT_FOUND/i.test(e?.message || "")) throw e; });
+        } catch (e) {
+            logger.warn("processHealthImportJob failed", { msg: e?.message, ms: Date.now() - t0 });
+            await snap.ref.update(
+                { status: "error", error: String(e?.message || e).slice(0, 300), finishedAt: FieldValue.serverTimestamp() },
+            ).catch((err) => { if (err?.code !== 5 && !/NOT_FOUND/i.test(err?.message || "")) logger.warn("job error-write failed:", err?.message); });
+        }
     }
 );
 
@@ -4269,8 +4344,10 @@ exports.healthComplianceReminders = onSchedule(
         const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
         const now = Date.now();
 
-        // Required doc keys (same defaults the client seeds).
-        let requiredDocKeys = ["illness_reporting", "hygiene_policy"];
+        // Required doc keys (fallback mirrors the PROD config: since
+        // 2026-07-13 only the FDA 1-B is required — hygiene_policy is
+        // optional, so a failed config read must not nag about it).
+        let requiredDocKeys = ["illness_reporting"];
         try {
             const cfg = await db.collection("config").doc("health_docs").get();
             const docs = (cfg.data() || {}).docs;
@@ -5463,6 +5540,16 @@ exports.pruneSystemLogs = onSchedule(
             { coll: "security_logs",      field: "ts", days: 365 },
             { coll: "ai_logs",            field: "ts", days: 90  },
             { coll: "api_request_logs",   field: "ts", days: 60  },
+            // AI health-doc read jobs (2026-07-13): the client deletes its own
+            // job doc when the read settles, so anything older than a day is
+            // an orphan (page closed mid-read / crashed) — and each doc holds
+            // transient PII-adjacent image URLs. Sweep daily.
+            { coll: "health_import_jobs", field: "createdAt", days: 1 },
+            // Rate-limit buckets (2026-07-13 audit): every 5-10 min window per
+            // namespace+IP mints a doc that was never deleted — unbounded
+            // growth (~580 docs and counting). expiresAt is the bucket's last
+            // write; anything older than 2 days is long dead.
+            { coll: "rate_limits", field: "expiresAt", days: 2 },
         ];
 
         const report = [];

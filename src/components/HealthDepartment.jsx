@@ -38,6 +38,16 @@ const fmtDate = (s, isEs) => {
     } catch { return s; }
 };
 
+// Typed-signature name match (2026-07-13 audit): fold diacritics + collapse
+// whitespace so 'Jose Garcia' signs for roster name 'José García' — half the
+// staff sign on English keyboards. Same folding idiom as menuConfig/AdminPanel.
+const nameMatches = (typed, expected) => {
+    const fold = (x) => String(x || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase().replace(/\s+/g, ' ').trim();
+    return fold(typed) === fold(expected) && fold(typed).length > 0;
+};
+
 // ── Status pill ──────────────────────────────────────────────────────
 function StatusPill({ status, isEs }) {
     if (status.complete) {
@@ -212,12 +222,20 @@ function SignDocModal({ docDef, staffId, staffName, language, onClose, onSigned 
         const el = bodyRef.current;
         if (el && el.scrollTop + el.clientHeight >= el.scrollHeight - 24) setScrolledToEnd(true);
     };
-    // Short docs may not scroll at all — count as read.
+    // Short docs may not scroll at all — count as read. Re-measure on
+    // resize/rotation too (2026-07-13 audit): measuring only on mount
+    // meant a rotation that made the body non-scrollable left onScroll
+    // unable to ever fire — signing permanently blocked.
     useEffect(() => {
-        const el = bodyRef.current;
-        if (el && el.scrollHeight <= el.clientHeight + 8) setScrolledToEnd(true);
+        const measure = () => {
+            const el = bodyRef.current;
+            if (el && el.scrollHeight <= el.clientHeight + 8) setScrolledToEnd(true);
+        };
+        measure();
+        window.addEventListener('resize', measure);
+        return () => window.removeEventListener('resize', measure);
     }, []);
-    const canSign = scrolledToEnd && typedName.trim().toLowerCase() === staffName.trim().toLowerCase();
+    const canSign = scrolledToEnd && nameMatches(typedName, staffName);
     const sign = async () => {
         try {
             await upsertHealthRecord(staffId, staffName, (rec) => {
@@ -276,10 +294,15 @@ function ExemptionModal({ staffId, staffName, language, onClose, onSigned }) {
         if (el && el.scrollTop + el.clientHeight >= el.scrollHeight - 24) setScrolledToEnd(true);
     };
     useEffect(() => {
-        const el = bodyRef.current;
-        if (el && el.scrollHeight <= el.clientHeight + 8) setScrolledToEnd(true);
+        const measure = () => {
+            const el = bodyRef.current;
+            if (el && el.scrollHeight <= el.clientHeight + 8) setScrolledToEnd(true);
+        };
+        measure();
+        window.addEventListener('resize', measure);
+        return () => window.removeEventListener('resize', measure);
     }, []);
-    const canSign = exType && scrolledToEnd && typedName.trim().toLowerCase() === staffName.trim().toLowerCase();
+    const canSign = exType && scrolledToEnd && nameMatches(typedName, staffName);
     const sign = async () => {
         try {
             await upsertHealthRecord(staffId, staffName, (rec) => {
@@ -527,6 +550,8 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
     const [records, setRecords] = useState({});        // staffId → record
     const [docsConfig, setDocsConfig] = useState(null);
     const [view, setView] = useState('mine');          // 'mine' | 'roster' | 'inspection'
+    const [locFilter, setLocFilter] = useState('all'); // 'all' | 'webster' | 'maryland'
+    const [sideFilter, setSideFilter] = useState('all'); // 'all' | 'foh' | 'boh'
     const [openPerson, setOpenPerson] = useState(null);
     const [refreshTick, setRefreshTick] = useState(0);
     const refresh = () => setRefreshTick(t => t + 1);
@@ -559,8 +584,33 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
         const rec = records[String(s.id)] || null;
         return { person: s, rec, status: complianceStatus(rec, docsConfig || []), shot2Due: hepA2Due(rec) };
     }), [activeStaff, records, docsConfig]);
-    const compliantCount = rows.filter(r => r.status.complete).length;
-    const attention = useMemo(() => buildAttentionQueue(rows), [rows]);
+    // Location split — a staff whose location is 'both' shows under every
+    // filter; anything unset falls under Webster (the older default).
+    const locFilteredRows = useMemo(
+        () => rows.filter(r => locFilter === 'all' || r.person?.location === 'both' || (r.person?.location || 'webster') === locFilter),
+        [rows, locFilter]
+    );
+    // Front/back-of-house split (person.scheduleSide 'foh'|'boh'; 'both' or
+    // unset → shown under both/FOH). Combines with the location filter above.
+    const filteredRows = useMemo(
+        () => locFilteredRows.filter(r => sideFilter === 'all' || r.person?.scheduleSide === 'both' || (r.person?.scheduleSide || 'foh') === sideFilter),
+        [locFilteredRows, sideFilter]
+    );
+    const compliantCount = filteredRows.filter(r => r.status.complete).length;
+    const attention = useMemo(() => buildAttentionQueue(filteredRows), [filteredRows]);
+    // FOH/BOH compliance counts within the CURRENT location selection.
+    const sideStats = useMemo(() => {
+        const out = { foh: { ok: 0, total: 0 }, boh: { ok: 0, total: 0 } };
+        for (const { person, status } of locFilteredRows) {
+            const sides = person.scheduleSide === 'both' ? ['foh', 'boh'] : [person.scheduleSide || 'foh'];
+            for (const s of sides) {
+                if (!out[s]) out[s] = { ok: 0, total: 0 };
+                out[s].total += 1;
+                if (status.complete) out[s].ok += 1;
+            }
+        }
+        return out;
+    }, [locFilteredRows]);
     // Per-location compliance (staff with location 'both' count toward each).
     const locStats = useMemo(() => {
         const out = {};
@@ -583,7 +633,7 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
         <div className="p-3 sm:p-4">
             <PageHeader icon={HeartPulse} title={tx('Health Department', 'Departamento de Salud')}
                 subtitle={canManage
-                    ? tx(`${compliantCount}/${rows.length} staff fully compliant`, `${compliantCount}/${rows.length} empleados en cumplimiento`)
+                    ? tx(`${compliantCount}/${filteredRows.length} staff fully compliant`, `${compliantCount}/${filteredRows.length} empleados en cumplimiento`)
                     : tx('Your health records & required documents', 'Tus registros de salud y documentos requeridos')} />
 
             {canManage && (
@@ -603,14 +653,40 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
 
             {canManage && view === 'roster' && (
                 <>
+                {/* Location filter — the compliance chips double as the
+                    split control; tap one to see just that store's roster. */}
                 <div className="flex flex-wrap gap-2 mb-3">
-                    {Object.entries(locStats).map(([loc, st]) => (
-                        <span key={loc} className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border ${st.ok === st.total ? 'bg-dd-sage-50 text-dd-green-700 border-dd-green/40' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            {loc === 'webster' ? 'Webster' : loc === 'maryland' ? 'Maryland Heights' : loc}
-                            <span className="font-mono">{st.ok}/{st.total}</span>
-                            <span className="font-normal">({Math.round((st.ok / Math.max(1, st.total)) * 100)}%)</span>
-                        </span>
-                    ))}
+                    {[['all', tx('All locations', 'Todas')], ['webster', 'Webster'], ['maryland', 'Maryland Heights']].map(([loc, label]) => {
+                        const st = loc === 'all'
+                            ? { ok: rows.filter(r => r.status.complete).length, total: rows.length }
+                            : (locStats[loc] || { ok: 0, total: 0 });
+                        const active = locFilter === loc;
+                        const allOk = st.total > 0 && st.ok === st.total;
+                        return (
+                            <button key={loc} onClick={() => setLocFilter(loc)}
+                                className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border transition ${active ? 'bg-dd-green text-white border-dd-green' : allOk ? 'bg-dd-sage-50 text-dd-green-700 border-dd-green/40' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                {label}
+                                <span className="font-mono">{st.ok}/{st.total}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+                {/* Front / back of house split — combines with the location filter. */}
+                <div className="flex flex-wrap gap-2 mb-3">
+                    {[['all', tx('Everyone', 'Todos')], ['foh', tx('Front (FOH)', 'Frente (FOH)')], ['boh', tx('Back (BOH)', 'Cocina (BOH)')]].map(([side, label]) => {
+                        const st = side === 'all'
+                            ? { ok: locFilteredRows.filter(r => r.status.complete).length, total: locFilteredRows.length }
+                            : (sideStats[side] || { ok: 0, total: 0 });
+                        const active = sideFilter === side;
+                        const allOk = st.total > 0 && st.ok === st.total;
+                        return (
+                            <button key={side} onClick={() => setSideFilter(side)}
+                                className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border transition ${active ? 'bg-dd-charcoal text-white border-dd-charcoal' : allOk ? 'bg-dd-sage-50 text-dd-green-700 border-dd-green/40' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                {label}
+                                <span className="font-mono">{st.ok}/{st.total}</span>
+                            </button>
+                        );
+                    })}
                 </div>
                 {attention.length > 0 && (
                     <div className="glass-card p-3 mb-3">
@@ -649,11 +725,11 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
                             </tr>
                         </thead>
                         <tbody>
-                            {rows.map(({ person, rec, status, shot2Due }) => (
+                            {filteredRows.map(({ person, rec, status, shot2Due }) => (
                                 <tr key={person.id} onClick={() => setOpenPerson(person)}
                                     className="border-b border-dd-line/60 cursor-pointer hover:bg-dd-sage-50/60 active:bg-dd-sage-50">
                                     <td className="py-2.5 px-2 font-semibold text-dd-text">{person.name}
-                                        <span className="block text-[10px] font-normal text-dd-text-2">{person.role}</span></td>
+                                        <span className="block text-[10px] font-normal text-dd-text-2">{person.role}{person.location ? ` · ${person.location === 'both' ? tx('Both', 'Ambas') : person.location === 'maryland' ? 'Maryland Hts' : 'Webster'}` : ''}{person.scheduleSide ? ` · ${person.scheduleSide === 'both' ? 'FOH/BOH' : person.scheduleSide.toUpperCase()}` : ''}</span></td>
                                     <td className="py-2.5 px-2 text-dd-text-2">{fmtDate(rec?.hiredDate, isEs)}</td>
                                     <td className="py-2.5 px-2">{status.hepA1 ? <span className="text-dd-green-700 font-semibold">{rec?.hepA?.exempt ? tx('Exempt', 'Exento') : fmtDate(rec?.hepA?.shot1Date, isEs)}</span> : <span className="text-amber-700 font-bold">{tx('Missing', 'Falta')}</span>}</td>
                                     <td className="py-2.5 px-2">{status.hepA2 ? <span className="text-dd-green-700 font-semibold">{rec?.hepA?.exempt ? tx('Exempt', 'Exento') : fmtDate(rec?.hepA?.shot2Date, isEs)}</span> : shot2Due ? <span className="text-red-600 font-bold">{tx('DUE', 'VENCE')}</span> : <span className="text-amber-700 font-bold">{tx('Missing', 'Falta')}</span>}</td>
@@ -674,22 +750,22 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
                         <button onClick={() => window.print()} className="glass-button-apple px-4 py-2 rounded-full text-sm flex items-center gap-1.5">
                             <Printer size={14} /> {tx('Print', 'Imprimir')}</button>
                     </div>
-                    <h2 className="text-lg font-black text-dd-text">DD Mau — Employee Health Compliance Summary</h2>
-                    <p className="text-xs text-dd-text-2 mb-3">{tx('Generated', 'Generado')} {new Date().toLocaleDateString()} · {compliantCount}/{rows.length} {tx('fully compliant', 'en cumplimiento total')}</p>
+                    <h2 className="text-lg font-black text-dd-text">DD Mau — Employee Health Compliance Summary{locFilter !== 'all' ? ` — ${locFilter === 'maryland' ? 'Maryland Heights' : 'Webster'}` : ''}{sideFilter !== 'all' ? ` — ${sideFilter.toUpperCase()}` : ''}</h2>
+                    <p className="text-xs text-dd-text-2 mb-3">{tx('Generated', 'Generado')} {new Date().toLocaleDateString()} · {compliantCount}/{filteredRows.length} {tx('fully compliant', 'en cumplimiento total')}</p>
                     <table className="w-full text-sm">
                         <thead><tr className="text-left text-[11px] uppercase text-dd-text-2 border-b-2 border-dd-text">
                             <th className="py-1.5 pr-2">Employee</th><th className="py-1.5 pr-2">Hired</th>
                             <th className="py-1.5 pr-2">Hep A #1</th><th className="py-1.5 pr-2">Hep A #2</th>
                             <th className="py-1.5 pr-2">Illness policy signed</th></tr></thead>
                         <tbody>
-                            {rows.map(({ person, rec, status }) => (
+                            {filteredRows.map(({ person, rec, status }) => (
                                 <tr key={person.id} onClick={() => setOpenPerson(person)}
                                     className="border-b border-dd-line/60 cursor-pointer hover:bg-dd-sage-50/60 print:cursor-auto">
                                     <td className="py-1.5 pr-2 font-semibold">{person.name}</td>
                                     <td className="py-1.5 pr-2">{fmtDate(rec?.hiredDate, false)}</td>
                                     <td className="py-1.5 pr-2">{rec?.hepA?.exempt ? 'Exempt' : fmtDate(rec?.hepA?.shot1Date, false)}</td>
                                     <td className="py-1.5 pr-2">{rec?.hepA?.exempt ? 'Exempt' : fmtDate(rec?.hepA?.shot2Date, false)}</td>
-                                    <td className="py-1.5 pr-2">{Object.values(rec?.docs || {}).some(d => d?.signedAt) ? fmtDate((Object.values(rec.docs).find(d => d?.signedAt)?.signedAt || '').slice(0, 10), false) : '—'}</td>
+                                    <td className="py-1.5 pr-2">{rec?.docs?.illness_reporting?.signedAt ? fmtDate(rec.docs.illness_reporting.signedAt.slice(0, 10), false) : '—'}</td>
                                 </tr>
                             ))}
                         </tbody>

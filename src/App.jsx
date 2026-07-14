@@ -945,6 +945,71 @@ export default function App() {
         return () => { cancelled = true; unsub(); };
     }, []);
 
+    // ── Self-updating OTA (native only) ──────────────────────────────
+    // 2026-07-13/14 — devices lagged behind the latest build: Capgo's
+    // native autoUpdate only APPLIES a downloaded bundle on a cold start,
+    // and the forceRefresh broadcast only reaches devices that happened to
+    // be OPEN at deploy time — so "I opened the app, it isn't the newest"
+    // kept happening. Three triggers now keep every device current:
+    //   • ~12s after boot — a fast pass (no-op if already current), so a
+    //     fresh open lands on the latest within seconds.
+    //   • on every FOREGROUND (throttled ≤1/90s) — opening a backgrounded
+    //     app checks + applies the newest build right then. This is the
+    //     one that makes "open → newest" reliable.
+    //   • every 4h — backstop for the always-on store kiosks that never
+    //     background or cold-restart (the June-freeze class).
+    // checkNativeOtaOnce is a no-op when already current, waits out active
+    // typing before reloading, and runs on the lock screen too. No-op on web.
+    useEffect(() => {
+        let isNative = false;
+        try { isNative = window?.Capacitor?.isNativePlatform?.() === true; } catch {}
+        if (!isNative) return;
+        let disposed = false;
+        let lastCheckMs = 0;
+        let cleanupResume = null;
+        const check = async (minGapMs = 0) => {
+            if (disposed) return;
+            if (minGapMs && Date.now() - lastCheckMs < minGapMs) return; // throttle resume bursts
+            lastCheckMs = Date.now();
+            try {
+                const { checkNativeOtaOnce } = await import('./capacitor-bridge');
+                await checkNativeOtaOnce();
+            } catch (e) { console.warn('OTA check failed:', e?.message); }
+        };
+        const first = setTimeout(() => check(), 12 * 1000);
+        const every = setInterval(() => check(), 4 * 60 * 60 * 1000);
+        (async () => {
+            try {
+                const { App: CapApp } = await import('@capacitor/app');
+                const h = await CapApp.addListener('appStateChange', ({ isActive }) => {
+                    if (isActive) check(90 * 1000);
+                });
+                if (disposed) { try { h.remove(); } catch { /* noop */ } }
+                else cleanupResume = () => { try { h.remove(); } catch { /* noop */ } };
+            } catch { /* @capacitor/app unavailable → the timers still cover it */ }
+        })();
+        return () => { disposed = true; clearTimeout(first); clearInterval(every); if (cleanupResume) cleanupResume(); };
+    }, []);
+
+    // ── Money Count keep-alive (2026-07-14, Andrew: "give staff time to
+    //    count the drawer — take off any timers") ──────────────────────
+    // Counting a cash drawer is several minutes of handling bills with
+    // ZERO screen taps, so every idle-relock path below (return-to-visible
+    // relock AND the shared-iPad foreground poll) read it as "idle" and
+    // logged the counter out mid-count = the "money count keeps timing
+    // out" report. While the Money Count tab is open we treat it as
+    // continuous activity: refresh the shared lastActive heartbeat every
+    // 20s (well under even the 1-minute shared-iPad minimum) so no relock
+    // fires. The moment they leave the tab, normal auto-lock resumes — no
+    // security change anywhere else in the app.
+    useEffect(() => {
+        if (!staffName || activeTab !== 'moneycount') return;
+        const bump = () => { try { localStorage.setItem('ddmau:lastActive', String(Date.now())); } catch { /* private mode */ } };
+        bump();
+        const id = setInterval(bump, 20 * 1000);
+        return () => clearInterval(id);
+    }, [staffName, activeTab]);
+
     // ── Idle-timeout relock ──────────────────────────────────────────
     // When the app is sent to the background (tab hidden / iPhone home
     // button), mark the timestamp. When the user returns and the gap
@@ -1538,11 +1603,24 @@ export default function App() {
     // because the gate kept rendering over Schedule.)
     const [gateBypassed, setGateBypassed] = useState(false);
     useEffect(() => { setGateBypassed(false); }, [staffName]);
+    // ── Optimistic gate seed (2026-07-14 login-speed audit) ──────────
+    // The blocking-task check below is a Firestore round-trip that USED to
+    // hold the whole home behind a spinner on EVERY login — the single
+    // biggest PIN→home delay — even though required_tasks is empty for
+    // ~everyone. We remember, per staffer, whether their LAST check was
+    // clear: if so, paint home instantly and re-verify in the background
+    // (if a new blocking task turns up, the flow still slams down). New
+    // staff and anyone previously blocked keep the hard spinner block, so
+    // required onboarding/policy tasks are never skippable on first login.
+    const RT_CLEAR_KEY = (n) => 'ddmau:rtclear:' + n;
     useEffect(() => {
-        if (!staffName) {
-            setPendingBlockingCount(null);
-            return;
-        }
+        if (!staffName) { setPendingBlockingCount(null); return; }
+        let clear = false;
+        try { clear = localStorage.getItem(RT_CLEAR_KEY(staffName)) === '1'; } catch { /* private mode */ }
+        setPendingBlockingCount(clear ? 0 : null);
+    }, [staffName]);
+    useEffect(() => {
+        if (!staffName) return;
         let cancelled = false;
         (async () => {
             try {
@@ -1566,9 +1644,14 @@ export default function App() {
                     t => t.blockApp === true && !resolvedIds.includes(t.id)
                 ).length;
                 setPendingBlockingCount(blocking);
+                // Remember whether this staffer is clear so the NEXT login
+                // can paint home instantly (see the optimistic seed above).
+                try { localStorage.setItem(RT_CLEAR_KEY(staffName), blocking > 0 ? '0' : '1'); } catch { /* private mode */ }
             } catch (e) {
                 console.warn('required-task check failed:', e);
-                setPendingBlockingCount(0); // fail-open: don't brick the app
+                // Fail-open, but never override an optimistic home already
+                // painted (which would flash a spinner over a live screen).
+                setPendingBlockingCount(prev => (prev === null ? 0 : prev));
             }
         })();
         return () => { cancelled = true; };

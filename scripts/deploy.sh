@@ -35,16 +35,33 @@ echo "▸ Releasing v$VERSION"
 echo "▸ Building…"
 npm run build
 
-# 3) Commit the version bump + push → GitHub Pages builds & deploys the web app
-#    (and the Pi menu TVs, which load the web app).
+# 3) Commit the version bump + ALL working-tree changes + push → GitHub Pages
+#    rebuilds & deploys the web app (and the Pi menu TVs, which load it).
+#
+#    ⚠ CRITICAL (2026-07-14 fix): the WEB app is rebuilt by GitHub Pages from
+#    the COMMITTED source on main — NOT from the local `dist/` built in step 2.
+#    The old script committed ONLY package.json/package-lock.json, so any
+#    uncommitted source changes were silently DROPPED from the web build: the
+#    version bumped, OTA (which uploads the local dist) got the code, but the
+#    web bundle was rebuilt from stale committed source WITHOUT the changes.
+#    That is exactly the recurring "my changes aren't showing on the web app"
+#    bug. Fix: stage the ENTIRE working tree so the release commit carries the
+#    source it just built. `git add -A` respects .gitignore (dist/, node_modules
+#    stay out). If there is genuinely nothing to commit beyond the version bump
+#    (a no-op re-deploy), --allow-empty keeps the push flowing.
 echo "▸ Pushing web (GitHub Pages)…"
-# Commit the lockfile too — `npm version patch` bumps the version field in BOTH
-# package.json and package-lock.json, but only staging package.json left the
-# lock's version field drifting (cosmetic, but it kept showing as a dirty file
-# every release). Harmless either way; keeps the tree clean.
-git add package.json package-lock.json
-git commit -m "Release v$VERSION" >/dev/null
+git add -A
+echo "  Shipping these files in v$VERSION:"
+git diff --cached --name-only | sed 's/^/    • /'
+git commit --allow-empty -m "Release v$VERSION" >/dev/null
 git push origin main
+# Guard: the web build is only as fresh as what we just committed+pushed. If
+# the working tree is somehow STILL dirty after the commit (e.g. a file changed
+# mid-deploy), warn loudly — the web bundle would miss it.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "  ⚠ Working tree still dirty AFTER the release commit — these files did NOT ship to web:" >&2
+  git status --porcelain | sed 's/^/      /' >&2
+fi
 echo "  ✓ Web pushed — live in ~1-2 min."
 
 # 4) Upload the OTA bundle → iOS + Android apps pull it on their next open.

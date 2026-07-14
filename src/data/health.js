@@ -23,9 +23,7 @@
 //   { docs: [ { key, title, titleEs, body, bodyEs, version, required } ] }
 // Seeded with DEFAULT_HEALTH_DOCS on first manager visit if missing.
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, runTransaction } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { doc, getDoc, setDoc, runTransaction, collection, onSnapshot, deleteDoc, serverTimestamp } from 'firebase/firestore';
 
 export const HEALTH_DOCS_CONFIG = ['config', 'health_docs'];
 
@@ -171,6 +169,18 @@ export function complianceStatus(record, docsConfig) {
 export function hepA2DueDateStr(record) {
     const s1 = record?.hepA?.shot1Date;
     if (!s1 || record?.hepA?.shot2Date || record?.hepA?.exempt) return '';
+    // 2026-07-13 audit — a stored impossible date ('2024-02-31', which the
+    // bulk-paste normalizer used to accept) parses as Invalid Date on
+    // WebKit/JSC and toISOString() THROWS — inside the roster's useMemo,
+    // which bricked the whole Health tab on every iPad. V8 is worse in a
+    // quieter way: it silently ROLLS Feb 31 → Mar 2 and computes a wrong
+    // due date. Validate the string against a real calendar (engine-
+    // independent) instead of trusting Date parsing; the normalizer now
+    // rejects impossible dates too — this is defense in depth.
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s1);
+    if (!m) return '';
+    const probe = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    if (probe.getUTCFullYear() !== +m[1] || probe.getUTCMonth() !== +m[2] - 1 || probe.getUTCDate() !== +m[3]) return '';
     const due = new Date(s1 + 'T00:00:00');
     due.setMonth(due.getMonth() + 6);
     return due.toISOString().slice(0, 10);
@@ -234,76 +244,66 @@ Entiendo que:
 • La documentación de respaldo (nota médica o resultado de títulos) debe subirse a mi registro de salud cuando aplique.`,
 };
 
-// ── AI extraction (aiExtractHealthDoc Cloud Function) ───────────────
-// The aiExtractHealthDoc callable's public HTTP endpoint. On NATIVE we POST
-// here directly via CapacitorHttp (see below).
-const AI_EXTRACT_URL = 'https://us-central1-dd-mau-staff-app.cloudfunctions.net/aiExtractHealthDoc';
+// ── AI extraction — job + realtime-listener pattern (2026-07-13) ────────
+// WHY NOT A DIRECT CALL: on the native iPad app, holding an HTTP request open
+// for this slow, batched AI read kept timing out. First it was the callable
+// SDK (WebView fetch, hung from capacitor://localhost); then CapacitorHttp —
+// same fragile shape. The server was never the problem: every request that
+// reached aiExtractHealthDoc returned in ~1.5s with zero errors. So we stop
+// holding a connection. We write a tiny job doc to Firestore and LISTEN for
+// the result; the processHealthImportJob Cloud Function does the read and
+// writes it back. This rides Firestore's realtime channel — the one transport
+// the whole app already uses reliably on native (chat, schedule, 86, etc.) —
+// so it's immune to the WebView/HTTP failure that broke every prior attempt.
+// Same signature as before: pass 1-4 image URLs, get the extracted fields.
+const HEALTH_IMPORT_JOBS = 'health_import_jobs';
+const JOB_TIMEOUT_MS = 120_000; // last-resort ceiling; the CF finishes in seconds
 
-// ROOT-CAUSE FIX (Andrew 2026-07-13, "all timed out", deep dive): the mass
-// import's reads NEVER REACHED the function from the native iPad app — the
-// Firebase callable SDK uses the WebView's fetch(), and from capacitor://
-// localhost those requests hung until the 120s timeout ("all timed out")
-// while the Storage uploads (a different SDK) went through fine, and every
-// browser test I ran worked. So on native we bypass the WebView entirely and
-// POST the callable's own wire format ({data} in, {result}/{error} out) via
-// CapacitorHttp — the OS network stack, the same transport that made
-// printing reliable. Web keeps the normal callable SDK.
-const isNativeApp = () => !!Capacitor?.isNativePlatform?.();
+export function extractHealthDoc(imageUrls) {
+    const ref = doc(collection(db, HEALTH_IMPORT_JOBS));
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let unsub = null;
+        let timer = null;
+        const cleanup = () => {
+            settled = true;
+            if (unsub) { try { unsub(); } catch { /* noop */ } }
+            if (timer) clearTimeout(timer);
+            // best-effort tidy-up so transient PII (image URLs + extracted
+            // fields) doesn't linger; the record itself lands in health_records.
+            deleteDoc(ref).catch(() => {});
+        };
+        const fail = (err) => { if (!settled) { cleanup(); reject(err); } };
 
-async function extractViaNativeHttp(imageUrls) {
-    const res = await CapacitorHttp.post({
-        url: AI_EXTRACT_URL,
-        headers: { 'Content-Type': 'application/json' },
-        data: { data: { imageUrls } },        // callable wire format
-        connectTimeout: 20_000,
-        readTimeout: 120_000,
+        // Offline fast-fail (2026-07-13 audit): with persistentLocalCache the
+        // setDoc promise resolves only on SERVER ack — offline it just hangs,
+        // and the user waited the full 120s for a misleading 'read timeout'.
+        // If the write hasn't acked in 10s, surface the real problem now.
+        const OFFLINE_FAIL_MS = 10_000;
+        let acked = false;
+        setTimeout(() => {
+            if (!acked && !settled) fail(new Error('no connection — check the internet and try again'));
+        }, OFFLINE_FAIL_MS);
+        setDoc(ref, { imageUrls, status: 'pending', createdAt: serverTimestamp() })
+            .then(() => {
+                acked = true;
+                if (settled) return;
+                unsub = onSnapshot(
+                    ref,
+                    (snap) => {
+                        const d = snap.data();
+                        if (!d || settled) return;
+                        if (d.status === 'done') { cleanup(); resolve(d.result || { docType: 'unreadable' }); }
+                        else if (d.status === 'error') {
+                            const err = new Error(d.error || 'read failed');
+                            fail(err);
+                        }
+                    },
+                    (err) => fail(err),
+                );
+            })
+            .catch((err) => fail(err));
+
+        timer = setTimeout(() => fail(new Error('read timeout')), JOB_TIMEOUT_MS);
     });
-    let body = res?.data;
-    if (typeof body === 'string') { try { body = JSON.parse(body); } catch { /* leave as string */ } }
-    const status = Number(res?.status) || 0;
-    if (status < 200 || status >= 300 || body?.error) {
-        const err = new Error(body?.error?.message || `http_${status}`);
-        err.code = body?.error?.status === 'RESOURCE_EXHAUSTED' ? 'functions/resource-exhausted' : `http_${status}`;
-        throw err;
-    }
-    return body?.result || { docType: 'unreadable' };
-}
-
-let _callable = null;
-function callViaSdk(imageUrls) {
-    if (!_callable) {
-        _callable = httpsCallable(getFunctions(undefined, 'us-central1'), 'aiExtractHealthDoc', { timeout: 120_000 });
-    }
-    return _callable({ imageUrls }).then((r) => r?.data || { docType: 'unreadable' });
-}
-
-export async function extractHealthDoc(imageUrls) {
-    // A big mass import fires these back-to-back; if it trips the server
-    // rate limit, wait and retry ONCE rather than surfacing "AI read
-    // failed" — the window drains fast and the retry usually lands.
-    for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-            if (isNativeApp()) {
-                try {
-                    return await extractViaNativeHttp(imageUrls);
-                } catch (e) {
-                    // If the native HTTP path itself fails (not a rate limit),
-                    // fall back to the callable SDK once before giving up.
-                    const rl = /resource.exhausted|rate.?limit/i.test(e?.message + (e?.code || ''));
-                    if (rl) throw e;
-                    return await callViaSdk(imageUrls);
-                }
-            }
-            return await callViaSdk(imageUrls);
-        } catch (e) {
-            const rateLimited = e?.code === 'functions/resource-exhausted'
-                || /resource.exhausted|rate.?limit/i.test(e?.message || '');
-            if (rateLimited && attempt === 0) {
-                await new Promise((r) => setTimeout(r, 6000));
-                continue;
-            }
-            throw e;
-        }
-    }
-    return { docType: 'unreadable' };
 }

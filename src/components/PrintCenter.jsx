@@ -600,7 +600,7 @@ function errorToHuman(code, isEs) {
         no_printer_configured: isEs ? 'sin impresora' : 'no printer',
         empty_text: isEs ? 'mensaje vacío' : 'empty message',
         text_too_long: isEs ? 'mensaje muy largo' : 'message too long',
-        'printer timeout': isEs ? 'sin respuesta de la impresora' : 'printer timeout',
+        'printer timeout': isEs ? 'sin respuesta — ¿impresora encendida y en Wi-Fi?' : 'no response — printer on + same Wi-Fi?',
         printer_rejected: isEs ? 'la impresora rechazó' : 'printer rejected',
     };
     return map[code] || code || (isEs ? 'falló' : 'failed');

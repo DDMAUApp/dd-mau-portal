@@ -89,6 +89,15 @@ describe('hepA2DueDateStr', () => {
         expect(hepA2DueDateStr({ hepA: { shot1Date: '2026-01-15', shot2Date: '2026-07-20' } })).toBe('');
         expect(hepA2DueDateStr({ hepA: { shot1Date: '2026-01-15', exempt: true } })).toBe('');
     });
+    // 2026-07-13 audit regression: a stored impossible date parsed as
+    // Invalid Date on WebKit and toISOString() THREW inside the roster
+    // useMemo — bricking the whole Health tab on iPads. Must return ''
+    // (never throw) for garbage stored values.
+    it('never throws on an impossible stored date (WebKit crash regression)', () => {
+        expect(() => hepA2DueDateStr({ hepA: { shot1Date: '2024-02-31' } })).not.toThrow();
+        expect(hepA2DueDateStr({ hepA: { shot1Date: '2024-02-31' } })).toBe('');
+        expect(hepA2DueDateStr({ hepA: { shot1Date: 'not-a-date' } })).toBe('');
+    });
 });
 
 describe('buildAttentionQueue', () => {
@@ -129,6 +138,16 @@ describe('normalizeDateInput', () => {
         expect(normalizeDateInput('')).toBe('');
         expect(normalizeDateInput('yes')).toBe('');
         expect(normalizeDateInput('13/45/26')).toBe('');
+    });
+    // 2026-07-13 audit regression: '2/31/24' passed the naive 1-31 day
+    // check and stored '2024-02-31' — which crashed WebKit downstream.
+    // Only dates that exist on a real calendar may survive.
+    it('rejects impossible calendar dates (both input paths)', () => {
+        expect(normalizeDateInput('2/31/24')).toBe('');
+        expect(normalizeDateInput('9/31/25')).toBe('');
+        expect(normalizeDateInput('2024-02-31')).toBe('');
+        expect(normalizeDateInput('2023-02-29')).toBe('');   // not a leap year
+        expect(normalizeDateInput('2024-02-29')).toBe('2024-02-29'); // leap year OK
     });
 });
 

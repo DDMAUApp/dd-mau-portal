@@ -17,7 +17,10 @@
 
 import { useState, useMemo } from 'react';
 import { db } from '../firebase';
-import { doc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch } from 'firebase/firestore';
+// 2026-07-13 audit: setDoc is CALLED below (chats_purged tombstone, line
+// ~328) but was missing from this import — the purge flow threw
+// "setDoc is not defined" at runtime. Same class as the 07-11 addDoc bug.
+import { doc, setDoc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch } from 'firebase/firestore';
 import { canEditChat, SEEN_VISIBILITY_OPTIONS, getSeenByVisibility } from '../data/chat';
 import { canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';

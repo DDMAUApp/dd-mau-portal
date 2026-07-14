@@ -161,22 +161,37 @@ function bytesToBase64(bytes) {
 }
 
 // POST one IPP job to the printer. Native only (CapacitorHttp binary body).
-// Returns { ok, status }.
+// Returns { ok, status, error } — NEVER throws. When the printer is asleep,
+// off, or its DHCP IP has drifted, iOS's URLSession rejects the CapacitorHttp
+// promise with a raw native string ("The request timed out" / "A server with
+// the specified hostname could not be found" / "Could not connect to the
+// server"). Before, that rejection propagated all the way to the print modal
+// and was shown verbatim ("Print failed: The request timed out") instead of
+// the actionable "Printer did not respond. Powered on + same Wi-Fi?" message.
+// Catch it here and normalize to the same 'printer timeout' code the Epson
+// path uses so both printers give staff the same clear guidance.
 async function postIpp(ip, ippBytes) {
     if (!Capacitor.isNativePlatform()) {
         return { ok: false, status: 0, error: 'web_unsupported' };
     }
-    const res = await CapacitorHttp.post({
-        url: `http://${ip}:${BROTHER_PORT}/ipp/print`,
-        headers: { 'Content-Type': 'application/ipp' },
-        data: bytesToBase64(ippBytes),
-        dataType: 'file',                 // base64 → raw binary request body
-        responseType: 'arraybuffer',
-        connectTimeout: 8000,
-        readTimeout: 15000,
-    });
-    const status = Number(res?.status) || 0;
-    return { ok: status >= 200 && status < 300, status };
+    try {
+        const res = await CapacitorHttp.post({
+            url: `http://${ip}:${BROTHER_PORT}/ipp/print`,
+            headers: { 'Content-Type': 'application/ipp' },
+            data: bytesToBase64(ippBytes),
+            dataType: 'file',                 // base64 → raw binary request body
+            responseType: 'arraybuffer',
+            connectTimeout: 8000,
+            readTimeout: 15000,
+        });
+        const status = Number(res?.status) || 0;
+        return { ok: status >= 200 && status < 300, status };
+    } catch (e) {
+        // Unreachable printer — surface a clean, mappable code (never the raw
+        // iOS string). 'printer timeout' is what errorToHuman in the print
+        // modals already maps to the friendly Wi-Fi guidance.
+        return { ok: false, status: 0, error: 'printer timeout', detail: e?.message || 'unreachable' };
+    }
 }
 
 // ── Canvas label renderer ────────────────────────────────────────────────
@@ -325,7 +340,25 @@ export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightS
         const ipp = buildIppPrintJob({ host: ip, urf, heightPx: height, jobName: jobName || 'DD Mau Label', requestId: i + 1 });
         // eslint-disable-next-line no-await-in-loop
         last = await postIpp(ip, ipp);
-        if (!last.ok) return { ok: false, status: last.status, error: 'printer_rejected', copyFailed: i + 1 };
+        // Cold-wake retry (first copy only): the QL-820NWB sleeps aggressively
+        // and its FIRST connect after sleep frequently times out mid-handshake
+        // — the radio + engine are still spinning up. A single retry lands on
+        // the now-awake printer and is the difference between a mysterious
+        // "request timed out" and a clean print. Only retry a transport
+        // timeout (not a printer_rejected / paper error, which won't self-fix).
+        if (!last.ok && i === 0 && last.error === 'printer timeout') {
+            // eslint-disable-next-line no-await-in-loop
+            await sleep(1200);
+            // eslint-disable-next-line no-await-in-loop
+            last = await postIpp(ip, ipp);
+        }
+        if (!last.ok) {
+            // Preserve the transport code ('printer timeout' → friendly Wi-Fi
+            // guidance) so the modal doesn't collapse every failure to a vague
+            // "printer rejected the job / check paper".
+            const err = last.error === 'printer timeout' ? 'printer timeout' : 'printer_rejected';
+            return { ok: false, status: last.status, error: err, copyFailed: i + 1 };
+        }
         // eslint-disable-next-line no-await-in-loop
         if (i < n - 1) await sleep(gapMs);
     }

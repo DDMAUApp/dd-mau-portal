@@ -19,13 +19,25 @@ import { toast } from '../toast';
 export function normalizeDateInput(raw) {
     const s = String(raw || '').trim();
     if (!s) return '';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    // Real-calendar check (2026-07-13 audit): '2/31/24' used to pass the
+    // naive 1-31 day range and be stored as '2024-02-31' — which WebKit
+    // parses as Invalid Date and CRASHED the whole Health tab on iPads
+    // (V8 silently rolled it to Mar 2 instead). Round-trip through Date
+    // so only dates that actually exist survive.
+    const realDate = (y, mo, d) => {
+        const dt = new Date(Date.UTC(+y, +mo - 1, +d));
+        return dt.getUTCFullYear() === +y && dt.getUTCMonth() === +mo - 1 && dt.getUTCDate() === +d;
+    };
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const [y, mo, d] = s.split('-');
+        return realDate(y, mo, d) ? s : '';
+    }
     const m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
     if (!m) return '';
     let [, mo, d, y] = m;
     if (y.length === 2) y = '20' + y;
     mo = mo.padStart(2, '0'); d = d.padStart(2, '0');
-    if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31) return '';
+    if (!realDate(y, mo, d)) return '';
     return `${y}-${mo}-${d}`;
 }
 
@@ -90,8 +102,13 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
         // inside the document's name is coincidence, not identity, and a
         // silent wrong auto-assign files the doc to the wrong person.
         const full = (p) => norm(p.name).includes(' ');
+        // 2026-07-13 audit: the substring pass ALSO requires the extracted
+        // name to be a real full name — a one-word AI read ("Maria") is a
+        // substring of the first "Maria …" on the roster, silently filing
+        // the doc to the wrong person. One-word reads go to manual assign.
+        const nIsFull = n.includes(' ');
         const hit = rows.find(p => norm(p.name) === n)
-            || rows.find(p => full(p) && (norm(p.name).includes(n) || n.includes(norm(p.name))))
+            || rows.find(p => nIsFull && full(p) && (norm(p.name).includes(n) || n.includes(norm(p.name))))
             || rows.find(p => {
                 const toks = n.split(' ').filter(Boolean);
                 const hay = norm(p.name);
@@ -274,7 +291,10 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
         // 120s ceiling minus transport, so the client waits for the server's
         // own retry to finish rather than giving up first.
         const READ_CONCURRENCY = 3;
-        const READ_TIMEOUT_MS = 110_000;
+        // 2026-07-13 audit: must exceed extractHealthDoc's own 120s ceiling
+        // so the inner path (which cleans up its job doc + gives the real
+        // reason) always fires first; this outer race is only the backstop.
+        const READ_TIMEOUT_MS = 130_000;
         let done = 0;
         const total = toRead.length;
         const readOne = async (row) => {
@@ -334,6 +354,11 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
         const assigned = massRows.filter(r => r.staffId && r.status === 'pending');
         if (assigned.length === 0 || massBusy) return;
         let done = 0;
+        // 2026-07-13 audit: count outcomes with loop-locals — the old toast
+        // read `massRows` from the render-time closure (all still 'pending'),
+        // so failures in the just-finished batch reported as successes.
+        let filedCount = 0;
+        let failCount = 0;
         for (const row of assigned) {
             setMassBusy(`${tx('Filing', 'Archivando')} ${++done}/${assigned.length}…`);
             const person = rows.find(p => String(p.id) === row.staffId);
@@ -363,8 +388,13 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                         // writes them straight into the record so nobody has
                         // to re-enter dates after the import. A blank box
                         // leaves whatever the record already has.
-                        const s1 = normalizeDateInput(row.shot1 || '') || row.extracted?.hepAShot1Date;
-                        const s2 = normalizeDateInput(row.shot2 || '') || row.extracted?.hepAShot2Date;
+                        // 2026-07-13 audit: NO fallback to the raw extracted
+                        // dates here — the boxes were already seeded from the
+                        // AI read, so a blank box means the admin DELETED a
+                        // wrong read; falling back re-wrote the very value
+                        // they removed (stamped "verified", un-normalized).
+                        const s1 = normalizeDateInput(row.shot1 || '');
+                        const s2 = normalizeDateInput(row.shot2 || '');
                         if (s1) rec.hepA.shot1Date = s1;
                         if (s2) rec.hepA.shot2Date = s2;
                         rec.hepA.verifiedBy = byName;
@@ -390,16 +420,17 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                     return rec;
                 }, byName);
                 setMassRow(row.id, { status: 'done' });
+                filedCount++;
             } catch (err) {
                 console.error('mass apply failed:', person?.name, err?.message);
                 setMassRow(row.id, { status: 'error' });
+                failCount++;
             }
         }
         setMassBusy('');
-        const failed = massRows.filter(r => r.status === 'error').length;
-        toast(failed
-            ? tx(`Filed ${done - failed}, ${failed} failed`, `${done - failed} archivados, ${failed} fallaron`)
-            : tx(`✅ ${done} document${done === 1 ? '' : 's'} filed`, `✅ ${done} documento${done === 1 ? '' : 's'} archivados`));
+        toast(failCount
+            ? tx(`Filed ${filedCount}, ${failCount} failed — retry Apply`, `${filedCount} archivados, ${failCount} fallaron — reintenta`)
+            : tx(`✅ ${filedCount} document${filedCount === 1 ? '' : 's'} filed`, `✅ ${filedCount} documento${filedCount === 1 ? '' : 's'} archivados`));
     };
 
     useEffect(() => {
@@ -451,6 +482,11 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
         if (saving || dirtyIds.length === 0) return;
         setSaving(true);
         let ok = 0, failed = 0;
+        // 2026-07-13 audit: track WHICH rows saved so a partial failure
+        // keeps the failed rows' typed dates on screen (the old code wiped
+        // ALL edits, then told the admin to "try again" with nothing left
+        // to retry). Same pattern applyMass already uses.
+        const savedIds = [];
         for (const id of dirtyIds) {
             const person = rows.find(p => String(p.id) === id);
             if (!person) continue;
@@ -467,13 +503,19 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                     return rec;
                 }, byName);
                 ok++;
+                savedIds.push(id);
             } catch (err) {
                 console.error('bulk save failed for', person.name, err?.message);
                 failed++;
             }
         }
         setSaving(false);
-        setEdits({});
+        // Clear only what actually saved — failed rows stay dirty/editable.
+        setEdits((prev) => {
+            const next = { ...prev };
+            for (const id of savedIds) delete next[id];
+            return next;
+        });
         setPasteResult(null); setPasteText('');
         toast(failed
             ? tx(`Saved ${ok}, ${failed} failed — try again`, `${ok} guardados, ${failed} fallaron`)
@@ -509,18 +551,25 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
                         <p className="text-xs font-bold text-dd-text-2 uppercase mb-1.5">
                             {tx('Documents staff must sign', 'Documentos que el personal debe firmar')}
                         </p>
-                        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                            {(docsConfig || []).map((d) => (
+                        <div className="flex flex-col gap-1.5">
+                            {(docsConfig || []).map((d) => {
+                                const on = d.required !== false;
+                                return (
                                 <label key={d.key} className="flex items-center gap-2 text-sm text-dd-text cursor-pointer">
-                                    <input type="checkbox" checked={d.required !== false}
+                                    <input type="checkbox" checked={on}
                                         onChange={async (e) => {
                                             const next = await setHealthDocRequired(d.key, e.target.checked, byName)
                                                 .catch(() => null);
                                             if (next) setDocsConfig(next);
                                         }} />
-                                    <span>{d.title}</span>
+                                    <span>{d.title}{d.key === 'illness_reporting' ? ` — ${tx('FDA Form 1-B', 'Formulario 1-B de la FDA')}` : ''}
+                                        <span className={`ml-1.5 text-[10px] font-bold uppercase ${on ? 'text-dd-green-700' : 'text-dd-text-2'}`}>
+                                            {on ? tx('Required', 'Requerido') : tx('Optional', 'Opcional')}
+                                        </span>
+                                    </span>
                                 </label>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
 

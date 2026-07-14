@@ -6,12 +6,14 @@
 // integer cents (src/data/moneyCount.js) so a drawer of pennies never drifts.
 
 import { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
-import { Coins, Banknote, History, Save, Eraser, ChevronDown, Wallet, HandCoins, CalendarRange } from 'lucide-react';
+import { Coins, Banknote, History, Save, Eraser, ChevronDown, Wallet, HandCoins, CalendarRange, Trash2, StickyNote } from 'lucide-react';
 import { toast } from '../toast';
 import {
     COIN_DENOMS, BILL_DENOMS, totalCents, fmtMoney, saveMoneyCount, subscribeMoneyCounts, subscribeTodayCounts,
     centralDate, dollarsToCents, saveCashTips, getCashTipsRange, editCashTips, missingTipDays,
+    deleteMoneyCount, setMoneyCountNote,
 } from '../data/moneyCount';
+import { recordAudit } from '../data/audit';
 import { LOCATION_LABELS } from '../data/staff';
 
 function fmtWhen(ms, isEn) {
@@ -81,7 +83,28 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const isEn = language !== 'es';
     const tx = (en, es) => (isEn ? en : es);
     const [view, setView] = useState('count');     // 'count' | 'history'
-    const [counts, setCounts] = useState({});       // { [cents]: 'string' }
+    // Live draft persistence (Andrew 2026-07-14: "keep the count live so
+    // if they leave it stays there"). The in-progress count is mirrored to
+    // localStorage, keyed per store, so switching tabs, a relock, or a
+    // reload never loses a half-counted drawer — it rehydrates exactly
+    // where they left off, and clears itself the moment they Save or Clear.
+    const draftKey = (l) => 'ddmau:moneydraft:' + l;
+    const STORE_MEMORY_KEY = 'ddmau:moneydraft:store';
+    const readStoreMemory = () => {
+        try { const s = localStorage.getItem(STORE_MEMORY_KEY); return (s === 'maryland' || s === 'webster') ? s : null; } catch { return null; }
+    };
+    const [counts, setCounts] = useState(() => {       // { [cents]: 'string' }
+        // For a fixed-store manager use their store; for a 'both'/admin
+        // manager restore the store they last counted so an in-progress
+        // Maryland draft isn't hidden behind the Webster default on return.
+        const initLoc = (storeLocation === 'webster' || storeLocation === 'maryland')
+            ? storeLocation : (readStoreMemory() || 'webster');
+        try {
+            const raw = localStorage.getItem(draftKey(initLoc));
+            if (raw) { const d = JSON.parse(raw); if (d && typeof d === 'object') return d; }
+        } catch { /* private mode / bad JSON → fresh */ }
+        return {};
+    });
     const [saving, setSaving] = useState(false);
     const [history, setHistory] = useState(null);   // null = loading
     const [openId, setOpenId] = useState(null);
@@ -110,8 +133,38 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     // PICK — never let 'both' reach a save (it isn't a real store and would be
     // invisible under the webster/maryland filters).
     const fixedStore = (storeLocation === 'webster' || storeLocation === 'maryland') ? storeLocation : null;
-    const [pickedStore, setPickedStore] = useState('webster');
+    // 'both' managers resume the store they last counted (see counts init).
+    const [pickedStore, setPickedStore] = useState(() => readStoreMemory() || 'webster');
     const loc = fixedStore || pickedStore;
+    // Remember the active store so a remount restores the right draft.
+    useEffect(() => { try { localStorage.setItem(STORE_MEMORY_KEY, loc); } catch { /* private mode */ } }, [loc]);
+    // Draft ↔ store binding. Persist every change under the CURRENT store's
+    // key; when a 'both' manager toggles stores, swap in that store's own
+    // saved draft (each store keeps its own in-progress count).
+    const locRef = useRef(loc);
+    useEffect(() => {
+        if (locRef.current === loc) return;   // first mount (lazy-init already loaded) / no change
+        locRef.current = loc;
+        try {
+            const raw = localStorage.getItem(draftKey(loc));
+            setCounts(raw ? (JSON.parse(raw) || {}) : {});
+        } catch { setCounts({}); }
+    }, [loc]);
+    // Write the draft synchronously (see setCount) AND on unmount as a
+    // backstop — never rely on a deferred effect that might not flush before
+    // the screen is torn down. This effect only mirrors current state on the
+    // rare programmatic setCounts (store swap / clearAll).
+    const writeDraft = (obj) => {
+        try {
+            if (obj && Object.keys(obj).length) localStorage.setItem(draftKey(locRef.current), JSON.stringify(obj));
+            else localStorage.removeItem(draftKey(locRef.current));
+        } catch { /* private mode → draft simply won't persist */ }
+    };
+    const countsRef = useRef(counts);
+    useEffect(() => { countsRef.current = counts; writeDraft(counts); }, [counts]);
+    // Persist the latest count when the screen is left (tab switch unmounts
+    // this component) — the direct fix for "click out and the count resets."
+    useEffect(() => () => { writeDraft(countsRef.current); }, []);
     // `today` (Central) in state + a 1-min timer + visibility re-check, so a
     // screen left open on a shared iPad rolls past midnight without waiting for
     // an incidental render (Today panel ↔ History split stays correct).
@@ -155,10 +208,53 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     // Stable identity so memoized DenomRows don't re-render on every keystroke.
     const setCount = useCallback((cents, v) => {
         const clean = String(v).replace(/[^\d]/g, '');   // digits only, allow empty
-        setCounts((c) => ({ ...c, [cents]: clean }));
+        setCounts((c) => {
+            const next = { ...c, [cents]: clean };
+            // Persist THIS keystroke synchronously so leaving the screen the
+            // instant after typing can't lose it (no wait for a passive effect).
+            try {
+                if (Object.keys(next).length) localStorage.setItem(draftKey(locRef.current), JSON.stringify(next));
+                else localStorage.removeItem(draftKey(locRef.current));
+            } catch { /* private mode */ }
+            return next;
+        });
     }, []);
 
     const clearAll = () => { setCounts({}); setOpenId(null); };
+
+    // ── Saved-count row actions (Andrew 2026-07-14): delete a wrong count
+    //    (then re-count) or leave a note on one that's just missing info ──
+    const [noteDrafts, setNoteDrafts] = useState({});   // { [id]: text }
+    const [confirmDelId, setConfirmDelId] = useState(null);
+    const [rowBusy, setRowBusy] = useState(null);       // id being saved/deleted
+    const saveNote = async (h) => {
+        if (rowBusy) return;
+        const text = (noteDrafts[h.id] ?? h.note ?? '').trim();
+        setRowBusy(h.id);
+        try {
+            await setMoneyCountNote({ id: h.id, note: text, by: staffName });
+            toast(text ? tx('Note saved', 'Nota guardada') : tx('Note cleared', 'Nota eliminada'), { kind: 'success' });
+            // Drop the local draft so the input follows the live doc value.
+            setNoteDrafts((m) => { const n = { ...m }; delete n[h.id]; return n; });
+        } catch (e) {
+            console.warn('money count note save failed:', e);
+            toast(tx('Could not save note — try again.', 'No se pudo guardar la nota.'), { kind: 'error' });
+        } finally { if (mountedRef.current) setRowBusy(null); }
+    };
+    const doDelete = async (h) => {
+        if (rowBusy) return;
+        setRowBusy(h.id);
+        try {
+            await deleteMoneyCount(h.id);
+            // Financial record — log who deleted what (recoverable from backups).
+            recordAudit({ action: 'money_count.deleted', actorName: staffName, actorId: myId, targetType: 'money_count', targetId: h.id, details: { totalCents: h.totalCents, date: h.date, location: h.location } });
+            toast(tx('Count deleted', 'Conteo eliminado'), { kind: 'success' });
+            if (openId === h.id) setOpenId(null);
+        } catch (e) {
+            console.warn('money count delete failed:', e);
+            toast(tx('Could not delete — try again.', 'No se pudo eliminar.'), { kind: 'error' });
+        } finally { if (mountedRef.current) { setRowBusy(null); setConfirmDelId(null); } }
+    };
 
     const save = async () => {
         if (saving || !hasEntries) return;
@@ -349,11 +445,13 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                                 className="w-full flex items-center justify-between gap-2 text-sm px-2.5 py-1.5 text-left hover:bg-dd-bg/40 active:scale-[0.998] transition">
                                                 <span className="font-bold text-dd-text tabular-nums">{fmtMoney(h.totalCents)}</span>
                                                 <span className="flex items-center gap-1.5 text-[11px] text-dd-text-2">
+                                                    {h.note ? <StickyNote size={11} className="text-amber-600 shrink-0" /> : null}
                                                     {i === 0 ? `${tx('1st', '1°')} · ` : ''}{fmtWhen(h.createdMs, isEn)}
                                                     <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
                                                 </span>
                                             </button>
                                             {open && (
+                                                <>
                                                 <div className="px-2.5 pb-2 pt-1 border-t border-dd-line/60 grid grid-cols-2 gap-x-4 gap-y-0.5">
                                                     {[...COIN_DENOMS, ...BILL_DENOMS].map((d) => {
                                                         const n = Number(h.counts?.[d.cents]) || 0;
@@ -366,6 +464,45 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                                         );
                                                     })}
                                                 </div>
+                                                {/* Note + delete (Andrew 2026-07-14) */}
+                                                <div className="px-2.5 pb-2.5 pt-1.5 border-t border-dd-line/60 space-y-2">
+                                                    {h.staffName && <p className="text-[10px] text-dd-text-2">{tx('Counted by', 'Contado por')} <b>{h.staffName}</b></p>}
+                                                    <div className="flex items-end gap-1.5">
+                                                        <label className="flex-1 flex flex-col gap-0.5 min-w-0">
+                                                            <span className="text-[10px] font-bold text-dd-text-2 flex items-center gap-1"><StickyNote size={11} /> {tx('Note', 'Nota')}</span>
+                                                            <input value={noteDrafts[h.id] ?? (h.note || '')}
+                                                                onChange={(e) => setNoteDrafts((m) => ({ ...m, [h.id]: e.target.value }))}
+                                                                placeholder={tx('e.g. drawer short $5, waiting on a void', 'ej. faltan $5, esperando un anulado')}
+                                                                maxLength={500}
+                                                                className="px-2.5 py-2 text-base bg-white border border-dd-line rounded-lg text-dd-text focus:border-dd-green focus:ring-1 focus:ring-dd-green/20 outline-none" />
+                                                        </label>
+                                                        <button onClick={() => saveNote(h)}
+                                                            disabled={rowBusy === h.id || (noteDrafts[h.id] ?? (h.note || '')) === (h.note || '')}
+                                                            className="px-3 py-2 rounded-lg text-xs font-bold text-white bg-dd-green disabled:opacity-40 active:scale-95">
+                                                            {tx('Save', 'Guardar')}
+                                                        </button>
+                                                    </div>
+                                                    {h.note && h.noteBy && <p className="text-[10px] text-dd-text-2">📝 {tx('Note by', 'Nota de')} {h.noteBy}</p>}
+                                                    {confirmDelId === h.id ? (
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            <span className="text-[11px] font-bold text-red-600 flex-1 min-w-[8rem]">{tx('Delete this count? It can’t be undone.', '¿Eliminar este conteo? No se puede deshacer.')}</span>
+                                                            <button onClick={() => doDelete(h)} disabled={rowBusy === h.id}
+                                                                className="px-3 py-1.5 rounded-lg text-xs font-black text-white bg-red-600 disabled:opacity-40 active:scale-95">
+                                                                {rowBusy === h.id ? tx('Deleting…', 'Eliminando…') : tx('Yes, delete', 'Sí, eliminar')}
+                                                            </button>
+                                                            <button onClick={() => setConfirmDelId(null)}
+                                                                className="px-3 py-1.5 rounded-lg text-xs font-bold text-dd-text-2 bg-dd-bg border border-dd-line active:scale-95">
+                                                                {tx('Cancel', 'Cancelar')}
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <button onClick={() => setConfirmDelId(h.id)}
+                                                            className="inline-flex items-center gap-1 text-xs font-bold text-red-600 px-2 py-1 -ml-1 rounded-lg hover:bg-red-50 active:scale-95">
+                                                            <Trash2 size={13} /> {tx('Delete count', 'Eliminar conteo')}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                </>
                                             )}
                                         </li>
                                     );

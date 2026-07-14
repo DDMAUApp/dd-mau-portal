@@ -105,13 +105,14 @@
 	     request permissions without honest, specific copy here. Each string
 	     gets shown verbatim in the OS permission prompt. -->
 	<!-- 2026-06-02 — Stripped the "capture your ID during onboarding" clause.
-	     There is no camera-capture code path in any Onboarding* component —
-	     OnboardingPortal/OnboardingApply only do file uploads. Camera capture
-	     is only used in chat (ChatThread, ChatPhotoIssueModal), Maintenance
-	     (MaintenanceRequest), supply needs (NeedsBoard), and Operations
-	     checklists. Apple reviewers reject mismatched copy under 5.1.1(i). -->
+	     Camera capture is used in chat (ChatThread, ChatPhotoIssueModal),
+	     Maintenance (MaintenanceRequest), supply needs (NeedsBoard), Operations
+	     checklists, and — since 2026-07-12 — the Health Department module
+	     (vaccine-card / health-document photos via input capture in
+	     HealthDepartment/HealthBulkEditor). Copy below must list every real
+	     path; Apple rejects mismatched copy under 5.1.1(i). -->
 	<key>NSCameraUsageDescription</key>
-	<string>DD Mau uses the camera so you can attach photos to chat, maintenance tickets, and supply-needs reports.</string>
+	<string>DD Mau uses the camera so you can attach photos to chat, maintenance tickets, supply-needs reports, and your own health records (like a vaccine card).</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>DD Mau uses the microphone to record voice notes in chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

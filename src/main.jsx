@@ -6,6 +6,55 @@ import './index.css';
 import './firebase.js';
 import { setupPWA } from './pwa.js';
 
+// ─── Firestore IndexedDB crash self-heal (2026-07-14) ─────────────────
+// "FIRESTORE (11.x) INTERNAL ASSERTION FAILED … Attempt to get a record
+// from database without an in-progress transaction" is a WKWebView
+// IndexedDB reliability bug. It is FATAL: once it fires, Firestore's async
+// queue is dead and every read/write afterward fails, so the app looks
+// frozen. There is no in-SDK recovery — only a reload re-inits Firestore.
+// So we detect it globally and self-heal. First occurrence → reload once.
+// If it recurs immediately, the on-disk cache is wedged → delete Firestore's
+// IndexedDB, then reload clean. sessionStorage-guarded (max ~3 heals/session)
+// so a truly unrecoverable device can't reload-loop forever. Installed here,
+// at module eval, so it's armed before the first Firestore call. Pattern is
+// specific to Firestore's fatal assertion — normal errors never match.
+const FS_ASSERT = /INTERNAL ASSERTION FAILED|without an in-progress transaction/i;
+let _fsHealing = false;
+async function healFirestoreCrash() {
+    const KEY = 'ddmau:fsHeal';
+    let s = {};
+    try { s = JSON.parse(sessionStorage.getItem(KEY) || '{}'); } catch { /* noop */ }
+    const now = Date.now();
+    const n = (s.at && now - s.at < 90_000) ? (s.n || 0) + 1 : 1;
+    try { sessionStorage.setItem(KEY, JSON.stringify({ at: now, n })); } catch { /* noop */ }
+    if (n > 3) return;                       // give up looping — let it surface
+    if (n >= 2) {                            // reload didn't help → nuke the cache
+        try {
+            const dbs = (indexedDB.databases ? await indexedDB.databases() : []) || [];
+            let names = dbs.map((d) => d && d.name).filter(Boolean);
+            if (!names.length) names = ['firestore/[DEFAULT]/dd-mau-staff-app/main'];
+            await Promise.all(names.filter((nm) => /firestore/i.test(nm)).map((nm) => new Promise((res) => {
+                try { const r = indexedDB.deleteDatabase(nm); r.onsuccess = r.onerror = r.onblocked = () => res(); }
+                catch { res(); }
+            })));
+        } catch { /* best-effort */ }
+    }
+    try { hideSplash(); } catch { /* noop */ }
+    try { window.location.reload(); } catch { /* noop */ }
+}
+function maybeHealFirestore(msg) {
+    if (_fsHealing || !FS_ASSERT.test(String(msg || ''))) return;
+    _fsHealing = true;
+    healFirestoreCrash();
+}
+if (typeof window !== 'undefined') {
+    window.addEventListener('error', (e) => maybeHealFirestore(e?.message || e?.error?.message), true);
+    window.addEventListener('unhandledrejection', (e) => {
+        const r = e?.reason;
+        maybeHealFirestore(r instanceof Error ? r.message : String(r || ''));
+    }, true);
+}
+
 // ─── Top-level ErrorBoundary — never let the screen go white ─────────
 // 2026-06-02 — Andrew "im stuck on the white screen again". App.jsx
 // already has an inner ErrorBoundary keyed on activeTab, but that

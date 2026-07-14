@@ -410,6 +410,42 @@ export async function applyNativeOtaWhenReady(targetVersion, { timeoutMs = 5 * 6
     return false;
 }
 
+// 2026-07-13 — one-shot OTA check for ALWAYS-ON devices (kiosk / shared
+// iPads). Root cause of the "fleet frozen on June bundles" incident: the
+// store tablets never cold-restart and never background, so the native
+// autoUpdate check never re-ran — and their old bundles predate the
+// forceRefresh broadcast listener, so no deploy could ever reach them.
+// Capgo's device log confirmed it: every frozen device simply stopped
+// pinging /updates while running the app 24/7. This helper asks Capgo
+// ONCE for the latest bundle and applies it (respecting active typing);
+// App.jsx calls it on a slow interval so an always-on device can never
+// silently freeze again, even if a broadcast is missed.
+export async function checkNativeOtaOnce() {
+    try {
+        if (!window?.Capacitor?.isNativePlatform?.()) return false;
+    } catch { return false; }
+    try {
+        const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
+        const cur = (await CapacitorUpdater.current().catch(() => null))?.bundle?.version || '';
+        const latest = await CapacitorUpdater.getLatest().catch(() => null);
+        if (!latest?.url || !latest.version || latest.version === cur) return false;
+        const bundle = await CapacitorUpdater.download({ url: latest.url, version: latest.version });
+        // Never yank the WebView out from under active input.
+        const cap = Date.now() + 60_000;
+        while (Date.now() < cap) {
+            const el = document.activeElement;
+            const busy = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+            if (!busy) break;
+            await new Promise(r => setTimeout(r, 3000));
+        }
+        await CapacitorUpdater.set(bundle); // applies + reloads the WebView
+        return true;
+    } catch (e) {
+        console.warn('[cap] periodic OTA check failed:', e?.message);
+        return false;
+    }
+}
+
 export async function applyNativeOtaRefresh() {
     try {
         if (!window?.Capacitor?.isNativePlatform?.()) return false;

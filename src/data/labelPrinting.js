@@ -1937,7 +1937,10 @@ export async function printFreeText({
                 transport, // 'bridge' | 'pdf_share_sheet (...)' | 'epson_epos'
             },
         });
-        if (!res.ok) return { ok: false, error: 'printer_rejected' };
+        // Preserve a transport-timeout code so PrintCenter shows the friendly
+        // "printer did not respond — powered on + same Wi-Fi?" guidance rather
+        // than collapsing every failure to a generic "printer rejected".
+        if (!res.ok) return { ok: false, error: res.error === 'printer timeout' ? 'printer timeout' : 'printer_rejected' };
         return { ok: true };
     } catch (e) {
         console.warn('printFreeText failed:', e);
@@ -2287,7 +2290,10 @@ export async function printPrepLabel({
             },
         });
         if (!res.ok) {
-            return { ok: false, error: 'printer_rejected' };
+            // Keep a transport-timeout distinct from a genuine printer reject so
+            // the modal shows "printer did not respond — powered on + Wi-Fi?"
+            // (asleep / off / drifted IP) instead of "check paper/cover".
+            return { ok: false, error: res.error === 'printer timeout' ? 'printer timeout' : 'printer_rejected' };
         }
         return { ok: true };
     } catch (e) {

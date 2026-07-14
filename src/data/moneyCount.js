@@ -7,7 +7,7 @@
 // and when. The catch-all Firestore rule already covers the new collection —
 // no rules/index deploy (history uses a single-field orderBy, no composite).
 
-import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, setDoc, doc, where, getDocs, getDoc, arrayUnion } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, setDoc, doc, where, getDocs, getDoc, arrayUnion, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 // The ONLY real stores. Cash is NEVER merged across locations: every count /
@@ -142,6 +142,28 @@ export function subscribeTodayCounts(date, cb) {
 // another store. Nothing here (or in any Cloud Function) deletes these docs —
 // the day-by-day history is permanent. ──
 const TIPS_COLL = 'cash_tips';
+
+// Delete a saved drawer count (Andrew 2026-07-14: "counted wrong and saved
+// it — just delete and save a new one"). Hard delete; the nightly Firestore
+// + NAS backups retain a copy and the UI writes an audit-trail entry, so a
+// mistaken delete is recoverable and attributable.
+export async function deleteMoneyCount(id) {
+    if (!id) throw new Error('deleteMoneyCount: id required');
+    await deleteDoc(doc(db, COLL, id));
+}
+
+// Attach / edit a free-text note on a saved count (e.g. "drawer short $5,
+// waiting on a void"). Merge-write touches ONLY the note fields — the
+// counts + total are never altered by adding a note.
+export async function setMoneyCountNote({ id, note, by }) {
+    if (!id) throw new Error('setMoneyCountNote: id required');
+    await setDoc(doc(db, COLL, id), {
+        note: String(note || '').slice(0, 500),
+        noteBy: by || 'Unknown',
+        noteAt: serverTimestamp(),
+        noteMs: Date.now(),
+    }, { merge: true });
+}
 
 export async function saveCashTips({ date, amountCents, staffName, staffId, location }) {
     const loc = normalizeLocation(location);   // throws on a phantom/missing store — never merges locations

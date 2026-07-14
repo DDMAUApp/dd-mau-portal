@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, persistentSingleTabManager } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
 
@@ -83,10 +83,25 @@ const app = initializeApp(firebaseConfig);
 // (private mode, locked-down WebView). A persistence failure degrades reads to
 // the network — it never blocks login. experimentalAutoDetectLongPolling (the
 // 2026-06-05 Android-login fix above) is preserved alongside it.
+// 2026-07-14 — recurring "FIRESTORE INTERNAL ASSERTION FAILED … Attempt to
+// get a record from database without an in-progress transaction" crash on the
+// native iPad app (survived the Firebase 11 upgrade). Root cause: the
+// persistentMultipleTabManager coordinates IndexedDB across tabs via a
+// leader-election + shared-worker channel — a documented source of this exact
+// assertion in WebViews. But the NATIVE Capacitor app is a SINGLE WebView; it
+// never has a second tab, so that cross-tab machinery is pure crash risk here.
+// Use the single-tab manager on native (forceOwnership: this WebView owns the
+// cache outright); keep the multi-tab manager on WEB, where a home-screen PWA
+// and a browser tab can genuinely be open at once. Offline persistence is
+// preserved on both. (A hard crash still self-heals — see main.jsx.)
 let _localCache;
 try {
     if (typeof indexedDB !== 'undefined' && indexedDB) {
-        _localCache = persistentLocalCache({ tabManager: persistentMultipleTabManager() });
+        const _isNative = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+        const _tabManager = _isNative
+            ? persistentSingleTabManager({ forceOwnership: true })
+            : persistentMultipleTabManager();
+        _localCache = persistentLocalCache({ tabManager: _tabManager });
     }
 } catch (e) {
     console.warn('[firestore] persistent cache unavailable — using memory cache:', e?.message);
