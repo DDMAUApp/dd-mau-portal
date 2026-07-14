@@ -232,13 +232,22 @@ describe('parseMentions', () => {
         const { mentions } = parseMentions('cc @"Andrew Jones" please', list);
         expect(mentions).toEqual(['Andrew Jones']);
     });
-    it('prefers full-name match over first-name when ambiguous', () => {
-        // "Andrew" could be Andrew Shih OR Andrew Jones — first-name match
-        // picks the first one found. The test pins that behavior so a
-        // future refactor doesn't silently change who gets notified.
+    it('notifies EVERY match when a bare first name is ambiguous', () => {
+        // "Andrew" could be Andrew Shih OR Andrew Jones. Correctness fix
+        // (2026-07-14): rather than silently pick whoever is first in the
+        // array (leaving the intended Andrew un-notified), notify BOTH — the
+        // right person always gets pinged. Use @"First Last" to target one.
         const { mentions } = parseMentions('hey @andrew', list);
-        expect(mentions.length).toBe(1);
-        expect(['Andrew Shih', 'Andrew Jones']).toContain(mentions[0]);
+        expect(mentions.length).toBe(2);
+        expect(mentions).toContain('Andrew Shih');
+        expect(mentions).toContain('Andrew Jones');
+    });
+    it('still prefers an EXACT full-name match over first-name spread', () => {
+        // If someone is literally named one word matching the token, only
+        // they are mentioned (no first-name fan-out).
+        const oneWord = [...list, { id: 100, name: 'Cash' }];
+        const { mentions } = parseMentions('hey @cash', oneWord);
+        expect(mentions).toEqual(['Cash']);
     });
     it('ignores unknown names', () => {
         const { mentions } = parseMentions('@ghost where are you', list);

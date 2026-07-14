@@ -418,10 +418,17 @@ export default function ChatCenter({
         let cancelled = false;
         (async () => {
             try {
+                // Bounded read + chunked writes (correctness/leak audit,
+                // 2026-07-14). A staffer returning after a long absence could
+                // have >500 unread chat notifications; a single writeBatch caps
+                // at 500 ops and THREW, so NONE were marked read (caught
+                // silently → the unread badge never cleared). Cap the read and
+                // commit in ≤450-op chunks.
                 const q = query(
                     collection(db, 'notifications'),
                     where('forStaff', '==', staffName),
                     where('read', '==', false),
+                    limit(1500),
                 );
                 const snap = await getDocs(q);
                 if (cancelled) return;
@@ -431,9 +438,13 @@ export default function ChatCenter({
                     if (t === 'chat_message' || t === 'chat_mention' || t === 'chat_reply') chatDocs.push(d.id);
                 });
                 if (chatDocs.length === 0) return;
-                const batch = writeBatch(db);
-                chatDocs.forEach(id => batch.update(doc(db, 'notifications', id), { read: true }));
-                await batch.commit();
+                for (let i = 0; i < chatDocs.length; i += 450) {
+                    if (cancelled) return;
+                    const batch = writeBatch(db);
+                    chatDocs.slice(i, i + 450).forEach(id => batch.update(doc(db, 'notifications', id), { read: true }));
+                    // eslint-disable-next-line no-await-in-loop
+                    await batch.commit();
+                }
             } catch (e) {
                 console.warn('mark-chat-read failed:', e);
             }

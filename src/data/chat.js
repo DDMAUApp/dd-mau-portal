@@ -223,11 +223,19 @@ export function parseMentions(text, staffList) {
     const bare = text.matchAll(/@(\p{L}[\p{L}'\-]*)/gu);
     for (const m of bare) {
         const lower = m[1].toLowerCase();
-        // Match by first name, then full name. Pick the most specific.
-        const firstNameMatch = names.find(n => n.split(' ')[0].toLowerCase() === lower);
+        // Prefer an exact full-name match (e.g. someone literally named one
+        // word). Otherwise match by FIRST name — and if that first name is
+        // shared by several people (common on a ~50-person bilingual roster:
+        // two Marias, two Joses), notify ALL of them rather than silently
+        // picking whoever happened to be first in the array and leaving the
+        // intended person un-notified (correctness audit P2, 2026-07-14).
+        // Over-notifying is the safe failure mode; the right person always
+        // gets pinged. Use @"First Last" to target one specific person.
         const fullMatch = names.find(n => n.toLowerCase() === lower);
-        const target = fullMatch || firstNameMatch;
-        if (target) found.add(target);
+        if (fullMatch) { found.add(fullMatch); continue; }
+        for (const n of names) {
+            if (n.split(' ')[0].toLowerCase() === lower) found.add(n);
+        }
     }
     return { mentions: Array.from(found) };
 }

@@ -367,7 +367,13 @@ function ChatThreadInner({
                 .catch(e => console.warn('markRead failed:', e));
         }, 1500);
         return () => clearTimeout(t);
-    }, [chat?.id, staffName, messages.length]);
+        // CORRECTNESS FIX (audit P2, 2026-07-14): key on the NEWEST message's
+        // identity, not messages.length. Messages are capped at `limit` (50), so
+        // once a busy channel hits the cap, length stays 50 as new messages
+        // stream in — the old dep never changed, so the read-marker stopped
+        // updating and the viewer kept showing an unread dot (and never appeared
+        // in others' "seen by") while staring right at the thread.
+    }, [chat?.id, staffName, messages[messages.length - 1]?.id]);
 
     // ── Auto-scroll-to-bottom on new messages ──────────────────────
     // Skip auto-scroll if the user has scrolled up >100px from bottom —
@@ -609,9 +615,16 @@ function ChatThreadInner({
     const [myAcks, setMyAcks] = useState(new Set());
     useEffect(() => {
         if (!chat?.id || !staffName) return;
+        // Bounded (correctness/leak audit, 2026-07-14): one ack doc is created
+        // per message this user acknowledges, so on a busy channel this set
+        // grows with volume and streamed unbounded into memory for the whole
+        // time the thread was open. The visible messages are capped at 50, so we
+        // never need more than a couple hundred acks to flip the "✓ Read" state
+        // on what's on screen. Newest-first + cap keeps it small on iPad.
         const q = query(
             collection(db, 'chats', chat.id, 'acks'),
-            where('userName', '==', staffName)
+            where('userName', '==', staffName),
+            limit(200)
         );
         let alive = true;
         const unsub = onSnapshot(q, (snap) => {

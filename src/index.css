@@ -1417,7 +1417,10 @@ button, a, [role="button"], input, select, textarea, label {
  */
 body.capacitor-native {
     overscroll-behavior-y: none;
-    -webkit-overflow-scrolling: auto;
+    /* `-webkit-overflow-scrolling: auto` removed 2026-07-14 (native audit): the
+       body isn't the scroll container (scroll is delegated to #root), and `auto`
+       can only ever DISABLE momentum where honored — it never helps. Rely on the
+       WKWebView default (momentum on). */
 }
 
 /* 2026-06-01 round 4 — Lock body + delegate scroll to #root.
@@ -1707,6 +1710,21 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
 .ddmau-msg-cv {
     content-visibility: auto;
     contain-intrinsic-size: auto 64px;
+}
+
+/* 2026-07-14 — inventory scroll perf (iPad). The inventory list is up to 252
+   rows, all permanently mounted (not virtualized), each with an <input> + 3
+   buttons. On a weak WKWebView CPU the layout/paint of all 252 rows makes the
+   list janky to scroll and slow to first-paint. Same trick as the chat bubbles:
+   skip layout/paint for off-screen rows and remember each row's height so the
+   scrollbar stays stable. `contain-intrinsic-size: auto 56px` matches a typical
+   row height. Progressive enhancement — engines without content-visibility just
+   render normally. Applied to every inventory row wrapper (location + category
+   views). NOTE: only put this on non-sticky list rows — never on headers or
+   anything with position:sticky. */
+.ddmau-inv-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 56px;
 }
 
 @media (max-width: 767px) {

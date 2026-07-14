@@ -448,7 +448,7 @@ const LocationItemRow = memo(function LocationItemRow({
     id, name, catName, subcat, pack, count, language, onUpdate,
 }) {
     return (
-        <div className={`flex items-center justify-between gap-2 px-3 py-2 ${count > 0 ? 'bg-green-50/50' : ''}`}>
+        <div className={`ddmau-inv-cv flex items-center justify-between gap-2 px-3 py-2 ${count > 0 ? 'bg-green-50/50' : ''}`}>
             <div className="flex-1 min-w-0 pr-2">
                 <p className={`text-sm font-semibold truncate ${count > 0 ? 'text-green-800' : 'text-gray-800'}`}>
                     {name}
@@ -513,6 +513,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const inventoryRef = useRef(inventory);
             const vendorCountsRef = useRef(vendorCounts);
             const manualInvClearRef = useRef(0);
+            // Server-side clear marker. `manualInvClearRef` only knows about a
+            // clear pressed on THIS device — so a Save & Reset / Clear on ANOTHER
+            // iPad produced an empty snapshot that this device's stability guard
+            // ignored, leaving a stale cart until this device itself wrote or
+            // reloaded (correctness audit P1, 2026-07-14). Fix: the clear writes
+            // stamp `clearedAt` on the ops doc; here we remember the last one we
+            // applied. When an incoming empty snapshot carries a NEWER clearedAt
+            // than we've seen, it's a real remote clear → we accept the empty.
+            // A transient/flicker empty snapshot carries the SAME (or no) clearedAt
+            // → still ignored, so the anti-flicker guarantee is preserved.
+            const lastAppliedClearedAtRef = useRef(null);
             useEffect(() => { inventoryRef.current = inventory; }, [inventory]);
             useEffect(() => { vendorCountsRef.current = vendorCounts; }, [vendorCounts]);
             // ── Dated delivery cart (2026-06-30) ─────────────────────────────
@@ -2312,10 +2323,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             Object.values(inventoryRef.current || {}).some((v) => Number(v) > 0) ||
                             Object.values(vendorCountsRef.current || {}).some((v) => Number(v) > 0);
                         const recentlyCleared = Date.now() - manualInvClearRef.current < 15000;
-                        if (!incomingHasAny && localHasAny && !recentlyCleared) {
+                        // A real clear on ANOTHER device stamps a new `clearedAt`
+                        // on the doc. If this empty snapshot's clearedAt is newer
+                        // than the last one we applied, it's an authoritative
+                        // remote clear → accept it. A transient/flicker empty
+                        // snapshot carries the same-or-missing clearedAt → still
+                        // ignored below. (correctness audit P1, 2026-07-14.)
+                        const incomingClearedAt = data.clearedAt || null;
+                        const remoteClearAdvanced = !!incomingClearedAt && incomingClearedAt !== lastAppliedClearedAtRef.current;
+                        if (!incomingHasAny && localHasAny && !recentlyCleared && !remoteClearAdvanced) {
                             console.warn('[inventory] ignored an empty/stale snapshot that would have wiped the active cart — keeping current counts.');
                             return;
                         }
+                        // Remember the clear marker we're about to honor so the
+                        // same one never re-triggers.
+                        if (incomingClearedAt) lastAppliedClearedAtRef.current = incomingClearedAt;
                         // Reconcile instead of overwrite: if this snapshot is stale
                         // for an item the user JUST bumped (e.g. a mid-burst server
                         // read that hasn't applied all of our increments yet), hold
@@ -2586,6 +2608,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const ch = checksRef.current;
                 const lists = checklistListsRef.current;
                 const todayKey = getTodayKey();
+                // MEMORY (2026-07-14): every dismissed/notified key embeds the
+                // day (…_<todayKey>), and this ref is never otherwise cleared —
+                // on an always-on iPad left running for days it grows one key per
+                // task per day forever. Prune anything not from today at the top
+                // of each 30s tick. (Deleting while iterating a Set is safe.)
+                if (dismissedAlertsRef.current.size > 0) {
+                    for (const k of dismissedAlertsRef.current) {
+                        if (!k.includes(todayKey)) dismissedAlertsRef.current.delete(k);
+                    }
+                }
                 const alerts = [];
                 ["FOH", "BOH"].forEach(side => {
                     TIME_PERIODS.forEach(p => {
@@ -2642,7 +2674,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         });
                     });
                 });
-                setActiveAlerts(alerts);
+                // PERF (2026-07-14): this fires every 30s. Building a fresh
+                // array and calling setActiveAlerts unconditionally re-rendered
+                // the entire ~10k-line Operations component (and its 252
+                // inventory rows) every 30s even when nothing changed — a manager
+                // just idling on the inventory screen paid a full reconcile twice
+                // a minute. Only update state when the alert set actually changed
+                // (by key + message, so a live countdown still updates).
+                setActiveAlerts(prev => {
+                    if (prev.length === alerts.length &&
+                        prev.every((a, i) => a.key === alerts[i].key && a.message === alerts[i].message)) {
+                        return prev; // unchanged — no re-render
+                    }
+                    return alerts;
+                });
                 // Also try browser notification for new alerts
                 if ("Notification" in window && Notification.permission === "granted") {
                     alerts.forEach(a => {
@@ -2705,11 +2750,32 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const writeChecklistPatch = async ({ checks, customTasks, assignments, lists } = {}) => {
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
+                // Two shapes: `patch` for updateDoc (can carry a dotted field
+                // path), `seed` for the setDoc-merge fallback (nested only — a
+                // literal dotted field name would NOT merge as a path).
                 const patch = { updatedAt: now, date: todayKey, version: CHECKLIST_VERSION };
-                if (checks !== undefined)      patch.checks      = cleanForFirestore(checks);
-                if (customTasks !== undefined) patch.customTasks = cleanForFirestore(customTasks);
-                if (assignments !== undefined) patch.assignments = cleanForFirestore(assignments);
-                if (lists !== undefined)       patch.lists       = cleanForFirestore(lists);
+                const seed  = { updatedAt: now, date: todayKey, version: CHECKLIST_VERSION };
+                if (checks !== undefined)      { patch.checks = cleanForFirestore(checks); seed.checks = patch.checks; }
+                if (assignments !== undefined) { patch.assignments = cleanForFirestore(assignments); seed.assignments = patch.assignments; }
+                if (lists !== undefined)       { patch.lists = cleanForFirestore(lists); seed.lists = patch.lists; }
+                if (customTasks !== undefined) {
+                    // CONCURRENCY FIX (correctness audit P2, 2026-07-14): every
+                    // task add/edit/delete/move/assign modifies ONLY the active
+                    // side's array (customTasks[checklistSide].all). The old code
+                    // wrote the ENTIRE customTasks map (both FOH + BOH) from a
+                    // full-clone RMW, so two managers editing opposite sides in
+                    // the same snapshot window clobbered each other → one side's
+                    // task silently vanished. Write ONLY the touched side via a
+                    // dotted path so the other side is never overwritten.
+                    const sideArr = customTasks?.[checklistSide]?.all;
+                    if (Array.isArray(sideArr)) {
+                        patch[`customTasks.${checklistSide}.all`] = cleanForFirestore(sideArr);
+                        seed.customTasks = cleanForFirestore(customTasks); // full nested for a first-time seed
+                    } else {
+                        patch.customTasks = cleanForFirestore(customTasks);
+                        seed.customTasks = patch.customTasks;
+                    }
+                }
                 // Nothing to write — no-op rather than wasting a round-trip.
                 if (Object.keys(patch).length <= 3) return;
 
@@ -2717,13 +2783,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const histRef = doc(db, "checklistHistory_" + storeLocation, todayKey);
                 try { await updateDoc(liveRef, patch); }
                 catch (e) {
-                    // Doc may not exist yet — seed it with merge.
-                    try { await setDoc(liveRef, patch, { merge: true }); }
+                    // Doc may not exist yet — seed it with merge (nested shape).
+                    try { await setDoc(liveRef, seed, { merge: true }); }
                     catch (e2) { console.error("Error saving checklist (live):", e2); }
                 }
                 try { await updateDoc(histRef, patch); }
                 catch (e) {
-                    try { await setDoc(histRef, patch, { merge: true }); }
+                    try { await setDoc(histRef, seed, { merge: true }); }
                     catch (e2) { console.error("Error saving checklist (history):", e2); }
                 }
             };
@@ -2818,6 +2884,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const toggleTaskAssignee = async (taskIdx, staffMemberName) => {
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 const item = updated[checklistSide][PERIOD_KEY][taskIdx];
+                if (!item) return; // guard: a remote snapshot may have removed this task while the picker was open (correctness audit P3)
                 let current = [];
                 if (item.assignTo) {
                     current = Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo];
@@ -3258,6 +3325,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!editTask.trim()) return;
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 const item = updated[checklistSide][PERIOD_KEY][idx];
+                if (!item) return; // guard: a remote snapshot may have removed this task while the inline editor was open (correctness audit P3)
                 item.task = editTask.trim();
                 if (editCategory && editCategory !== "other") { item.category = editCategory; } else { delete item.category; }
                 if (editRecurrence && editRecurrence !== "daily") { item.recurrence = editRecurrence; } else { delete item.recurrence; }
@@ -3994,7 +4062,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // so a concurrent schema edit (add item, change vendor) on another tablet isn't clobbered.
                     setDeliveryDate(null);
                     try {
-                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), date: new Date().toISOString() });
+                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), clearedAt: new Date().toISOString(), date: new Date().toISOString() });
                     } catch (err) {
                         if (err?.code === "not-found") {
                             await setDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, customInventory, date: new Date().toISOString() });
@@ -4044,7 +4112,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setDeliveryDate(null);
                 try {
                     await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
-                        counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), date: new Date().toISOString(),
+                        counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), clearedAt: new Date().toISOString(), date: new Date().toISOString(),
                     });
                     toast(language === 'es' ? '✓ Conteo limpiado' : '✓ Counts cleared', { kind: 'success' });
                 } catch (e) {
@@ -8105,7 +8173,11 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                 : fromVendor === "US Foods" ? "border-l-4 border-orange-400"
                                                                                 : "";
                                                         return (
-                                                            <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : fromVendorBorder}`}>
+                                                            // ddmau-inv-cv (content-visibility) skips layout/paint for
+                                                            // off-screen rows on iPad — but NOT while this row is being
+                                                            // edited (the expanded editor's height varies, so leave it
+                                                            // fully rendered).
+                                                            <div key={item.id} className={`${isEditing ? "" : "ddmau-inv-cv"} px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : fromVendorBorder}`}>
                                                                 {isEditing ? (
                                                                     <div className="space-y-2">
                                                                         <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
