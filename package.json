@@ -1,7 +1,7 @@
 {
   "name": "dd-mau-portal",
   "private": true,
-  "version": "1.0.271",
+  "version": "1.0.272",
   "type": "module",
   "scripts": {
     "dev": "vite",
