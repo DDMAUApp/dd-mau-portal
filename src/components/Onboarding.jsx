@@ -421,6 +421,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                             hire={selected}
                             isEs={isEs}
                             staffName={staffName}
+                            staffList={staffList}
                             docOverrides={docOverrides}
                             templates={templates}
                             onWriteAudit={writeAudit}
@@ -739,7 +740,7 @@ function ProgressDonut({ counts, size = 64 }) {
 }
 
 // ── HireDetail ────────────────────────────────────────────────────────────
-function HireDetail({ hire, isEs, staffName, docOverrides, templates, onWriteAudit, onArchive, onResend, onEdit, onResetPassword, onMoveToComplete, onMoveBackToActive }) {
+function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templates, onWriteAudit, onArchive, onResend, onEdit, onResetPassword, onMoveToComplete, onMoveBackToActive }) {
     const tx = (en, es) => (isEs ? es : en);
     const docs = docsForHire(hire);
     const counts = hireProgressCounts(hire);
@@ -767,6 +768,27 @@ function HireDetail({ hire, isEs, staffName, docOverrides, templates, onWriteAud
     // finish permissions + set a real PIN on the Staff page. Race-safe:
     // appendStaffRecord transacts against the live roster and bumps rev.
     const [addingStaff, setAddingStaff] = useState(false);
+
+    // Does a staff record for this hire ACTUALLY still exist on the live
+    // roster? (Andrew 2026-07-14 — "moved Yeimy to staff but I don't see
+    // her.") The old UI showed a permanent "✓ On staff" pill the moment
+    // `staffCreatedAt` was stamped, and NEVER re-checked the roster. So if
+    // the staff record later fell off — e.g. a device on a stale bundle
+    // clobbered config/staff — the hire looked "done" with no way to re-add
+    // them. Gate the pill on the REAL roster instead: match by the
+    // appendStaffRecord-stamped `onboardingHireId` first (survives renames),
+    // then by normalized name as a fallback for older records. If it's gone,
+    // the Add-to-Staff button comes back as a recovery path.
+    const onRoster = useMemo(() => {
+        const list = Array.isArray(staffList) ? staffList : [];
+        if (list.some((s) => s?.onboardingHireId && s.onboardingHireId === hire.id)) return true;
+        const norm = (v) => String(v || '')
+            .normalize('NFD').replace(/[̀-ͯ]/g, '')  // fold accents
+            .toLowerCase().replace(/\s+/g, ' ').trim();
+        const hireName = norm(hire.personal?.legalName || hire.name);
+        return !!hireName && list.some((s) => norm(s?.name) === hireName);
+    }, [staffList, hire.id, hire.name, hire.personal?.legalName]);
+
     const addToStaff = async () => {
         if (addingStaff) return;
         setAddingStaff(true);
@@ -967,17 +989,29 @@ function HireDetail({ hire, isEs, staffName, docOverrides, templates, onWriteAud
                         className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-green text-white font-bold hover:bg-dd-green/90 disabled:opacity-60">
                         {exporting ? tx('Building zip…', 'Creando zip…') : tx('📦 Export zip', '📦 Exportar zip')}
                     </button>
-                    {hire.staffCreatedAt ? (
+                    {/* Only claim "On staff" when the roster ACTUALLY still has
+                        them (onRoster) — not merely because staffCreatedAt was
+                        once stamped. If they were added before but have since
+                        fallen off the roster, offer a "Re-add to staff" recovery
+                        button instead of a dead "✓ On staff" pill. */}
+                    {onRoster ? (
                         <span className="text-[11px] px-2.5 py-1.5 rounded-lg bg-green-100 text-green-800 font-bold"
-                            title={tx('A staff record was created for this hire', 'Ya se creó su registro de personal')}>
+                            title={tx('This hire is on the Staff list', 'Este empleado está en la lista de Personal')}>
                             ✓ {tx('On staff', 'En personal')}
                         </span>
                     ) : (
                         <button onClick={addToStaff} disabled={addingStaff}
-                            title={tx('Creates their record on the Staff page with a temporary PIN so you can set permissions',
-                                'Crea su registro en Personal con un PIN temporal para asignar permisos')}
-                            className="text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-60">
-                            {addingStaff ? tx('Adding…', 'Agregando…') : tx('👥 Add to Staff', '👥 Agregar a Personal')}
+                            title={hire.staffCreatedAt
+                                ? tx('Their staff record is missing from the roster — tap to re-create it',
+                                    'Su registro de personal no está en la lista — toca para volver a crearlo')
+                                : tx('Creates their record on the Staff page with a temporary PIN so you can set permissions',
+                                    'Crea su registro en Personal con un PIN temporal para asignar permisos')}
+                            className={`text-[11px] px-2.5 py-1.5 rounded-lg text-white font-bold disabled:opacity-60 ${hire.staffCreatedAt ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                            {addingStaff
+                                ? tx('Adding…', 'Agregando…')
+                                : hire.staffCreatedAt
+                                    ? tx('👥 Re-add to Staff', '👥 Volver a agregar')
+                                    : tx('👥 Add to Staff', '👥 Agregar a Personal')}
                         </button>
                     )}
                     {/* Move to Complete — locks the hire's portal. Only
