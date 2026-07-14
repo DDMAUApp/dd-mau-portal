@@ -218,6 +218,13 @@ try { setupPWA(); } catch (e) { console.warn('setupPWA failed:', e?.message); }
 // Capacitor.isNativePlatform() === false at the top, so this adds
 // nothing measurable to the web critical path.
 initCapacitor().catch((e) => console.warn('initCapacitor failed:', e?.message));
+// Register the push-tap listener as EARLY as possible (before React mounts) so a
+// tap that COLD-LAUNCHED the app isn't dropped — the tap's deep-link is stashed
+// and drained once App attaches its navigate handler. No-op on web. See
+// onPushTapNavigate / initEarlyPushTapCapture in messaging.js.
+import('./messaging')
+    .then((m) => m.initEarlyPushTapCapture?.())
+    .catch((e) => console.warn('initEarlyPushTapCapture failed:', e?.message));
 
 // AppToast subscribes to the module-level toast queue. Rendering it
 // here (sibling of <App />) guarantees it shows on every code path —

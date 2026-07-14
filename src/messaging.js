@@ -787,24 +787,76 @@ export async function onForegroundMessage(handler) {
  * FCM service worker's notificationclick (postMessage / ?deepLink=). Returns
  * an unsubscribe function.
  */
+// ── Cold-launch-safe push-tap routing (2026-07-14) ───────────────────────────
+// PROBLEM: tapping a push while the app is FULLY CLOSED cold-launches it, and
+// the native `pushNotificationActionPerformed` event can fire BEFORE React
+// mounts and attaches its handler — so the deep-link was dropped and the app
+// opened to Home instead of the tapped chat/task/shift. (The web cold-open path
+// already handled this via ?deepLink=; native had no equivalent.)
+//
+// FIX: register the native listener ONCE, as early as possible (initEarly-
+// PushTapCapture, called from main.jsx before first paint). It routes the tap
+// to the live handler if App has attached one, else STASHES it; onPushTap-
+// Navigate then drains the stash the moment App attaches. Exactly ONE native
+// listener exists (no double-fire), and taps are de-duped by notification id so
+// a Capacitor event replay can't navigate twice.
+let _pushTapHandler = null;       // App's live navigate handler, or null
+let _pendingTapDeepLink = null;   // a tap captured before the handler attached
+let _earlyTapWired = false;       // native listener registered exactly once
+const _seenTapIds = new Set();    // de-dupe replayed tap events
+
+function _routePushTap(data) {
+    const tab = data?.deepLink || data?.tab || null;
+    if (!tab) return;
+    // De-dupe: a replayed/duplicate tap for the same notification must not
+    // navigate twice. Fall back to the tab string when no id is present.
+    const id = String(data?.notifId || data?.id || data?.['gcm.message_id'] || data?.google?.['message_id'] || `tab:${tab}`);
+    if (_seenTapIds.has(id)) return;
+    _seenTapIds.add(id);
+    if (_seenTapIds.size > 50) { _seenTapIds.clear(); _seenTapIds.add(id); } // cap the set
+    if (typeof _pushTapHandler === 'function') _pushTapHandler(String(tab));
+    else _pendingTapDeepLink = String(tab);
+}
+
+/**
+ * Register the native tap listener ONCE, as early as possible so a cold-launch
+ * tap is captured even before React mounts. Safe to call multiple times (guarded)
+ * and on web (no-op). Call from main.jsx during boot.
+ */
+export async function initEarlyPushTapCapture() {
+    if (_earlyTapWired || !isCapacitorNative()) return;
+    _earlyTapWired = true;
+    try {
+        const plugin = await loadNativePushPlugin();
+        if (!plugin) { _earlyTapWired = false; return; } // allow a later retry
+        await plugin.addListener('pushNotificationActionPerformed', (event) => {
+            try { _routePushTap(event?.notification?.data || {}); }
+            catch (e) { console.warn('[push][native] tap route failed:', e?.message); }
+        });
+    } catch (e) {
+        _earlyTapWired = false; // let onPushTapNavigate retry
+        console.warn('[push][native] early tap capture failed:', e?.message);
+    }
+}
+
+/**
+ * App wires its 'ddmau:navigate' dispatcher here. Sets the live handler and
+ * DRAINS any tap captured before mount. No-op on web (web taps come via the SW
+ * / ?deepLink=). Returns an unsubscribe that detaches the handler.
+ */
 export async function onPushTapNavigate(handler) {
     if (!isCapacitorNative()) return () => {};
-    let plugin;
-    try { plugin = await loadNativePushPlugin(); } catch { return () => {}; }
-    if (!plugin) return () => {};
-    try {
-        const sub = await plugin.addListener('pushNotificationActionPerformed', (event) => {
-            try {
-                const data = event?.notification?.data || {};
-                const tab = data.deepLink || data.tab || null;
-                if (tab && typeof handler === 'function') handler(String(tab));
-            } catch (e) { console.warn('[push][native] tap route failed:', e?.message); }
-        });
-        return () => { try { sub?.remove?.(); } catch {} };
-    } catch (e) {
-        console.warn('[push][native] addListener pushNotificationActionPerformed THREW:', e?.message);
-        return () => {};
+    _pushTapHandler = typeof handler === 'function' ? handler : null;
+    // Ensure the single native listener exists (in case initEarly… hasn't run
+    // yet or failed) — this never adds a second listener (guarded).
+    try { await initEarlyPushTapCapture(); } catch { /* best-effort */ }
+    // Deliver a tap that arrived before we were ready.
+    if (_pendingTapDeepLink && typeof _pushTapHandler === 'function') {
+        const dl = _pendingTapDeepLink;
+        _pendingTapDeepLink = null;
+        try { _pushTapHandler(dl); } catch { /* ignore */ }
     }
+    return () => { if (_pushTapHandler === handler) _pushTapHandler = null; };
 }
 
 /**
