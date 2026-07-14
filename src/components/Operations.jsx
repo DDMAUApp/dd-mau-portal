@@ -7,6 +7,7 @@ import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
 import { reconcileCounts } from '../data/inventoryReconcile';
+import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot } from '../data/inventoryStability';
 import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
 // Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
 // returns the priority-ranked price (manual > receipt > … > legacy scraped).
@@ -2314,24 +2315,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // within 15s of that we DO accept an empty snapshot. Any other
                         // empty snapshot over a non-empty cart is ignored — the cart
                         // stays exactly as the staff left it.
+                        // Stability decision extracted to src/data/inventoryStability.js
+                        // (pure + unit-tested) so this exact "never wipe the active
+                        // list on a glitchy snapshot" behavior can't silently regress.
                         const inCounts = data.counts || {};
                         const inVendor = data.vendorCounts || {};
-                        const incomingHasAny =
-                            Object.values(inCounts).some((v) => Number(v) > 0) ||
-                            Object.values(inVendor).some((v) => Number(v) > 0);
-                        const localHasAny =
-                            Object.values(inventoryRef.current || {}).some((v) => Number(v) > 0) ||
-                            Object.values(vendorCountsRef.current || {}).some((v) => Number(v) > 0);
+                        const incomingHasAny = hasAnyCount(inCounts, inVendor);
+                        const localHasAny = hasAnyCount(inventoryRef.current, vendorCountsRef.current);
                         const recentlyCleared = Date.now() - manualInvClearRef.current < 15000;
-                        // A real clear on ANOTHER device stamps a new `clearedAt`
-                        // on the doc. If this empty snapshot's clearedAt is newer
-                        // than the last one we applied, it's an authoritative
-                        // remote clear → accept it. A transient/flicker empty
-                        // snapshot carries the same-or-missing clearedAt → still
-                        // ignored below. (correctness audit P1, 2026-07-14.)
                         const incomingClearedAt = data.clearedAt || null;
-                        const remoteClearAdvanced = !!incomingClearedAt && incomingClearedAt !== lastAppliedClearedAtRef.current;
-                        if (!incomingHasAny && localHasAny && !recentlyCleared && !remoteClearAdvanced) {
+                        const remoteClearAdvanced = isRemoteClearAdvanced(incomingClearedAt, lastAppliedClearedAtRef.current);
+                        if (shouldIgnoreInventorySnapshot({ incomingHasAny, localHasAny, recentlyCleared, remoteClearAdvanced })) {
                             console.warn('[inventory] ignored an empty/stale snapshot that would have wiped the active cart — keeping current counts.');
                             return;
                         }
