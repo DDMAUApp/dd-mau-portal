@@ -559,96 +559,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
             }, [storeLocation, staffName]);
 
-            // Client BACKUP for the 12am auto-empty (the Cloud Function is primary).
-            // Reads straight from the snapshot `data` (no stale closure) so it always
-            // sees the live counts/customInventory/deliveryDate. On/after the delivery
-            // date, archive the cart to inventoryHistory_{loc}/<date>_delivered (a
-            // DETERMINISTIC id → a client+cron race just overwrites one row), then zero
-            // the counts + clear deliveryDate. Clearing deliveryDate makes any second
-            // tablet skip. Best-effort; never throws into the snapshot handler.
-            const archiveAndClearIfDelivered = useCallback(async (data) => {
-                if (!data || autoEmptyingRef.current) return;
-                const dd = data.deliveryDate || null;
-                if (!shouldAutoEmpty(dd, centralToday())) return;
-                const counts = data.counts || {};
-                const vCounts = data.vendorCounts || {};
-                const hasCounts = Object.values(counts).some((v) => Number(v) > 0);
-                const hasVendor = Object.values(vCounts).some((v) => Number(v) > 0);
-                if (!hasCounts) {
-                    // No master-inventory items to archive. Clear the stale
-                    // deliveryDate — AND zero any vendor-only counts too. Why:
-                    // deliveryItemCount (below) counts vendorCounts, so a
-                    // vendor-only cart (e.g. a pure Sysco order) CAN be dated,
-                    // but if we only clear the date here the vendor counts stay
-                    // stranded and the "⚠ Set delivery date" prompt re-fires
-                    // forever. Vendor-only items aren't written to
-                    // inventoryHistory (same gap as the manual Save path), so
-                    // there's nothing to archive — just wipe + toast so it's
-                    // never silent.
-                    try {
-                        const patch = { deliveryDate: deleteField() };
-                        if (hasVendor) { patch.vendorCounts = {}; patch.date = new Date().toISOString(); }
-                        await updateDoc(doc(db, 'ops', 'inventory_' + storeLocation), patch);
-                        if (hasVendor) {
-                            setVendorCounts({});
-                            toast(language === 'es'
-                                ? '✓ Pedido de entrega archivado — carrito nuevo'
-                                : '✓ Delivery order archived — fresh cart started',
-                                { kind: 'success', duration: 6000 });
-                        }
-                    } catch { /* ignore */ }
-                    return;
-                }
-                autoEmptyingRef.current = true;
-                try {
-                    const histDoc = buildHistoryDoc({
-                        counts,
-                        customInventory: data.customInventory || [],
-                        countMeta: data.countMeta || {},
-                        deliveryDate: dd,
-                        nowIso: new Date().toISOString(),
-                    });
-                    await setDoc(doc(db, 'inventoryHistory_' + storeLocation, deliveredDocId(dd)), histDoc);
-                    pendingCountsRef.current = {};
-                    setInventory({});
-                    setInvCountMeta({});
-                    setVendorCounts({});
-                    setDeliveryDate(null);
-                    await updateDoc(doc(db, 'ops', 'inventory_' + storeLocation), {
-                        counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(),
-                        date: new Date().toISOString(),
-                    });
-                    // Never wipe the cart silently — tell the staffer why it cleared
-                    // (it's safely archived under Recent Orders). Mirrors saveAndReset.
-                    toast(language === 'es'
-                        ? '✓ Pedido de entrega archivado — carrito nuevo'
-                        : '✓ Delivery order archived — fresh cart started',
-                        { kind: 'success', duration: 6000 });
-                    reloadLastEnteredByItem().catch(() => {});
-                } catch (e) {
-                    console.warn('archiveAndClearIfDelivered failed:', e);
-                } finally {
-                    autoEmptyingRef.current = false;
-                }
-            }, [storeLocation]);
+            // ⛔ AUTO-EMPTY REMOVED (2026-07-14, Andrew: "the inventory list they
+            // were just working on disappeared … remove anything that auto clears
+            // it"). This used to archive + ZERO the whole cart the moment
+            // `deliveryDate <= today` — which fired on EVERY Operations open, so a
+            // list dated for today (or one that rolled past its delivery date)
+            // vanished out from under staff who were still building it. The
+            // inventory list must now ONLY ever be cleared by an explicit human
+            // action (Save & Reset, or Clear). This function is kept as a
+            // guaranteed NO-OP so the call site stays valid but can never wipe the
+            // cart again. (The 12am Cloud Function that did the same has also been
+            // disabled — see functions/index.js emptyDeliveredInventoryCarts.)
+            const archiveAndClearIfDelivered = useCallback(async (_data) => {
+                // Intentionally does nothing. Do NOT re-introduce any auto-clear here.
+                return;
+            }, []);
 
             // Distinct counted items across master + vendor-only maps.
             const deliveryItemCount = useMemo(() => (
                 Object.values(inventory).filter((v) => Number(v) > 0).length +
                 Object.values(vendorCounts).filter((v) => Number(v) > 0).length
             ), [inventory, vendorCounts]);
-            // Prompt for a delivery date when a NEW item is added to a cart that has
-            // no date yet (fires on the first item, and again on the next new item if
-            // the staffer dismissed — but never on +/- of an existing item). Also
-            // catches an app-reload with counts-but-no-date (legacy cart) → prompts
-            // once. Resets when the cart empties.
-            useEffect(() => {
-                const prev = lastDeliveryPromptCountRef.current;
-                lastDeliveryPromptCountRef.current = deliveryItemCount;
-                if (deliveryItemCount === 0) return;                 // empty → nothing to ask
-                if (deliveryDate || showDeliveryModal) return;       // already dated / already asking
-                if (deliveryItemCount > prev) setShowDeliveryModal(true);
-            }, [deliveryItemCount, deliveryDate, showDeliveryModal]);
+            // ⛔ FORCED DELIVERY-DATE PROMPT REMOVED (2026-07-14). The auto-open
+            // "What day is this delivery for?" modal existed ONLY to drive the
+            // (now-removed) auto-empty. With auto-empty gone it was pure friction —
+            // staff had to pick a date on every new list for no functional reason.
+            // A delivery date can still be set manually via the ✎ on the cart bar
+            // if anyone wants to label an order; it no longer clears anything.
+            // (lastDeliveryPromptCountRef retained above; harmless.)
             // "Last ordered" per item — computed from inventoryHistory_{loc}.
             // For each item, finds the most recent saved snapshot where the
             // item had a count > 0. That date + qty is the "last time you

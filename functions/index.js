@@ -5899,45 +5899,20 @@ function _deliveryBuildHistoryDoc(counts, customInventory, countMeta, deliveryDa
     return { counts: cleanCounts, items, countMeta: cleanMeta, date: nowIso, listName: deliveryDate ? `Delivery ${deliveryDate}` : "", deliveryDate: deliveryDate || "", ordered: {} };
 }
 
+// ⛔ DISABLED (2026-07-14, Andrew: "the inventory list they were just working on
+// disappeared … remove anything that auto clears it"). This scheduled job used
+// to ZERO each store's inventory cart at 12:05am Central once its deliveryDate
+// arrived. Combined with the client-side backup it meant a cart could be wiped
+// out from under staff. The inventory list must ONLY ever be cleared by an
+// explicit human action (Save & Reset / Clear). The trigger is kept but its
+// body is a NO-OP so a redeploy doesn't require deleting the scheduled function;
+// it now touches NOTHING. Do NOT re-enable auto-empty. The _delivery* helpers
+// above are intentionally left in place (unused) in case a future, opt-in,
+// non-destructive "archive a copy" feature is built — but it must never clear
+// the live cart automatically.
 exports.emptyDeliveredInventoryCarts = onSchedule(
-    { schedule: "5 0 * * *", timeZone: "America/Chicago", region: "us-central1", maxInstances: 3 },
+    { schedule: "5 0 * * *", timeZone: "America/Chicago", region: "us-central1", maxInstances: 1 },
     async () => {
-        const todayStr = _deliveryCentralToday();
-        const report = [];
-        for (const loc of ["webster", "maryland"]) {
-            try {
-                const ref = db.doc(`ops/inventory_${loc}`);
-                const snap = await ref.get();
-                if (!snap.exists) continue;
-                const data = snap.data() || {};
-                const dd = data.deliveryDate || null;
-                if (!_deliveryShouldEmpty(dd, todayStr)) continue;
-                const counts = data.counts || {};
-                const vCounts = data.vendorCounts || {};
-                const hasCounts = Object.values(counts).some((v) => Number(v) > 0);
-                const hasVendor = Object.values(vCounts).some((v) => Number(v) > 0);
-                if (!hasCounts) {
-                    // No master-inventory items to archive. Clear the stale date,
-                    // and zero any vendor-only counts too so a vendor-only cart
-                    // (deliveryItemCount counts vendorCounts client-side) doesn't
-                    // stay stranded + re-prompt forever. Vendor-only items aren't
-                    // written to inventoryHistory (matches the client), so there's
-                    // nothing to archive here.
-                    const patch = { deliveryDate: FieldValue.delete() };
-                    if (hasVendor) patch.vendorCounts = {};
-                    await ref.update(patch);
-                    report.push(`${loc}: date ${dd} past, no master counts → cleared date${hasVendor ? " + vendor counts" : ""}`);
-                    continue;
-                }
-                const histDoc = _deliveryBuildHistoryDoc(counts, data.customInventory || [], data.countMeta || {}, dd, new Date().toISOString());
-                await db.doc(`inventoryHistory_${loc}/${dd}_delivered`).set(histDoc);
-                await ref.update({ counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: FieldValue.delete(), date: new Date().toISOString() });
-                report.push(`${loc}: archived + emptied delivery ${dd} (${Object.keys(histDoc.counts).length} items)`);
-            } catch (e) {
-                logger.error(`emptyDeliveredInventoryCarts ${loc} failed:`, e);
-                try { captureWithContext(e, { fn: "emptyDeliveredInventoryCarts", tags: { location: loc } }); } catch { /* ignore */ }
-            }
-        }
-        logger.info(`emptyDeliveredInventoryCarts: ${report.length ? report.join(" | ") : "nothing due"}`);
+        logger.info("emptyDeliveredInventoryCarts: DISABLED — no inventory cart is auto-emptied (Andrew 2026-07-14).");
     },
 );
