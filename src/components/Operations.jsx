@@ -501,6 +501,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // body + dep array, so a lower declaration hits a temporal-dead-zone crash
             // ("Cannot access 'vendorCounts' before initialization"). Keep it above.
             const [vendorCounts, setVendorCounts] = useState({});
+            // Live mirrors of the two count maps so the Firestore snapshot handler
+            // (a stable closure) can read the CURRENT on-screen cart without a
+            // stale closure. Plus a timestamp of the last EXPLICIT clear (Save &
+            // Reset / Clear). Used by the "don't let an empty snapshot wipe the
+            // cart" stability guard in the inventory listener (2026-07-14, Andrew:
+            // "it keeps deleting the list they make but then it comes back — make
+            // it stable"). A transient empty/stale snapshot (cold cache, a
+            // post-crash IndexedDB heal, a mid-sync cache read) must never blank
+            // out a non-empty cart the staff are building.
+            const inventoryRef = useRef(inventory);
+            const vendorCountsRef = useRef(vendorCounts);
+            const manualInvClearRef = useRef(0);
+            useEffect(() => { inventoryRef.current = inventory; }, [inventory]);
+            useEffect(() => { vendorCountsRef.current = vendorCounts; }, [vendorCounts]);
             // ── Dated delivery cart (2026-06-30) ─────────────────────────────
             // The cart is an order FOR a specific delivery day. When the first
             // item lands in an empty cart we ask which day; the cart persists +
@@ -2261,13 +2275,41 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (!docSnap.metadata.fromCache) invServerSynced = true;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
+                        // ── STABILITY GUARD (2026-07-14, Andrew: "it keeps deleting
+                        // the list they make but then it comes back — make it
+                        // stable") ────────────────────────────────────────────────
+                        // Never let an EMPTY (or all-zero) snapshot blow away a
+                        // non-empty cart that's on screen. A transient empty snapshot
+                        // arrives from several harmless sources — a cold IndexedDB
+                        // cache, the post-Firestore-crash cache heal, a mid-sync
+                        // cache read, or a brief server lag — and painting it wipes
+                        // the whole list for a second until the real server snapshot
+                        // restores it (the exact "disappears then comes back" flicker).
+                        // The ONLY legitimate ways the cart empties are the explicit
+                        // Save & Reset / Clear buttons, which stamp manualInvClearRef;
+                        // within 15s of that we DO accept an empty snapshot. Any other
+                        // empty snapshot over a non-empty cart is ignored — the cart
+                        // stays exactly as the staff left it.
+                        const inCounts = data.counts || {};
+                        const inVendor = data.vendorCounts || {};
+                        const incomingHasAny =
+                            Object.values(inCounts).some((v) => Number(v) > 0) ||
+                            Object.values(inVendor).some((v) => Number(v) > 0);
+                        const localHasAny =
+                            Object.values(inventoryRef.current || {}).some((v) => Number(v) > 0) ||
+                            Object.values(vendorCountsRef.current || {}).some((v) => Number(v) > 0);
+                        const recentlyCleared = Date.now() - manualInvClearRef.current < 15000;
+                        if (!incomingHasAny && localHasAny && !recentlyCleared) {
+                            console.warn('[inventory] ignored an empty/stale snapshot that would have wiped the active cart — keeping current counts.');
+                            return;
+                        }
                         // Reconcile instead of overwrite: if this snapshot is stale
                         // for an item the user JUST bumped (e.g. a mid-burst server
                         // read that hasn't applied all of our increments yet), hold
                         // the optimistic value so the count never visibly reverts.
-                        setInventory(reconcileServerCounts(data.counts || {}));
+                        setInventory(reconcileServerCounts(inCounts));
                         setInvCountMeta(data.countMeta || {});
-                        setVendorCounts(data.vendorCounts || {});
+                        setVendorCounts(inVendor);
                         // Dated delivery cart: mirror the delivery date, and if we've
                         // reached/passed its midnight, archive + empty (client backup
                         // for the 12am Cloud Function). archiveAndClearIfDelivered is
@@ -3930,6 +3972,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         cat.items.forEach(item => { resetCounts[item.id] = 0; });
                     });
                     pendingCountsRef.current = {}; // drop in-flight bumps so reconcile can't resurrect a cleared count
+                    manualInvClearRef.current = Date.now(); // explicit clear — allow the resulting empty snapshot through the stability guard
                     setInventory(resetCounts);
                     setInvCountMeta({});
                     setVendorCounts({});
@@ -3981,6 +4024,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     : `Clear all counts (${total} items)? This cannot be undone. Save first if you want a copy.`);
                 if (!ok) return;
                 pendingCountsRef.current = {}; // drop in-flight bumps so reconcile can't resurrect a cleared count
+                manualInvClearRef.current = Date.now(); // explicit clear — allow the resulting empty snapshot through the stability guard
                 setInventory({});
                 setInvCountMeta({});
                 setVendorCounts({});
