@@ -645,6 +645,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // (vendorCounts state moved up beside inventory/invCountMeta to avoid a
             // temporal-dead-zone crash in the delivery-cart useMemo — see note there.)
             const [activeTab, setActiveTab] = useState("checklist");
+            // PERF (2026-07-14, Andrew: "tap the tasks tab, it doesn't load right
+            // away — takes too long"). The Tasks (checklist) tab mounts a heavy
+            // subtree — ~51 tasks each rendered as a large row, PLUS per-assignee
+            // columns for admins — in one synchronous pass, which blocks the tap.
+            // We keep `activeTab` synchronous so the TAPPED tab-bar button
+            // highlights INSTANTLY, but drive the heavy tab BODY off a deferred
+            // copy: React renders the new tab concurrently (interruptibly) instead
+            // of freezing the thread, so the tap is acknowledged immediately and a
+            // "Loading…" hint shows while the list paints. useDeferredValue returns
+            // the initial value on first mount, so the very first render is
+            // unchanged — only tab SWITCHES become non-blocking.
+            const deferredActiveTab = useDeferredValue(activeTab);
+            const tabSwitching = activeTab !== deferredActiveTab;
             // DC-2, 2026-05-30: removed lastUpdated state — set 4× from
             // snapshot handlers but never rendered (the "last updated X"
             // ribbon was removed in an earlier UI cleanup). Setter calls
@@ -6744,9 +6757,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         everyone sees the existing checklist here, the
                         manager kanban stays in the dedicated Assign
                         sub-tab. */}
-                    {activeTab === "checklist" && renderChecklist()}
+                    {tabSwitching && (
+                        <div className="flex items-center justify-center gap-2 py-6 text-dd-text-2 text-sm">
+                            <span className="inline-block w-4 h-4 border-2 border-dd-green/40 border-t-dd-green rounded-full animate-spin" />
+                            {language === 'es' ? 'Cargando…' : 'Loading…'}
+                        </div>
+                    )}
+                    {deferredActiveTab === "checklist" && renderChecklist()}
 
-                    {activeTab === "assign" && (
+                    {deferredActiveTab === "assign" && (
                         <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
                             <AssignTasksPanel
                                 language={language}
@@ -6757,7 +6776,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         </Suspense>
                     )}
 
-                    {activeTab === "wall" && (
+                    {deferredActiveTab === "wall" && (
                         <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
                             <WallTasksAdmin
                                 language={language}
@@ -6769,7 +6788,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         </Suspense>
                     )}
 
-                    {activeTab === "saucelog" && (
+                    {deferredActiveTab === "saucelog" && (
                         <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>
                             <SauceLog
                                 language={language}
@@ -7195,7 +7214,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         );
                     })()}
 
-                    {activeTab === "inventory" && (
+                    {deferredActiveTab === "inventory" && (
                         <div className="space-y-3">
                             {/* ── Low-stock summary ──
                                 Surfaces items where count > 0 AND
@@ -9328,7 +9347,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         </div>
                     )}
 
-                    {activeTab === "breaks" && (
+                    {deferredActiveTab === "breaks" && (
                         <div className="space-y-4">
                             {/* Side toggle — FOH vs. BOH break planning.
                                 Each side has its own stations, plan doc,
@@ -9830,7 +9849,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         </div>
                     )}
 
-                    {activeTab === "prep" && (
+                    {deferredActiveTab === "prep" && (
                         <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>
                             <PrepBoard
                                 language={language}
