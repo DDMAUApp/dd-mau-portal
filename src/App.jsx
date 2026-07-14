@@ -945,6 +945,31 @@ export default function App() {
         return () => { cancelled = true; unsub(); };
     }, []);
 
+    // ── Apply OTA updates only at the LOGIN screen (2026-07-14, Andrew: "make
+    // the updates run once the iPad or phones hit the login screen so if someone
+    // is working on a project it doesn't lose data, and if they log out it
+    // updates the app") ───────────────────────────────────────────────────────
+    // New bundles still DOWNLOAD in the background any time (see the
+    // self-updating-OTA effect below), but the bridge only APPLIES (reloads onto)
+    // them while nobody is logged in. `!staffName` === at the lock/login screen.
+    // Flipping the gate true on logout/relock makes the bridge apply anything it
+    // already downloaded — so a device updates the instant a shift ends, never
+    // mid-task. On web this import resolves to a harmless no-op.
+    useEffect(() => {
+        let isNative = false;
+        try { isNative = window?.Capacitor?.isNativePlatform?.() === true; } catch {}
+        if (!isNative) return;
+        const atLoginScreen = !staffName;
+        let cancelled = false;
+        (async () => {
+            try {
+                const { setOtaApplyAllowed } = await import('./capacitor-bridge');
+                if (!cancelled) setOtaApplyAllowed(atLoginScreen);
+            } catch (e) { console.warn('setOtaApplyAllowed failed:', e?.message); }
+        })();
+        return () => { cancelled = true; };
+    }, [staffName]);
+
     // ── Self-updating OTA (native only) ──────────────────────────────
     // 2026-07-13/14 — devices lagged behind the latest build: Capgo's
     // native autoUpdate only APPLIES a downloaded bundle on a cold start,

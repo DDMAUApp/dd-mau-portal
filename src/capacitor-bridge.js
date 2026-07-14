@@ -82,6 +82,48 @@ const _backHandlers = [];
 // applied (see the updateAvailable listener in initCapacitor).
 let _otaPending = false;
 
+// ── APPLY-AT-LOGIN-SCREEN GATE (2026-07-14, Andrew: "make the updates run once
+// the iPad or phones hit the login screen so if someone is working on a project
+// it doesn't lose data, and if they log out it updates the app") ──────────────
+// Updates DOWNLOAD in the background any time (safe — no reload). But we only
+// APPLY (reload the WebView onto the new bundle) when the app is at the login /
+// lock screen, i.e. nobody is mid-task. App.jsx calls setOtaApplyAllowed(true)
+// whenever staffName is empty (logged out / relocked) and (false) once someone
+// unlocks. A bundle downloaded mid-shift is remembered and applied the instant
+// the device returns to the login screen — so a half-built order/form is never
+// reloaded out from under staff.
+let _otaApplyAllowed = false;      // true only while at the login/lock screen
+let _otaBundlePending = null;      // a downloaded-but-not-yet-applied Capgo bundle
+
+// Apply any queued OTA now — ONLY call when _otaApplyAllowed (login screen).
+async function applyPendingOtaNow() {
+    if (!_otaApplyAllowed) return false;
+    if (!_otaBundlePending && !_otaPending) return false;
+    try {
+        const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
+        if (_otaBundlePending) {
+            const b = _otaBundlePending;
+            _otaBundlePending = null;
+            await CapacitorUpdater.set(b);   // activate the bundle we downloaded + reload
+            return true;
+        }
+        // Capgo's autoUpdate already downloaded one (updateAvailable fired).
+        await CapacitorUpdater.reload();
+        return true;
+    } catch (e) {
+        console.warn('[cap] applyPendingOtaNow failed:', e?.message);
+        return false;
+    }
+}
+
+// App.jsx wires this to the login state: allowed === (no one logged in).
+// Flipping it TRUE (a logout / relock / landing on the lock screen) immediately
+// applies any bundle that finished downloading while staff were working.
+export function setOtaApplyAllowed(allowed) {
+    _otaApplyAllowed = !!allowed;
+    if (_otaApplyAllowed) applyPendingOtaNow();
+}
+
 export function pushBackHandler(fn) {
     if (typeof fn !== 'function') return () => {};
     _backHandlers.push(fn);
@@ -307,14 +349,13 @@ export async function initCapacitor() {
         };
         const updHandle = await CapacitorUpdater.addListener('updateAvailable', () => {
             _otaPending = true;
-            try {
-                toast('✨ New version ready · Nueva versión lista', {
-                    kind: 'info',
-                    duration: 0,                 // sticky until tapped / dismissed
-                    actionLabel: 'Refresh',
-                    onAction: applyOta,
-                });
-            } catch { /* toast is best-effort */ }
+            // 2026-07-14 — apply-at-login model. A new bundle is now downloaded
+            // and waits silently; it applies automatically the moment the device
+            // is at the login screen (see setOtaApplyAllowed). If we happen to
+            // ALREADY be at the login screen when it lands, apply right away. We
+            // no longer pop a sticky "Refresh" toast mid-shift — tapping it could
+            // reload someone out of a half-finished order/form.
+            if (_otaApplyAllowed) applyPendingOtaNow();
         });
         _subscriptions.push(updHandle);
 
@@ -339,7 +380,10 @@ export async function initCapacitor() {
                 } catch {}
                 return false;
             })();
-            if (_otaPending && otaBgAt > 0 && Date.now() - otaBgAt > 30000 && !editing) applyOta();
+            // Only auto-apply on reopen when we're at the login screen — never
+            // reload a working session out from under staff (Andrew 2026-07-14).
+            // If not at the login screen, the pending bundle waits for logout.
+            if (_otaPending && _otaApplyAllowed && otaBgAt > 0 && Date.now() - otaBgAt > 30000 && !editing) applyOta();
             otaBgAt = 0;
         });
         _subscriptions.push(otaStateHandle);
@@ -381,10 +425,10 @@ export async function applyNativeOtaWhenReady(targetVersion, { timeoutMs = 5 * 6
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
             try {
-                // autoUpdate already downloaded it → just swap onto it.
+                // autoUpdate already downloaded it → apply only at the login
+                // screen (else remember it; setOtaApplyAllowed applies it later).
                 if (_otaPending) {
-                    await waitInputIdle();
-                    await CapacitorUpdater.reload();
+                    if (_otaApplyAllowed) { await applyPendingOtaNow(); }
                     return true;
                 }
                 const cur = (await CapacitorUpdater.current().catch(() => null))?.bundle?.version || '';
@@ -393,8 +437,11 @@ export async function applyNativeOtaWhenReady(targetVersion, { timeoutMs = 5 * 6
                 if (latest?.url && latest.version && latest.version !== cur
                     && (!targetVersion || latest.version === targetVersion)) {
                     const bundle = await CapacitorUpdater.download({ url: latest.url, version: latest.version });
-                    await waitInputIdle();
-                    await CapacitorUpdater.set(bundle); // applies + reloads the WebView
+                    // Downloaded in the background. Apply now ONLY if at the login
+                    // screen; otherwise queue it for when staff log out (so a
+                    // deploy broadcast can't reload someone mid-task).
+                    _otaBundlePending = bundle;
+                    if (_otaApplyAllowed) await applyPendingOtaNow();
                     return true;
                 }
             } catch (e) {
@@ -430,16 +477,12 @@ export async function checkNativeOtaOnce() {
         const latest = await CapacitorUpdater.getLatest().catch(() => null);
         if (!latest?.url || !latest.version || latest.version === cur) return false;
         const bundle = await CapacitorUpdater.download({ url: latest.url, version: latest.version });
-        // Never yank the WebView out from under active input.
-        const cap = Date.now() + 60_000;
-        while (Date.now() < cap) {
-            const el = document.activeElement;
-            const busy = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
-            if (!busy) break;
-            await new Promise(r => setTimeout(r, 3000));
-        }
-        await CapacitorUpdater.set(bundle); // applies + reloads the WebView
-        return true;
+        // Downloaded safely in the background. Only APPLY (reload) if we're at
+        // the login screen right now; otherwise remember it and apply the
+        // moment the device returns to the login screen (setOtaApplyAllowed).
+        _otaBundlePending = bundle;
+        if (_otaApplyAllowed) return await applyPendingOtaNow();
+        return true; // downloaded + queued; will apply at the login screen
     } catch (e) {
         console.warn('[cap] periodic OTA check failed:', e?.message);
         return false;
