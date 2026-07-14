@@ -2206,18 +2206,31 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         const todayKey = getTodayKey();
-                        // Auto-update tasks when version changes
+                        // Version bump — bump the version field IN PLACE and
+                        // preserve everything else.
+                        //
+                        // ⚠ DATA-LOSS LANDMINE removed (2026-07-14, Andrew: "all
+                        // the tasks are gone"). The old code, on ANY version
+                        // mismatch, did a full setDoc that overwrote customTasks
+                        // with DEFAULT_CHECKLIST_TASKS — which is EMPTY
+                        // ({FOH:{all:[]},BOH:{all:[]}}) — and also dropped `lists`
+                        // and `assignments`. So the instant the app's
+                        // CHECKLIST_VERSION ever moved ahead of the stored value
+                        // (a new deploy), or the `version` field was momentarily
+                        // absent mid-write, EVERY task the store had built (51 on
+                        // Webster) was deleted store-wide, with zero upside (the
+                        // "defaults" are empty). Never overwrite real task data
+                        // with an empty scaffold. Just bump the version and fall
+                        // through to the normal load below, which reads the
+                        // existing customTasks/lists/assignments from `data`.
                         if (!data.version || data.version < CHECKLIST_VERSION) {
-                            const freshTasks = JSON.parse(JSON.stringify(DEFAULT_CHECKLIST_TASKS));
-                            setCustomTasks(freshTasks);
-                            setChecks({});
-                            setChecklistDate(todayKey);
                             try {
-                                await setDoc(doc(db, "ops", "checklists2_" + storeLocation), {
-                                    checks: {}, customTasks: freshTasks, date: todayKey, updatedAt: new Date().toISOString(), version: CHECKLIST_VERSION
+                                await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), {
+                                    version: CHECKLIST_VERSION, updatedAt: new Date().toISOString(),
                                 });
-                            } catch (err) { console.error("Error updating checklist version:", err); }
-                            return;
+                            } catch (err) { console.error("Error bumping checklist version:", err); }
+                            // Intentionally NO early return — fall through so the
+                            // block below hydrates state from the preserved data.
                         }
                         // Auto-reset: if stored date != today, save previous day's final state then reset
                         if (data.date && data.date !== todayKey) {
