@@ -1550,6 +1550,52 @@ export default function App() {
         if (activeTab === "onboarding" && !hasOnboardingAccess) setActiveTab("home");
     }, [staffName, staffIsAdmin, isManager, canMoney, hasOpsAccess, hasRecipesAccess, hasOnboardingAccess, activeTab]);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
+
+    // ── Printer keep-awake (2026-07-14, Andrew: "build a keep awake during
+    // 10am–8pm") ──────────────────────────────────────────────────────────────
+    // The Brother QL-820NWB (and Epson) auto-sleep; the FIRST sticker after an
+    // idle gap pays a multi-second wake. Measured on the store LAN: awake connect
+    // ≈130–300ms, so keeping the printer awake makes every print instant. During
+    // business hours (10:00–20:00 Central), while this STORE device is
+    // foregrounded, ping the kitchen printer(s) every 90s with the existing
+    // READ-ONLY wake (warmPrintConfigs → IPP Get-Printer-Attributes / HTTP GET —
+    // it never submits a print job). Bounded + cheap. No-op on web (can't reach a
+    // LAN printer), off-hours, backgrounded, or when no single store is selected
+    // (e.g. an admin viewing "both").
+    useEffect(() => {
+        let isNative = false;
+        try { isNative = window?.Capacitor?.isNativePlatform?.() === true; } catch { /* ignore */ }
+        const loc = effectiveLocation;
+        if (!isNative || (loc !== 'webster' && loc !== 'maryland')) return;
+        const inBusinessHours = () => {
+            try {
+                const h = Number(new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/Chicago', hour: '2-digit', hourCycle: 'h23',
+                }).format(new Date()));
+                return h >= 10 && h < 20; // 10:00–19:59 Central
+            } catch { return true; }
+        };
+        let cancelled = false;
+        const ping = async () => {
+            if (cancelled) return;
+            try { if (document.visibilityState !== 'visible') return; } catch { /* ignore */ }
+            if (!inBusinessHours()) return;
+            try {
+                const { warmPrintConfigs } = await import('./data/labelPrinting');
+                warmPrintConfigs(loc); // read-only wake of the kitchen Epson + Brother
+            } catch (e) { console.warn('printer keep-awake failed:', e?.message); }
+        };
+        ping(); // wake right away if we're already in the window
+        const id = setInterval(ping, 90 * 1000);
+        const onVis = () => { try { if (document.visibilityState === 'visible') ping(); } catch { /* ignore */ } };
+        try { document.addEventListener('visibilitychange', onVis); } catch { /* ignore */ }
+        return () => {
+            cancelled = true;
+            clearInterval(id);
+            try { document.removeEventListener('visibilitychange', onVis); } catch { /* ignore */ }
+        };
+    }, [effectiveLocation]);
+
     const handleSelectStaff = (name) => {
         setStaffName(name);
         const staff = staffList.find(s => s.name === name);
