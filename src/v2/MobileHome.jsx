@@ -356,7 +356,7 @@ export default function MobileHome({
                 {sharedMode && (
                     <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-dd-bg border border-dd-line text-dd-text-2">
                         <Monitor size={11} strokeWidth={2.5} aria-hidden="true" />
-                        {tx('Shared iPad · notifications off', 'iPad compartido · sin notificaciones')}
+                        {tx('Shared iPad · notifications off · keeping printer ready', 'iPad compartido · sin notificaciones · manteniendo impresora lista')}
                     </span>
                 )}
             </header>

@@ -1628,16 +1628,70 @@ export default function App() {
         // wake every time. Drop to 25s (matches the in-modal keep-alive) so
         // during business hours the printer genuinely never sleeps while the
         // app is foregrounded. Pings are read-only (IPP attrs / HTTP GET),
-        // tiny, and throttled per-IP — 25s is cheap. NOTE: iOS suspends this
-        // timer when the app is backgrounded/locked, so the definitive fix
-        // is still disabling the printer's own Auto Power-Off in its settings.
-        const id = setInterval(ping, 25 * 1000);
+        // tiny, and throttled per-IP. A designated SHARED iPad is the always-
+        // on LAN device (Andrew: "use that ipad to keep the printer working
+        // so when phones try to print it's fast too") — it's plugged in and
+        // stays put, so it warms a touch harder (15s) and holds a screen wake
+        // lock (below) so it never backgrounds. Every phone/tablet printing
+        // on the same store Wi-Fi lands on the printer the iPad kept awake.
+        const intervalMs = isSharedDeviceModeEnabled() ? 15 * 1000 : 25 * 1000;
+        const id = setInterval(ping, intervalMs);
         const onVis = () => { try { if (document.visibilityState === 'visible') ping(); } catch { /* ignore */ } };
         try { document.addEventListener('visibilitychange', onVis); } catch { /* ignore */ }
         return () => {
             cancelled = true;
             clearInterval(id);
             try { document.removeEventListener('visibilitychange', onVis); } catch { /* ignore */ }
+        };
+    }, [warmLocation]);
+
+    // ── Shared-iPad screen wake lock (2026-07-15) ───────────────────────────
+    // The printer keep-awake above can only ping while the app is foregrounded
+    // — iOS suspends JS timers the moment the iPad locks or the app backgrounds.
+    // On a DESIGNATED shared iPad (the always-on store device) we hold a screen
+    // Wake Lock during business hours so the screen never dims/locks, the app
+    // stays foregrounded, and the keep-awake keeps running all day. That turns
+    // the shared iPad into a reliable printer heartbeat for the whole LAN, so a
+    // phone printing over the same Wi-Fi hits an already-warm printer. Web
+    // standard (navigator.wakeLock) — NO native plugin, so it ships over OTA.
+    // Only on shared iPads (a personal iPhone must be free to sleep normally).
+    useEffect(() => {
+        if (!isSharedDeviceModeEnabled()) return;
+        if (warmLocation !== 'webster' && warmLocation !== 'maryland') return;
+        if (!('wakeLock' in navigator)) return;
+        let sentinel = null;
+        let cancelled = false;
+        const inHours = () => {
+            try {
+                const h = Number(new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/Chicago', hour: '2-digit', hourCycle: 'h23',
+                }).format(new Date()));
+                return h >= 10 && h < 20;
+            } catch { return true; }
+        };
+        const acquire = async () => {
+            if (cancelled) return;
+            try {
+                if (document.visibilityState !== 'visible' || !inHours()) return;
+                if (sentinel) return; // already held
+                sentinel = await navigator.wakeLock.request('screen');
+                sentinel.addEventListener('release', () => { sentinel = null; });
+            } catch { /* denied / off-gesture — harmless, printer keep-awake still runs */ }
+        };
+        const release = async () => {
+            try { if (sentinel) { const s = sentinel; sentinel = null; await s.release(); } } catch { /* ignore */ }
+        };
+        acquire();
+        // iOS releases the lock whenever the page hides — re-acquire on return.
+        const onVis = () => { if (document.visibilityState === 'visible') acquire(); };
+        try { document.addEventListener('visibilitychange', onVis); } catch { /* ignore */ }
+        // Re-check every 5 min so the lock is dropped after 8pm and re-taken at 10am.
+        const tick = setInterval(() => { inHours() ? acquire() : release(); }, 5 * 60 * 1000);
+        return () => {
+            cancelled = true;
+            clearInterval(tick);
+            try { document.removeEventListener('visibilitychange', onVis); } catch { /* ignore */ }
+            release();
         };
     }, [warmLocation]);
 

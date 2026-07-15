@@ -293,7 +293,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                     </p>
                     {sharedMode && (
                         <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-dd-bg border border-dd-line text-dd-text-2">
-                            {tx('Shared iPad · notifications off', 'iPad compartido · sin notificaciones')}
+                            {tx('Shared iPad · notifications off · keeping printer ready', 'iPad compartido · sin notificaciones · manteniendo impresora lista')}
                         </span>
                     )}
                 </div>
