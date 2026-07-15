@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-// DD Mau Location Coordinates
+// DD Mau Location Coordinates. `slug` matches the app's storeLocation
+// values ('maryland' / 'webster') so callers can map a fix straight to the
+// location toggle without a lookup table.
 export const DD_MAU_LOCATIONS = [
-    { name: "Maryland Heights", lat: 38.7138, lng: -90.4391 },
-    { name: "Webster Groves", lat: 38.5917, lng: -90.3389 }
+    { name: "Maryland Heights", slug: "maryland", lat: 38.7138, lng: -90.4391 },
+    { name: "Webster Groves", slug: "webster", lat: 38.5917, lng: -90.3389 }
 ];
 
 const GEOFENCE_RADIUS_FEET = 500;
@@ -25,6 +27,19 @@ export function isWithinGeofence(lat, lng) {
     );
 }
 
+// nearestDDMauLocation — the slug of the store the device is physically at
+// ('maryland' | 'webster'), or null if it's outside both geofences. When
+// (improbably) inside both radii, the closer one wins.
+export function nearestDDMauLocation(lat, lng) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const loc of DD_MAU_LOCATIONS) {
+        const d = getDistanceFeet(lat, lng, loc.lat, loc.lng);
+        if (d <= GEOFENCE_RADIUS_FEET && d < bestDist) { best = loc.slug; bestDist = d; }
+    }
+    return best;
+}
+
 // Geofence hook.
 //
 // Returns:
@@ -44,6 +59,10 @@ export function isWithinGeofence(lat, lng) {
 //                and the UI shows the Settings hint.
 export default function useGeofence() {
     const [isAtDDMau, setIsAtDDMau] = useState(false);
+    // Which store the device is at ('maryland' | 'webster' | null). Lets the
+    // app auto-start a both-locations user at the location they're physically
+    // at instead of a hardcoded default.
+    const [nearestLocation, setNearestLocation] = useState(null);
     const [checking, setChecking] = useState(true);
     const [error, setError] = useState(null);
     const [permState, setPermState] = useState('unknown');
@@ -85,12 +104,14 @@ export default function useGeofence() {
         setError(null);
         // Also fire a one-shot getCurrentPosition so we get a fix faster
         // than waiting for watchPosition's first tick on cold start.
+        const onFix = (pos) => {
+            setIsAtDDMau(isWithinGeofence(pos.coords.latitude, pos.coords.longitude));
+            setNearestLocation(nearestDDMauLocation(pos.coords.latitude, pos.coords.longitude));
+            setChecking(false);
+            setError(null);
+        };
         navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                setIsAtDDMau(isWithinGeofence(pos.coords.latitude, pos.coords.longitude));
-                setChecking(false);
-                setError(null);
-            },
+            onFix,
             (err) => {
                 setError(err.code === 1 ? "denied" : "unavailable");
                 setChecking(false);
@@ -98,11 +119,7 @@ export default function useGeofence() {
             { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
         );
         watchIdRef.current = navigator.geolocation.watchPosition(
-            (pos) => {
-                setIsAtDDMau(isWithinGeofence(pos.coords.latitude, pos.coords.longitude));
-                setChecking(false);
-                setError(null);
-            },
+            onFix,
             (err) => {
                 setError(err.code === 1 ? "denied" : "unavailable");
                 setChecking(false);
@@ -130,5 +147,5 @@ export default function useGeofence() {
         start();
     }, [start]);
 
-    return { isAtDDMau, checking, error, retry, permState };
+    return { isAtDDMau, nearestLocation, checking, error, retry, permState };
 }

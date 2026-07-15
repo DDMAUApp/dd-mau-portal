@@ -1210,7 +1210,7 @@ export default function App() {
         };
     }, [staffName]);
 
-    const { isAtDDMau, checking: geoChecking, error: geoError, retry: geoRetry, permState: geoPermState } = useGeofence();
+    const { isAtDDMau, nearestLocation: geoNearestLocation, checking: geoChecking, error: geoError, retry: geoRetry, permState: geoPermState } = useGeofence();
     const updateAvailable = useVersionCheck();
     // Mobile pull-down-to-refresh — bypasses the cached SW and forces the
     // app to re-download HTML+JS. Without this, PWAs installed on iOS get
@@ -1551,6 +1551,26 @@ export default function App() {
     }, [staffName, staffIsAdmin, isManager, canMoney, hasOpsAccess, hasRecipesAccess, hasOnboardingAccess, activeTab]);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
 
+    // ── Auto-start at the physical location (2026-07-15, Andrew: "whoever has
+    // both locations available … start at the location it's at. the recipe tab
+    // has a geo fence you can use.") ────────────────────────────────────────
+    // For toggle users (admins, who can flip webster/maryland/both), when a
+    // store-level GPS fix lands right after login — and before they've manually
+    // picked a location this session — jump the active location to the store
+    // they're standing in, instead of the hardcoded 'webster' default. Runs
+    // ONCE per login; a manual toggle or being off-site leaves their choice
+    // alone. Bonus: this points the printer keep-awake at the right store
+    // automatically (a device parked on 'both' warms nothing).
+    const geoStartAppliedRef = useRef(false);
+    const manualLocationRef = useRef(false);
+    useEffect(() => {
+        if (!staffName || !staffIsAdmin) return;
+        if (geoStartAppliedRef.current || manualLocationRef.current) return;
+        if (geoNearestLocation !== 'webster' && geoNearestLocation !== 'maryland') return;
+        geoStartAppliedRef.current = true;
+        setActiveLocation(prev => (prev === geoNearestLocation ? prev : geoNearestLocation));
+    }, [staffName, staffIsAdmin, geoNearestLocation]);
+
     // ── Printer keep-awake (2026-07-14, Andrew: "build a keep awake during
     // 10am–8pm") ──────────────────────────────────────────────────────────────
     // The Brother QL-820NWB (and Epson) auto-sleep; the FIRST sticker after an
@@ -1602,6 +1622,11 @@ export default function App() {
         const loc = staff?.location || "webster";
         setStaffLocation(loc);
         setActiveLocation(loc === "both" ? "webster" : loc);
+        // New login → let the geofence auto-start re-apply (and clear any
+        // prior manual-toggle latch). If GPS puts them at a store, the
+        // auto-start effect overrides the default above within a few seconds.
+        geoStartAppliedRef.current = false;
+        manualLocationRef.current = false;
         // Per-staff Home view override: if admin set this person's homeView
         // to a specific tab (e.g. 'schedule', 'recipes'), land them on that
         // tab. Empty / 'auto' / 'home' → default Home behavior. Admins can
@@ -2299,6 +2324,9 @@ export default function App() {
                     // location (no-op when not admin).
                     onLocationChange={() => {
                         if (!staffIsAdmin) return;
+                        // A deliberate toggle wins over the geofence auto-start
+                        // for the rest of this session.
+                        manualLocationRef.current = true;
                         const cycle = ['webster', 'maryland', 'both'];
                         const idx = cycle.indexOf(activeLocation);
                         const next = cycle[(idx + 1) % cycle.length];
