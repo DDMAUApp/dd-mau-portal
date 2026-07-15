@@ -1606,7 +1606,17 @@ export default function App() {
             } catch (e) { console.warn('printer keep-awake failed:', e?.message); }
         };
         ping(); // wake right away if we're already in the window
-        const id = setInterval(ping, 90 * 1000);
+        // 2026-07-15 — Andrew: "printer still takes a while to load." Root
+        // cause: this ran every 90s, but the printers' network sleep is
+        // shorter than that, so they napped BETWEEN pings and were asleep
+        // whenever someone opened a print modal — paying the multi-second
+        // wake every time. Drop to 25s (matches the in-modal keep-alive) so
+        // during business hours the printer genuinely never sleeps while the
+        // app is foregrounded. Pings are read-only (IPP attrs / HTTP GET),
+        // tiny, and throttled per-IP — 25s is cheap. NOTE: iOS suspends this
+        // timer when the app is backgrounded/locked, so the definitive fix
+        // is still disabling the printer's own Auto Power-Off in its settings.
+        const id = setInterval(ping, 25 * 1000);
         const onVis = () => { try { if (document.visibilityState === 'visible') ping(); } catch { /* ignore */ } };
         try { document.addEventListener('visibilitychange', onVis); } catch { /* ignore */ }
         return () => {
