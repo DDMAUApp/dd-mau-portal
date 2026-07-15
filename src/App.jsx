@@ -1582,10 +1582,25 @@ export default function App() {
     // it never submits a print job). Bounded + cheap. No-op on web (can't reach a
     // LAN printer), off-hours, backgrounded, or when no single store is selected
     // (e.g. an admin viewing "both").
+    // Resolve WHICH store's printer to keep warm — and keep it warm even when
+    // logged out or viewing 'both'. 2026-07-15, Andrew: "when i login and
+    // connect the printer (~30s) then logout and relogin i have to wait again."
+    // Cause: the keep-awake used effectiveLocation, which falls back to
+    // staffLocation on the login screen — and if that's 'both' the keep-awake
+    // stopped, so the printer slept in the logged-out gap and the next login
+    // paid the full wake again. Fix: fall back to the geofenced store, then the
+    // last-used store (persisted), so a store device keeps its printer awake
+    // across logout/login regardless of who is (or isn't) signed in.
+    const warmLocation =
+        (effectiveLocation === 'webster' || effectiveLocation === 'maryland') ? effectiveLocation
+        : (geoNearestLocation === 'webster' || geoNearestLocation === 'maryland') ? geoNearestLocation
+        : (activeLocation === 'webster' || activeLocation === 'maryland') ? activeLocation
+        : (staffLocation === 'webster' || staffLocation === 'maryland') ? staffLocation
+        : null;
     useEffect(() => {
         let isNative = false;
         try { isNative = window?.Capacitor?.isNativePlatform?.() === true; } catch { /* ignore */ }
-        const loc = effectiveLocation;
+        const loc = warmLocation;
         if (!isNative || (loc !== 'webster' && loc !== 'maryland')) return;
         const inBusinessHours = () => {
             try {
@@ -1624,7 +1639,7 @@ export default function App() {
             clearInterval(id);
             try { document.removeEventListener('visibilitychange', onVis); } catch { /* ignore */ }
         };
-    }, [effectiveLocation]);
+    }, [warmLocation]);
 
     const handleSelectStaff = (name) => {
         setStaffName(name);
