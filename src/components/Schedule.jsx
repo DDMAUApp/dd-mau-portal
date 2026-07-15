@@ -237,6 +237,31 @@ const addDays = (date, n) => {
     return d;
 };
 
+// blockedDatesInRange — every day in [startStr, endStr] that lands on a
+// no-time-off / closed blackout, as [{date, reason}]. Single source of truth
+// for BOTH the staff self-serve guard (hard stop) AND the manager add-entry
+// form (surfaced as an overridable warning so a manager can make an exception).
+// `blocksByDate` is the component's Map<'YYYY-MM-DD', block[]>. Iterates by
+// addDays() (DST-safe, unlike Date.setDate mutation) and caps at 120 days.
+function blockedDatesInRange(startStr, endStr, blocksByDate) {
+    const out = [];
+    if (!startStr || !endStr || !blocksByDate) return out;
+    const startD = parseLocalDate(startStr);
+    const endD = parseLocalDate(endStr);
+    if (!startD || !endD) return out;
+    const sStr = toDateStr(startD);
+    const eStr = toDateStr(endD);
+    for (let i = 0; i < 120; i++) {
+        const d = addDays(startD, i);
+        const dStr = toDateStr(d);
+        if (dStr > eStr) break;
+        if (dStr < sStr) continue;
+        const hit = (blocksByDate.get(dStr) || []).find(b => b.type === 'no_timeoff' || b.type === 'closed');
+        if (hit) out.push({ date: dStr, reason: hit.reason || 'blocked' });
+    }
+    return out;
+}
+
 // localStorage round-trip helpers for shifts. JSON.stringify turns a
 // Firestore Timestamp into `{seconds, nanoseconds}` which doesn't
 // have .toMillis() — downstream code that calls .toMillis() crashes.
@@ -4045,19 +4070,50 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // ── Time-off (Phase 2: admin-entered) ──
     const handleAddTimeOff = async (entry) => {
         if (!canEdit) return;
+        // A manager CAN add time off on a blackout date — that's the whole
+        // point of "make an exception". Recompute the overlap here (never
+        // trust the modal alone) so the exception is recorded + the staffer
+        // is told it was an override, not a normal approval.
+        const overlap = blockedDatesInRange(entry.startDate, entry.endDate || entry.startDate, blocksByDate);
+        const isException = overlap.length > 0;
         try {
             const ref = await addDoc(collection(db, 'time_off'), {
                 ...entry,
                 status: 'approved', // admin-entered = pre-approved
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
+                // Audit-visible flag when this crossed a blackout. Harmless on
+                // normal entries (absent). Records which dates were overridden.
+                ...(isException ? {
+                    blackoutOverride: true,
+                    blackoutOverrideBy: staffName,
+                    blackoutOverrideDates: overlap.map(o => o.date),
+                } : {}),
             });
             auditPtoChange({
                 entryId: ref.id, staffName: entry.staffName, action: 'created',
                 after: { status: 'approved', startDate: entry.startDate, endDate: entry.endDate || entry.startDate },
-                reason: entry.reason, surface: 'admin-dashboard',
+                reason: isException
+                    ? `${entry.reason || ''}${entry.reason ? ' · ' : ''}⚠️ blackout exception (${overlap.map(o => o.date).join(', ')})`.trim()
+                    : entry.reason,
+                surface: 'admin-dashboard',
             });
+            // Tell the staff member — an exception on a blocked date is
+            // noteworthy; they should know it went through.
+            if (entry.staffName && entry.staffName !== staffName) {
+                const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+                notify(entry.staffName, 'pto_approved',
+                    { en: isException ? '🌴 Time off approved (exception)' : '🌴 Time off approved',
+                      es: isException ? '🌴 Tiempo libre aprobado (excepción)' : '🌴 Tiempo libre aprobado' },
+                    { en: `${staffName} added time off for you on ${range}${isException ? ' — approved as an exception to a blocked date.' : '.'}`,
+                      es: `${staffName} te agregó tiempo libre el ${range}${isException ? ' — aprobado como excepción a una fecha bloqueada.' : '.'}` }
+                ).catch(() => {});
+            }
             setShowTimeOffModal(false);
+            toast(isException
+                ? tx('✅ Saved as an exception to the blocked date.', '✅ Guardado como excepción a la fecha bloqueada.')
+                : tx('✅ Time off saved.', '✅ Tiempo libre guardado.'),
+                { kind: 'success', duration: 2500 });
         } catch (e) {
             console.error('Add time-off failed:', e);
             toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
@@ -4186,33 +4242,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 return;
             }
         }
-        const blockedDates = [];
-        const startD = parseLocalDate(start);
-        const endD = parseLocalDate(end);
-        if (startD && endD) {
-            // Iterate by day-count using addDays() rather than mutating a
-            // Date in-place. d.setDate() across DST transitions can either
-            // skip a day (spring forward) or get stuck (fall back), and the
-            // mutation interacts badly with parseLocalDate's noon anchor.
-            const startStr = toDateStr(startD);
-            const endStr = toDateStr(endD);
-            // Cap at ~120 iterations to defend against absurd ranges /
-            // misformatted inputs causing an unbounded loop.
-            for (let i = 0; i < 120; i++) {
-                const d = addDays(startD, i);
-                const dStr = toDateStr(d);
-                if (dStr > endStr) break;
-                if (dStr < startStr) continue;
-                const dayBlocks = (blocksByDate.get(dStr) || []);
-                if (dayBlocks.some(b => b.type === 'no_timeoff' || b.type === 'closed')) {
-                    blockedDates.push(`${dStr} (${dayBlocks.find(b => b.type === 'no_timeoff' || b.type === 'closed').reason || 'blocked'})`);
-                }
-            }
-        }
-        if (blockedDates.length > 0) {
+        // Staff self-serve is a HARD stop on blackout dates. (Managers get an
+        // overridable warning in TimeOffModal — they can make an exception.)
+        const blocked = blockedDatesInRange(start, end, blocksByDate);
+        if (blocked.length > 0) {
+            const lines = blocked.map(b => `${b.date} (${b.reason})`);
             toast(tx(
-                `🛑 Time-off cannot be requested for these dates:\n${blockedDates.join('\n')}\n\nPlease pick different dates.`,
-                `🛑 No se puede pedir tiempo libre para estas fechas:\n${blockedDates.join('\n')}\n\nPor favor elige otras fechas.`,
+                `🛑 Time-off cannot be requested for these dates:\n${lines.join('\n')}\n\nAsk a manager — they can add it as an exception.`,
+                `🛑 No se puede pedir tiempo libre para estas fechas:\n${lines.join('\n')}\n\nPídele a un gerente — puede agregarlo como excepción.`,
             ));
             return;
         }
@@ -6876,6 +6913,7 @@ ${dayBlocks}
                     staffList={staffList}
                     isEn={isEn}
                     canEdit={canEdit}
+                    blocksByDate={blocksByDate}
                 />
             )}
             {/* Calendar-chip popup — entries derived live from the timeOff
@@ -11089,7 +11127,7 @@ function PtoDetailsModal({ target, entries, isEn, canEdit, onSetStatus, onRemove
 
 // ── TimeOffModal ───────────────────────────────────────────────────────────
 // Phase 2: admin-entered. Phase 3 will add staff self-serve form + manager queue.
-function TimeOffModal({ onClose, onAdd, onRemove, onSetStatus, entries, staffList, isEn, canEdit }) {
+function TimeOffModal({ onClose, onAdd, onRemove, onSetStatus, entries, staffList, isEn, canEdit, blocksByDate }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
     const [form, setForm] = useState({
@@ -11104,6 +11142,10 @@ function TimeOffModal({ onClose, onAdd, onRemove, onSetStatus, entries, staffLis
     const past = sortedEntries.filter(e => (e.endDate || e.startDate) < today);
     const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
     const canSubmit = form.staffName && form.startDate && form.endDate && form.startDate <= form.endDate;
+    // Which of the picked dates land on a blackout? A manager can still add
+    // it (that's the exception), but we SHOW it so it's a deliberate choice —
+    // not a silent override. Staff self-serve hard-blocks these; managers don't.
+    const blockedInRange = blockedDatesInRange(form.startDate, form.endDate, blocksByDate);
     return (
         <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -11141,9 +11183,30 @@ function TimeOffModal({ onClose, onAdd, onRemove, onSetStatus, entries, staffLis
                         <input type="text" value={form.reason} onChange={e => update("reason", e.target.value)}
                             placeholder={tx("Reason (e.g. vacation, sick)", "Razón (ej. vacaciones, enfermo)")}
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                        {/* Blackout overlap — manager may override as an exception.
+                            Shown as an amber warning, NOT a hard stop (staff get
+                            the hard stop; managers make exceptions). */}
+                        {blockedInRange.length > 0 && (
+                            <div className="text-xs rounded-lg p-2.5 border border-amber-300 bg-amber-50 text-amber-900">
+                                <div className="font-bold mb-1">
+                                    ⚠️ {tx("These dates are blocked off:", "Estas fechas están bloqueadas:")}
+                                </div>
+                                <ul className="list-disc list-inside space-y-0.5">
+                                    {blockedInRange.map(b => (
+                                        <li key={b.date}>{b.date} <span className="text-amber-700">· {b.reason}</span></li>
+                                    ))}
+                                </ul>
+                                <div className="mt-1.5 text-[11px] text-amber-800">
+                                    {tx("You can still add it as an exception. The staff member will be notified.",
+                                        "Aún puedes agregarlo como excepción. Se le notificará al empleado.")}
+                                </div>
+                            </div>
+                        )}
                         <button onClick={() => canSubmit && onAdd(form)} disabled={!canSubmit}
-                            className={`w-full py-2 rounded-lg font-bold text-white ${canSubmit ? "bg-amber-600 hover:bg-amber-700" : "bg-gray-300"}`}>
-                            {tx("Approve & Save", "Aprobar y Guardar")}
+                            className={`w-full py-2 rounded-lg font-bold text-white ${!canSubmit ? "bg-gray-300" : blockedInRange.length > 0 ? "bg-orange-600 hover:bg-orange-700" : "bg-amber-600 hover:bg-amber-700"}`}>
+                            {blockedInRange.length > 0
+                                ? tx("⚠️ Approve as exception", "⚠️ Aprobar como excepción")
+                                : tx("Approve & Save", "Aprobar y Guardar")}
                         </button>
                     </div>
                     )}
