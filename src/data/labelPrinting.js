@@ -2006,16 +2006,44 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     let body = '';
     try {
         if (Capacitor.isNativePlatform()) {
-            const native = await CapacitorHttp.post({
-                url,
-                headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '""' },
-                data: eposXml,                 // already a string — sent as-is
-                responseType: 'text',          // ePOS replies with XML, not JSON
-                readTimeout: TIMEOUT,
-                connectTimeout: TIMEOUT,
-            });
-            httpStatus = native?.status || 0;
-            body = typeof native?.data === 'string' ? native.data : String(native?.data ?? '');
+            // Cold-wake AUTO-RETRY (2026-07-15): the TM-L100 sleeps to save
+            // power, and its FIRST connect after idle frequently times out
+            // mid-handshake while the radio + print engine spin up. Instead
+            // of surfacing "request timed out" and making staff re-tap Print,
+            // retry the send ONCE on a timeout — the second attempt lands on
+            // the now-awake printer and prints clean. Mirrors the Brother
+            // direct-IPP path (brotherIpp.js printBrotherDirect). We ONLY
+            // retry a transport timeout: a printer-side rejection (cover open,
+            // media empty, wrong tape) won't self-fix, so it's thrown as-is.
+            let nativeErr = null;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const native = await CapacitorHttp.post({
+                        url,
+                        headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '""' },
+                        data: eposXml,                 // already a string — sent as-is
+                        responseType: 'text',          // ePOS replies with XML, not JSON
+                        readTimeout: TIMEOUT,
+                        connectTimeout: TIMEOUT,
+                    });
+                    httpStatus = native?.status || 0;
+                    body = typeof native?.data === 'string' ? native.data : String(native?.data ?? '');
+                    nativeErr = null;
+                    break;
+                } catch (e) {
+                    nativeErr = e;
+                    const isTimeout = e?.name === 'AbortError'
+                        || /tim(e|ed)\s*out|timeout/i.test(e?.message || '');
+                    if (attempt === 0 && isTimeout) {
+                        // eslint-disable-next-line no-await-in-loop
+                        await new Promise((r) => setTimeout(r, 1200));
+                        continue;                       // one cold-wake retry
+                    }
+                    break;                              // non-timeout, or already retried
+                }
+            }
+            if (nativeErr) throw nativeErr;             // handled by the outer catch
         } else {
             // AbortController so the fetch doesn't hang forever if the
             // printer is off. Belt + suspenders alongside the printer's
