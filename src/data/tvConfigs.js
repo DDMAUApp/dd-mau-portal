@@ -521,6 +521,54 @@ export async function saveTvConfig({ tvId, payload, byName }) {
     });
 }
 
+// Copy an existing TV screen to the OTHER location as a brand-new, INDEPENDENT
+// screen (Andrew 2026-07-14: "if i want this used at both locations make it a
+// copy — sharing might make things complicated"). Clones ALL the content
+// (mode, layout, imageUrls / imageLayers / split, dayparts, promoStrip,
+// showPhotos, spotlight, etc. — images are URLs so nothing is re-uploaded),
+// assigns the target location, a fresh unique tvId, and a label that names the
+// location so the two are easy to tell apart. Because it's a real copy, editing
+// one location's screen later never affects the other.
+//
+// @param source        the full config object (from subscribeTvConfigs)
+// @param targetLocation 'webster' | 'maryland'
+// @param existingIds    array of tvIds already in use (to guarantee uniqueness)
+// @returns { tvId, location, label } of the new copy
+export async function copyTvConfigToLocation({ source, targetLocation, existingIds = [], byName }) {
+    if (!source) throw new Error('source config required');
+    if (targetLocation !== 'webster' && targetLocation !== 'maryland') {
+        throw new Error('targetLocation must be webster or maryland');
+    }
+    // Deep-clone the content, then strip the doc id + all server-managed /
+    // versioning / draft / heartbeat fields (those describe THIS doc, not the
+    // content we're copying).
+    const payload = JSON.parse(JSON.stringify(source));
+    for (const k of [
+        'tvId', 'updatedAt', 'updatedBy', 'publishedVersion', 'publishedAt', 'publishedBy',
+        'createdAt', 'draftSnapshot', 'draftSavedAt', 'draftSavedBy', 'lastSeenAt', 'userAgent', 'version',
+    ]) { delete payload[k]; }
+
+    payload.location = targetLocation;
+    // Label: strip any existing "— Webster/MD Heights" suffix, then append the
+    // target location's label so both copies read clearly.
+    const targetLabel = targetLocation === 'maryland' ? 'MD Heights' : 'Webster';
+    const baseLabel = String(source.label || source.tvId || 'TV')
+        .replace(/\s*[—-]\s*(Webster|MD Heights|Maryland Heights|Maryland)\s*$/i, '')
+        .trim() || 'TV';
+    payload.label = `${baseLabel} — ${targetLabel}`;
+
+    // Unique, URL-friendly id that can't collide with an existing screen.
+    const taken = new Set(existingIds);
+    let id = makeTvId(payload.label, targetLocation);
+    if (taken.has(id)) {
+        let n = 2;
+        while (taken.has(`${id}-${n}`)) n += 1;
+        id = `${id}-${n}`;
+    }
+    await saveTvConfig({ tvId: id, payload, byName });
+    return { tvId: id, location: targetLocation, label: payload.label };
+}
+
 // ── Draft layer ─────────────────────────────────────────────────────────
 // Writes go to the `draftSnapshot` field on the root doc. The published
 // layer stays untouched, so live TVs continue showing the previously-

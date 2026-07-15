@@ -9,7 +9,7 @@ import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { MENU_DATA as LEGACY_MENU_DATA } from '../data/menu';
 import { useMenuConfigLegacy } from '../data/menuConfig';
 import {
-    subscribeTvConfigs, saveTvConfig, saveTvConfigDraft, deleteTvConfig,
+    subscribeTvConfigs, saveTvConfig, saveTvConfigDraft, deleteTvConfig, copyTvConfigToLocation,
     LAYOUTS, MODES, DEFAULT_LAYOUT, DEFAULT_MODE,
     DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
     makeTvId, findDaypartGaps,
@@ -165,6 +165,8 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
                                         cfg={{ ...defaultOverride, label: `${defaultOverride.label || LOC_LABEL[loc]} (default URL)` }}
                                         baseUrl={baseUrl}
                                         onEdit={() => setEditing({ existing: defaultOverride })}
+                                        byName={byName}
+                                        allConfigs={configs}
                                         tx={tx} />
                                 ) : (
                                     <div className="space-y-0.5">
@@ -187,6 +189,8 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
                                         cfg={cfg}
                                         baseUrl={baseUrl}
                                         onEdit={() => setEditing({ existing: cfg })}
+                                        byName={byName}
+                                        allConfigs={configs}
                                         tx={tx} />
                                 ))}
 
@@ -245,7 +249,36 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
     );
 }
 
-function TvConfigRow({ cfg, baseUrl, onEdit, tx }) {
+function TvConfigRow({ cfg, baseUrl, onEdit, tx, byName, allConfigs }) {
+    const [copying, setCopying] = useState(false);
+    // The store this screen ISN'T at yet — the "copy to" target.
+    const otherLoc = cfg.location === 'maryland' ? 'webster' : 'maryland';
+    const otherLabel = LOC_LABEL[otherLoc];
+    const copyToOther = async () => {
+        if (copying) return;
+        if (!confirm(tx(
+            `Copy "${cfg.label || cfg.tvId}" to ${otherLabel} as a new screen? It becomes an independent copy — editing one location won't change the other.`,
+            `¿Copiar "${cfg.label || cfg.tvId}" a ${otherLabel} como pantalla nueva? Será una copia independiente.`,
+        ))) return;
+        setCopying(true);
+        try {
+            const res = await copyTvConfigToLocation({
+                source: cfg,
+                targetLocation: otherLoc,
+                existingIds: (allConfigs || []).map(c => c.tvId),
+                byName,
+            });
+            toast(tx(
+                `✓ Copied to ${otherLabel} as "${res.label}". Point that store's TV at: ?tv=${res.tvId}`,
+                `✓ Copiado a ${otherLabel} como "${res.label}". Apunta la TV de esa tienda a: ?tv=${res.tvId}`,
+            ), { kind: 'success', duration: 12000 });
+        } catch (e) {
+            toast(tx('Copy failed — try again.', 'Error al copiar — intenta de nuevo.'), { kind: 'error' });
+            console.warn('copyTvConfigToLocation failed:', e?.message);
+        } finally {
+            setCopying(false);
+        }
+    };
     const isImageMode = cfg.mode === 'image';
     const isSplitMode = cfg.mode === 'split';
     const pageCount = Array.isArray(cfg.imageUrls) ? cfg.imageUrls.length : 0;
@@ -285,6 +318,11 @@ function TvConfigRow({ cfg, baseUrl, onEdit, tx }) {
                     <button onClick={onEdit}
                         className="px-2.5 py-1 text-[11px] font-bold text-sky-700 hover:bg-sky-100 rounded transition">
                         {tx('Edit', 'Editar')}
+                    </button>
+                    <button onClick={copyToOther} disabled={copying}
+                        title={tx(`Duplicate this screen to ${otherLabel} as an independent copy`, `Duplicar a ${otherLabel}`)}
+                        className="px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 rounded transition disabled:opacity-60">
+                        {copying ? tx('Copying…', 'Copiando…') : tx(`📄 Copy to ${otherLabel}`, `📄 Copiar a ${otherLabel}`)}
                     </button>
                 </div>
             </div>
