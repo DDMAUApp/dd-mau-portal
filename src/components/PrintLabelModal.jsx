@@ -460,9 +460,24 @@ export default function PrintLabelModal({
                         className={`flex-1 py-2.5 rounded-lg font-bold text-white transition ${(!printerReady || printing)
                             ? 'bg-dd-text-2/40 cursor-not-allowed'
                             : 'bg-dd-green hover:bg-dd-green-700 active:scale-95 shadow-sm'}`}>
+                        {/* 2026-07-21 — NotFoundError "Failed to execute 'removeChild'
+                            on 'Node'" crash fix (Date Stickers → this shared print
+                            modal, userRole FOH). Same root cause + fix as the Recipes
+                            print button (PR #4, 2026-06-25): staff routinely run their
+                            phone browser in Google Translate (auto-translate ES/EN).
+                            Translate swaps React's text nodes for its own <font>
+                            wrappers; when this button's children toggled between a BARE
+                            STRING ("Printing…") and a MULTI-NODE FRAGMENT ("🏷 Print 2×
+                            labels") on print-tap, React's reconciler called removeChild
+                            on a text node Translate had already moved → it threw and the
+                            whole tab crashed via the ErrorBoundary. Wrapping BOTH branches
+                            in a single stable <span> means React only ever swaps one
+                            element for another (it never touches the inner text nodes
+                            Translate mutates), so reconciliation can't fail. Keep the
+                            wrappers — do NOT collapse back to a bare string / fragment. */}
                         {printing
-                            ? tx('Printing…', 'Imprimiendo…')
-                            : <>🏷 {tx(`Print ${copies > 1 ? copies + '× ' : ''}label${copies > 1 ? 's' : ''}`, `Imprimir ${copies > 1 ? copies + '× ' : ''}etiqueta${copies > 1 ? 's' : ''}`)}</>}
+                            ? <span>{tx('Printing…', 'Imprimiendo…')}</span>
+                            : <span>🏷 {tx(`Print ${copies > 1 ? copies + '× ' : ''}label${copies > 1 ? 's' : ''}`, `Imprimir ${copies > 1 ? copies + '× ' : ''}etiqueta${copies > 1 ? 's' : ''}`)}</span>}
                     </button>
                 </div>
             </div>
