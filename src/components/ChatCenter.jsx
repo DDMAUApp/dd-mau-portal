@@ -40,6 +40,7 @@ import { isAdminId } from '../data/staff';
 // row and to every Sentry event. See src/data/logger.js for the ring.
 import { breadcrumb } from '../data/logger';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
+import { chatDocEqual } from './chatThreadHelpers';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
@@ -498,10 +499,24 @@ export default function ChatCenter({
     const canAnnounce = canPostAnnouncements(viewer, isAdmin, isManager);
     const canCover = canPostCoverageRequest(viewer);
 
-    const activeChat = useMemo(
-        () => chats.find(c => c.id === activeChatId) || null,
-        [chats, activeChatId]
-    );
+    // 2026-07-21 (chat audit follow-up) — stabilize the open thread's `chat`
+    // prop reference. The chats onSnapshot returns a NEW array on every
+    // fan-out (a typing heartbeat or read-marker in ANY chat), so a plain
+    // `.find()` produced a fresh `activeChat` object each time and forced the
+    // whole open <ChatThread> to reconcile even when its OWN doc was
+    // unchanged. Keep the previous reference when the found chat is
+    // value-equal (Timestamp-aware) so the thread only re-renders when its
+    // own data actually moved. See chatDocEqual in chatThreadHelpers.js.
+    const activeChatStableRef = useRef(null);
+    const activeChat = useMemo(() => {
+        const found = chats.find(c => c.id === activeChatId) || null;
+        const prev = activeChatStableRef.current;
+        if (prev && found && prev.id === found.id && chatDocEqual(prev, found)) {
+            return prev;
+        }
+        activeChatStableRef.current = found;
+        return found;
+    }, [chats, activeChatId]);
 
     // Mobile list-vs-thread switcher: if mobile + a chat is active, hide
     // the list. Desktop shows both panes always.

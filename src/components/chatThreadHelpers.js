@@ -83,3 +83,56 @@ export function groupByDate(messages, isEs) {
     }
     return groups;
 }
+
+// ── chatDocEqual — Timestamp-aware deep equality for a chat document ──
+// 2026-07-21 (chat audit follow-up): ChatCenter derives the open thread's
+// `chat` prop with `chats.find(c => c.id === activeChatId)`. Because the
+// chats onSnapshot hands back a NEW array on every fan-out — including when
+// a DIFFERENT chat gets a typing heartbeat or read-marker — `activeChat`
+// was a fresh object reference each time, forcing the whole open thread to
+// reconcile for no reason (the "sluggish while a thread is open" symptom).
+//
+// This lets the caller keep the SAME reference when the active chat's own
+// document is unchanged, so the thread only re-renders when ITS data moved
+// (new message meta, its own typingByName / lastReadByName, members, …).
+//
+// Firestore Timestamps compare by their millisecond value (two snapshots of
+// the same write produce distinct Timestamp instances that are value-equal),
+// so a naive `===` or JSON compare would spuriously report a change. We
+// duck-type the Timestamp (toMillis()/seconds) without importing Firestore,
+// keeping this file pure + testable.
+function tsMillis(v) {
+    if (!v || typeof v !== 'object') return null;
+    if (typeof v.toMillis === 'function') return v.toMillis();
+    if (typeof v.seconds === 'number') {
+        return v.seconds * 1000 + Math.floor((v.nanoseconds || 0) / 1e6);
+    }
+    return null;
+}
+
+export function chatDocEqual(a, b) {
+    if (a === b) return true;
+    if (a == null || b == null) return a === b;
+    const am = tsMillis(a);
+    const bm = tsMillis(b);
+    if (am !== null || bm !== null) return am === bm; // one is a Timestamp
+    const ta = typeof a;
+    if (ta !== 'object' || typeof b !== 'object') return a === b;
+    const aArr = Array.isArray(a);
+    if (aArr !== Array.isArray(b)) return false;
+    if (aArr) {
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) {
+            if (!chatDocEqual(a[i], b[i])) return false;
+        }
+        return true;
+    }
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) {
+        if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+        if (!chatDocEqual(a[k], b[k])) return false;
+    }
+    return true;
+}
