@@ -95,8 +95,17 @@ export default function ModalPortal({ children, onBackPress }) {
         return pop;
     }, [onBackPress]);
     if (typeof document === 'undefined') return null;   // SSR guard
+    // translate="no" / .notranslate: keep Chrome/Google auto-translate OUT of
+    // modal DOM. On Spanish-locale devices Chrome rewrites text nodes; when
+    // React later unmounts the modal it calls removeChild on a node Chrome
+    // already moved → "NotFoundError: removeChild ... not a child" crash
+    // (2026-07-21, first seen in Date Stickers → PrintLabelModal on an es-US
+    // device; the debug agent span-wrapped that one button in PR #13, this
+    // hardens the class for EVERY modal). The app renders its own EN/ES via the
+    // language toggle, so Chrome translate on a modal is redundant anyway.
+    // Attribute inherits to all descendants; display:contents keeps it layout-neutral.
     return createPortal(
-        <div ref={wrapRef} style={{ display: 'contents' }}>{children}</div>,
+        <div ref={wrapRef} translate="no" className="notranslate" style={{ display: 'contents' }}>{children}</div>,
         document.body,
     );
 }
