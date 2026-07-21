@@ -163,6 +163,21 @@ class ChatThreadErrorBoundary extends Component {
     }
 }
 
+// 2026-07-21 (chat audit) — instant paint-from-cache. Firestore has
+// persistentLocalCache, but the thread used to blank `messages` to [] and show
+// a spinner on EVERY open, throwing away the last-known messages — so users
+// always saw empty → spinner → content even for a chat they'd just viewed.
+// This module-level map keeps the last-rendered message list per chatId so a
+// re-open paints instantly while the onSnapshot revalidates in the background.
+// Bounded to the most-recent ~25 chats to cap memory.
+const _msgCache = new Map(); // chatId -> messages[]
+function _cacheMessages(chatId, list) {
+    if (!chatId) return;
+    _msgCache.delete(chatId);           // re-insert to mark most-recent (LRU)
+    _msgCache.set(chatId, list);
+    if (_msgCache.size > 25) _msgCache.delete(_msgCache.keys().next().value);
+}
+
 function ChatThreadInner({
     chat, language, staffName, staffList, isAdmin, isManager,
     viewer, viewerTier, onBack, onOpenSettings,
@@ -188,7 +203,7 @@ function ChatThreadInner({
     // Most chat sessions don't scroll back further than ~30 messages,
     // so the new default is 50, with a "Load older" button for older
     // scrollback. (AUDIT CHAT-008.)
-    const [messages, setMessages] = useState([]);
+    const [messages, setMessages] = useState(() => _msgCache.get(chat?.id) || []);
     const [messageLimit, setMessageLimit] = useState(50);
     const [hasMore, setHasMore] = useState(true);
     // 2026-05-27 — load/error UX state. Andrew: "about half the time
@@ -212,7 +227,7 @@ function ChatThreadInner({
     //                that bumps subscriptionGen to force a re-sub.
     //   subscriptionGen → manual reset key. Bumped by Retry to force
     //                a fresh subscription without changing chat.id.
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !_msgCache.has(chat?.id));
     const [loadError, setLoadError] = useState(null);
     const [subscriptionGen, setSubscriptionGen] = useState(0);
 
@@ -225,8 +240,12 @@ function ChatThreadInner({
         // chat's first snapshot lands.
         setMessageLimit(50);
         setHasMore(true);
-        setMessages([]);
-        setLoading(true);
+        // Paint this chat's last-known messages instantly from the module cache
+        // (only fall back to the spinner when we have nothing to show). The
+        // onSnapshot below revalidates within ms.
+        const cached = _msgCache.get(chat.id);
+        setMessages(cached || []);
+        setLoading(!cached);
         setLoadError(null);
     }, [chat?.id]);
 
@@ -267,6 +286,7 @@ function ChatThreadInner({
             // Snapshot is newest-first because of the desc order; reverse
             // so render order stays oldest-first / newest-at-bottom.
             list.reverse();
+            _cacheMessages(chat.id, list);   // keep for instant re-open paint
             setMessages(list);
             setLoading(false);
             setLoadError(null);
@@ -400,7 +420,30 @@ function ChatThreadInner({
         if (!atBottom) return;
         const el = scrollRef.current;
         if (el) el.scrollTop = el.scrollHeight;
-    }, [messages.length, atBottom]);
+        // 2026-07-21 (chat audit) — key on the NEWEST message's id, not
+        // messages.length. Messages are capped at `limit` (50); on a busy
+        // channel length stays pinned at 50 as new messages stream in, so the
+        // length dep never changed and new arrivals at the bottom stopped
+        // auto-scrolling into view. Same cap bug the mark-read effect above
+        // already fixed. (ResizeObserver only masked it when heights differed.)
+    }, [messages[messages.length - 1]?.id, atBottom]);
+
+    // 2026-07-21 (chat audit, bug #1) — mark-read when you scroll back DOWN to
+    // the bottom. The main mark-read effect only re-runs on a NEW message id;
+    // if a message arrived while you were scrolled up (so it bailed on
+    // !atBottom) and you then scrolled down to read it, nothing re-fired and
+    // the unread dot stuck / you never showed in others' "Seen by". Firing on
+    // the atBottom→true transition closes that gap. Idempotent updateDoc.
+    useEffect(() => {
+        if (!chat?.id || !staffName || !atBottom || !messages.length) return;
+        const ref = doc(db, 'chats', chat.id);
+        const t = setTimeout(() => {
+            if (!atBottomRef.current) return;
+            updateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
+                .catch(() => { /* best-effort */ });
+        }, 1500);
+        return () => clearTimeout(t);
+    }, [chat?.id, staffName, atBottom, messages.length]);
     // ── ResizeObserver — handles the "bottom → jump up → bottom" jitter
     //
     // Andrew 2026-05-31: opening a chat showed a visible jump-up-then-
@@ -704,7 +747,13 @@ function ChatThreadInner({
                 return ms && (now - ms) < TYPING_TTL_MS;
             })
             .map(([name]) => name);
-        setTypingNames(fresh);
+        // 2026-07-21 (chat audit, perf) — the parent re-fires this on every
+        // chats snapshot (typing heartbeats fire ~every 2s per typer). Bail out
+        // when the computed list is unchanged so we don't trigger a needless
+        // re-render of the whole thread each heartbeat.
+        setTypingNames(prev =>
+            (prev.length === fresh.length && prev.every((n, i) => n === fresh[i]))
+                ? prev : fresh);
     }, [chat?.typingByName, staffName]);
 
     // Pick a target to reply to. Snapshots the relevant fields so the
@@ -740,6 +789,7 @@ function ChatThreadInner({
     // before either setSending(true) committed, landing two
     // messages in Firestore. sendingRef updates synchronously.
     const sendingRef = useRef(false);
+    const schedulingRef = useRef(false);   // re-entry guard for handleScheduleSend (chat audit bug #3)
 
     // ── Failed-send queue ──────────────────────────────────────────
     // Audit follow-up 2026-05-23: previously a failed send just
@@ -1753,6 +1803,12 @@ function ChatThreadInner({
     async function handleScheduleSend(sendAt) {
         const body = draft.trim();
         if (!body) return;
+        // 2026-07-21 (chat audit, bug #3) — re-entry guard. Unlike the live-send
+        // path (sendingRef), this had none, so a double-tap of the schedule
+        // picker created two identical pending docs → the Cloud Function
+        // delivered the message twice.
+        if (schedulingRef.current) return;
+        schedulingRef.current = true;
         try {
             await addDoc(collection(db, 'scheduled_messages'), {
                 chatId: chat.id,
@@ -1782,6 +1838,8 @@ function ChatThreadInner({
         } catch (e) {
             console.warn('schedule failed:', e);
             toast(tx('Schedule failed', 'Error al programar'), { kind: 'error' });
+        } finally {
+            schedulingRef.current = false;
         }
     }
 
@@ -3897,7 +3955,13 @@ async function sendMessage({
                 // top so the user lands next to their new message.
                 deepLink: 'chat',
                 link: '/chat',
-                tag: `chat:${chat.id}:${to}`,
+                // 2026-07-21 (chat audit, bug #5) — mentions/replies get their
+                // OWN tag so a later ordinary message can't overwrite (bury)
+                // them in the OS tray. Plain messages still coalesce under one
+                // tag (burst chatter = one notification, intended).
+                tag: notifType === 'chat_message'
+                    ? `chat:${chat.id}:${to}`
+                    : `chat:${chat.id}:${to}:${notifType}`,
                 // 2026-05-16 — Andrew: every chat message must reach
                 // every member ASAP. Flagging chat notifications as
                 // high-priority signals to the FCM dispatcher (and any
@@ -4795,7 +4859,11 @@ function SeenBySheet({
     // this message's timestamp. Excluded: sender (implicit read) and
     // anyone already in `seenBy`.
     const seenNames = new Set(seenBy.map(r => r.name));
-    const notSeen = members.filter(n => n !== senderName && !seenNames.has(n));
+    // 2026-07-21 (chat audit, bug #4) — exclude the viewing manager themselves.
+    // Their own read-marker is debounced, so they often appear in their own
+    // "not yet seen" list → inflated header count + wrong "Nudge N" total
+    // (handleNudge already no-ops self, so the toast over-counted).
+    const notSeen = members.filter(n => n !== senderName && n !== viewer?.name && !seenNames.has(n));
 
     // "Nudge all" target list — everyone in not-yet-seen that we
     // haven't already nudged in the last 30s. The button is hidden

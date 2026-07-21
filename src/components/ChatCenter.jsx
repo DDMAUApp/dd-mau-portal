@@ -111,6 +111,23 @@ export default function ChatCenter({
         return () => { setStatusBarStyle('dark'); };
     }, []);
 
+    // 2026-07-21 (chat audit) — prefetch the (large, lazy) ChatThread chunk
+    // while the list is idle, so tapping a chat doesn't block on the download
+    // + parse. Biggest win on the first open of a session and right after an
+    // OTA/deploy when the cache is cold. Fire-and-forget; ignore failures.
+    useEffect(() => {
+        const warm = () => { import('./ChatThread').catch(() => {}); };
+        const id = (typeof window !== 'undefined' && window.requestIdleCallback)
+            ? window.requestIdleCallback(warm, { timeout: 2500 })
+            : setTimeout(warm, 800);
+        return () => {
+            try {
+                if (typeof window !== 'undefined' && window.cancelIdleCallback) window.cancelIdleCallback(id);
+                else clearTimeout(id);
+            } catch { /* ignore */ }
+        };
+    }, []);
+
     // ── Native hardware-back integration (stub) ──────────────────
     // 2026-06-02 — When ChatCenter mounts, push a handler onto the
     // shared back-stack so the Android hardware back button can
