@@ -926,6 +926,11 @@ export async function setSharedDeviceMode(on, staffName) {
         if (on) localStorage.setItem(SHARED_MODE_KEY, '1');
         else localStorage.removeItem(SHARED_MODE_KEY);
     } catch { /* private-mode storage failure — mode just won't stick */ }
+    // 2026-07-22 (sticker audit M7): let live effects react to the toggle.
+    // App.jsx's printer keep-awake cadence + screen wake-lock read this mode
+    // once when their effects ran, so flipping shared mode mid-session did
+    // nothing (no wake lock, wrong cadence) until an app relaunch.
+    try { window.dispatchEvent(new CustomEvent('ddmau:sharedModeChanged', { detail: { on } })); } catch { /* SSR */ }
     if (on && staffName) {
         try { await disableFcmPush(staffName); } catch { /* best-effort purge */ }
     }

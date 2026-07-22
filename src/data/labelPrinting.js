@@ -459,6 +459,15 @@ function getPrinterConfigFast(location, slot = DEFAULT_PRINTER_SLOT) {
     });
 }
 
+// Prefetch the pdf-lib chunk (2026-07-22 audit P2) — the Brother fallback
+// path builds a PDF via a dynamic import, so the FIRST fallback print paid
+// the chunk download mid-print. Print modals call this when the resolved
+// printer is a brother_ql so the chunk is already cached by print time.
+// Fire-and-forget; safe to call repeatedly (browser caches the module).
+export function prefetchPdfLib() {
+    try { import('pdf-lib').catch(() => {}); } catch { /* best-effort */ }
+}
+
 // Fire-and-forget pre-warm — call when a print modal OPENS so the
 // configs are hot by the time the user taps Print (they spend a few
 // seconds picking size/copies anyway). Safe to call repeatedly.

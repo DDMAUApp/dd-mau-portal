@@ -36,6 +36,7 @@ import {
     printPrepLabel,
     warmPrintConfigs,
     subscribePrinterWarmState,
+    prefetchPdfLib,
 } from '../data/labelPrinting';
 import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
@@ -182,6 +183,12 @@ export default function PrintLabelModal({
     // printer still renders a sensible 3-tab UI.
     const printerType = printer?.type || 'epson_linerless';
     const isBrotherPrinter = printerType === 'brother_ql';
+    // Brother's PDF fallback needs the pdf-lib chunk — prefetch it while the
+    // user is still picking copies so the first fallback print doesn't pay
+    // the download mid-print (2026-07-22 audit P2).
+    useEffect(() => {
+        if (isBrotherPrinter || printer?.brotherIp) prefetchPdfLib();
+    }, [isBrotherPrinter, printer?.brotherIp]);
 
     // Size presets removed (Andrew 2026-06-20: "drop the size tabs").
     // The admin Label Format is now the single source of truth for every
@@ -247,6 +254,17 @@ export default function PrintLabelModal({
         if (editable && !editTitle.trim()) {
             toast(tx('Enter an item name first.', 'Ingresa un nombre primero.'), { kind: 'error' });
             return;
+        }
+        // 2026-07-22 (audit M4): the status strip already says "Printer not
+        // responding", but the Print button stayed armed — a tap then hung
+        // ~11s before failing. One explicit confirm turns a mystery wait
+        // into an informed choice (the printer may just be waking up).
+        if (warmState === 'offline') {
+            const goAnyway = window.confirm(tx(
+                'The printer is not responding. Try to print anyway?',
+                'La impresora no responde. ¿Intentar imprimir de todos modos?',
+            ));
+            if (!goAnyway) return;
         }
         cancelledRef.current = false;
         setPrinting(true);

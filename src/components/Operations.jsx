@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue, lazy, Suspense, memo } from 'react';
 import { db, storage } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, serverTimestamp, deleteField, arrayUnion, runTransaction, increment } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, serverTimestamp, deleteField, arrayUnion, runTransaction, increment, FieldPath } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
@@ -2501,6 +2501,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                 // Load split list config (overrides + write-ins)
                 const unsubSplit = onSnapshot(doc(db, "ops", "splitConfig_" + storeLocation), (docSnap) => {
+                    // 2026-07-22 (audit B2): skip the local-echo snapshot — the
+                    // mutators already updated state optimistically, and the echo
+                    // could clobber a rapid follow-up tap with the older map.
+                    if (docSnap.metadata.hasPendingWrites) return;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         if (data.overrides) setSplitOverrides(data.overrides);
@@ -4530,48 +4534,63 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // (e.g. someone moving an item while you bump a count) isn't clobbered.
             // First-ever write (doc missing) falls back to a merge setDoc; the
             // other field defaults to {} in the consumers until its first edit.
-            const saveSplitConfig = async (patch) => {
+            // 2026-07-22 (audit B2) — split-config writes were whole-map
+            // last-writer-wins from render-closure state: two tablets editing
+            // write-ins concurrently silently dropped each other's changes,
+            // and rapid +/- taps on a write-in reused stale closure state
+            // (same bug class fixed in updateInventoryCount 2026-05-22).
+            // Now: ONE field per write (FieldPath handles names containing
+            // dots) + functional setState so local math never reads stale.
+            const saveSplitField = async (section, key, value) => {
                 const ref = doc(db, "ops", "splitConfig_" + storeLocation);
-                const data = { ...patch, date: new Date().toISOString() };
                 try {
-                    await updateDoc(ref, data);
+                    await updateDoc(ref, new FieldPath(section, key), value, 'date', new Date().toISOString());
                 } catch (err) {
                     if (err?.code === "not-found") {
-                        try { await setDoc(ref, data, { merge: true }); } catch (e) { console.error("Error creating split config:", e); }
+                        // setDoc(merge) deep-merges nested maps, so this can't
+                        // clobber another person's write-ins either.
+                        try {
+                            await setDoc(ref, { [section]: { [key]: value }, date: new Date().toISOString() }, { merge: true });
+                        } catch (e) { console.error("Error creating split config:", e); }
                     } else { console.error("Error saving split config:", err); }
                 }
             };
 
             const moveSplitItem = async (itemId, toPerson) => {
-                const updated = { ...splitOverrides, [itemId]: toPerson };
-                setSplitOverrides(updated);
+                setSplitOverrides(prev => ({ ...prev, [itemId]: toPerson }));
                 setSplitMovingItem(null);
-                await saveSplitConfig({ overrides: updated });
+                await saveSplitField('overrides', itemId, toPerson);
             };
 
             const addSplitWriteIn = async (personName) => {
                 const input = (splitWriteInValues[personName] || "").trim();
                 if (!input) return;
-                const existing = splitWriteIns[personName] || [];
                 const newId = "sw-" + personName + "-" + Date.now();
-                const updated = { ...splitWriteIns, [personName]: [...existing, { id: newId, name: input, count: 0 }] };
-                setSplitWriteIns(updated);
+                let nextForPerson;
+                setSplitWriteIns(prev => {
+                    nextForPerson = [...(prev[personName] || []), { id: newId, name: input, count: 0 }];
+                    return { ...prev, [personName]: nextForPerson };
+                });
                 setSplitWriteInValues(prev => ({ ...prev, [personName]: "" }));
-                await saveSplitConfig({ writeIns: updated });
+                await saveSplitField('writeIns', personName, nextForPerson);
             };
 
             const removeSplitWriteIn = async (personName, itemId) => {
-                const existing = splitWriteIns[personName] || [];
-                const updated = { ...splitWriteIns, [personName]: existing.filter(i => i.id !== itemId) };
-                setSplitWriteIns(updated);
-                await saveSplitConfig({ writeIns: updated });
+                let nextForPerson;
+                setSplitWriteIns(prev => {
+                    nextForPerson = (prev[personName] || []).filter(i => i.id !== itemId);
+                    return { ...prev, [personName]: nextForPerson };
+                });
+                await saveSplitField('writeIns', personName, nextForPerson);
             };
 
             const updateSplitWriteInCount = async (personName, itemId, newCount) => {
-                const existing = splitWriteIns[personName] || [];
-                const updated = { ...splitWriteIns, [personName]: existing.map(i => i.id === itemId ? { ...i, count: newCount } : i) };
-                setSplitWriteIns(updated);
-                await saveSplitConfig({ writeIns: updated });
+                let nextForPerson;
+                setSplitWriteIns(prev => {
+                    nextForPerson = (prev[personName] || []).map(i => i.id === itemId ? { ...i, count: newCount } : i);
+                    return { ...prev, [personName]: nextForPerson };
+                });
+                await saveSplitField('writeIns', personName, nextForPerson);
             };
 
             const toggleCatCollapse = (key) => {
@@ -6644,6 +6663,37 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                 showCart, inventory, vendorCounts, customInventory,
                 syscoPricingData, usfoodsPricingData, invToVendorPrices,
                 language,
+            ]);
+
+            // 2026-07-22 (audit perf) — hoisted vendor-view grouping. The
+            // VENDOR VIEW IIFE below rebuilt + sorted vendorGroups over all
+            // ~250 items on EVERY render (~4 renders per +/- tap). Same
+            // hoist-out-of-the-IIFE pattern as cartData above. `inventory`
+            // is only a real input when the Counted filter is ON, so the
+            // dep is gated — plain count taps don't re-run the grouping.
+            const vendorViewData = useMemo(() => {
+                if (invViewMode !== "vendor") return null;
+                const vendorGroups = {};
+                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
+                customInventory.forEach((cat, catIdx) => {
+                    cat.items.forEach((item, iIdx) => {
+                        const v = item.vendor || item.supplier || "Other";
+                        if (!vendorGroups[v]) vendorGroups[v] = [];
+                        const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
+                        if (itemMatchesSearchAi(item, searchLower) && matchesCounted) {
+                            vendorGroups[v].push({ ...item, catIdx, itemIdx: iIdx, catName: cat.name, catNameEs: cat.nameEs });
+                        }
+                    });
+                });
+                Object.values(vendorGroups).forEach(list => list.sort((a, b) => a.name.localeCompare(b.name)));
+                const vendorNames = Object.keys(vendorGroups)
+                    .filter(v => vendorGroups[v].length > 0)
+                    .sort((a, b) => vendorGroups[b].length - vendorGroups[a].length);
+                return { vendorGroups, vendorNames };
+            }, [
+                invViewMode, customInventory, invSearchDeferred, invShowOnlyCounted,
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+                invShowOnlyCounted ? inventory : null,
             ]);
 
             return (
@@ -8927,26 +8977,13 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             })()}
 
                             {/* ── VENDOR VIEW ── */}
-                            {invViewMode === "vendor" && (() => {
-                                // FIX (review 2026-05-14, perf): iterate with
-                                // the array's own index instead of doing an
-                                // O(n) cat.items.indexOf(item) lookup per
-                                // item (overall O(n²) per render).
-                                const vendorGroups = {};
-                                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
-                                customInventory.forEach((cat, catIdx) => {
-                                    cat.items.forEach((item, iIdx) => {
-                                        const v = item.vendor || item.supplier || "Other";
-                                        if (!vendorGroups[v]) vendorGroups[v] = [];
-                                        const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
-                                        if (itemMatchesSearchAi(item, searchLower) && matchesCounted) {
-                                            vendorGroups[v].push({ ...item, catIdx, itemIdx: iIdx, catName: cat.name, catNameEs: cat.nameEs });
-                                        }
-                                    });
-                                });
-                                const vendorNames = Object.keys(vendorGroups).filter(v => vendorGroups[v].length > 0).sort((a, b) => vendorGroups[b].length - vendorGroups[a].length);
+                            {invViewMode === "vendor" && vendorViewData && (() => {
+                                // Grouping + sorting hoisted to the
+                                // vendorViewData useMemo above the return
+                                // (2026-07-22 perf) — the IIFE just reads it.
+                                const { vendorGroups, vendorNames } = vendorViewData;
                                 return vendorNames.map(vendor => {
-                                    const vItems = vendorGroups[vendor].sort((a, b) => a.name.localeCompare(b.name));
+                                    const vItems = vendorGroups[vendor];
                                     const vKey = "ven-" + vendor;
                                     const isCollapsed = collapsedCats[vKey] && !invSearch;
                                     const countedInV = vItems.filter(i => (inventory[i.id] || 0) > 0).length;
@@ -10091,10 +10128,16 @@ async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, cur
     if (!confirmed) return false;
     setInventory(restored);
     try {
-        await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
-            counts: restored,
-            date: new Date().toISOString(),
-        });
+        // 2026-07-22 (audit B4): per-item dotted writes instead of replacing
+        // the whole counts map. The empty-cart check above is read-then-write;
+        // a count another tablet lands between the check and this write used
+        // to be silently erased by `counts: restored`. Dotted paths only touch
+        // the restored ids, so a concurrent tap on a different item survives.
+        const patch = { date: new Date().toISOString() };
+        for (const [id, qty] of Object.entries(restored)) {
+            patch[`counts.${id}`] = qty;
+        }
+        await updateDoc(doc(db, "ops", "inventory_" + storeLocation), patch);
     } catch (e) {
         console.warn('restoreOrderEntryToCart persist failed:', e);
         // Non-fatal — local state already updated.

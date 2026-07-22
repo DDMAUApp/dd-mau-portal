@@ -1597,6 +1597,18 @@ export default function App() {
         : (activeLocation === 'webster' || activeLocation === 'maryland') ? activeLocation
         : (staffLocation === 'webster' || staffLocation === 'maryland') ? staffLocation
         : null;
+    // 2026-07-22 (sticker audit M7) — react to the shared-iPad toggle LIVE.
+    // Both effects below read isSharedDeviceModeEnabled() when they run;
+    // without this generation counter, flipping the toggle mid-session left
+    // the old cadence and NO wake lock until the app was relaunched. The
+    // setSharedDeviceMode() in messaging.js fires this event.
+    const [sharedModeGen, setSharedModeGen] = useState(0);
+    useEffect(() => {
+        const onChange = () => setSharedModeGen(g => g + 1);
+        window.addEventListener('ddmau:sharedModeChanged', onChange);
+        return () => window.removeEventListener('ddmau:sharedModeChanged', onChange);
+    }, []);
+
     useEffect(() => {
         let isNative = false;
         try { isNative = window?.Capacitor?.isNativePlatform?.() === true; } catch { /* ignore */ }
@@ -1643,7 +1655,7 @@ export default function App() {
             clearInterval(id);
             try { document.removeEventListener('visibilitychange', onVis); } catch { /* ignore */ }
         };
-    }, [warmLocation]);
+    }, [warmLocation, sharedModeGen]);
 
     // ── Shared-iPad screen wake lock (2026-07-15) ───────────────────────────
     // The printer keep-awake above can only ping while the app is foregrounded
@@ -1693,7 +1705,7 @@ export default function App() {
             try { document.removeEventListener('visibilitychange', onVis); } catch { /* ignore */ }
             release();
         };
-    }, [warmLocation]);
+    }, [warmLocation, sharedModeGen]);
 
     const handleSelectStaff = (name) => {
         setStaffName(name);

@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "acks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userName", "order": "ASCENDING" },
+        { "fieldPath": "ackedAt",  "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "attendance",
       "queryScope": "COLLECTION",
       "fields": [

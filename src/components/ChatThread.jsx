@@ -40,7 +40,7 @@ import {
     arrayUnion, arrayRemove, getDoc, runTransaction,
     Timestamp,
 } from 'firebase/firestore';
-import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as sref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
 // Pure formatters lifted out 2026-05-23 — see chatThreadHelpers.js
 // for the rationale on the incremental ChatThread split.
@@ -371,7 +371,18 @@ function ChatThreadInner({
     // MAX_MESSAGE_LIMIT below caps runaway growth from accidental
     // long-press / rapid-tap.
     const MAX_MESSAGE_LIMIT = 2000;
+    // 2026-07-22 (audit N5) — scroll-position restore. Older messages are
+    // PREPENDED when the bigger snapshot lands, and the message list has
+    // `overflow-anchor: none` (needed for the bottom-pin behavior), so the
+    // viewport used to jump deep into history. Capture the scroll metrics at
+    // tap time; the layout effect below compensates scrollTop by exactly the
+    // prepended height before the browser paints.
+    const scrollRestoreRef = useRef(null);
     function loadOlderMessages() {
+        const el = scrollRef.current;
+        if (el) {
+            scrollRestoreRef.current = { height: el.scrollHeight, top: el.scrollTop };
+        }
         setMessageLimit(n => Math.min(n + 50, MAX_MESSAGE_LIMIT));
     }
 
@@ -449,6 +460,22 @@ function ChatThreadInner({
         // auto-scrolling into view. Same cap bug the mark-read effect above
         // already fixed. (ResizeObserver only masked it when heights differed.)
     }, [messages[messages.length - 1]?.id, atBottom]);
+
+    // 2026-07-22 (audit N5) — apply the Load-older scroll restore (see
+    // loadOlderMessages). Runs before paint; only fires while a restore is
+    // pending, and only once real growth is observed (the cache may re-fire
+    // the OLD window first with no new content — skip that one).
+    useLayoutEffect(() => {
+        const pending = scrollRestoreRef.current;
+        if (!pending) return;
+        const el = scrollRef.current;
+        if (!el) return;
+        const grewBy = el.scrollHeight - pending.height;
+        if (grewBy > 0) {
+            el.scrollTop = pending.top + grewBy;
+            scrollRestoreRef.current = null;
+        }
+    }, [messages[0]?.id, messages.length]);
 
     // 2026-07-21 (chat audit, bug #1) — mark-read when you scroll back DOWN to
     // the bottom. The main mark-read effect only re-runs on a NEW message id;
@@ -563,6 +590,7 @@ function ChatThreadInner({
     const [sending, setSending] = useState(false);
     const [recording, setRecording] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(null); // { kind, pct }
+    const uploadTaskRef = useRef(null); // in-flight resumable upload (for cancel — audit M10)
     const [typingNames, setTypingNames] = useState([]);
     // ── Pending media attachment (Andrew 2026-05-27) ────────────────
     // When the user picks a photo/video or finishes a voice memo, we
@@ -697,9 +725,16 @@ function ChatThreadInner({
         // time the thread was open. The visible messages are capped at 50, so we
         // never need more than a couple hundred acks to flip the "✓ Read" state
         // on what's on screen. Newest-first + cap keeps it small on iPad.
+        // 2026-07-22 (audit N7): the comment above says "newest-first" but
+        // there was NO orderBy — default doc-id order is effectively random,
+        // so past 200 acks in one chat, RECENT acks could drop from the set
+        // and acknowledged announcements re-showed "Mark as read". Composite
+        // index (acks: userName ASC, ackedAt DESC) added to
+        // firestore.indexes.json in the same release.
         const q = query(
             collection(db, 'chats', chat.id, 'acks'),
             where('userName', '==', staffName),
+            orderBy('ackedAt', 'desc'),
             limit(200)
         );
         let alive = true;
@@ -1008,10 +1043,34 @@ function ChatThreadInner({
             } else {
                 ext = (att.filename?.split('.').pop() || 'bin').toLowerCase();
             }
-            const messageId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            const path = `chats/${chat.id}/${messageId}.${ext}`;
+            // 2026-07-22 (audit M11) — STABLE storage path per staged
+            // attachment. The old code minted a fresh path on every attempt,
+            // so each failed-then-retried send orphaned the previous upload
+            // in Storage forever. Stamping the id on the staged object means
+            // a retry OVERWRITES the same object instead.
+            if (!att.storageId) {
+                att.storageId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            }
+            const path = `chats/${chat.id}/${att.storageId}.${ext}`;
             const r = sref(storage, path);
-            await uploadBytes(r, att.uploadFile, { contentType: att.mimeType });
+            // 2026-07-22 (audit M10) — resumable upload with live progress +
+            // cancel. uploadBytes gave a frozen "Uploading…" for the whole
+            // transfer (3-30 min for a 250MB video on kitchen Wi-Fi) with no
+            // way out. uploadBytesResumable streams progress events; the
+            // cancel button calls task.cancel(), which rejects the promise
+            // with storage/canceled (handled silently below — the staged
+            // attachment is kept so the user can retry or discard it).
+            const task = uploadBytesResumable(r, att.uploadFile, { contentType: att.mimeType });
+            uploadTaskRef.current = task;
+            await new Promise((resolve, reject) => {
+                task.on('state_changed', (snap) => {
+                    const pct = snap.totalBytes > 0
+                        ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100)
+                        : 0;
+                    setUploadProgress({ kind: att.kind, pct });
+                }, reject, resolve);
+            });
+            uploadTaskRef.current = null;
             const url = await getDownloadURL(r);
             await sendMessage({
                 chat, staffName, viewer, staffList,
@@ -1035,13 +1094,38 @@ function ChatThreadInner({
             setReplyTarget(null);
             setPendingAttachment(null);  // effect cleanup revokes URL
         } catch (err) {
-            console.warn(`${att.kind} send failed:`, err);
-            toast(tx('Upload failed', 'Error al subir'), { kind: 'error' });
+            uploadTaskRef.current = null;
+            if (err?.code === 'storage/canceled') {
+                // User tapped Cancel — not an error. Staged attachment is
+                // kept so they can re-send or discard it themselves.
+                toast(tx('Upload cancelled', 'Subida cancelada'), { kind: 'info' });
+            } else {
+                console.warn(`${att.kind} send failed:`, err);
+                toast(tx('Upload failed', 'Error al subir'), { kind: 'error' });
+                // 2026-07-22 (audit M11) — if the UPLOAD succeeded but the
+                // message write failed, delete the uploaded object so it
+                // doesn't orphan in Storage (best-effort; a retry re-uploads
+                // to the same stable path anyway).
+                if (att.storageId) {
+                    try {
+                        let ext;
+                        if (att.kind === 'audio') ext = att.mimeType?.includes('mp4') ? 'm4a' : 'webm';
+                        else ext = (att.filename?.split('.').pop() || 'bin').toLowerCase();
+                        deleteObject(sref(storage, `chats/${chat.id}/${att.storageId}.${ext}`)).catch(() => {});
+                    } catch { /* best-effort */ }
+                }
+            }
         } finally {
             sendingRef.current = false;
             setSending(false);
             setUploadProgress(null);
         }
+    }
+
+    // Cancel an in-flight attachment upload (audit M10). Safe no-op when
+    // nothing is uploading.
+    function cancelUpload() {
+        try { uploadTaskRef.current?.cancel(); } catch { /* already settled */ }
     }
 
     // Dispatcher wired to the composer's send arrow + Enter-to-send.
@@ -1196,7 +1280,20 @@ function ChatThreadInner({
     // re-tapping does nothing because the doc id is deterministic.
     async function handleAck(message) {
         if (!message || !staffName) return;
-        const ackId = `${message.id}_${staffName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        // 2026-07-22 (audit, ack-id collision): the slug alone collapsed
+        // names that differ only in punctuation ("Maria B" vs "Maria-B" →
+        // both "Maria_B"), so the second user's ack OVERWROTE the first's
+        // (merge:true rewrote userName — the first user's ack vanished from
+        // their own query). Append a tiny hash of the RAW name so distinct
+        // names always get distinct doc ids. Reads are by the userName
+        // FIELD, so pre-existing acks under old ids still count.
+        const nameHash = (() => {
+            let h = 0;
+            const s = String(staffName);
+            for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+            return (h >>> 0).toString(36);
+        })();
+        const ackId = `${message.id}_${staffName.replace(/[^a-zA-Z0-9]/g, '_')}_${nameHash}`;
         try {
             await setDoc(doc(db, 'chats', chat.id, 'acks', ackId), {
                 messageId: message.id,
@@ -2235,10 +2332,27 @@ function ChatThreadInner({
                 </div>
             </div>
 
-            {/* ── Upload progress ─────────────────────────────── */}
+            {/* ── Upload progress — live % + cancel (audit M10) ── */}
             {uploadProgress && (
-                <div className="px-4 py-2 text-xs text-dd-text-2 border-t border-dd-line bg-white">
-                    {tx(`Uploading ${uploadProgress.kind}…`, `Subiendo ${uploadProgress.kind}…`)}
+                <div className="px-4 py-2 border-t border-dd-line bg-white flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                        <div className="text-xs text-dd-text-2 mb-1">
+                            {tx(`Uploading ${uploadProgress.kind}… ${uploadProgress.pct}%`,
+                                `Subiendo ${uploadProgress.kind}… ${uploadProgress.pct}%`)}
+                        </div>
+                        <div className="h-1.5 rounded-full bg-dd-line overflow-hidden">
+                            <div
+                                className="h-full bg-dd-green rounded-full transition-[width] duration-300"
+                                style={{ width: `${uploadProgress.pct}%` }}
+                            />
+                        </div>
+                    </div>
+                    <button
+                        onClick={cancelUpload}
+                        className="shrink-0 text-xs font-bold text-red-600 border border-red-200 rounded-full px-3 py-1.5 hover:bg-red-50 active:scale-95"
+                    >
+                        {tx('Cancel', 'Cancelar')}
+                    </button>
                 </div>
             )}
 

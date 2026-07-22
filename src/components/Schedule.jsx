@@ -1364,12 +1364,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // custom claims) will mirror this in Firestore rules so a tampered
     // client can't bypass it.
     const viewerTimeOff = useMemo(() => {
-        if (canEdit) return timeOff;
+        if (canEdit) {
+            // 2026-07-22 Andrew: "PTO/time-off requests show BOTH locations
+            // for admins only; a schedule manager should only see their
+            // location." Admins (and both-location managers) keep the full
+            // list; a single-location manager's queue + All-PTO modal are
+            // scoped to staff at THEIR store. Staff with location 'both'
+            // (or no location recorded) show for managers at either store.
+            if (staffIsAdmin) return timeOff;
+            const myLoc = (staffList || []).find(s => s.name === staffName)?.location || 'both';
+            if (myLoc === 'both') return timeOff;
+            const locByName = new Map((staffList || []).map(s => [s.name, s.location || 'both']));
+            return (timeOff || []).filter(t => {
+                if (t.staffName === staffName) return true;   // own — always
+                const loc = locByName.get(t.staffName) || 'both';
+                return loc === 'both' || loc === myLoc;
+            });
+        }
         return (timeOff || []).filter(t =>
             t.staffName === staffName || // own — any status
             t.status === 'approved'      // others' — approved only
         );
-    }, [timeOff, canEdit, staffName]);
+    }, [timeOff, canEdit, staffIsAdmin, staffName, staffList]);
 
     // Permission-filtered shifts — drafts hidden for non-editors. Used by
     // any aggregation that renders to the viewer (hours scoreboard, staff
@@ -6909,7 +6925,7 @@ ${dayBlocks}
                     onAdd={handleAddTimeOff}
                     onRemove={askRemoveTimeOff}
                     onSetStatus={askSetPtoStatus}
-                    entries={timeOff}
+                    entries={viewerTimeOff}
                     staffList={staffList}
                     isEn={isEn}
                     canEdit={canEdit}
