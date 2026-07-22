@@ -369,6 +369,10 @@ export function subscribePrinterConfig(location, cb, slot = DEFAULT_PRINTER_SLOT
     if (!location) { cb(null); return () => {}; }
     const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
     let primaryHit = false;
+    // Track the legacy doc's latest value so a LATER deletion of the
+    // kitchen slot doc can fall back to it (or to null) instead of
+    // silently keeping the deleted config forever (2026-07-22 audit M8).
+    let legacyValue = null;
     const unsubPrimary = onSnapshot(doc(db, 'config', printerDocPath(location, safeSlot)), (snap) => {
         if (snap.exists()) {
             primaryHit = true;
@@ -377,21 +381,31 @@ export function subscribePrinterConfig(location, cb, slot = DEFAULT_PRINTER_SLOT
             // Office slot with no doc → no legacy fallback exists.
             primaryHit = false;
             cb(null);
-        } else if (!primaryHit) {
-            // Wait for the legacy listener below to fire.
+        } else if (primaryHit) {
+            // Kitchen slot doc was DELETED after we'd seen it — fall back
+            // to the legacy doc (or null) so consumers drop the dead config.
+            primaryHit = false;
+            cb(legacyValue);
         }
+        // else: initial miss on kitchen — wait for the legacy listener.
     }, (err) => {
+        // 2026-07-22 (audit H3): a Firestore listener error is TERMINAL —
+        // the listener stops for good. Signal "error" distinctly from
+        // "no printer configured" so the hot-path cache doesn't poison
+        // itself with a permanent null (which read as no_printer_configured
+        // on every print until app relaunch).
         console.warn('subscribePrinterConfig (primary) failed:', err);
-        cb(null);
+        cb(null, { error: true });
     });
     let unsubLegacy = () => {};
     if (safeSlot === 'kitchen') {
         unsubLegacy = onSnapshot(doc(db, 'config', `printers_${location}`), (snap) => {
+            legacyValue = snap.exists()
+                ? { id: location, slot: 'kitchen', legacy: true, ...snap.data() }
+                : null;
             // Legacy fallback only if the primary slot doc isn't there.
             if (primaryHit) return;
-            cb(snap.exists()
-                ? { id: location, slot: 'kitchen', legacy: true, ...snap.data() }
-                : null);
+            cb(legacyValue);
         }, (err) => {
             console.warn('subscribePrinterConfig (legacy) failed:', err);
         });
@@ -422,7 +436,16 @@ function getPrinterConfigFast(location, slot = DEFAULT_PRINTER_SLOT) {
         try {
             // Intentionally never unsubscribed — one tiny doc listener
             // per printer for the app session keeps prints instant.
-            subscribePrinterConfig(location, (cfg) => {
+            subscribePrinterConfig(location, (cfg, info) => {
+                if (info?.error) {
+                    // Listener died (terminal in Firestore). Mark the entry
+                    // NOT ready so the next print falls back to a one-shot
+                    // read instead of serving a poisoned permanent null
+                    // ("no printer configured" all day — audit H3).
+                    entry.value = undefined;
+                    entry.ready = false;
+                    return;
+                }
                 entry.value = cfg;
                 entry.ready = true;
             }, safeSlot);
@@ -496,10 +519,14 @@ async function warmPrinterConnection(location, slot = DEFAULT_PRINTER_SLOT) {
     // Web can't reach a LAN printer directly (mixed content) — nothing to
     // warm, so don't strand the UI on "loading". Treat as ready.
     if (!Capacitor.isNativePlatform()) { _setWarm(key, 'ready'); return; }
-    // Only show "connecting" if we don't already have a fresh green — avoids
-    // the strip flickering to "loading" on every 25s keep-alive tick.
+    // Only show "connecting" if we don't already have a FRESH verdict —
+    // green OR red. Without the 'offline' half (audit M5), every 25s
+    // keep-alive tick flipped a dead printer offline→connecting(spinner)→
+    // offline, making the status strip flicker forever.
     const cur = _warmState.get(key);
-    if (!(cur?.status === 'ready' && (Date.now() - cur.at) < 30000)) {
+    const fresh = cur && (Date.now() - cur.at) < 30000
+        && (cur.status === 'ready' || cur.status === 'offline');
+    if (!fresh) {
         _setWarm(key, 'connecting');
     }
     try {
@@ -1447,7 +1474,12 @@ async function sendBrotherPdfViaShareSheet(pdfBlob, fileNameHint = 'DD-Mau-Label
             // so the caller doesn't surface a scary toast. Other
             // errors fall through to the iframe fallback.
             if (e && e.name === 'AbortError') {
-                return { ok: true, status: 200, responseXml: 'share_dismissed' };
+                // 2026-07-22 (audit M1): a DISMISSED share sheet means the
+                // user printed NOTHING — reporting ok:true made the modal
+                // toast "✓ Label printed" and close. Surface it as a
+                // 'cancelled' failure; the print modal already handles
+                // 'cancelled' silently (no scary error toast).
+                return { ok: false, error: 'cancelled', responseXml: 'share_dismissed' };
             }
             console.warn('navigator.share failed, falling back to iframe:', e);
             // fall through to iframe fallback below
@@ -1785,7 +1817,10 @@ export async function printRecipeIngredients({
         const cols = paperColumns(printer.paperWidthMm);
         const body = renderRecipeIngredientsBody({ title, multLabel, lines: clean, cols, byName });
         const xml = wrapSoapEnvelope(Array.from({ length: c }, () => body).join(''));
-        const res = await sendToPrinter(printer, xml, { source: 'recipe_ingredients', itemName: title });
+        const res = await sendToPrinter(printer, xml, {
+            kind: 'label', source: 'recipe_ingredients',
+            title: String(title || 'Recipe').slice(0, 80), byName, copies: c,
+        });
         recordAudit({
             action: 'print.recipe_ingredients',
             actorName: byName || 'unknown',
@@ -1918,7 +1953,10 @@ export async function printFreeText({
             }
         } else {
             const xml = renderFreeTextXml(freePayload);
-            res = await sendToPrinter(printer, xml);
+            res = await sendToPrinter(printer, xml, {
+                kind: 'free_text', source: 'free_text',
+                title: trimmed.slice(0, 80), byName, copies: c,
+            });
             transport = 'epson_epos';
         }
         recordAudit({
@@ -1988,7 +2026,14 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     }
     const port = printer.port || DEFAULT_PRINTER_PORT;
     const devId = printer.deviceId || DEFAULT_DEVICE_ID;
-    const url = `http://${printer.ip}:${port}/cgi-bin/epos/service.cgi?devid=${encodeURIComponent(devId)}&timeout=${DEFAULT_TIMEOUT_MS}`;
+    // 2026-07-22 (sticker audit H2) — ePOS answers only after the whole job
+    // prints, and the envelope stitches ALL copies into one request. The old
+    // fixed 10s device timeout meant a 10-20 copy batch "failed" (and got
+    // re-tapped → duplicate batch) while labels were still physically coming
+    // out. Scale the device-side timeout with the copy count.
+    const copyCount = Math.max(1, Math.floor(Number(meta?.copies) || 1));
+    const deviceTimeoutMs = Math.min(DEFAULT_TIMEOUT_MS + 3_000 * (copyCount - 1), 60_000);
+    const url = `http://${printer.ip}:${port}/cgi-bin/epos/service.cgi?devid=${encodeURIComponent(devId)}&timeout=${deviceTimeoutMs}`;
 
     // Transport split (2026-06-06):
     //   • Native (iOS/Android) → CapacitorHttp.post — the request goes through
@@ -2001,22 +2046,32 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     //     when the app is HTTPS and the printer is HTTP, so direct printing
     //     from a browser won't work — use the native app (or the Pi bridge).
     //     Kept for localhost/dev and any future HTTPS-capable printer.
-    const TIMEOUT = DEFAULT_TIMEOUT_MS + 2_000;
+    // 2026-07-22 (sticker audit H1) — SPLIT connect vs read timeouts. The old
+    // code used one 12s value for both, and retried on ANY timeout. A READ
+    // timeout means the printer ACCEPTED the job and is printing (just slow —
+    // exactly what a big batch does); re-sending the envelope then printed the
+    // whole batch twice (up to 2×20 duplicate labels). A CONNECT timeout means
+    // the sleeping printer never took the socket — that's the only case a
+    // retry is safe. We can't distinguish the two from the error message, so
+    // we gate on elapsed time: only a failure within the connect window is
+    // treated as cold-wake. Bonus: cold-wake retry now fires at ~5s instead
+    // of ~13s, and printer-off fails in ~11s instead of ~25s.
+    const CONNECT_TIMEOUT = 5_000;
+    const READ_TIMEOUT = deviceTimeoutMs + 2_000;
     let httpStatus = 0;
     let body = '';
     try {
         if (Capacitor.isNativePlatform()) {
             // Cold-wake AUTO-RETRY (2026-07-15): the TM-L100 sleeps to save
             // power, and its FIRST connect after idle frequently times out
-            // mid-handshake while the radio + print engine spin up. Instead
-            // of surfacing "request timed out" and making staff re-tap Print,
-            // retry the send ONCE on a timeout — the second attempt lands on
-            // the now-awake printer and prints clean. Mirrors the Brother
-            // direct-IPP path (brotherIpp.js printBrotherDirect). We ONLY
-            // retry a transport timeout: a printer-side rejection (cover open,
-            // media empty, wrong tape) won't self-fix, so it's thrown as-is.
+            // mid-handshake while the radio + print engine spin up. Retry the
+            // send ONCE — but ONLY when the failure happened inside the
+            // connect window (see H1 note above): a slow-print read timeout
+            // must never be re-sent, and a printer-side rejection (cover
+            // open, media empty, wrong tape) won't self-fix.
             let nativeErr = null;
             for (let attempt = 0; attempt < 2; attempt++) {
+                const attemptStart = Date.now();
                 try {
                     // eslint-disable-next-line no-await-in-loop
                     const native = await CapacitorHttp.post({
@@ -2024,8 +2079,8 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
                         headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '""' },
                         data: eposXml,                 // already a string — sent as-is
                         responseType: 'text',          // ePOS replies with XML, not JSON
-                        readTimeout: TIMEOUT,
-                        connectTimeout: TIMEOUT,
+                        readTimeout: READ_TIMEOUT,
+                        connectTimeout: CONNECT_TIMEOUT,
                     });
                     httpStatus = native?.status || 0;
                     body = typeof native?.data === 'string' ? native.data : String(native?.data ?? '');
@@ -2035,12 +2090,16 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
                     nativeErr = e;
                     const isTimeout = e?.name === 'AbortError'
                         || /tim(e|ed)\s*out|timeout/i.test(e?.message || '');
-                    if (attempt === 0 && isTimeout) {
+                    // Elapsed-time gate: a timeout that fired within the
+                    // connect window (+0.5s slack) never delivered the job;
+                    // anything later may have printed — do NOT re-send.
+                    const inConnectWindow = (Date.now() - attemptStart) < (CONNECT_TIMEOUT + 500);
+                    if (attempt === 0 && isTimeout && inConnectWindow) {
                         // eslint-disable-next-line no-await-in-loop
                         await new Promise((r) => setTimeout(r, 1200));
                         continue;                       // one cold-wake retry
                     }
-                    break;                              // non-timeout, or already retried
+                    break;                              // non-timeout, late timeout, or already retried
                 }
             }
             if (nativeErr) throw nativeErr;             // handled by the outer catch
@@ -2049,7 +2108,7 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
             // printer is off. Belt + suspenders alongside the printer's
             // own ?timeout= param.
             const controller = new AbortController();
-            const killer = setTimeout(() => controller.abort(), TIMEOUT);
+            const killer = setTimeout(() => controller.abort(), READ_TIMEOUT);
             try {
                 const resp = await fetch(url, {
                     method: 'POST',
@@ -2081,8 +2140,12 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     // Epson returns SOAP with a <response success="true"/> tag on
     // success. Quick string sniff is enough — we don't need a full
     // XML parser for one boolean.
-    const successMatch = /success\s*=\s*"(true|false)"/i.exec(body);
-    const ok = successMatch ? successMatch[1].toLowerCase() === 'true' : false;
+    // Some ePOS firmwares emit success="1"/"0" instead of "true"/"false"
+    // (sticker audit L1) — accept both so a good print isn't reported as
+    // rejected.
+    const successMatch = /success\s*=\s*"(true|false|1|0)"/i.exec(body);
+    const okToken = successMatch ? successMatch[1].toLowerCase() : '';
+    const ok = okToken === 'true' || okToken === '1';
     finalize({
         ok,
         status: httpStatus,
@@ -2256,6 +2319,7 @@ export async function printPrepLabel({
                 copies: c,
                 rightShift: printer.brotherRightShift,
                 jobName: recipe?.titleEn || 'DD Mau Label',
+                shouldAbort,      // honor Cancel between copies (audit M3)
             });
             res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error };
             transport = 'brother_ipp_direct';
@@ -2296,7 +2360,12 @@ export async function printPrepLabel({
             }
         } else {
             const xml = renderEposXml(payload, c);
-            res = await sendToPrinter(printer, xml);
+            res = await sendToPrinter(printer, xml, {
+                kind: source === 'datestickers' ? 'date' : 'label',
+                source,
+                title: String(recipe?.titleEn || 'Label').slice(0, 80),
+                byName, copies: c,
+            });
             transport = 'epson_epos';
         }
         recordAudit({
@@ -2400,7 +2469,9 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
             res = await sendBrotherPdfViaShareSheet(pdfBlob, 'DD-Mau-Test.pdf');
         } else {
             const xml = renderEposXml(payload);
-            res = await sendToPrinter(printer, xml);
+            res = await sendToPrinter(printer, xml, {
+                kind: 'test', source: 'test_print', title: 'Test print', byName, copies: 1,
+            });
         }
         // Stamp the printer doc (per slot) with the test result.
         try {

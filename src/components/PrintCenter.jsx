@@ -55,11 +55,10 @@ export default function PrintCenter({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location]);
 
-    // Slot selector — kitchen vs office. Persisted per-user.
-    const [printSlot, setPrintSlot] = useState(() => {
-        try { return localStorage.getItem('ddmau:printerSlot') || 'kitchen'; }
-        catch { return 'kitchen'; }
-    });
+    // Slot — HARDCODED to kitchen (2026-07-22 audit M6). The selector UI was
+    // removed; seeding from the old localStorage value silently routed
+    // prints to the invisible 'office' slot on devices that once picked it.
+    const [printSlot, setPrintSlot] = useState('kitchen');
     const setSlotPersistent = (s) => {
         setPrintSlot(s);
         try { localStorage.setItem('ddmau:printerSlot', s); } catch {}

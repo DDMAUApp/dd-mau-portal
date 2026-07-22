@@ -20,7 +20,7 @@
 //     completedAt?, completedBy?
 //   }
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { db } from '../firebase';
 import {
     collection, doc, addDoc, updateDoc, serverTimestamp,
@@ -55,6 +55,7 @@ export default function ChatTaskFromMessageModal({
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     });
     const [busy, setBusy] = useState(false);
+    const busyRef = useRef(false);   // same-tick double-tap guard (audit M14)
 
     // Candidates: chat members (most likely the right person is in the chat).
     // Falls back to full staff list if the chat doesn't have a members
@@ -72,7 +73,11 @@ export default function ChatTaskFromMessageModal({
     }, [chat, staffList, staffName]);
 
     async function handleCreate() {
-        if (!title.trim() || !assignee || busy) return;
+        // 2026-07-22 (audit M14) — busyRef alongside the state guard: `busy`
+        // only protects after a re-render, so a same-tick double-tap created
+        // the task (and its push) twice.
+        if (!title.trim() || !assignee || busy || busyRef.current) return;
+        busyRef.current = true;
         setBusy(true);
         try {
             const dueAt = dueDate ? new Date(dueDate + 'T23:59:00').toISOString() : null;
@@ -135,6 +140,7 @@ export default function ChatTaskFromMessageModal({
             console.error('task convert failed:', e);
             toast(tx('Could not create task', 'No se pudo crear la tarea'), { kind: 'error' });
         } finally {
+            busyRef.current = false;
             setBusy(false);
         }
     }

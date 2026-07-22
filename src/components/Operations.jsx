@@ -572,7 +572,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Persist the delivery date the staffer picked (or edited) for the
             // current cart. Writes ops/inventory_{loc}.deliveryDate + audit.
             const setDeliveryForCart = useCallback(async (dateStr) => {
-                if (!storeLocation || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) return;
+                // 'both' admin mode has no real inventory doc — a write would
+                // land in phantom ops/inventory_both that neither store reads
+                // (2026-07-22 audit M16).
+                if (!storeLocation || storeLocation === 'both' || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) return;
                 setDeliveryDate(dateStr);                 // optimistic
                 try {
                     await updateDoc(doc(db, 'ops', 'inventory_' + storeLocation), {
@@ -2209,8 +2212,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             // Intentionally NO early return — fall through so the
                             // block below hydrates state from the preserved data.
                         }
-                        // Auto-reset: if stored date != today, save previous day's final state then reset
-                        if (data.date && data.date !== todayKey) {
+                        // Auto-reset: if stored date != today, save previous day's final state then reset.
+                        //
+                        // ⚠ CRITICAL fromCache guard (2026-07-22 audit C2): the FIRST
+                        // snapshot on a tablet that was off overnight is served from
+                        // the local CACHE and still carries YESTERDAY's doc. Running
+                        // the rollover on that cached snapshot (a) archived the stale
+                        // cached checks over the real history row and (b) wrote
+                        // checks:{} server-side — wiping every checkmark other
+                        // tablets had recorded TODAY. Only roll over on a
+                        // server-confirmed snapshot; the cached one just paints
+                        // (else-branch below), and the server snapshot that follows
+                        // seconds later does the rollover if it's genuinely stale.
+                        if (data.date && data.date !== todayKey && !docSnap.metadata.fromCache) {
                             // Save the previous day's completed state to history before resetting
                             try {
                                 const prevChecks = data.checks || {};
@@ -2332,6 +2346,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // Remember the clear marker we're about to honor so the
                         // same one never re-triggers.
                         if (incomingClearedAt) lastAppliedClearedAtRef.current = incomingClearedAt;
+                        // 2026-07-22 (audit B3): when we HONOR a remote clear
+                        // (another device pressed Save/Clear), drop our in-flight
+                        // optimistic bumps too — otherwise reconcileServerCounts
+                        // holds a just-tapped item at its pre-clear value for up
+                        // to 12s and it "reappears" over the cleared cart.
+                        if (remoteClearAdvanced) pendingCountsRef.current = {};
                         // Reconcile instead of overwrite: if this snapshot is stale
                         // for an item the user JUST bumped (e.g. a mid-burst server
                         // read that hasn't applied all of our increments yet), hold
@@ -2688,10 +2708,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         const nKey = "notif_" + a.key;
                         if (!dismissedAlertsRef.current.has(nKey)) {
                             dismissedAlertsRef.current.add(nKey);
-                            new Notification(a.type === "overdue" ? "DD Mau - Task Due!" : "DD Mau - Reminder", {
-                                body: `"${a.taskName}" \u{2014} ${a.message}`,
-                                tag: nKey
-                            });
+                            const nTitle = a.type === "overdue" ? "DD Mau - Task Due!" : "DD Mau - Reminder";
+                            const nOpts = { body: `"${a.taskName}" \u{2014} ${a.message}`, tag: nKey };
+                            // ⚠ Android Chrome/WebView throws "Illegal constructor"
+                            // on page-context `new Notification()` — and this runs
+                            // synchronously in the mount effect, so the throw took
+                            // down the ENTIRE Operations tab (2026-07-22 audit H8,
+                            // wild-proven). try/catch + service-worker fallback;
+                            // the in-app alert banner above still shows regardless.
+                            try {
+                                new Notification(nTitle, nOpts);
+                            } catch {
+                                try {
+                                    navigator.serviceWorker?.ready
+                                        ?.then(reg => reg?.showNotification?.(nTitle, nOpts))
+                                        ?.catch(() => {});
+                                } catch { /* best-effort */ }
+                            }
                         }
                     });
                 }
@@ -3554,11 +3587,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // Filter countMeta to only include items with counts
                 const cleanMeta = {};
                 Object.entries(invCountMeta).forEach(([k, v]) => { if (cleanCounts[k]) cleanMeta[k] = v; });
+                // 2026-07-22 (audit B1): also archive vendor-only counts. Save &
+                // Reset wipes vendorCounts right after this snapshot — without
+                // persisting them here, every vendor-view item in the cart was
+                // destroyed with NO history record (and restore could never
+                // bring them back). Additive field; history readers ignore it.
+                const cleanVendor = {};
+                Object.entries(vendorCountsRef.current || {}).forEach(([k, v]) => { if (v && v > 0) cleanVendor[k] = v; });
                 try {
                     await setDoc(doc(db, "inventoryHistory_" + storeLocation, key), {
                         counts: cleanCounts,
                         items: filteredItems,
                         countMeta: cleanMeta,
+                        vendorCounts: cleanVendor,
                         date: now.toISOString(),
                         listName: "",
                         ordered: {}
@@ -3696,6 +3737,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const updateInventoryCount = async (itemId, newCount, delta = null) => {
+                // 2026-07-22 (audit M16): in 'both' admin mode there is no real
+                // inventory doc — writes went to phantom ops/inventory_both that
+                // NEITHER store reads, so the admin's counts silently vanished.
+                // Block the write and tell them to pick a store.
+                if (storeLocation === 'both') {
+                    toast(language === 'es'
+                        ? 'Elige Webster o Maryland (arriba) para contar inventario'
+                        : 'Pick Webster or Maryland (top toggle) to count inventory', { kind: 'error' });
+                    return;
+                }
                 const count = parseInt(newCount) || 0;
                 const isDelta = delta === 1 || delta === -1;
                 const now = new Date();
@@ -3987,6 +4038,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Same dotted-path pattern as updateInventoryCount so concurrent edits on
             // other items aren't clobbered.
             const updateVendorCount = async (vendor, vendorId, newCount) => {
+                // 'both' mode writes go to a phantom doc — see updateInventoryCount (M16).
+                if (storeLocation === 'both') {
+                    toast(language === 'es'
+                        ? 'Elige Webster o Maryland (arriba) para contar inventario'
+                        : 'Pick Webster or Maryland (top toggle) to count inventory', { kind: 'error' });
+                    return;
+                }
                 // 2026-06-20 (QA audit O3) — clamp to a non-negative integer.
                 // `min="0"` on a type=number only governs the spinner, not typed/
                 // pasted text, so "-5"/"3.7"/22-digit overflow used to persist
@@ -4037,6 +4095,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const saveAndResetInventory = async () => {
+                // 'both' mode has no real inventory doc — see updateInventoryCount (M16).
+                if (storeLocation === 'both') {
+                    toast(language === 'es'
+                        ? 'Elige Webster o Maryland (arriba) para guardar inventario'
+                        : 'Pick Webster or Maryland (top toggle) to save inventory', { kind: 'error' });
+                    return;
+                }
                 setInventorySaving(true);
                 try {
                     // Save snapshot to history
@@ -4087,6 +4152,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Confirm-gated; persists counts:{} + vendorCounts:{} to the canonical
             // doc (updateDoc preserves customInventory + schema).
             const clearAllInventoryCounts = async () => {
+                // 'both' mode has no real inventory doc — see updateInventoryCount (M16).
+                if (storeLocation === 'both') {
+                    toast(language === 'es'
+                        ? 'Elige Webster o Maryland (arriba) para limpiar el conteo'
+                        : 'Pick Webster or Maryland (top toggle) to clear counts', { kind: 'error' });
+                    return;
+                }
                 const masterN = Object.values(inventory).filter(v => v > 0).length;
                 const vendorN = Object.values(vendorCounts).filter(v => v > 0).length;
                 const total = masterN + vendorN;
@@ -8897,7 +8969,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         const count = inventory[item.id] || 0;
                                                         const isEditing = invEditingIdx && invEditingIdx.catIdx === item.catIdx && invEditingIdx.itemIdx === item.itemIdx;
                                                         return (
-                                                            <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
+                                                            <div key={item.id} className={`${isEditing ? "" : "ddmau-inv-cv"} px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
                                                                 {isEditing ? (
                                                                     <div className="space-y-2">
                                                                         <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
@@ -9084,7 +9156,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                     const wasMoved = !!splitOverrides[item.id];
                                                                     const isEditing = invEditingIdx && invEditingIdx.catIdx === item.catIdx && invEditingIdx.itemIdx === item.itemIdx;
                                                                     return (
-                                                                        <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
+                                                                        <div key={item.id} className={`${isEditing ? "" : "ddmau-inv-cv"} px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
                                                                             {isEditing ? (
                                                                                 <div className="space-y-2">
                                                                                     <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
@@ -10276,8 +10348,8 @@ function DeliveryDateModal({ current, onConfirm, onClose, isEs }) {
                     </h3>
                     <p className="text-xs text-gray-500 mb-3">
                         {isEs
-                            ? 'La lista se guarda y se vacía sola a las 12am de ese día.'
-                            : 'The list is saved and clears itself at 12am on that day.'}
+                            ? 'Marca este pedido con su fecha de entrega. La lista NUNCA se borra sola — usa Guardar o Limpiar.'
+                            : 'Labels this order with its delivery date. The list NEVER clears itself — use Save or Clear.'}
                     </p>
                     <input type="date" value={val} min={minDate}
                         onChange={(e) => setVal(e.target.value)}

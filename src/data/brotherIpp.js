@@ -324,7 +324,7 @@ export async function warmBrotherDirect(ip) {
 
 // ── Top-level: render + send one label (copies = repeat the job; the
 // QL-820NWB does NOT support the IPP `copies` attribute, so we loop). ──
-export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightShift, jobName }) {
+export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightShift, jobName, shouldAbort }) {
     if (!ip) return { ok: false, error: 'no_brother_ip' };
     if (!Capacitor.isNativePlatform()) return { ok: false, error: 'web_unsupported' };
     const { rgba, width, height } = renderLabelCanvas(lines, { footer, rightShift });
@@ -337,7 +337,13 @@ export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightS
     const gapMs = Math.max(2500, Math.round(height * 6));
     let last = { ok: false, status: 0 };
     for (let i = 0; i < n; i++) {
+        // 2026-07-22 (audit M3) — a 10-copy job runs ~30s; honor Cancel
+        // between copies instead of printing the rest after the modal closed.
+        if (typeof shouldAbort === 'function' && shouldAbort()) {
+            return { ok: false, error: 'cancelled', copiesPrinted: i };
+        }
         const ipp = buildIppPrintJob({ host: ip, urf, heightPx: height, jobName: jobName || 'DD Mau Label', requestId: i + 1 });
+        const attemptStart = Date.now();
         // eslint-disable-next-line no-await-in-loop
         last = await postIpp(ip, ipp);
         // Cold-wake retry (first copy only): the QL-820NWB sleeps aggressively
@@ -346,7 +352,13 @@ export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightS
         // the now-awake printer and is the difference between a mysterious
         // "request timed out" and a clean print. Only retry a transport
         // timeout (not a printer_rejected / paper error, which won't self-fix).
-        if (!last.ok && i === 0 && last.error === 'printer timeout') {
+        // 2026-07-22 (audit H1-analog): gate the retry on ELAPSED TIME —
+        // postIpp can't distinguish a connect timeout (job never delivered,
+        // safe to retry) from a read timeout (job accepted, printing slowly —
+        // a re-send prints the label TWICE). Only a failure inside the 8s
+        // connect window is treated as cold-wake.
+        const inConnectWindow = (Date.now() - attemptStart) < 8_500;
+        if (!last.ok && i === 0 && last.error === 'printer timeout' && inConnectWindow) {
             // eslint-disable-next-line no-await-in-loop
             await sleep(1200);
             // eslint-disable-next-line no-await-in-loop

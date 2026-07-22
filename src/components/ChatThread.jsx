@@ -36,7 +36,7 @@ import {
 import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
-    addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, where, getCountFromServer,
+    addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, where,
     arrayUnion, arrayRemove, getDoc, runTransaction,
     Timestamp,
 } from 'firebase/firestore';
@@ -286,12 +286,29 @@ function ChatThreadInner({
             // Snapshot is newest-first because of the desc order; reverse
             // so render order stays oldest-first / newest-at-bottom.
             list.reverse();
-            _cacheMessages(chat.id, list);   // keep for instant re-open paint
+            // Keep for instant re-open paint. Cap at the base window (50):
+            // after Load-older grew the list, re-opening painted 100+ cached
+            // messages and then the fresh 50-limit snapshot truncated it a
+            // beat later — a visible yank if the user scrolled up quickly
+            // (2026-07-22 audit N6).
+            _cacheMessages(chat.id, list.slice(-50));
             setMessages(list);
             setLoading(false);
             setLoadError(null);
             // If we got fewer than we asked for, there's no older to load.
-            if (snap.size < messageLimit) setHasMore(false);
+            // ⚠ CRITICAL fromCache guard (2026-07-22 audit H4): with the
+            // persistent local cache, the FIRST snapshot is often the cached
+            // partial (e.g. 23 cached msgs < 50, or the old 50 right after
+            // Load-older bumps the limit to 100). Deciding "no more history"
+            // off that cached partial permanently hid the Load-older button
+            // for the rest of the session. Only trust a server-confirmed
+            // snapshot — and restore the button whenever a full window
+            // arrives (the limit was satisfied, so older may exist).
+            if (snap.size >= messageLimit) {
+                setHasMore(true);
+            } else if (!snap.metadata.fromCache) {
+                setHasMore(false);
+            }
         }, (err) => {
             // Was just console.warn — silent failure mode. Now we
             // surface the error in the UI so the user knows to retry
@@ -370,6 +387,11 @@ function ChatThreadInner({
     // burst of arrivals into one write while the user is reading.
     useEffect(() => {
         if (!chat?.id || !staffName) return;
+        // 2026-07-22 (audit M12 residual): don't mark read before any
+        // messages have actually rendered. On a slow/failed first load the
+        // 1.5s timer used to fire on the EMPTY thread and write a read
+        // marker — a false "Seen by" for messages the viewer never saw.
+        if (!messages.length) return;
         const ref = doc(db, 'chats', chat.id);
         const t = setTimeout(() => {
             // 2026-06-14 — only mark fully-read when the viewer is actually at
@@ -434,8 +456,15 @@ function ChatThreadInner({
     // !atBottom) and you then scrolled down to read it, nothing re-fired and
     // the unread dot stuck / you never showed in others' "Seen by". Firing on
     // the atBottom→true transition closes that gap. Idempotent updateDoc.
+    // 2026-07-22 (audit N3): only fire on the false→true TRANSITION of
+    // atBottom. With plain deps this effect also re-ran on every message
+    // arrival while already at bottom — duplicating the main mark-read
+    // effect's write (2× write volume + chats-snapshot echo per burst).
+    const prevAtBottomForReadRef = useRef(true);
     useEffect(() => {
-        if (!chat?.id || !staffName || !atBottom || !messages.length) return;
+        const wasAtBottom = prevAtBottomForReadRef.current;
+        prevAtBottomForReadRef.current = atBottom;
+        if (!chat?.id || !staffName || !atBottom || wasAtBottom || !messages.length) return;
         const ref = doc(db, 'chats', chat.id);
         const t = setTimeout(() => {
             if (!atBottomRef.current) return;
@@ -581,6 +610,10 @@ function ChatThreadInner({
     const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [show86Modal, setShow86Modal] = useState(false);
     const [posting86, setPosting86] = useState(false);
+    // Same-tick double-tap guards for the 86 post/resolve paths (2026-07-22
+    // audit M13) — state-based guards only bite after a re-render.
+    const posting86Ref = useRef(false);
+    const resolving86Ref = useRef(false);
     // ── Inline edit state ───────────────────────────────────────────
     // editingMessageId: which bubble is currently in the "swap text
     //   for textarea" mode. Only one message can be edited at a time;
@@ -843,6 +876,11 @@ function ChatThreadInner({
                 return next.slice(-5);
             });
             toast(tx('Send failed — saved for retry', 'Error al enviar — guardado'), { kind: 'error' });
+            // 2026-07-22 (audit N8): clear the composer once the body is safely
+            // in the retry queue. Leaving it in the draft meant tapping Retry
+            // AND hitting send on the composer copy posted the message twice.
+            setDraft((cur) => (cur === body ? '' : cur));
+            setReplyTarget(null);
         } finally {
             sendingRef.current = false;
             setSending(false);
@@ -1583,7 +1621,11 @@ function ChatThreadInner({
     // (its name is misleading — it doesn't write a chat doc anymore,
     // just audit + push to on-duty FOH staff).
     async function handlePost86({ itemName, location, note }) {
-        if (!itemName || !location || posting86) return;
+        // 2026-07-22 (audit M13) — ref guard alongside the state guard.
+        // `posting86` only protects after a re-render; a same-tick double-tap
+        // posted two 86 cards and double-pushed the whole channel. Same
+        // pattern as sendingRef on the text-send path.
+        if (!itemName || !location || posting86 || posting86Ref.current) return;
         // Location-permission gate. A staff record carries `location`
         // = 'webster' | 'maryland' | 'both' (or undefined for legacy).
         // We only refuse when there's an EXPLICIT mismatch — undefined
@@ -1600,6 +1642,7 @@ function ChatThreadInner({
             );
             return;
         }
+        posting86Ref.current = true;   // set AFTER the permission gate so an early return can't wedge it
         setPosting86(true);
         try {
             // 1. Send the chat message — the EightySixCard renders
@@ -1684,14 +1727,22 @@ function ChatThreadInner({
             // separate eighty_six push (different tag → the OS won't collapse it),
             // double-buzzing the whole team on every 86. Keep the audit row +
             // /ops/86 dashboard sync; just drop the duplicate notify.
-            await postEightySixToChat({
-                location,
-                itemName,
-                transition: 'out',
-                actorName: staffName,
-                actorId: viewer?.id,
-                notifyRecipients: [],
-            });
+            // Own try/catch (audit M13c): this is just the audit row + 86-board
+            // sync — the chat card and pushes above already succeeded. A
+            // failure here used to trip the outer catch and toast a false
+            // "Could not post 86", prompting a re-tap that duplicated the card.
+            try {
+                await postEightySixToChat({
+                    location,
+                    itemName,
+                    transition: 'out',
+                    actorName: staffName,
+                    actorId: viewer?.id,
+                    notifyRecipients: [],
+                });
+            } catch (e) {
+                console.warn('86 audit/board sync failed (card already posted):', e);
+            }
 
             setShow86Modal(false);
             toast(tx('86 posted', '86 publicado'), { kind: 'success' });
@@ -1699,6 +1750,7 @@ function ChatThreadInner({
             console.warn('86 post failed:', e);
             toast(tx('Could not post 86', 'No se pudo publicar 86'), { kind: 'error' });
         } finally {
+            posting86Ref.current = false;
             setPosting86(false);
         }
     }
@@ -1714,6 +1766,10 @@ function ChatThreadInner({
     //      team sees a fresh "back in stock" bubble
     async function handleResolve86(message) {
         if (!message?.id) return;
+        // 2026-07-22 (audit M13b): this path had NO re-entry guard at all —
+        // double-tapping "Mark back in stock" posted two "✅ Back in stock"
+        // bubbles and double-pushed every member.
+        if (resolving86Ref.current) return;
         const data = message.eightySixData || {};
         const itemName = data.itemName;
         const location = data.location;
@@ -1721,6 +1777,7 @@ function ChatThreadInner({
         // Permission check: manager OR original poster
         if (!isAdmin && !isManager && message.senderName !== staffName) return;
 
+        resolving86Ref.current = true;
         try {
             // 1. Patch the source 86 message
             await updateDoc(doc(db, 'chats', chat.id, 'messages', message.id), {
@@ -1770,21 +1827,30 @@ function ChatThreadInner({
                 },
             });
 
-            await postEightySixToChat({
-                location,
-                itemName,
-                transition: 'in',
-                actorName: staffName,
-                actorId: viewer?.id,
-                // C1 (resolve path): the "back in stock" chat message above
-                // already pushed every member a chat_message — don't fan out a
-                // second eighty_six push to the same people (double-buzz). The
-                // audit row + /ops/86 sync still run; only the notify is dropped.
-                notifyRecipients: [],
-            });
+            // Own try/catch (audit M13c) — see the post path: only the audit
+            // row rides here; a failure must not toast a false "Could not
+            // resolve" after the message + board sync already succeeded.
+            try {
+                await postEightySixToChat({
+                    location,
+                    itemName,
+                    transition: 'in',
+                    actorName: staffName,
+                    actorId: viewer?.id,
+                    // C1 (resolve path): the "back in stock" chat message above
+                    // already pushed every member a chat_message — don't fan out a
+                    // second eighty_six push to the same people (double-buzz). The
+                    // audit row + /ops/86 sync still run; only the notify is dropped.
+                    notifyRecipients: [],
+                });
+            } catch (e) {
+                console.warn('86 resolve audit sync failed (message already posted):', e);
+            }
         } catch (e) {
             console.warn('86 resolve failed:', e);
             toast(tx('Could not resolve', 'No se pudo resolver'), { kind: 'error' });
+        } finally {
+            resolving86Ref.current = false;
         }
     }
 
@@ -1939,7 +2005,9 @@ function ChatThreadInner({
                 >
                     <span className="text-amber-700">📌</span>
                     <span className="flex-1 text-xs text-amber-900 truncate">
-                        <b>{pinnedMessages.length}</b> {tx('pinned', 'fijado')}{pinnedMessages.length !== 1 ? (isEs ? 's' : '') : ''}: <i>{pinnedMessages[0].text ? pinnedMessages[0].text.slice(0, 60) : (pinnedMessages[0].type === 'image' ? '📷' : '—')}{pinnedMessages[0].text?.length > 60 ? '…' : ''}</i>
+                        {/* Preview the NEWEST pin, not the oldest (2026-07-22 audit) —
+                            the array is oldest-first, so [0] showed a stale pin. */}
+                        <b>{pinnedMessages.length}</b> {tx('pinned', 'fijado')}{pinnedMessages.length !== 1 ? (isEs ? 's' : '') : ''}: <i>{(() => { const p = pinnedMessages[pinnedMessages.length - 1]; return <>{p.text ? p.text.slice(0, 60) : (p.type === 'image' ? '📷' : '—')}{p.text?.length > 60 ? '…' : ''}</>; })()}</i>
                     </span>
                     <span className="text-xs text-amber-700 font-bold">{tx('View →', 'Ver →')}</span>
                 </button>
@@ -2372,7 +2440,14 @@ function ChatThreadInner({
 // would persist across chats ("this chat is broken" sticking even
 // after navigating to a different chat). Added 2026-05-23 after the
 // audit flagged chat as the highest-risk surface.
-export default function ChatThread(props) {
+// 2026-07-22 (audit N4): memoized. ChatCenter re-renders on EVERY chats
+// snapshot (any chat's typing heartbeat, ~2s cadence per typer); without
+// memo the whole 5k-line thread re-rendered each time even though its own
+// props were unchanged — the v1.0.304 activeChat reference stabilization
+// only pays off if this component actually bails on equal props. All props
+// are stable refs/primitives now (onBack/onOpenSettings are useCallbacks in
+// ChatCenter), so the default shallow compare is correct.
+function ChatThreadOuter(props) {
     const chatId = props?.chat?.id || 'no-chat';
     return (
         <ChatThreadErrorBoundary key={chatId} onReset={props?.onBack} language={props?.language}>
@@ -2380,6 +2455,8 @@ export default function ChatThread(props) {
         </ChatThreadErrorBoundary>
     );
 }
+const ChatThread = memo(ChatThreadOuter);
+export default ChatThread;
 
 // ── MessageBubble ───────────────────────────────────────────────
 //
@@ -4040,6 +4117,38 @@ async function probeVideo(file) {
 // time-format / mention parsing / etc.
 // ─────────────────────────────────────────────────────────────────
 
+// Shared long-press handlers for the specialty cards (2026-07-22 audit N1).
+// Announcement/Coverage/PhotoIssue cards used a bare
+// `onTouchStart={() => onLongPress?.()}` — the action menu popped INSTANTLY
+// on ANY touch, so scrolling with a finger that landed on one of these cards
+// opened the reaction sheet (the exact "moving the page pulls up the emoji
+// window" complaint, fixed 2026-07-10 for normal bubbles + EightySixCard but
+// missed here). Same 400ms timer + 10px move-cancel as everywhere else.
+function useCardLongPress(onLongPress) {
+    const timerRef = useRef(null);
+    const startRef = useRef(null);
+    const end = () => {
+        if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    };
+    return {
+        onTouchStart: (e) => {
+            const t = e.touches?.[0];
+            startRef.current = t ? { x: t.clientX, y: t.clientY } : null;
+            timerRef.current = setTimeout(() => onLongPress?.(), 400);
+        },
+        onTouchMove: (e) => {
+            if (!timerRef.current || !startRef.current) return;
+            const t = e.touches?.[0];
+            if (!t) return;
+            if (Math.abs(t.clientX - startRef.current.x) > 10
+                || Math.abs(t.clientY - startRef.current.y) > 10) end();
+        },
+        onTouchEnd: end,
+        onTouchCancel: end,
+        onContextMenu: (e) => { e.preventDefault(); onLongPress?.(); },
+    };
+}
+
 function AnnouncementCard({
     message, chat, isMine, isEs, staffName, viewer, isAdmin, isManager,
     targetLang, autoTranslate,
@@ -4049,10 +4158,11 @@ function AnnouncementCard({
     const deadlineMs = message?.ackDeadline ? Date.parse(message.ackDeadline) : null;
     const overdue = deadlineMs && Date.now() > deadlineMs;
     const isAuthorOrManager = isMine || isManager || isAdmin;
+    const longPressHandlers = useCardLongPress(onLongPress);
     return (
         <div
             className="rounded-xl overflow-hidden border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-amber-100/40 shadow-card"
-            onTouchStart={() => onLongPress?.()}
+            {...longPressHandlers}
         >
             <div className="px-4 py-2.5 bg-amber-200/60 border-b border-amber-300 flex items-center gap-2 flex-wrap">
                 <span className="text-base">📣</span>
@@ -4155,9 +4265,10 @@ function CoverageCard({
         expired:   { label: tx('EXPIRED', 'EXPIRADO'),   cls: 'bg-dd-bg text-dd-text-2 border-dd-line' },
     }[status] || { label: status, cls: 'bg-dd-bg' };
 
+    const longPressHandlers = useCardLongPress(onLongPress);
     return (
         <div className="rounded-xl overflow-hidden border-2 border-blue-300 bg-white shadow-card"
-             onTouchStart={() => onLongPress?.()}>
+             {...longPressHandlers}>
             <div className="px-4 py-2.5 bg-blue-100 border-b border-blue-300 flex items-center gap-2">
                 <span className="text-base">🙋</span>
                 <span className="text-[11px] font-black uppercase tracking-widest text-blue-900 flex-1">
@@ -4351,9 +4462,10 @@ function PhotoIssueCard({ message, chat, isEs, isManager, staffName, viewer, tar
     const data = message.issueData || {};
     const cat = ISSUE_CATEGORIES.find(c => c.key === data.category);
     const urg = ISSUE_URGENCIES.find(u => u.key === data.urgency);
+    const longPressHandlers = useCardLongPress(onLongPress);
     return (
         <div className="rounded-xl overflow-hidden border-2 border-orange-300 bg-white shadow-card"
-             onTouchStart={() => onLongPress?.()}>
+             {...longPressHandlers}>
             <div className="px-4 py-2 bg-orange-100 border-b border-orange-300 flex items-center gap-2">
                 <span className="text-base">{cat?.emoji || '📸'}</span>
                 <span className="text-[11px] font-black uppercase tracking-widest text-orange-900 flex-1">

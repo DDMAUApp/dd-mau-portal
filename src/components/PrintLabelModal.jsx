@@ -71,14 +71,13 @@ export default function PrintLabelModal({
     // Prep labels can print N at once, stitched into one envelope so
     // the printer batches them as one job (no round-trips per copy).
     const [copies, setCopies] = useState(1);
-    // Slot selector — kitchen vs office printer. Andrew 2026-05-20:
-    // "add the option to print off the office printer or off the
-    // kitchen printer". Persisted per-user in localStorage so the
-    // last choice sticks across opens.
-    const [slot, setSlot] = useState(() => {
-        try { return localStorage.getItem('ddmau:printerSlot') || 'kitchen'; }
-        catch { return 'kitchen'; }
-    });
+    // Slot — HARDCODED to kitchen (2026-07-22 audit M6). The kitchen/office
+    // selector was removed from the UI, but this state still seeded from the
+    // old localStorage value — a device that ever picked 'office' silently
+    // printed there forever with no visible way to see or change it (and the
+    // keep-awake only warms 'kitchen'). Re-add the selector before making
+    // this dynamic again.
+    const [slot, setSlot] = useState('kitchen');
     const setSlotPersistent = (s) => {
         setSlot(s);
         try { localStorage.setItem('ddmau:printerSlot', s); } catch {}

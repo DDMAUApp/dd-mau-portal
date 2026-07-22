@@ -472,6 +472,11 @@ export default function ChatCenter({
 
     // ── UI state ─────────────────────────────────────────────────
     const [activeChatId, setActiveChatId] = useState(null);
+    // Ref mirror so stable callbacks (handleThreadBack) can read the current
+    // id without depending on it (which would recreate the callback and
+    // defeat ChatThread's memo — audit N4).
+    const activeChatIdRef = useRef(null);
+    useEffect(() => { activeChatIdRef.current = activeChatId; }, [activeChatId]);
     // When the user lands here from the cross-chat search, we pass this
     // through to ChatThread which scrolls + highlights the message. The
     // id is one-shot — ChatThread clears the highlight after a brief
@@ -544,10 +549,27 @@ export default function ChatCenter({
             type: c.type || 'unknown',
             memberCount: Array.isArray(c.members) ? c.members.length : 0,
         });
+        // 2026-07-22 (audit N2): clear any leftover search-jump target. It was
+        // only set by search results, but never cleared on a normal open — so
+        // reopening the SAME chat later in the session scrolled back to the
+        // old search hit (+ highlight) instead of the newest message.
+        setJumpToMessageId(null);
         setActiveChatId(c.id);
         setMobileShowList(false);
     }, []);
     const handleLongPressChat = useCallback((c) => setLongPressedChat(c), []);
+
+    // 2026-07-22 (audit N4) — stable handler refs for the memoized ChatThread.
+    // Inline arrows defeated the memo: every ChatCenter re-render (any chat's
+    // typing heartbeat ~every 2s) handed the thread new function props and
+    // re-ran the whole 5k-line render, undoing the v1.0.304 activeChat
+    // stabilization.
+    const handleThreadBack = useCallback(() => {
+        breadcrumb('chat.back', activeChatIdRef.current || 'unknown');
+        setActiveChatId(null);
+        setMobileShowList(true);
+    }, []);
+    const handleOpenSettings = useCallback(() => setShowSettings(true), []);
 
     // 2026-05-27 — Andrew: "when in a chat room the bottom navigation
     // bar at the bottom can disappear." Toggle a body data attribute
@@ -816,12 +838,8 @@ export default function ChatCenter({
                             viewer={viewer}
                             viewerTier={viewerTier}
                             jumpToMessageId={jumpToMessageId}
-                            onBack={() => {
-                                breadcrumb('chat.back', activeChat?.id || 'unknown');
-                                setActiveChatId(null);
-                                setMobileShowList(true);
-                            }}
-                            onOpenSettings={() => setShowSettings(true)}
+                            onBack={handleThreadBack}
+                            onOpenSettings={handleOpenSettings}
                         />
                     </Suspense>
                 ) : (
