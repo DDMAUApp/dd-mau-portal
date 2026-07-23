@@ -585,8 +585,13 @@ async function warmEpsonConnection(printer) {
     }
     _epsonWarmAt.set(key, now);
     try {
+        // GET the ePOS SERVICE endpoint, not the web root: `/` answers
+        // 301 → the printer's self-signed HTTPS config page, which iOS
+        // follows and hangs on — so a root probe reported a healthy
+        // printer as offline. service.cgi answers 200 in ~20ms and a GET
+        // there cannot print (jobs require a POST body).
         const res = await CapacitorHttp.get({
-            url: `http://${printer.ip}:${port}/`,
+            url: `http://${printer.ip}:${port}/cgi-bin/epos/service.cgi?devid=${encodeURIComponent(printer.deviceId || DEFAULT_DEVICE_ID)}&timeout=1000`,
             connectTimeout: 3000,
             readTimeout: 3000,
         });
@@ -2114,16 +2119,21 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
         if (Capacitor.isNativePlatform()) {
             // Cold-wake PREFLIGHT: the TM-L100 sleeps to save power and its
             // first connect after idle often times out mid-handshake while
-            // the radio spins up. Probe with a GET (any reply, even 404,
-            // means the NIC is awake); one retry after 1.2s covers the
-            // cold-wake case. Printer truly off → fails here in ~11s
-            // without ever risking a duplicate job.
+            // the radio spins up. Probe with a GET on the ePOS SERVICE
+            // endpoint — NOT the web root: `/` answers 301 → the printer's
+            // HTTPS config page (self-signed cert), which iOS URLSession
+            // follows and hangs on, so a root probe times out even with the
+            // printer healthy (2026-07-23 outage: every print failed at
+            // ~11.2s). GET service.cgi returns 200 in ~20ms and CANNOT
+            // print (jobs require a POST body). One retry after 1.2s covers
+            // cold-wake; printer truly off → fails here in ~11s without
+            // ever risking a duplicate job.
             let probeOk = false;
             for (let attempt = 0; attempt < 2; attempt++) {
                 try {
                     // eslint-disable-next-line no-await-in-loop
                     const probe = await CapacitorHttp.get({
-                        url: `http://${printer.ip}:${port}/`,
+                        url,        // same service.cgi URL the job POSTs to
                         connectTimeout: CONNECT_TIMEOUT,
                         readTimeout: CONNECT_TIMEOUT,
                     });
