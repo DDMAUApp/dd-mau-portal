@@ -170,7 +170,12 @@ function bytesToBase64(bytes) {
 // the actionable "Printer did not respond. Powered on + same Wi-Fi?" message.
 // Catch it here and normalize to the same 'printer timeout' code the Epson
 // path uses so both printers give staff the same clear guidance.
-async function postIpp(ip, ippBytes) {
+// 2026-07-23 — one `timeoutMs` for BOTH fields: iOS CapacitorHttp collapses
+// connectTimeout/readTimeout into a single URLRequest.timeoutInterval
+// (`connectTimeout ?? readTimeout`), so a smaller connect value silently
+// became the TOTAL request budget on iPhone/iPad. See the matching Epson
+// double-print fix in labelPrinting.js sendToPrinter.
+async function postIpp(ip, ippBytes, timeoutMs = 15000) {
     if (!Capacitor.isNativePlatform()) {
         return { ok: false, status: 0, error: 'web_unsupported' };
     }
@@ -181,8 +186,8 @@ async function postIpp(ip, ippBytes) {
             data: bytesToBase64(ippBytes),
             dataType: 'file',                 // base64 → raw binary request body
             responseType: 'arraybuffer',
-            connectTimeout: 8000,
-            readTimeout: 15000,
+            connectTimeout: timeoutMs,
+            readTimeout: timeoutMs,
         });
         const status = Number(res?.status) || 0;
         return { ok: status >= 200 && status < 300, status };
@@ -335,6 +340,23 @@ export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightS
     // for one label to physically finish + cut before sending the next, scaled
     // to the label length so longer labels get more time.
     const gapMs = Math.max(2500, Math.round(height * 6));
+    // Cold-wake PREFLIGHT (2026-07-23 — replaces the in-loop job re-send):
+    // the QL-820NWB sleeps aggressively and its first connect after sleep
+    // often times out mid-handshake. The old fix re-sent the PRINT job when
+    // the failure looked like a connect timeout, but on iOS the transport
+    // can't tell connect from read timeouts (single collapsed budget — see
+    // postIpp), so a slow job acceptance could be re-sent → duplicate label.
+    // Probe with Get-Printer-Attributes instead: it CANNOT print, so
+    // retrying it is always safe. Any HTTP reply = printer awake.
+    let awake = false;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        const probe = await postIpp(ip, buildIppGetPrinterAttributes(ip), 5000);
+        if ((Number(probe?.status) || 0) > 0) { awake = true; break; }
+        // eslint-disable-next-line no-await-in-loop
+        if (attempt === 0) await sleep(1200);
+    }
+    if (!awake) return { ok: false, status: 0, error: 'printer timeout' };
     let last = { ok: false, status: 0 };
     for (let i = 0; i < n; i++) {
         // 2026-07-22 (audit M3) — a 10-copy job runs ~30s; honor Cancel
@@ -343,27 +365,9 @@ export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightS
             return { ok: false, error: 'cancelled', copiesPrinted: i };
         }
         const ipp = buildIppPrintJob({ host: ip, urf, heightPx: height, jobName: jobName || 'DD Mau Label', requestId: i + 1 });
-        const attemptStart = Date.now();
+        // Send each copy ONCE — never re-send a print job (duplicate risk).
         // eslint-disable-next-line no-await-in-loop
         last = await postIpp(ip, ipp);
-        // Cold-wake retry (first copy only): the QL-820NWB sleeps aggressively
-        // and its FIRST connect after sleep frequently times out mid-handshake
-        // — the radio + engine are still spinning up. A single retry lands on
-        // the now-awake printer and is the difference between a mysterious
-        // "request timed out" and a clean print. Only retry a transport
-        // timeout (not a printer_rejected / paper error, which won't self-fix).
-        // 2026-07-22 (audit H1-analog): gate the retry on ELAPSED TIME —
-        // postIpp can't distinguish a connect timeout (job never delivered,
-        // safe to retry) from a read timeout (job accepted, printing slowly —
-        // a re-send prints the label TWICE). Only a failure inside the 8s
-        // connect window is treated as cold-wake.
-        const inConnectWindow = (Date.now() - attemptStart) < 8_500;
-        if (!last.ok && i === 0 && last.error === 'printer timeout' && inConnectWindow) {
-            // eslint-disable-next-line no-await-in-loop
-            await sleep(1200);
-            // eslint-disable-next-line no-await-in-loop
-            last = await postIpp(ip, ipp);
-        }
         if (!last.ok) {
             // Preserve the transport code ('printer timeout' → friendly Wi-Fi
             // guidance) so the modal doesn't collapse every failure to a vague

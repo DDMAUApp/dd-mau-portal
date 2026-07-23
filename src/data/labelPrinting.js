@@ -2050,7 +2050,10 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     // surface "why didn't my label print?" without admin having to
     // open DevTools. Logging is fire-and-forget; a failure to log
     // never blocks the actual print.
+    let finalized = false;   // probe-failure throws inside the try → outer catch also finalizes; log once
     const finalize = (outcome) => {
+        if (finalized) return;
+        finalized = true;
         try {
             logPrintAttempt({
                 printer,
@@ -2091,63 +2094,62 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     //     when the app is HTTPS and the printer is HTTP, so direct printing
     //     from a browser won't work — use the native app (or the Pi bridge).
     //     Kept for localhost/dev and any future HTTPS-capable printer.
-    // 2026-07-22 (sticker audit H1) — SPLIT connect vs read timeouts. The old
-    // code used one 12s value for both, and retried on ANY timeout. A READ
-    // timeout means the printer ACCEPTED the job and is printing (just slow —
-    // exactly what a big batch does); re-sending the envelope then printed the
-    // whole batch twice (up to 2×20 duplicate labels). A CONNECT timeout means
-    // the sleeping printer never took the socket — that's the only case a
-    // retry is safe. We can't distinguish the two from the error message, so
-    // we gate on elapsed time: only a failure within the connect window is
-    // treated as cold-wake. Bonus: cold-wake retry now fires at ~5s instead
-    // of ~13s, and printer-off fails in ~11s instead of ~25s.
+    // 2026-07-23 (double-print fix — supersedes the 2026-07-22 H1 elapsed-time
+    // gate): iOS CapacitorHttp COLLAPSES connectTimeout/readTimeout into ONE
+    // URLRequest.timeoutInterval (`connectTimeout ?? readTimeout` — see
+    // @capacitor/ios HttpRequestHandler.swift). So the old "connect 5s / read
+    // scaled" split actually sent the whole POST with a 5s TOTAL budget on
+    // iPhone/iPad — and since ePOS only replies after the labels physically
+    // print, any 2+-copy job (>5s of printing) "timed out" inside the connect
+    // window, passed the cold-wake gate, and got RE-SENT: every multi-copy
+    // batch printed exactly twice (Andrew 2026-07-23: "press 2 stickers, 4
+    // print"). The job POST must therefore (a) carry the FULL window in BOTH
+    // timeout fields and (b) NEVER be re-sent. Cold-wake handling moves to a
+    // preflight GET probe — a GET cannot print, so retrying it is always safe.
     const CONNECT_TIMEOUT = 5_000;
     const READ_TIMEOUT = deviceTimeoutMs + 2_000;
     let httpStatus = 0;
     let body = '';
     try {
         if (Capacitor.isNativePlatform()) {
-            // Cold-wake AUTO-RETRY (2026-07-15): the TM-L100 sleeps to save
-            // power, and its FIRST connect after idle frequently times out
-            // mid-handshake while the radio + print engine spin up. Retry the
-            // send ONCE — but ONLY when the failure happened inside the
-            // connect window (see H1 note above): a slow-print read timeout
-            // must never be re-sent, and a printer-side rejection (cover
-            // open, media empty, wrong tape) won't self-fix.
-            let nativeErr = null;
+            // Cold-wake PREFLIGHT: the TM-L100 sleeps to save power and its
+            // first connect after idle often times out mid-handshake while
+            // the radio spins up. Probe with a GET (any reply, even 404,
+            // means the NIC is awake); one retry after 1.2s covers the
+            // cold-wake case. Printer truly off → fails here in ~11s
+            // without ever risking a duplicate job.
+            let probeOk = false;
             for (let attempt = 0; attempt < 2; attempt++) {
-                const attemptStart = Date.now();
                 try {
                     // eslint-disable-next-line no-await-in-loop
-                    const native = await CapacitorHttp.post({
-                        url,
-                        headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '""' },
-                        data: eposXml,                 // already a string — sent as-is
-                        responseType: 'text',          // ePOS replies with XML, not JSON
-                        readTimeout: READ_TIMEOUT,
+                    const probe = await CapacitorHttp.get({
+                        url: `http://${printer.ip}:${port}/`,
                         connectTimeout: CONNECT_TIMEOUT,
+                        readTimeout: CONNECT_TIMEOUT,
                     });
-                    httpStatus = native?.status || 0;
-                    body = typeof native?.data === 'string' ? native.data : String(native?.data ?? '');
-                    nativeErr = null;
-                    break;
-                } catch (e) {
-                    nativeErr = e;
-                    const isTimeout = e?.name === 'AbortError'
-                        || /tim(e|ed)\s*out|timeout/i.test(e?.message || '');
-                    // Elapsed-time gate: a timeout that fired within the
-                    // connect window (+0.5s slack) never delivered the job;
-                    // anything later may have printed — do NOT re-send.
-                    const inConnectWindow = (Date.now() - attemptStart) < (CONNECT_TIMEOUT + 500);
-                    if (attempt === 0 && isTimeout && inConnectWindow) {
-                        // eslint-disable-next-line no-await-in-loop
-                        await new Promise((r) => setTimeout(r, 1200));
-                        continue;                       // one cold-wake retry
-                    }
-                    break;                              // non-timeout, late timeout, or already retried
-                }
+                    if ((Number(probe?.status) || 0) > 0) { probeOk = true; break; }
+                } catch { /* asleep or off — maybe cold-waking */ }
+                // eslint-disable-next-line no-await-in-loop
+                if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
             }
-            if (nativeErr) throw nativeErr;             // handled by the outer catch
+            if (!probeOk) {
+                finalize({ ok: false, error: 'timeout' });
+                throw new Error('printer timeout');
+            }
+            // Send the job ONCE. Both timeout fields get the full window:
+            // iOS reads connectTimeout as the total budget (see above);
+            // Android connects instantly on LAN (the probe just proved
+            // reachability) so the wide connect value costs nothing.
+            const native = await CapacitorHttp.post({
+                url,
+                headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '""' },
+                data: eposXml,                 // already a string — sent as-is
+                responseType: 'text',          // ePOS replies with XML, not JSON
+                readTimeout: READ_TIMEOUT,
+                connectTimeout: READ_TIMEOUT,
+            });
+            httpStatus = native?.status || 0;
+            body = typeof native?.data === 'string' ? native.data : String(native?.data ?? '');
         } else {
             // AbortController so the fetch doesn't hang forever if the
             // printer is off. Belt + suspenders alongside the printer's
