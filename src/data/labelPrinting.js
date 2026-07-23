@@ -1871,11 +1871,30 @@ export function renderFreeTextXml(freePayload) {
     return wrapSoapEnvelope(stitched);
 }
 
+// ── Per-device print serialization (2026-07-23) ─────────────────────
+// The print modals now hand jobs off OPTIMISTICALLY (they stop awaiting
+// the printer's reply after ~450ms), so a fast second tap can arrive
+// while the previous job is still printing. The Brother QL DROPS a job
+// that lands mid-print, and interleaved Epson envelopes risk out-of-
+// order labels — so every outbound print from THIS device runs through
+// one chain: next job starts only after the previous one settles.
+// (Cross-device concurrency is unchanged — the printers already handle
+// one job per device at a time fine.)
+let _printChain = Promise.resolve();
+function serializePrint(fn) {
+    const run = _printChain.then(fn, fn);
+    _printChain = run.then(() => {}, () => {});
+    return run;
+}
+
 // Convenience wrapper — like printPrepLabel but for free-text. The
 // audit row captures a preview of the text body (first 80 chars) so
 // admins can see what was printed without full content (privacy +
 // log volume).
-export async function printFreeText({
+export function printFreeText(args) {
+    return serializePrint(() => _printFreeTextImpl(args));
+}
+async function _printFreeTextImpl({
     location, slot = DEFAULT_PRINTER_SLOT,
     text, size, bold, align, copies = 1,
     stampDate = false, stampSignature = false, signature, footer,
@@ -2256,7 +2275,11 @@ export function subscribePrintJobs(cb, max = 50) {
 // Returns { ok, error? }. Never throws — even network/CORS errors
 // are caught and surfaced as { ok: false, error: '<message>' }
 // so the UI can toast cleanly.
-export async function printPrepLabel({
+// Serialized per device — see serializePrint above.
+export function printPrepLabel(args) {
+    return serializePrint(() => _printPrepLabelImpl(args));
+}
+async function _printPrepLabelImpl({
     location, slot = DEFAULT_PRINTER_SLOT,
     recipe, preppedBy, shelfLifeDays, language = 'en',
     notes, byName, copies = 1, source = 'recipe',

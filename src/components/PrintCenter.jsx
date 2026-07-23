@@ -164,26 +164,50 @@ export default function PrintCenter({
             return;
         }
         setPrinting(true);
-        const res = await printFreeText({
+        // Capture the inputs NOW — with the optimistic hand-off below, staff
+        // may already be typing the next label when this one resolves.
+        const capturedText = text;
+        const capturedCopies = copies;
+        const printPromise = printFreeText({
             location: printLocation,
             slot: printSlot,
-            text,
-            size, bold, align, copies,
+            text: capturedText,
+            size, bold, align, copies: capturedCopies,
             stampDate, stampSignature, signature: staffName,
             byName: staffName,
             presetId,
             useBrother: printOnBrother && !!printer?.brotherIp,
-        });
-        setPrinting(false);
-        if (res.ok) {
-            pushRecent(text);
-            const word = copies > 1 ? tx('labels', 'etiquetas') : tx('label', 'etiqueta');
-            toast(tx(`✓ Printed ${copies} ${word}`, `✓ ${copies} ${word} impresas`), { kind: 'success' });
-            // Don't auto-close — staff often want to print multiple
-            // different things in one session. They close manually.
-        } else {
-            toast(tx('Print failed: ', 'Impresión falló: ') + errorToHuman(res.error, isEs), { kind: 'error' });
+        }).catch((e) => ({ ok: false, error: e?.message || 'print_failed' }));
+        // OPTIMISTIC HAND-OFF (2026-07-23, same as PrintLabelModal): the
+        // printer only replies AFTER the label physically prints, so waiting
+        // froze the panel 2-4s per label. Give the job a short window to
+        // fail fast; otherwise release the panel so the next label can be
+        // typed immediately. printFreeText is serialized in the data layer,
+        // so back-to-back taps still reach the printer one at a time.
+        const GRACE_MS = 450;
+        const first = await Promise.race([
+            printPromise.then((res) => ({ pending: false, res })),
+            new Promise((r) => setTimeout(() => r({ pending: true }), GRACE_MS)),
+        ]);
+        const report = (res) => {
+            if (res.ok) {
+                pushRecent(capturedText);
+                const word = capturedCopies > 1 ? tx('labels', 'etiquetas') : tx('label', 'etiqueta');
+                toast(tx(`✓ Printed ${capturedCopies} ${word}`, `✓ ${capturedCopies} ${word} impresas`), { kind: 'success' });
+                // Don't auto-close — staff often want to print multiple
+                // different things in one session. They close manually.
+            } else {
+                toast(tx('Print failed: ', 'Impresión falló: ') + errorToHuman(res.error, isEs), { kind: 'error' });
+            }
+        };
+        if (first.pending) {
+            toast(tx('🖨 Printing…', '🖨 Imprimiendo…'), { kind: 'info' });
+            setPrinting(false);           // release the panel for the next label
+            printPromise.then(report);
+            return;
         }
+        setPrinting(false);
+        report(first.res);
     };
 
     const sizeChips = [

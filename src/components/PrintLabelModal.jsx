@@ -281,7 +281,7 @@ export default function PrintLabelModal({
         }
         cancelledRef.current = false;
         setPrinting(true);
-        const res = await printPrepLabel({
+        const printPromise = printPrepLabel({
             location,
             slot,
             recipe: effectiveRecipe,
@@ -295,7 +295,34 @@ export default function PrintLabelModal({
             prepDate,
             shouldAbort: () => cancelledRef.current,
             useBrother: printOnBrother && !!printer?.brotherIp,
-        });
+        }).catch((e) => ({ ok: false, error: e?.message || 'print_failed' }));
+        // ── OPTIMISTIC HAND-OFF (2026-07-23) ───────────────────────────
+        // Andrew: "it could have just printed and the next print still
+        // takes some time." The wait wasn't warm-up — ePOS only REPLIES
+        // after the label has physically printed, so every print held the
+        // modal (and the staff member) for the full 2-4s round trip. Now:
+        // give the job a short grace window to fail fast (bad config,
+        // instant network refusal), and if it's still in flight after
+        // that, assume it's printing, close the modal, and let staff move
+        // on. The outcome still lands as a global toast: silence on
+        // success (the label in their hand IS the confirmation), a clear
+        // error toast if the printer rejects it. Every attempt is also in
+        // the print_jobs log regardless.
+        const GRACE_MS = 450;
+        const first = await Promise.race([
+            printPromise.then((res) => ({ pending: false, res })),
+            new Promise((r) => setTimeout(() => r({ pending: true }), GRACE_MS)),
+        ]);
+        if (first.pending) {
+            toast(tx('🖨 Printing…', '🖨 Imprimiendo…'), { kind: 'info' });
+            onClose?.();   // plain close — NOT cancelAndClose; the job must keep going
+            printPromise.then((res) => {
+                if (res.ok || res.error === 'cancelled') return;
+                toast(errorToHuman(res.error, isEs), { kind: 'error' });
+            });
+            return;
+        }
+        const res = first.res;
         setPrinting(false);
         if (res.ok) {
             toast(tx('✓ Label printed', '✓ Etiqueta impresa'), { kind: 'success' });
