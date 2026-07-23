@@ -7,16 +7,16 @@ import { notifyManagement } from '../data/notify';
 
 // Native-app store links.
 //   • iOS — the unlisted App Store build (only reachable via this direct link).
-//   • Android — INTERNAL testing track. A manager adds the staffer's Google
-//     email in Play Console → Internal testing → Testers; the staffer then
-//     opens this internal-test opt-in link, taps "Become a tester," and
-//     installs. Andrew 2026-06-25 — this is the correct opt-in URL (the old
-//     /apps/testing/<package> closed-test link showed "not available"; the
-//     internal track uses the /apps/internaltest/<id> form below).
-//     NOTE: the opt-in only resolves once the staffer's email is on the
-//     internal tester list; until then Play shows "not available".
+//   • Android — CLOSED testing on the Forsis LLC org account (app transferred
+//     2026-07; the old /apps/internaltest/… link belonged to the pre-transfer
+//     internal track and is dead). Andrew 2026-07-23: the Play STORE LISTING
+//     link works best on Android phones — it's the primary button. The
+//     /apps/testing/<package> web opt-in page is the fallback for a staffer
+//     Play still tells "not available" (their email must be on the closed-test
+//     list first — the email-capture form below handles that).
 export const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
-export const ANDROID_APP_URL = 'https://play.google.com/apps/internaltest/4701656348790704265';
+export const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=com.ddmau.staff';
+export const ANDROID_JOIN_URL = 'https://play.google.com/apps/testing/com.ddmau.staff';
 
 // Loose email shape check — we only need to reject obvious typos / empty
 // submits before writing. Play Console does the authoritative validation
@@ -153,6 +153,11 @@ export default function InstallAppButton({ language, compact = false }) {
                                 <p className="text-[11px] text-dd-text-2 mb-2 leading-tight">
                                     🤖 {tx('Android: if Google Play says “not available,” enter your Google email and Andrew will add you as a tester.',
                                         'Android: si Google Play dice “no disponible”, ingresa tu correo de Google y Andrew te agregará como probador.')}
+                                    {' '}
+                                    <button type="button" onClick={() => openExternalUrl(ANDROID_JOIN_URL)}
+                                        className="underline text-cyan-700 font-semibold">
+                                        {tx('Already added? Join the test here.', '¿Ya te agregaron? Únete a la prueba aquí.')}
+                                    </button>
                                 </p>
                                 <input
                                     type="email"

@@ -188,7 +188,9 @@ export async function disableBiometric() {
 // Detection: the plugin simply isn't compiled into the binary.
 // Web is never "outdated" (biometrics don't apply there).
 const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881912';
-const ANDROID_APP_URL = 'https://play.google.com/apps/internaltest/4701656348790704265';
+// Play store listing (closed testing, Forsis LLC org — 2026-07-23). Correct
+// for the update deep-link: anyone with the app installed is already a tester.
+const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=com.ddmau.staff';
 
 export function isNativeBuildOutdated() {
     try {

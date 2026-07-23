@@ -1,4 +1,4 @@
-import { IOS_APP_URL, ANDROID_APP_URL } from './InstallAppButton';
+import { IOS_APP_URL, ANDROID_APP_URL, ANDROID_JOIN_URL } from './InstallAppButton';
 
 // Full-screen post-login gate for PHONE browsers (2026-07-12, Andrew:
 // "whoever is still using the web app version on next login, send them to
@@ -47,8 +47,11 @@ export default function DownloadAppGate({ language, staffName, onSignOut }) {
                     </a>
                 </div>
                 <p className="text-[11px] text-dd-text-2 mt-4">
-                    {tx('Android: ask a manager to add your Google email to the tester list first.',
-                        'Android: pide a un gerente que agregue tu correo de Google a la lista de probadores primero.')}
+                    {tx('Android: ask a manager to add your Google email to the tester list first. If Play says “not available,” ',
+                        'Android: pide a un gerente que agregue tu correo de Google a la lista de probadores primero. Si Play dice “no disponible”, ')}
+                    <a href={ANDROID_JOIN_URL} target="_blank" rel="noopener noreferrer" className="underline text-cyan-700 font-semibold">
+                        {tx('join the test here', 'únete a la prueba aquí')}
+                    </a>.
                 </p>
                 <button onClick={onSignOut}
                     className="mt-5 text-xs text-dd-text-2 underline underline-offset-2">
