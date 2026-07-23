@@ -136,7 +136,14 @@ const resolveStaffSide = (staff) => {
     return 'foh';
 };
 
-const isOnSide = (staff, side) => resolveStaffSide(staff) === side;
+// scheduleSide:'both' is a supported value (managers/floaters who work both
+// sides) — they belong to EVERY side's roster. resolveStaffSide stays
+// single-valued ('both' → foh fallback) for contexts that need one home side
+// (legacy shift-side resolution); membership checks must come through here.
+const isOnSide = (staff, side) => {
+    if (staff?.scheduleSide === 'both') return true;
+    return resolveStaffSide(staff) === side;
+};
 
 // Role groups — used by staffing-need slots and day templates to scope which
 // staff can fill a given slot. "any" = no role filter (legacy / catch-all).
@@ -555,6 +562,44 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         || (_currentStaff && /manager|owner/i.test(_currentStaff.role || ''));
     const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
     const [selectedDayIdx, setSelectedDayIdx] = useState(() => (new Date().getDay() - WEEK_START_DOW + 7) % 7);
+    // Date-rollover catch-up (2026-07-23): weekStart/selectedDayIdx were
+    // computed once at mount, so a shared iPad parked on this tab overnight
+    // kept showing yesterday (or, across the week boundary, LAST week)
+    // until someone remounted the page. On wake/visibility, if the user is
+    // still sitting on the week that WAS current when they last looked,
+    // snap to today. Never touches a week they deliberately navigated to.
+    const lastSeenTodayRef = useRef(toDateStr(new Date()));
+    const weekStartRef = useRef(weekStart);
+    useEffect(() => { weekStartRef.current = weekStart; }, [weekStart]);
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState !== 'visible') return;
+            const now = new Date();
+            const todayStr = toDateStr(now);
+            if (todayStr === lastSeenTodayRef.current) return;   // same day — nothing to do
+            const staleToday = lastSeenTodayRef.current;
+            lastSeenTodayRef.current = todayStr;
+            // Only auto-jump when the visible week contains the STALE
+            // "today" — i.e. the user was parked on what used to be the
+            // current week. A browsed-to past/future week stays put.
+            const prevStr = toDateStr(weekStartRef.current);
+            const prevEnd = toDateStr(addDays(weekStartRef.current, 7));
+            if (staleToday >= prevStr && staleToday < prevEnd) {
+                const fresh = startOfWeek(now);
+                if (toDateStr(fresh) !== prevStr) setWeekStart(fresh);
+                setSelectedDayIdx((now.getDay() - WEEK_START_DOW + 7) % 7);
+            }
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('focus', onVisible);
+        // Always-on iPads never fire visibilitychange — poll cheaply too.
+        const id = setInterval(onVisible, 5 * 60 * 1000);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('focus', onVisible);
+            clearInterval(id);
+        };
+    }, []);
     const [showAddModal, setShowAddModal] = useState(false);
     // Availability conflict acknowledgment modal — 2026-05-15.
     // Andrew: "lets it flash and show a small window warning and i can
@@ -1372,20 +1417,26 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // scoped to staff at THEIR store. Staff with location 'both'
             // (or no location recorded) show for managers at either store.
             if (staffIsAdmin) return timeOff;
-            const myLoc = (staffList || []).find(s => s.name === staffName)?.location || 'both';
-            if (myLoc === 'both') return timeOff;
+            // Scope by the VIEWED store (2026-07-23), not the viewer's live
+            // staff-record location. The grid, auto-fill, publish checks and
+            // chips all key off storeLocation — if the viewer's record moves
+            // stores mid-session the two diverge and every PTO chip/guard on
+            // the grid silently vanishes (scheduling over approved PTO). For
+            // a single-store manager storeLocation IS their store; a
+            // 'both'-location manager views 'both' and sees everything.
+            if (storeLocation === 'both') return timeOff;
             const locByName = new Map((staffList || []).map(s => [s.name, s.location || 'both']));
             return (timeOff || []).filter(t => {
                 if (t.staffName === staffName) return true;   // own — always
                 const loc = locByName.get(t.staffName) || 'both';
-                return loc === 'both' || loc === myLoc;
+                return loc === 'both' || loc === storeLocation;
             });
         }
         return (timeOff || []).filter(t =>
             t.staffName === staffName || // own — any status
             t.status === 'approved'      // others' — approved only
         );
-    }, [timeOff, canEdit, staffIsAdmin, staffName, staffList]);
+    }, [timeOff, canEdit, staffIsAdmin, staffName, staffList, storeLocation]);
 
     // Permission-filtered shifts — drafts hidden for non-editors. Used by
     // any aggregation that renders to the viewer (hours scoreboard, staff
@@ -1705,9 +1756,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 // hours in the right-sidebar staff summary. visibleShifts is
                 // already permission-filtered downstream so sideShiftCount is
                 // safe as-is.
-                const allMyShifts = viewerShifts.filter(sh =>
-                    sh.staffName === s.name &&
-                    (storeLocation === 'both' || sh.location === storeLocation));
+                // No location filter (2026-07-23): OT is per employee per week
+                // across BOTH stores (one employer). A floater with 25h here +
+                // 20h at the other store is a 45h/5h-OT week — the badge must
+                // say so in either store's view, or the overtime is invisible
+                // everywhere.
+                const allMyShifts = viewerShifts.filter(sh => sh.staffName === s.name);
                 // Group by date and let dayPaidHours handle the double-shift
                 // break deduction (auto-detected from 2+ shifts/day OR legacy
                 // isDouble flag). Important — this means weekly totals are
@@ -2301,6 +2355,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         offerStatus: null, offeredBy: null, offeredAt: null,
                         pendingClaimBy: null, claimedAt: null,
                         coverNeeded: false, coverNeededAt: null, proposedSplit: null,
+                        // approvedBy is the double-approval guard for a claim
+                        // cycle — it must reset with the rest of the offer
+                        // state, or the NEXT offer on this shift doc can never
+                        // be approved ("Already approved by X" forever).
+                        approvedBy: null,
                     } : {}),
                     updatedAt: serverTimestamp(),
                 });
@@ -2442,22 +2501,33 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const handleApproveSwapRequest = async (request) => {
         if (!canEdit) return;
         try {
+            // 'swapped' | 'cleared' — set by the transaction body so the
+            // shift-deleted path can COMMIT the request cleanup instead of
+            // throwing (a throw aborts the whole transaction, so the old
+            // "Request cleared." message cleared nothing and the dead
+            // request re-errored on every future Approve).
+            let outcome = 'swapped';
             await runTransaction(db, async (tx) => {
+                outcome = 'swapped';                    // reset on retry
                 const fromRef = doc(db, 'shifts', request.fromShiftId);
                 const toRef   = doc(db, 'shifts', request.toShiftId);
                 const reqRef  = doc(db, 'swap_requests', request.id);
                 const [fromSnap, toSnap, reqSnap] = await Promise.all([tx.get(fromRef), tx.get(toRef), tx.get(reqRef)]);
-                if (!fromSnap.exists() || !toSnap.exists()) {
-                    throw new Error(tx_msg(
-                        'One of the shifts no longer exists. Request cleared.',
-                        'Uno de los turnos ya no existe. Solicitud cancelada.',
-                    ));
-                }
                 if (!reqSnap.exists() || reqSnap.data().status !== 'pending') {
                     throw new Error(tx_msg(
                         'Request already handled.',
                         'La solicitud ya fue procesada.',
                     ));
+                }
+                if (!fromSnap.exists() || !toSnap.exists()) {
+                    // Actually retire the stale request ('denied' so every
+                    // existing status consumer renders it correctly).
+                    tx.update(reqRef, {
+                        status: 'denied', deniedBy: staffName,
+                        deniedAt: serverTimestamp(), deniedReason: 'shift_deleted',
+                    });
+                    outcome = 'cleared';
+                    return;
                 }
                 const fromData = fromSnap.data();
                 const toData = toSnap.data();
@@ -2468,10 +2538,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         'La asignación del turno cambió desde que se hizo la solicitud.',
                     ));
                 }
+                // Also verify the shifts still match the date/time snapshot the
+                // manager (and both staffers) were shown — a shift rescheduled
+                // after the request was filed must not swap silently.
+                const drifted = (snapObj, live) => snapObj && (
+                    (snapObj.date && snapObj.date !== live.date) ||
+                    (snapObj.startTime && snapObj.startTime !== live.startTime) ||
+                    (snapObj.endTime && snapObj.endTime !== live.endTime));
+                if (drifted(request.fromShiftSnapshot, fromData) || drifted(request.toShiftSnapshot, toData)) {
+                    throw new Error(tx_msg(
+                        'A shift was rescheduled since the request was filed. Ask them to re-request.',
+                        'Un turno fue reprogramado desde que se hizo la solicitud. Pide que la vuelvan a solicitar.',
+                    ));
+                }
                 tx.update(fromRef, { staffName: request.toStaff, updatedAt: serverTimestamp(), updatedBy: staffName });
                 tx.update(toRef,   { staffName: request.fromStaff, updatedAt: serverTimestamp(), updatedBy: staffName });
                 tx.update(reqRef,  { status: 'approved', approvedBy: staffName, approvedAt: serverTimestamp() });
             });
+            if (outcome === 'cleared') {
+                toast(tx('One of the shifts no longer exists — request cleared.',
+                         'Uno de los turnos ya no existe — solicitud cancelada.'));
+                return;
+            }
             // Notify both staff (best-effort, outside the transaction).
             const detail = `${request.fromShiftSnapshot?.date || ''} ↔ ${request.toShiftSnapshot?.date || ''}`;
             // Audit log — Andrew 2026-06-25.
@@ -2589,6 +2677,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 coverNeededAt: urgent ? serverTimestamp() : null,
                 pendingClaimBy: null,
                 claimedAt: null,
+                // Start of a NEW offer cycle: clear the previous cycle's
+                // double-approval guard, or approving this offer's claim
+                // fails forever with "Already approved by X".
+                approvedBy: null,
                 // arrayUnion + ISO-string timestamp because Firestore
                 // disallows serverTimestamp() inside an array element.
                 transferHistory: arrayUnion({
@@ -2906,6 +2998,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 coverNeededAt: null,
                 pendingClaimBy: null,
                 claimedAt: null,
+                // Clear the claim-cycle approval guard too (see commitOfferShift).
+                approvedBy: null,
                 updatedAt: serverTimestamp(),
             });
             // Audit log — Andrew 2026-06-25.
@@ -4243,10 +4337,36 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     // ── Phase 3: staff submits a PTO request (status='pending') ──
     // Validates against no-PTO blackout dates before submitting.
+    const ptoSubmitBusyRef = useRef(false);
     const handleSubmitPtoRequest = async (entry) => {
+        // One in-flight submit at a time (2026-07-23): the modal button
+        // stays enabled while addDoc awaits, so a double-tap on slow Wi-Fi
+        // used to file the same request twice (two docs, two manager pushes,
+        // both approvable).
+        if (ptoSubmitBusyRef.current) return;
+        ptoSubmitBusyRef.current = true;
+        try {
         // Check every date in range against no_timeoff blackouts
         const start = entry.startDate;
         const end = entry.endDate || entry.startDate;
+        // Handler-side past-date guard — the input's min= attribute is
+        // advisory on desktop web (typed dates bypass it) and its `today`
+        // is frozen at modal mount (stale across midnight).
+        if (start < toDateStr(new Date())) {
+            toast(tx('Start date is in the past.', 'La fecha inicial ya pasó.'));
+            return;
+        }
+        // Duplicate guard: an identical/overlapping request of their own
+        // that isn't denied already covers these dates.
+        const overlapping = (timeOff || []).some(t =>
+            t.staffName === staffName && t.status !== 'denied' &&
+            (t.startDate || t.date) <= end &&
+            (t.endDate || t.startDate || t.date) >= start);
+        if (overlapping) {
+            toast(tx('You already have a time-off request covering those dates.',
+                     'Ya tienes una solicitud de tiempo libre para esas fechas.'));
+            return;
+        }
         // 2026-06-16 (#9): belt-and-suspenders. Both PTO UIs already disable
         // submit when end<start, but guard the handler too — an inverted range
         // would silently protect ZERO days (isStaffOffOn needs start<=end), so
@@ -4310,6 +4430,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         } catch (e) {
             console.error('Submit PTO failed:', e);
             toast(tx('Could not submit: ', 'No se pudo enviar: ') + e.message);
+        }
+        } finally {
+            ptoSubmitBusyRef.current = false;
         }
     };
 
@@ -5038,16 +5161,34 @@ ${dayBlocks}
             return;
         }
         try {
-            const batch = writeBatch(db);
-            for (const s of safeDrafts) {
-                batch.update(doc(db, 'shifts', s.id), {
+            // Per-doc updates, NOT one writeBatch (2026-07-23): a batch fails
+            // ENTIRELY if any doc no longer exists — so a co-manager deleting
+            // one draft while this preview was open used to abort the whole
+            // publish with a raw error and ZERO shifts released. Now the
+            // survivors publish and the deleted ones are reported.
+            const results = await Promise.allSettled(safeDrafts.map(s =>
+                updateDoc(doc(db, 'shifts', s.id), {
                     published: true,
                     publishedBy: staffName,
                     publishedAt: serverTimestamp(),
                     updatedAt: serverTimestamp(),
-                });
+                })));
+            const failedIds = new Set();
+            results.forEach((r, i) => { if (r.status === 'rejected') failedIds.add(safeDrafts[i].id); });
+            if (failedIds.size > 0) {
+                toast(tx(`⚠ ${failedIds.size} draft(s) were deleted by someone else and were skipped.`,
+                         `⚠ ${failedIds.size} borrador(es) fueron eliminados por otra persona y se omitieron.`));
             }
-            await batch.commit();
+            // Everything downstream (audit count, toast, staff pushes) should
+            // reflect what actually published.
+            const publishedDrafts = safeDrafts.filter(s => !failedIds.has(s.id));
+            if (publishedDrafts.length === 0) {
+                setPublishPreview(null);
+                toast(tx('Nothing published — the drafts no longer exist.', 'Nada publicado — los borradores ya no existen.'));
+                return;
+            }
+            safeDrafts.length = 0;
+            safeDrafts.push(...publishedDrafts);
             // Audit log (one roll-up row for the publish) — Andrew 2026-06-25.
             auditShiftChange({ action: 'published', staffName: null,
                 after: { count: safeDrafts.length, skipped: ptoConflicts.length || 0 } }).catch(() => {});
@@ -5167,6 +5308,16 @@ ${dayBlocks}
             // Create new docs with date shifted +7. Batched (audit
             // 2026-05-22) — same reasoning as auto-fill: 50 sequential
             // addDocs was 10+ seconds dead time on copy-week.
+            // Dedupe vs shifts ALREADY in the target week (2026-07-23):
+            // tapping Copy twice — or copying FOH then BOH when a
+            // cross-side staffer is on both rosters — used to create every
+            // shift again. Key = person+date+times; the Set also grows as
+            // we queue creates so duplicates WITHIN one run are caught too.
+            const wkStartStr = toDateStr(weekStart);
+            const wkEndStr = toDateStr(addDays(weekStart, 7));
+            const existingKeys = new Set(shifts
+                .filter(sh => sh.date >= wkStartStr && sh.date < wkEndStr)
+                .map(sh => `${sh.staffName}|${sh.date}|${sh.startTime}|${sh.endTime}`));
             const toCreate = [];
             for (const sh of filtered) {
                 const oldDate = parseLocalDate(sh.date);
@@ -5176,6 +5327,9 @@ ${dayBlocks}
                 const newDateStr = toDateStr(newDate);
                 if (dateClosed(newDateStr, sh.location)) continue;
                 if (isStaffOffOn(sh.staffName, newDateStr)) continue;
+                const dupeKey = `${sh.staffName}|${newDateStr}|${sh.startTime}|${sh.endTime}`;
+                if (existingKeys.has(dupeKey)) continue;
+                existingKeys.add(dupeKey);
                 toCreate.push({
                     staffName: sh.staffName,
                     date: newDateStr,
@@ -5243,9 +5397,11 @@ ${dayBlocks}
             // visibleShifts is side-filtered, so a FOH cook with a Tuesday BOH
             // shift would be considered "free" by FOH auto-fill and end up
             // double-booked against themselves.
-            const myExisting = shifts.filter(sh =>
-                sh.staffName === s.name &&
-                (storeLocation === 'both' || sh.location === storeLocation));
+            // ALSO: no location filter — `shifts` holds BOTH stores, and a
+            // floater already working Tuesday at the other store must not be
+            // auto-filled here the same day (one human), nor have those hours
+            // ignored when computing how far they are from target.
+            const myExisting = shifts.filter(sh => sh.staffName === s.name);
             // Group by date so the auto-double break gets deducted once per day
             // (e.g. existing 10–3 + 4–8 same day → 8h paid, not 9h).
             const myByDate = new Map();
@@ -5255,7 +5411,11 @@ ${dayBlocks}
                 myByDate.set(sh.date, arr);
             }
             const existingHours = Array.from(myByDate.values()).reduce((sum, dayShifts) => sum + dayPaidHours(dayShifts), 0);
-            const remaining = target - existingHours;
+            let remaining = target - existingHours;
+            // Minor-labor cap (2026-07-23): never auto-fill a minor past the
+            // weekly limit even if their targetHours says more — the limit
+            // previously existed only as a passive warning badge.
+            if (s.isMinor) remaining = Math.min(remaining, MINOR_WEEKLY_HOURS_MAX - existingHours);
             if (remaining <= 0) { skipped.push(`${s.name}: ${tx('already at target', 'ya alcanzó objetivo')}`); continue; }
 
             // Build candidate days: must be available, not closed, not on approved PTO.
@@ -5309,6 +5469,10 @@ ${dayBlocks}
                     startTime: c.from,
                     endTime,
                     location: (s.location && s.location !== 'both') ? s.location : (storeLocation !== 'both' ? storeLocation : 'webster'),
+                    // Stamp the side being auto-filled (2026-07-23). Without
+                    // it, a cross-side staffer's generated drafts resolved to
+                    // their HOME side and landed on the other grid.
+                    side,
                     isShiftLead: false,
                     isDouble: false,
                     notes: tx('auto-filled', 'auto-rellenado'),
@@ -6926,7 +7090,14 @@ ${dayBlocks}
                     onRemove={askRemoveTimeOff}
                     onSetStatus={askSetPtoStatus}
                     entries={viewerTimeOff}
-                    staffList={staffList}
+                    // Scope the "Add entry" staff dropdown to the same set the
+                    // list shows (2026-07-23): a single-store manager could
+                    // pick other-store staff, and the just-saved entry then
+                    // vanished from their own filtered list (looked like a
+                    // failed save → retry → duplicate approved PTO).
+                    staffList={(staffIsAdmin || storeLocation === 'both')
+                        ? staffList
+                        : (staffList || []).filter(s => !s.location || s.location === 'both' || s.location === storeLocation)}
                     isEn={isEn}
                     canEdit={canEdit}
                     blocksByDate={blocksByDate}
@@ -11454,18 +11625,21 @@ function SwapShiftModal({ onClose, shifts, staffList, staffName, storeLocation, 
     }, [shifts, staffName, today, storeLocation, filterStaff]);
 
     // Unique staff names that have an upcoming shift, for the picker.
+    // Same location filter as theirShifts (2026-07-23) — the picker used to
+    // list other-store staff whose shifts then rendered as an empty list.
     const swappableStaff = useMemo(() => {
         const seen = new Set();
         const out = [];
         for (const s of (shifts || [])) {
             if (s.staffName === staffName) continue;
+            if (storeLocation !== 'both' && s.location !== storeLocation && s.location !== 'both') continue;
             if (s.staffName && !seen.has(s.staffName) && s.published !== false && s.date >= today) {
                 seen.add(s.staffName);
                 out.push(s.staffName);
             }
         }
         return out.sort();
-    }, [shifts, staffName, today]);
+    }, [shifts, staffName, today, storeLocation]);
 
     const renderShiftRow = (s, onClick, selected) => (
         <button key={s.id} onClick={() => onClick(s)}
@@ -11716,6 +11890,20 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
         setAvail(a => ({ ...a, [dayKey]: { ...(a[dayKey] || { available: true, from: '09:00', to: '21:00' }), ...patch } }));
     };
     const handleSave = async () => {
+        // Reversed windows (From 9pm / To 9am) read as "available almost
+        // never" to the conflict checker and render a nonsense badge —
+        // reject them before saving (2026-07-23).
+        const bad = DAYS.find(d => {
+            const dd = avail[d.k];
+            return dd && dd.available !== false && dd.from && dd.to && dd.to <= dd.from;
+        });
+        if (bad) {
+            alert(tx(
+                `${bad.en}: the "until" time must be after the "from" time.`,
+                `${bad.es}: la hora "hasta" debe ser después de la hora "desde".`,
+            ));
+            return;
+        }
         await onSave(avail);
         onClose();
     };
