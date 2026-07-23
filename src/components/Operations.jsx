@@ -4170,9 +4170,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     toast(language === 'es' ? 'El conteo ya está vacío' : 'Counts are already empty');
                     return;
                 }
+                // Andrew 2026-07-23: "when you clear a list give a prompt to
+                // save the list — I don't see enough saved lists." Clear used
+                // to skip history entirely, so lists staff built all week
+                // vanished unsaved. Bias toward saving: first offer
+                // save-then-clear (identical to the Save button, so it lands
+                // in Recent Orders like any other save); declining asks once
+                // more before a destructive no-save clear.
+                const wantSave = window.confirm(language === 'es'
+                    ? `¿Guardar esta lista (${total} artículos) en el historial antes de limpiar?\n\nOK = guardar y limpiar. Cancelar = limpiar sin guardar.`
+                    : `Save this list (${total} items) to history before clearing?\n\nOK = save & clear. Cancel = clear without saving.`);
+                if (wantSave) {
+                    await saveAndResetInventory();
+                    return;
+                }
                 const ok = window.confirm(language === 'es'
-                    ? `¿Limpiar todo el conteo (${total} artículos)? Esto no se puede deshacer. Guarda primero si quieres una copia.`
-                    : `Clear all counts (${total} items)? This cannot be undone. Save first if you want a copy.`);
+                    ? `¿Limpiar SIN guardar (${total} artículos)? La lista se perderá — esto no se puede deshacer.`
+                    : `Clear WITHOUT saving (${total} items)? The list will be lost — this cannot be undone.`);
                 if (!ok) return;
                 pendingCountsRef.current = {}; // drop in-flight bumps so reconcile can't resurrect a cleared count
                 manualInvClearRef.current = Date.now(); // explicit clear — allow the resulting empty snapshot through the stability guard
@@ -8029,9 +8043,22 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     no reason to keep staring at it). */}
                                                 {rows.length > 0 && (
                                                     <button onClick={async () => {
+                                                        // Same save-first bias as the main Clear button
+                                                        // (Andrew 2026-07-23): offer to land the list in
+                                                        // history before it's destroyed. Save path = the
+                                                        // regular Save & Reset, so it shows up in Recent
+                                                        // Orders like any other saved list.
+                                                        const wantSave = window.confirm(language === "es"
+                                                            ? `¿Guardar esta lista (${rows.length} items) en el historial antes de vaciar?\n\nOK = guardar y vaciar. Cancelar = vaciar sin guardar.`
+                                                            : `Save this list (${rows.length} items) to history before emptying?\n\nOK = save & empty. Cancel = empty without saving.`);
+                                                        if (wantSave) {
+                                                            await saveAndResetInventory();
+                                                            setShowCart(false);
+                                                            return;
+                                                        }
                                                         const ok = window.confirm(language === "es"
-                                                            ? `¿Vaciar el carrito (${rows.length} items)? Esto no se puede deshacer.`
-                                                            : `Empty the cart (${rows.length} items)? This cannot be undone.`);
+                                                            ? `¿Vaciar SIN guardar (${rows.length} items)? La lista se perderá — esto no se puede deshacer.`
+                                                            : `Empty WITHOUT saving (${rows.length} items)? The list will be lost — this cannot be undone.`);
                                                         if (!ok) return;
                                                         setInventory({});
                                                         try {
