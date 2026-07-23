@@ -20,6 +20,7 @@ import { fileToBytes, parseToastFiles } from '../../data/payroll/toastParse.js';
 import {
     buildRosterView, syncWithToast, upsertPerson, staffDefaultsByKey,
 } from '../../data/payroll/roster.js';
+import { keyFromMaster } from '../../data/payroll/names.js';
 import { validate as validateExtra } from '../../data/payroll/extras.js';
 import { buildPayrollWorkbook, buildComparisonWorkbook } from '../../data/payroll/excelOut.js';
 import {
@@ -159,6 +160,29 @@ function PayrollGate({ onUnlock, onClose, staffName }) {
     );
 }
 
+// Inline "add an hourly person" mini-form for the People step. Keyed the same
+// way Toast rows are (keyFromMaster on first+last), so a person added here a
+// week early merges with their Toast row on the next import instead of duping.
+function AddPersonRow({ onAdd }) {
+    const [first, setFirst] = useState('');
+    const [last, setLast] = useState('');
+    const add = () => {
+        if (!first.trim() || !last.trim()) { toast('Enter first and last name.'); return; }
+        onAdd(first.trim(), last.trim());
+        setFirst(''); setLast('');
+    };
+    return (
+        <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+            <input value={first} onChange={(e) => setFirst(e.target.value)} placeholder="First"
+                className="border border-dd-line rounded px-1 py-0.5 w-24" />
+            <input value={last} onChange={(e) => setLast(e.target.value)} placeholder="Last"
+                onKeyDown={(e) => e.key === 'Enter' && add()}
+                className="border border-dd-line rounded px-1 py-0.5 w-24" />
+            <button onClick={add} className="text-dd-green font-bold">+ add hourly person</button>
+        </div>
+    );
+}
+
 // ───────────────────────────── main wizard ─────────────────────────────
 export default function PayrollPanel({ language, staffName, staffList, onClose }) {
     const owner = isAdmin(staffName, staffList);
@@ -264,7 +288,12 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
         live = { inputs, results, extrasErrors, adjResults };
     }
 
-    const rosterView = imported ? buildRosterView(roster, parsed.exports.employees) : null;
+    // People & Direct Deposit works WITHOUT a Toast import (Andrew 2026-07-23):
+    // the cloud roster persists from the last payroll run, so the owner can add
+    // a person, flip Direct Deposit, or pin a rate any day of the period — not
+    // just on payroll day. With no import, Toast-derived columns (hours, Toast
+    // rate, NEW flags) simply show "—"; the rate shown is the last known rate.
+    const rosterView = buildRosterView(roster, imported ? parsed.exports.employees : { WG: {}, MH: {} });
 
     // Effective "natural" rate = this period's Toast rate, else the last known
     // rate. An override is anything the owner types that differs from it.
@@ -491,14 +520,16 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
 
     // ───────────────────────── render ─────────────────────────
     const tx = (en, es) => (language === 'es' ? es : en);
-    const canAdvance = step === 0 ? imported : true;
+    // People & DD (step 1) is reachable without an import; everything past it
+    // needs this period's Toast files.
+    const canAdvance = step === 1 ? imported : true;
 
     return (
         <div className="text-sm">
             {/* step chips */}
             <div className="flex flex-wrap gap-1.5 mb-3">
                 {STEPS.map((s, i) => (
-                    <button key={s} onClick={() => { if (i === 0 || imported) setStep(i); }}
+                    <button key={s} onClick={() => { if (i <= 1 || imported) setStep(i); }}
                         className={`px-2.5 py-1 rounded-full text-xs font-bold border transition ${
                             i === step ? 'bg-dd-green text-white border-dd-green'
                                 : i < step ? 'text-dd-green border-dd-green/40 bg-white'
@@ -564,8 +595,15 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                 </div>
             )}
 
-            {step === 1 && imported && (
+            {step === 1 && (
                 <div className="rounded-xl border border-dd-line bg-white p-4 space-y-4">
+                    {!imported && (
+                        <div className="text-[11px] text-dd-text bg-dd-bg border border-dd-line rounded px-2 py-1.5">
+                            📋 <b>No Toast files imported</b> — this is the live roster carried from the last payroll run.
+                            You can add people, change Direct Deposit, or set pay rates now; everything saves and is
+                            already in place when you import the next period's files. Hours and Toast rates appear after an import.
+                        </div>
+                    )}
                     <div>
                         <h4 className="font-bold text-dd-text mb-1">People & Direct Deposit</h4>
                         <p className="text-xs text-dd-text-2">This list is live — what you set carries to every future payroll. Set anyone marked <span className="text-red-600 font-bold">NEW</span> (FOH/BOH + Direct Deposit). Hours come from Toast; the <b>pay rate</b> defaults to Toast but you can change it here. <b>A rate you set becomes that person's master rate</b> — it stays at that price every period (even if Toast later reports something else) until you change it again or tap <b>↺</b> to go back to Toast. Rows where the master rate differs from the current Toast Rate are highlighted <span className="text-red-600 font-bold">red</span>.</p>
@@ -617,6 +655,18 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                     </tbody>
                                 </table>
                             </div>
+                            {/* Pre-add a new hire before they exist on Toast (Andrew
+                                2026-07-23): set their section/DD/rate today; the next
+                                import matches them by first+last name key and just
+                                fills in the hours. */}
+                            <AddPersonRow onAdd={(first, last) => {
+                                const key = keyFromMaster(first, last);
+                                if (!key) { toast('Enter a name.'); return; }
+                                if (roster[loc].people[key]) { toast('That name is already on the roster.'); return; }
+                                upsertPerson(roster, loc, key, { first, last });
+                                bump();
+                                persistRosterQuiet();
+                            }} />
                             <div className="mt-2">
                                 <div className="text-[11px] font-bold text-dd-text-2 mb-1">Salary (fixed each period, not on Toast)</div>
                                 <table className="w-full text-[11px]">
