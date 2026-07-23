@@ -37,6 +37,7 @@ import {
     warmPrintConfigs,
     subscribePrinterWarmState,
     prefetchPdfLib,
+    getCachedPrinterConfig,
 } from '../data/labelPrinting';
 import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
@@ -83,7 +84,14 @@ export default function PrintLabelModal({
         setSlot(s);
         try { localStorage.setItem('ddmau:printerSlot', s); } catch {}
     };
-    const [printer, setPrinter] = useState(null);
+    // Printer config, seeded SYNCHRONOUSLY from the live-mirror cache
+    // (2026-07-23): the old `useState(null)` meant every modal open flashed
+    // "No printer set up — ask admin" for the first beat until the async
+    // subscription fired — even though the config was already in memory.
+    // undefined = still resolving (show "Connecting…"), null = definitively
+    // no config for this location.
+    const [printer, setPrinter] = useState(() => getCachedPrinterConfig(location, 'kitchen'));
+    const configResolved = printer !== undefined;
     const [printing, setPrinting] = useState(false);
     // Live printer connection state: 'connecting' | 'ready' | 'offline' | 'idle'.
     const [warmState, setWarmState] = useState('connecting');
@@ -160,7 +168,12 @@ export default function PrintLabelModal({
         // the print fires without a cold connect. ("sticky" print, Andrew
         // 2026-06-11; connection warm-up 2026-06-30.)
         warmPrintConfigs(location, slot);
-        const unsub = subscribePrinterConfig(location, setPrinter, slot);
+        // Ignore terminal listener errors (info.error) — keep the last known
+        // config instead of blanking to "no printer" on a network hiccup.
+        const unsub = subscribePrinterConfig(location, (cfg, info) => {
+            if (info?.error) return;
+            setPrinter(cfg);
+        }, slot);
         // Live connection state → drives the "Printer loading… / ready" strip.
         const unsubWarm = subscribePrinterWarmState(location, slot, setWarmState);
         // Keep the connection warm while the modal stays open so the Brother
@@ -407,35 +420,51 @@ export default function PrintLabelModal({
                         2026-07-13). Colors: green ready, amber loading/not-set,
                         red offline. */}
                     {(() => {
-                        // Connecting only matters once a printer is configured.
-                        const connecting = printerReady && warmState === 'connecting';
+                        // 2026-07-23 (Andrew: "always say loading or connected —
+                        // not 'no printer, ask admin'"): three calm states.
+                        //   • Connecting… — config still resolving OR first probe
+                        //     in flight. This replaces the scary "No printer set
+                        //     up" flash that showed for a beat on every open.
+                        //   • Connected ✓ — probe answered.
+                        //   • Reconnecting… — probe failed; the 25s keep-alive
+                        //     keeps retrying, so this is an ACTIVE state, not a
+                        //     dead end (the print-tap confirm still guards a
+                        //     genuinely dead printer). The "ask admin" line now
+                        //     appears ONLY when the config is definitively
+                        //     absent — a real setup gap, not a loading beat.
+                        const connecting = !configResolved || (printerReady && warmState === 'connecting');
                         const offline = printerReady && warmState === 'offline';
-                        const tone = !printerReady || offline
+                        const noConfig = configResolved && !printerReady;
+                        const tone = connecting || offline || noConfig
                             ? 'bg-amber-50 border border-amber-300 text-amber-800'
-                            : connecting
-                                ? 'bg-amber-50 border border-amber-300 text-amber-800'
-                                : 'bg-dd-sage-50 border border-dd-green/40 text-dd-green-700';
+                            : 'bg-dd-sage-50 border border-dd-green/40 text-dd-green-700';
+                        const Spinner = () => (
+                            <span className="inline-block w-3 h-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" aria-hidden="true" />
+                        );
                         return (
                     <div className={`rounded-lg p-2.5 text-[11px] ${tone}`}>
-                        {!printerReady ? (
-                            <>⚠ {tx(
-                                `No ${slot} printer set up for this location. Ask admin to configure it.`,
-                                `Sin impresora de ${slot === 'kitchen' ? 'cocina' : 'oficina'}. Pídele a un admin.`,
-                            )}</>
-                        ) : connecting ? (
+                        {connecting ? (
                             <span className="font-bold inline-flex items-center gap-1.5">
-                                <span className="inline-block w-3 h-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" aria-hidden="true" />
-                                {tx('Printer loading…', 'Cargando impresora…')}
+                                <Spinner />
+                                {tx('Connecting to printer…', 'Conectando a la impresora…')}
                             </span>
+                        ) : noConfig ? (
+                            <>⚠ {tx(
+                                'Printer not set up for this location yet — an admin can add it in Admin → Label printers.',
+                                'Impresora aún no configurada — un admin puede agregarla en Admin → Impresoras.',
+                            )}</>
                         ) : offline ? (
-                            <span className="font-bold">⚠ {tx('Printer not responding — check it’s on', 'Impresora sin responder — verifica que esté encendida')}</span>
+                            <span className="font-bold inline-flex items-center gap-1.5">
+                                <Spinner />
+                                {tx('Reconnecting… (check the printer is on)', 'Reconectando… (verifica que esté encendida)')}
+                            </span>
                         ) : (
                             <>
-                                <span className="font-bold">🖨 {printer.name || tx('Printer ready', 'Impresora lista')}</span>
+                                <span className="font-bold">🖨 {tx('Connected', 'Conectada')} — {printer.name || tx('Printer', 'Impresora')}</span>
                                 {isBrotherPrinter ? (
-                                    <span className="ml-1.5 opacity-70">— {tx('Brother (AirPrint dialog)', 'Brother (diálogo AirPrint)')}</span>
+                                    <span className="ml-1.5 opacity-70">({tx('Brother', 'Brother')})</span>
                                 ) : (
-                                    <span className="ml-1.5 opacity-70">— {printer.ip}</span>
+                                    <span className="ml-1.5 opacity-70">({printer.ip})</span>
                                 )}
                             </>
                         )}

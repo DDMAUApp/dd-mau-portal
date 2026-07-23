@@ -26,7 +26,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
-import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs, subscribePrinterWarmState } from '../data/labelPrinting';
+import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs, subscribePrinterWarmState, getCachedPrinterConfig } from '../data/labelPrinting';
 
 const RECENTS_KEY = 'ddmau:printCenter:recents';
 const MAX_RECENTS = 6;
@@ -64,7 +64,11 @@ export default function PrintCenter({
         try { localStorage.setItem('ddmau:printerSlot', s); } catch {}
     };
 
-    const [printer, setPrinter] = useState(null);
+    // Seeded synchronously from the live-mirror cache (2026-07-23) — same
+    // fix as PrintLabelModal: no "no printer" flash while the async
+    // subscription warms up. undefined = resolving, null = truly no config.
+    const [printer, setPrinter] = useState(() => getCachedPrinterConfig(printLocation, 'kitchen'));
+    const configResolved = printer !== undefined;
     const [warmState, setWarmState] = useState('connecting');
     useEffect(() => {
         // Pre-warm the print hot path (see PrintLabelModal) so the
@@ -74,7 +78,10 @@ export default function PrintCenter({
         // lingers (this interval was missing here vs PrintLabelModal).
         warmPrintConfigs(printLocation, printSlot);
         const keepAlive = setInterval(() => warmPrintConfigs(printLocation, printSlot), 25000);
-        const unsub = subscribePrinterConfig(printLocation, setPrinter, printSlot);
+        const unsub = subscribePrinterConfig(printLocation, (cfg, info) => {
+            if (info?.error) return; // keep last known config on listener errors
+            setPrinter(cfg);
+        }, printSlot);
         const unsubWarm = subscribePrinterWarmState(printLocation, printSlot, setWarmState);
         return () => { clearInterval(keepAlive); unsub(); unsubWarm(); };
     }, [printLocation, printSlot]);
@@ -504,32 +511,43 @@ export default function PrintCenter({
                             just config loaded; shows "Printer loading…" while the
                             device wakes (Andrew 2026-07-13). */}
                         {(() => {
-                            const connecting = printerReady && warmState === 'connecting';
+                            // 2026-07-23 — calm three-state strip, same as
+                            // PrintLabelModal: Connecting… / Connected /
+                            // Reconnecting…; "not set up" only when the config
+                            // is DEFINITIVELY absent (never as a loading flash).
+                            const connecting = !configResolved || (printerReady && warmState === 'connecting');
                             const offline = printerReady && warmState === 'offline';
-                            const tone = (!printerReady || connecting || offline)
+                            const noConfig = configResolved && !printerReady;
+                            const tone = (connecting || offline || noConfig)
                                 ? 'bg-amber-50 border border-amber-300 text-amber-800'
                                 : 'bg-dd-sage-50 border border-dd-green/40 text-dd-green-700';
+                            const Spinner = () => (
+                                <span className="inline-block w-3 h-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" aria-hidden="true" />
+                            );
                             return (
                         <div className={`rounded-lg p-2.5 text-[11px] ${tone}`}>
-                            {!printerReady ? (
-                                <>⚠ {tx(
-                                    'No printer at this location. Admin → 🏷 Label printers.',
-                                    'Sin impresora aquí. Admin → 🏷 Impresoras.',
-                                )}</>
-                            ) : connecting ? (
+                            {connecting ? (
                                 <span className="font-bold inline-flex items-center gap-1.5">
-                                    <span className="inline-block w-3 h-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" aria-hidden="true" />
-                                    {tx('Printer loading…', 'Cargando impresora…')}
+                                    <Spinner />
+                                    {tx('Connecting to printer…', 'Conectando a la impresora…')}
                                 </span>
+                            ) : noConfig ? (
+                                <>⚠ {tx(
+                                    'Printer not set up for this location yet — Admin → 🏷 Label printers.',
+                                    'Impresora aún no configurada — Admin → 🏷 Impresoras.',
+                                )}</>
                             ) : offline ? (
-                                <span className="font-bold">⚠ {tx('Printer not responding — check it’s on', 'Impresora sin responder — verifica que esté encendida')}</span>
+                                <span className="font-bold inline-flex items-center gap-1.5">
+                                    <Spinner />
+                                    {tx('Reconnecting… (check the printer is on)', 'Reconectando… (verifica que esté encendida)')}
+                                </span>
                             ) : (
                                 <>
-                                    <span className="font-bold">🖨 {printer.name || tx('Printer ready', 'Lista')}</span>
+                                    <span className="font-bold">🖨 {tx('Connected', 'Conectada')} — {printer.name || tx('Printer', 'Impresora')}</span>
                                     {isBrotherPrinter ? (
-                                        <span className="ml-1.5 opacity-70">— {tx('Brother (AirPrint dialog)', 'Brother (diálogo AirPrint)')}</span>
+                                        <span className="ml-1.5 opacity-70">({tx('Brother', 'Brother')})</span>
                                     ) : (
-                                        <span className="ml-1.5 opacity-70">— {printer.ip}</span>
+                                        <span className="ml-1.5 opacity-70">({printer.ip})</span>
                                     )}
                                 </>
                             )}

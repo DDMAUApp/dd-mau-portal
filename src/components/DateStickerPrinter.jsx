@@ -53,7 +53,7 @@ import {
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
 import { isAdmin } from '../data/staff';
-import { warmPrintBridge } from '../data/printBridge';
+import { warmPrintConfigs } from '../data/labelPrinting';
 import { subscribeAllBuildOverrides, applyBuildOverride } from '../data/buildOverrides';
 import { subscribeAllCustomItems } from '../data/customItems';
 
@@ -137,16 +137,22 @@ export default function DateStickerPrinter({
         const t = setTimeout(warm, 800);
         return () => clearTimeout(t);
     }, []);
-    // Open the printer CONNECTION as soon as the sticker page mounts (Tailscale
-    // tunnel + wake the Brother), then keep it warm every 25s while the page is
-    // open — so by the time a sticker is picked and Print is tapped, the printer
-    // is already connected instead of cold-starting. No-op when the bridge is
-    // disabled (config → null, no network). Andrew 2026-06-30.
+    // Wake the ACTUAL printers the moment the sticker page mounts, then keep
+    // them warm every 25s while the page is open — so by the time staff pick
+    // an item and the print window opens, the status strip is already green.
+    // 2026-07-23 (Andrew: "when we go into the page it still takes a while
+    // to load the printer"): this effect used to warm ONLY the Pi print
+    // bridge — which is retired (the Pis are TVs now) — and never touched
+    // the Epson/Brother, so the real warm-up didn't start until the modal
+    // opened. Now it runs the full warm (config live-mirror + Epson HTTP
+    // wake + Brother IPP wake) for the store the user is on.
     useEffect(() => {
-        warmPrintBridge();
-        const id = setInterval(() => warmPrintBridge(), 25000);
+        const loc = storeLocation === 'both' ? 'webster' : storeLocation;
+        if (loc !== 'webster' && loc !== 'maryland') return;
+        warmPrintConfigs(loc);
+        const id = setInterval(() => warmPrintConfigs(loc), 25000);
         return () => clearInterval(id);
-    }, []);
+    }, [storeLocation]);
     // Edit Mode — admin-only. When ON, each row in the flat sections
     // becomes an editable form with delete + add-row buttons. Off
     // by default so the normal print-a-sticker flow stays clean.

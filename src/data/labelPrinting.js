@@ -68,7 +68,7 @@ import { getLabelFormat, getLabelFormatFast } from './labelFormat';
 // bridge is disabled, unreachable, or the Brother is offline, we fall
 // through to the existing PDF + Web Share Sheet path so date stickers
 // still work. See src/data/printBridge.js + /pi5-print-bridge/.
-import { tryPrintViaBridge, payloadToBridgeFormat, warmPrintBridge } from './printBridge';
+import { tryPrintViaBridge, payloadToBridgeFormat } from './printBridge';
 import { printBrotherDirect, warmBrotherDirect } from './brotherIpp';
 
 // ── Public types ──────────────────────────────────────────────
@@ -475,10 +475,27 @@ export function warmPrintConfigs(location, slot = DEFAULT_PRINTER_SLOT) {
     try {
         getLabelFormatFast().catch(() => {});
         warmPrinterConnection(location, slot);
-        // Keep warming the Pi bridge too — harmless no-op unless a slot is
-        // ever configured as brother_ql (bridge path).
-        warmPrintBridge();
+        // 2026-07-23 — Pi bridge warming REMOVED (Andrew: "the Pis are just
+        // for the TVs now, not the printer"). Both stores print direct to
+        // Wi-Fi printers; warming the retired bridge burned a Firestore read
+        // + network probe every 25s for nothing. The print-time bridge path
+        // (tryPrintViaBridge) still exists for slots explicitly configured
+        // as brother_ql — it health-probes on demand.
     } catch { /* warming is best-effort */ }
+}
+
+// Synchronous read of the live-mirrored printer config (2026-07-23).
+// Print modals seed their `printer` state from this so a modal that
+// opens AFTER the first subscription tick paints the config in the
+// same frame — no "No printer set up" flash while the async
+// subscription warms up. Returns undefined while the mirror hasn't
+// resolved yet (callers treat undefined as "still connecting", vs
+// null = definitively no config).
+export function getCachedPrinterConfig(location, slot = DEFAULT_PRINTER_SLOT) {
+    if (!location) return undefined;
+    const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
+    const entry = _printerCfgCache.get(`${location}_${safeSlot}`);
+    return entry && entry.ready ? entry.value : undefined;
 }
 
 // ── Live printer WARM STATE (2026-07-13) ────────────────────────────
