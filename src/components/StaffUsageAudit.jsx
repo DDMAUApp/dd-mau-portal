@@ -52,6 +52,8 @@ import {
     MessageSquare, Send, PhoneOff, Phone,
 } from 'lucide-react';
 import { composeSetupReminderSmsUrl, stampSetupReminderSent, sendSetupReminderSms } from '../data/notify';
+import { sendDirectMessage } from '../data/chatDm';
+import { IOS_APP_URL, ANDROID_APP_URL } from './InstallAppButton';
 
 // Coerce any timestamp shape to a millisecond number (or 0 for
 // nothing). Handles Firestore Timestamp objects, JS Dates, ISO
@@ -108,6 +110,38 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
     // onSetPhone (passed from AdminPanel) to normalize + validate +
     // write to /config/staff + log the phone_change audit event.
     const [addingPhoneFor, setAddingPhoneFor] = useState(null);
+    // 2026-07-23 — Andrew: "when it shows that the staff is still using the
+    // web app can we add a button to send them a chat message with the link
+    // to download the app." Per-row send state: '' | 'sending' | 'sent'.
+    const [dmState, setDmState] = useState({});
+
+    async function handleSendAppLinkDm(staffRow) {
+        if (!staffRow?.name || dmState[staffRow.name] === 'sending' || dmState[staffRow.name] === 'sent') return;
+        setDmState((m) => ({ ...m, [staffRow.name]: 'sending' }));
+        // Bilingual body — we don't know the recipient's language setting here,
+        // and a two-line repeat costs nothing in a chat bubble.
+        const text = [
+            '📲 Please switch to the DD Mau app — the web version doesn’t get push notifications for schedules, chat, or shift reminders.',
+            `iPhone: ${IOS_APP_URL}`,
+            `Android: ${ANDROID_APP_URL}`,
+            '',
+            '📲 Por favor cambia a la app de DD Mau — la versión web no recibe notificaciones de horarios, chat ni recordatorios de turno.',
+        ].join('\n');
+        const res = await sendDirectMessage({
+            fromName: currentManagerName,
+            fromId: currentManagerId,
+            toName: staffRow.name,
+            text,
+        });
+        if (res.ok) {
+            setDmState((m) => ({ ...m, [staffRow.name]: 'sent' }));
+            setToast(tx(`Chat sent to ${staffRow.name}`, `Chat enviado a ${staffRow.name}`));
+        } else {
+            setDmState((m) => { const n = { ...m }; delete n[staffRow.name]; return n; });
+            setToast(tx('Could not send the chat message', 'No se pudo enviar el chat'));
+        }
+        setTimeout(() => setToast(null), 3000);
+    }
 
     // Cooldown matches the value in src/data/notify.js. Used here only
     // to disable the button + show "Sent 3d ago" — the Cloud Function
@@ -460,6 +494,32 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                             label={s.installed ? tx('PWA', 'PWA') : tx('No PWA', 'Sin PWA')}
                                         />
                                     </div>
+                                    {/* Still on web (or never seen on the native app) →
+                                        one-tap in-app DM with the store links. The DM
+                                        also fires a push if they have any registered
+                                        device; worst case it's waiting the next time
+                                        they open the web app. Hidden on your own row. */}
+                                    {!s.native && s.name !== currentManagerName && (
+                                        dmState[s.name] === 'sent' ? (
+                                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap bg-dd-green text-white border-dd-green">
+                                                <Check size={11} strokeWidth={3} aria-hidden="true" />
+                                                {tx('Chat sent', 'Chat enviado')}
+                                            </span>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSendAppLinkDm(s)}
+                                                disabled={dmState[s.name] === 'sending'}
+                                                className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap bg-cyan-600 text-white border-cyan-700 hover:bg-cyan-700 active:scale-95 transition disabled:opacity-60"
+                                                title={tx('Send them a chat message with the app download links', 'Enviarles un chat con los enlaces para descargar la app')}
+                                            >
+                                                {dmState[s.name] === 'sending'
+                                                    ? <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                                                    : <MessageSquare size={11} strokeWidth={2.5} aria-hidden="true" />}
+                                                <span>{tx('Send app link', 'Enviar enlace')}</span>
+                                            </button>
+                                        )
+                                    )}
                                     {/* Manual-SMS link — same pattern Onboarding
                                         uses (sms:NUMBER?body=...). Tapping
                                         opens the admin's native Messages app
