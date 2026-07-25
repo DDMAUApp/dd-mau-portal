@@ -319,6 +319,7 @@ export default function MobileHome({
         { tab: 'menu',       Icon: UtensilsCrossed, en: 'Menu',         es: 'Menú' },
         { tab: 'training',   Icon: GraduationCap,   en: 'Training',     es: 'Capacitación' },
         { tab: 'catering',   Icon: ChefHat,         en: 'Orders',       es: 'Pedidos' },
+        { tab: 'myhours',    Icon: Clock,           en: 'My Hours',     es: 'Mis Horas' },
         ...(canMoney  ? [{ tab: 'moneycount', Icon: Wallet, en: 'Money Count', es: 'Conteo de Dinero', primary: true }] : []),
         { tab: 'healthdept', Icon: HeartPulse, en: 'Health Dept', es: 'Depto. de Salud' },
         ...(isManager ? [{ tab: 'tardies', Icon: Clock,     en: 'Tardies', es: 'Tardanzas' }] : []),

@@ -66,6 +66,11 @@ const NAV_GROUPS = [
         items: [
             { tab: 'home',         Icon: Home,           en: 'Home',       es: 'Inicio' },
             { tab: 'schedule',     Icon: Calendar,       en: 'Schedule',   es: 'Horario' },
+            // 2026-07-24 — every staffer's own Toast timecards (clock in/out
+            // per day, week + month totals, OT) + "this timecard is wrong"
+            // dispute flow. All-staff, self-scoped: the page only ever
+            // queries the signed-in name's own cards.
+            { tab: 'myhours',      Icon: Clock,          en: 'My Hours',   es: 'Mis Horas' },
             // 2026-05-21 — Andrew: managers assign tasks from Operations →
             // Assign Tasks; staff see their list here. Sits right under
             // Schedule because both answer "what do I have to do today?".

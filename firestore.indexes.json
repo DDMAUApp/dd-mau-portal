@@ -4,93 +4,188 @@
       "collectionGroup": "acks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "userName", "order": "ASCENDING" },
-        { "fieldPath": "ackedAt",  "order": "DESCENDING" }
+        {
+          "fieldPath": "userName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ackedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "attendance",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "staffKey", "order": "ASCENDING" },
-        { "fieldPath": "date",     "order": "DESCENDING" }
+        {
+          "fieldPath": "staffKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "scheduled_messages",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "chatId",    "order": "ASCENDING" },
-        { "fieldPath": "createdBy", "order": "ASCENDING" },
-        { "fieldPath": "status",    "order": "ASCENDING" },
-        { "fieldPath": "sendAt",    "order": "ASCENDING" }
+        {
+          "fieldPath": "chatId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdBy",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "sendAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "scheduled_messages",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "sendAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "sendAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "shifts",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "staffName", "order": "ASCENDING" },
-        { "fieldPath": "date",      "order": "ASCENDING" },
-        { "fieldPath": "published", "order": "ASCENDING" }
+        {
+          "fieldPath": "staffName",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "published",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "maintenanceRequests",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "submittedBy", "order": "ASCENDING" },
-        { "fieldPath": "createdAt",   "order": "DESCENDING" }
+        {
+          "fieldPath": "submittedBy",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "chats",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "members",        "arrayConfig": "CONTAINS"  },
-        { "fieldPath": "lastActivityAt", "order": "DESCENDING"      }
+        {
+          "fieldPath": "members",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "lastActivityAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "sms_delivery_logs",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "forStaff",  "order": "ASCENDING"  },
-        { "fieldPath": "type",      "order": "ASCENDING"  },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "forStaff",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "type",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "toast_invoices",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "location",    "order": "ASCENDING"  },
-        { "fieldPath": "createdDate", "order": "DESCENDING" }
+        {
+          "fieldPath": "location",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdDate",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "assigned_tasks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "side",       "order": "ASCENDING"  },
-        { "fieldPath": "done",       "order": "ASCENDING"  },
-        { "fieldPath": "assignedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "side",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "done",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "assignedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "notifications",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "forStaff",  "order": "ASCENDING"  },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "forStaff",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "timecards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "staffKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],

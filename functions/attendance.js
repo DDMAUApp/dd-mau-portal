@@ -237,7 +237,125 @@ async function recordCompletedSessions(location, before, after) {
     return completed.length;
 }
 
+// ── Durable per-employee timecards — Andrew 2026-07-24 ──────────────────────
+// "I want staff to see their time cards … clock in and out for each day,
+// total hours, total overtime." The live roster + clock_sessions docs are
+// TODAY-only (overwritten each tick / reset each day) — nothing durable per
+// employee existed. This writes one PERMANENT doc per (location, Central day,
+// toastEmployeeId) to /timecards, built from the same scraper feed:
+//
+//   timecards/{loc}_{YYYY-MM-DD}_{toastEmployeeId} = {
+//     location, date, toastEmployeeId, employeeName,
+//     staffKey,                    // normName(employeeName) — joins to app staff
+//     sessions: [{clockIn, clockOut}],  // CLOSED sessions, deduped by clockIn
+//     openClockIn: ISO | null,     // in-progress session (null after clock-out)
+//     breaks: [{in, out, minutes, paid}],
+//     hoursToday, hoursThisWeek,   // scraper's own running totals (Toast truth)
+//     updatedAt
+//   }
+//
+// Write discipline (the trigger fires every ~90s per location): a doc is only
+// written when the before→after DIFF shows a real change for that person —
+// new session, clock-out (disappeared from roster), break started/ended, or
+// hoursToday moved ≥3 minutes. Quiet ticks write nothing.
+// History accrues FORWARD from deploy — the feed keeps no past days.
+function _tcChanged(prev, e) {
+    if (!prev) return true;
+    if (prev.clockedInAt !== e.clockedInAt) return true;
+    if ((prev.onBreakSince || null) !== (e.onBreakSince || null)) return true;
+    const pb = Array.isArray(prev.breaksToday) ? prev.breaksToday.length : 0;
+    const eb = Array.isArray(e.breaksToday) ? e.breaksToday.length : 0;
+    if (pb !== eb) return true;
+    if (Math.abs((Number(prev.hoursToday) || 0) - (Number(e.hoursToday) || 0)) >= 0.05) return true;
+    return false;
+}
+
+function _tcRef(db, location, dateKey, toastEmployeeId) {
+    return db.collection("timecards").doc(`${location}_${dateKey}_${toastEmployeeId}`);
+}
+
+// Append a CLOSED session to the day-of-clock-in's timecard (transaction —
+// dedupes on the stable clockIn timestamp, so replayed diffs are no-ops).
+async function _tcCloseSession(db, location, prevEntry, clockOutIso) {
+    const clockIn = prevEntry.clockedInAt;
+    if (!clockIn) return;
+    const dateKey = ctDateKey(new Date(clockIn));
+    const ref = _tcRef(db, location, dateKey, prevEntry.toastEmployeeId);
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const data = snap.exists ? snap.data() : {
+            location, date: dateKey,
+            toastEmployeeId: String(prevEntry.toastEmployeeId),
+            employeeName: prevEntry.employeeName || "",
+            staffKey: normName(prevEntry.employeeName),
+            sessions: [], breaks: [], openClockIn: null,
+            hoursToday: null, hoursThisWeek: null,
+        };
+        if (!Array.isArray(data.sessions)) data.sessions = [];
+        if (!data.sessions.some(s => s.clockIn === clockIn)) {
+            data.sessions.push({ clockIn, clockOut: clockOutIso || null });
+            data.sessions.sort((a, b) => String(a.clockIn).localeCompare(String(b.clockIn)));
+        }
+        // This session is no longer the open one.
+        if (data.openClockIn === clockIn) data.openClockIn = null;
+        if (Array.isArray(prevEntry.breaksToday) && prevEntry.breaksToday.length >= (data.breaks?.length || 0)) {
+            data.breaks = prevEntry.breaksToday;
+        }
+        if (prevEntry.hoursToday != null) data.hoursToday = prevEntry.hoursToday;
+        data.updatedAt = new Date().toISOString();
+        tx.set(ref, data);
+    });
+}
+
+async function recordDurableTimecards(location, before, after) {
+    const afterEntries = Array.isArray(after?.entries) ? after.entries : [];
+    const beforeEntries = Array.isArray(before?.entries) ? before.entries : [];
+    if (!afterEntries.length && !beforeEntries.length) return 0;
+    const db = getFirestore();
+    const beforeById = {};
+    for (const e of beforeEntries) if (e && e.toastEmployeeId) beforeById[e.toastEmployeeId] = e;
+    const afterIds = new Set(afterEntries.filter(e => e && e.toastEmployeeId).map(e => String(e.toastEmployeeId)));
+    let wrote = 0;
+
+    // 1. Upsert the live picture for everyone currently on the clock.
+    for (const e of afterEntries) {
+        if (!e || !e.toastEmployeeId || !e.clockedInAt || !e.employeeName) continue;
+        const prev = beforeById[e.toastEmployeeId];
+        // Re-clock-in: the PREVIOUS session just closed — record it first.
+        if (prev && prev.clockedInAt && prev.clockedInAt !== e.clockedInAt) {
+            try { await _tcCloseSession(db, location, prev, prev.clockedOutAt || e.clockedInAt); wrote++; } catch (err) { /* best-effort */ }
+        }
+        if (!_tcChanged(prev, e)) continue;
+        const dateKey = ctDateKey(new Date(e.clockedInAt));
+        try {
+            await _tcRef(db, location, dateKey, e.toastEmployeeId).set({
+                location, date: dateKey,
+                toastEmployeeId: String(e.toastEmployeeId),
+                employeeName: e.employeeName,
+                staffKey: normName(e.employeeName),
+                openClockIn: e.clockedInAt,
+                onBreakSince: e.onBreakSince || null,
+                breaks: Array.isArray(e.breaksToday) ? e.breaksToday : [],
+                hoursToday: e.hoursToday != null ? e.hoursToday : null,
+                hoursThisWeek: e.hoursThisWeek != null ? e.hoursThisWeek : null,
+                jobName: e.jobName || null,
+                updatedAt: new Date().toISOString(),
+            }, { merge: true });
+            wrote++;
+        } catch (err) { /* best-effort — never break the feed trigger */ }
+    }
+
+    // 2. Anyone in BEFORE but gone from AFTER just clocked out — close them.
+    for (const prev of beforeEntries) {
+        if (!prev || !prev.toastEmployeeId || !prev.clockedInAt) continue;
+        if (afterIds.has(String(prev.toastEmployeeId))) continue;
+        try { await _tcCloseSession(db, location, prev, prev.clockedOutAt || new Date().toISOString()); wrote++; } catch (err) { /* best-effort */ }
+    }
+    return wrote;
+}
+
 module.exports = {
     normName, ctDateKey, shiftStartMs, pickBestShift, classify,
     recordClockedInAttendance, markNoShows, recordCompletedSessions,
+    recordDurableTimecards,
 };

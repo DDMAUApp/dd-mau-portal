@@ -63,6 +63,7 @@ const HealthDepartment = lazy(() => import('./components/HealthDepartment').then
 // See src/components/NeedsBoard.jsx for schema details.
 const NeedsBoard = lazy(() => import('./components/NeedsBoard').then(m => ({ default: memo(m.default) })));
 const CateringOrder = lazy(() => import('./components/CateringOrder').then(m => ({ default: memo(m.default) })));
+const MyHoursPage = lazy(() => import('./components/MyHoursPage').then(m => ({ default: memo(m.default) })));
 const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest').then(m => ({ default: memo(m.default) })));
 const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: memo(m.default) })));
 // 2026-05-24 — per-staff push opt-out matrix (admin only). See
@@ -2300,6 +2301,10 @@ export default function App() {
             // sees Operations + AdminPanel — staff cannot reach this tab.
             if (activeTab === 'needs' && (staffIsAdmin || isManager)) return <PageErrorBoundary tabName="Needs Board" language={language}><NeedsBoard language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'catering' && canSeePage(currentStaffRecord, 'catering')) return <PageErrorBoundary tabName="Catering" language={language}><CateringOrder language={language} staffName={staffName} /></PageErrorBoundary>;
+            // My Hours — ALL staff, strictly self-scoped: the page queries only
+            // the signed-in name's own timecards (staffKey == normName(me));
+            // there is no prop or UI path to another person's cards.
+            if (activeTab === 'myhours') return <PageErrorBoundary tabName="My Hours" language={language}><MyHoursPage language={language} staffName={staffName} /></PageErrorBoundary>;
             if (activeTab === 'maintenance' && canSeePage(currentStaffRecord, 'maintenance')) return <PageErrorBoundary tabName="Maintenance" language={language}><MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'insurance' && canSeePage(currentStaffRecord, 'insurance')) return <PageErrorBoundary tabName="Insurance" language={language}><InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} /></PageErrorBoundary>;
             if (activeTab === 'ai' && canSeePage(currentStaffRecord, 'ai')) return <PageErrorBoundary tabName="AI Assistant" language={language}><AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;

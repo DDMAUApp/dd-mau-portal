@@ -34,6 +34,7 @@ import StaffTodosAdmin from './StaffTodosAdmin';
 // page. i want to know which staff has used the app?" Self-contained
 // read-only card; reads staffList in-place, no new Firestore writes.
 import StaffUsageAudit from './StaffUsageAudit';
+import TimecardDisputesPanel from './TimecardDisputesPanel';
 import HealthBulkEditor from './HealthBulkEditor';
 import ScheduleAuditLog from './ScheduleAuditLog';
 import AttendanceLog from './AttendanceLog';
@@ -2455,6 +2456,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         currentManagerId={(staffList || []).find(s => s.name === staffName)?.id ?? null}
                         onSetPhone={setPhoneForStaff}
                     />
+
+                    {/* ── TIMECARD FIX REQUESTS ── Andrew 2026-07-24: staff
+                        dispute a day's Toast timecard from the My Hours tab
+                        ("clocked in late, breaks wrong, clock out wrong" +
+                        what it should be); every request lands here. Admin
+                        corrects the punch in Toast, then marks it Fixed. */}
+                    <TimecardDisputesPanel language={language} staffName={staffName} />
 
                     {/* ── HEALTH RECORDS BULK IMPORT & EDIT ── Andrew 2026-07-12:
                         spreadsheet-style grid + paste-import for hire dates and

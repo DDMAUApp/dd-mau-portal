@@ -2262,6 +2262,14 @@ function makeAttendanceRecorder(location) {
         } catch (e) {
             logger.warn(`recordSessions(${location}) failed:`, e?.message || e);
         }
+        // Durable per-employee /timecards docs (Andrew 2026-07-24) — powers the
+        // staff "My Hours" tab. Change-gated inside; quiet ticks write nothing.
+        try {
+            const t = await attendanceLib.recordDurableTimecards(location, before, after);
+            if (t) logger.info(`recordTimecards(${location}): ${t} timecard write(s)`);
+        } catch (e) {
+            logger.warn(`recordTimecards(${location}) failed:`, e?.message || e);
+        }
     };
 }
 exports.recordAttendanceWebster = onDocumentWritten("ops/clocked_in_webster", makeAttendanceRecorder("webster"));
