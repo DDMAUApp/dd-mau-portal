@@ -5357,20 +5357,60 @@ function _deliveryBuildHistoryDoc(counts, customInventory, countMeta, deliveryDa
     return { counts: cleanCounts, items, countMeta: cleanMeta, date: nowIso, listName: deliveryDate ? `Delivery ${deliveryDate}` : "", deliveryDate: deliveryDate || "", ordered: {} };
 }
 
-// ⛔ DISABLED (2026-07-14, Andrew: "the inventory list they were just working on
-// disappeared … remove anything that auto clears it"). This scheduled job used
-// to ZERO each store's inventory cart at 12:05am Central once its deliveryDate
-// arrived. Combined with the client-side backup it meant a cart could be wiped
-// out from under staff. The inventory list must ONLY ever be cleared by an
-// explicit human action (Save & Reset / Clear). The trigger is kept but its
-// body is a NO-OP so a redeploy doesn't require deleting the scheduled function;
-// it now touches NOTHING. Do NOT re-enable auto-empty. The _delivery* helpers
-// above are intentionally left in place (unused) in case a future, opt-in,
-// non-destructive "archive a copy" feature is built — but it must never clear
-// the live cart automatically.
+// ⛔ AUTO-EMPTY PERMANENTLY DISABLED (2026-07-14, Andrew: "the inventory list
+// they were just working on disappeared … remove anything that auto clears
+// it"). The inventory cart must ONLY ever be cleared by an explicit human
+// action (Save & Reset / Clear). Do NOT re-add any write to ops/inventory_*
+// here — this job is READ-ONLY against the live cart.
+//
+// ✅ NON-DESTRUCTIVE NIGHTLY ARCHIVE (2026-07-24, Andrew: "orders in the
+// orders tab isn't popping up anymore"). Root cause of the empty Orders bar:
+// the July-14 removal above also killed the ONLY automatic writer of
+// inventoryHistory_{loc} — after that, history only grew on an explicit Save,
+// so the Recent Orders bar froze (Webster's newest entry was the CF's last
+// run, 2026-07-13). This is the "opt-in, non-destructive archive a copy"
+// follow-up the old comment reserved: every night at 12:05am Central, if a
+// store's cart has items AND its contents changed since the newest history
+// entry, write a COPY to inventoryHistory_{loc}/{date}_autosave. The live
+// cart is never modified — staff keep exactly what they were building.
 exports.emptyDeliveredInventoryCarts = onSchedule(
     { schedule: "5 0 * * *", timeZone: "America/Chicago", region: "us-central1", maxInstances: 1 },
     async () => {
-        logger.info("emptyDeliveredInventoryCarts: DISABLED — no inventory cart is auto-emptied (Andrew 2026-07-14).");
+        const todayStr = _deliveryCentralToday();
+        const nowIso = new Date().toISOString();
+        for (const loc of ["webster", "maryland"]) {
+            try {
+                const snap = await db.doc(`ops/inventory_${loc}`).get();
+                if (!snap.exists) continue;
+                const data = snap.data() || {};
+                const histDoc = _deliveryBuildHistoryDoc(data.counts, data.customInventory, data.countMeta, "", nowIso);
+                const itemCount = Object.keys(histDoc.counts).length;
+                if (itemCount === 0) {
+                    logger.info(`nightlyCartArchive[${loc}]: cart empty — nothing to archive.`);
+                    continue;
+                }
+                // Skip when the cart is IDENTICAL to the newest history entry
+                // (nobody touched it today, or it was just saved manually) so
+                // quiet days don't stack duplicate rows in Recent Orders.
+                const latest = await db.collection(`inventoryHistory_${loc}`)
+                    .orderBy("date", "desc").limit(1).get();
+                if (!latest.empty) {
+                    const prevCounts = latest.docs[0].data().counts || {};
+                    const same = Object.keys(prevCounts).length === itemCount
+                        && Object.entries(histDoc.counts).every(([k, v]) => Number(prevCounts[k]) === Number(v));
+                    if (same) {
+                        logger.info(`nightlyCartArchive[${loc}]: unchanged vs ${latest.docs[0].id} — skipped.`);
+                        continue;
+                    }
+                }
+                histDoc.listName = `Auto-save ${todayStr}`;
+                histDoc.autoSaved = true;
+                // Deterministic per-day id → reruns overwrite, never duplicate.
+                await db.doc(`inventoryHistory_${loc}/${todayStr}_autosave`).set(histDoc);
+                logger.info(`nightlyCartArchive[${loc}]: archived ${itemCount} items as ${todayStr}_autosave (cart untouched).`);
+            } catch (e) {
+                logger.error(`nightlyCartArchive[${loc}] failed:`, e);
+            }
+        }
     },
 );
