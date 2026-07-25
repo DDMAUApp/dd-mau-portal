@@ -16,15 +16,19 @@
 #     • DEBUG_AGENT_ENABLED = true   ← the on-switch. Until this is "true" the job
 #                                      is skipped, so there are NO failing runs while
 #                                      you set up the secrets.
-# Then either wait for the next :00/:15/:30/:45, or run it once manually:
+# Then either wait for the daily run, or run it once manually:
 # Actions → "DD Mau debug agent (24/7)" → Run workflow.
-# Cost: ~96 runs/day; almost all exit in seconds with nothing to do.
+# Cost: 1 scheduled run/day (Andrew 2026-07-24: "the automatic debug run is
+# too frequent — once a day"). The */15 poll was ~96 runs/day and the main
+# driver of the Anthropic bill; the repository_dispatch instant wake below
+# still fires within seconds on a chat command or critical error, so the
+# daily cron is just the catch-anything-missed sweep.
 
 name: DD Mau debug agent (24/7)
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # every 15 min (UTC; GitHub may delay under load) — SAFETY-NET backstop
+    - cron: '0 14 * * *'     # once daily ~9:00 AM Central (14:00 UTC; 8 AM in winter)
   workflow_dispatch: {}        # manual "Run workflow" button
   repository_dispatch:         # INSTANT wake from a Cloud Function (functions/index.js
     types:                     # wakeDebugAgent): chat command or critical error → runs in seconds,
