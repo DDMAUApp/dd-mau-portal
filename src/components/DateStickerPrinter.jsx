@@ -65,6 +65,22 @@ const PrintCenter = lazy(() => import('./PrintCenter'));
 // MM/DD/YY for the Today's Date quick sticker — ONE format for both
 // languages and for both the button text and the printed title, so
 // what the cook reads is exactly what comes out of the printer.
+// Short chip labels for the wrapped category bar — the full section titles
+// ("🥬 Veggies & Toppings") pushed the bar to 4+ rows on phones. [EN, ES].
+const CHIP_LABELS = {
+    proteins: ['🥩 Proteins', '🥩 Proteínas'],
+    vegetables: ['🥬 Veggies', '🥬 Verduras'],
+    riceNoodles: ['🍜 Noodles', '🍜 Fideos'],
+    sauces: ['🥢 Sauces', '🥢 Salsas'],
+    stocks: ['🍲 Broths', '🍲 Caldos'],
+    madeAhead: ['🥟 Made Ahead', '🥟 Pre-Hechos'],
+    snacks: ['🍪 Sweets', '🍪 Dulces'],
+    drinks: ['🧋 Drinks', '🧋 Bebidas'],
+    chemicals: ['🧪 Chemicals', '🧪 Químicos'],
+    statusLabels: ['⚠️ Use First', '⚠️ Usar Primero'],
+    other: ['📦 Other', '📦 Otros'],
+};
+
 function fmtTodaySticker() {
     const d = new Date();
     return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
@@ -483,14 +499,15 @@ export default function DateStickerPrinter({
                     </button>
                 </div>
                 {/* Category buttons — tap one to bring up just that category
-                    (tap again, or All, to clear). Horizontal scroll on
-                    phones; also clears an active search so the tap always
-                    lands on the category grid. */}
-                <div className="flex gap-1.5 overflow-x-auto scrollbar-thin -mx-1 px-1" role="tablist"
+                    (tap again, or All, to clear). WRAPPED into 2–3 short rows
+                    that always fit the page width — no sideways scrolling
+                    (Andrew 2026-07-24). Short chip labels keep the row count
+                    down; the full titles still head each section below. */}
+                <div className="flex flex-wrap gap-1.5" role="tablist"
                     aria-label={tx('Sticker categories', 'Categorías de etiquetas')}>
                     <button type="button" role="tab" aria-selected={sectionFilter === null}
                         onClick={() => { setSectionFilter(null); setSearch(''); }}
-                        className={`flex-shrink-0 px-3 py-1.5 rounded-full text-[12px] font-bold border-2 transition ${sectionFilter === null
+                        className={`px-2.5 py-1.5 rounded-full text-[11.5px] font-bold border-2 transition whitespace-nowrap ${sectionFilter === null
                             ? 'bg-purple-600 text-white border-purple-700'
                             : 'bg-white text-dd-text-2 border-dd-line hover:bg-purple-50'}`}>
                         {tx('All', 'Todo')}
@@ -498,23 +515,25 @@ export default function DateStickerPrinter({
                     {STICKER_SECTIONS.map((s) => {
                         const on = sectionFilter === s.key;
                         const tone = COMPONENT_KIND_TONE[s.kind] || COMPONENT_KIND_TONE.side;
+                        const chip = CHIP_LABELS[s.key];
+                        const label = chip ? (isEs ? chip[1] : chip[0]) : (isEs ? s.titleEs : s.titleEn);
                         return (
                             <button key={s.key} type="button" role="tab" aria-selected={on}
                                 onClick={() => { setSectionFilter(prev => prev === s.key ? null : s.key); setSearch(''); }}
-                                className={`flex-shrink-0 px-3 py-1.5 rounded-full text-[12px] font-bold border-2 transition whitespace-nowrap ${on
+                                className={`px-2.5 py-1.5 rounded-full text-[11.5px] font-bold border-2 transition whitespace-nowrap ${on
                                     ? 'bg-purple-600 text-white border-purple-700'
                                     : `${tone.bg} ${tone.text} border-black/10 hover:brightness-95`}`}>
-                                {isEs ? s.titleEs : s.titleEn}
+                                {label}
                             </button>
                         );
                     })}
                     {allItems.length > 0 && (
                         <button type="button" role="tab" aria-selected={sectionFilter === 'custom'}
                             onClick={() => { setSectionFilter(prev => prev === 'custom' ? null : 'custom'); setSearch(''); }}
-                            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-[12px] font-bold border-2 transition whitespace-nowrap ${sectionFilter === 'custom'
+                            className={`px-2.5 py-1.5 rounded-full text-[11.5px] font-bold border-2 transition whitespace-nowrap ${sectionFilter === 'custom'
                                 ? 'bg-purple-600 text-white border-purple-700'
                                 : 'bg-white text-dd-text border-dd-line hover:bg-purple-50'}`}>
-                            ⭐ {tx('Custom', 'Personalizados')}
+                            ⭐ {tx('Custom', 'Personal.')}
                         </button>
                     )}
                 </div>
