@@ -425,8 +425,8 @@ export default function DateStickerPrinter({
                         </h1>
                         <p className="text-xs text-dd-text-2">
                             {tx(
-                                'Every prep item, one list — tap 🏷 to print a dated sticker.',
-                                'Cada artículo de preparación en una lista — toca 🏷 para imprimir.',
+                                'Tap any sticker to print it with today’s date.',
+                                'Toca cualquier etiqueta para imprimirla con la fecha de hoy.',
                             )}
                         </p>
                     </div>
@@ -576,23 +576,22 @@ export default function DateStickerPrinter({
                                     <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
                                         🏷 {tx('Prep items', 'Artículos de preparación')}
                                     </h2>
-                                    <div className="space-y-1.5">
-                                        {flatResults.components.map(c => (
-                                            <ComponentSearchResult
-                                                key={c.id}
-                                                component={c}
-                                                isEs={isEs}
-                                                tx={tx}
-                                                onPrint={() => handlePrintComponent({
-                                                    kind: c.componentKind,
-                                                    nameEn: c.nameEn,
-                                                    nameEs: c.nameEs,
-                                                    descEn: c.descEn,
-                                                    descEs: c.descEs,
-                                                }, null)}
-                                            />
-                                        ))}
-                                    </div>
+                                    {/* Search hits use the SAME sticker-button
+                                        grid as browse (2026-07-24) — tap the
+                                        sticker, it prints. */}
+                                    <StickerGrid
+                                        components={flatResults.components.map(c => ({ ...c, kind: c.componentKind || 'side' }))}
+                                        toneFor={(c) => COMPONENT_KIND_TONE[c.kind] || COMPONENT_KIND_TONE.side}
+                                        isEs={isEs}
+                                        tx={tx}
+                                        onPrint={(c) => handlePrintComponent({
+                                            kind: c.kind,
+                                            nameEn: c.nameEn,
+                                            nameEs: c.nameEs,
+                                            descEn: c.descEn,
+                                            descEs: c.descEs,
+                                        }, null)}
+                                    />
                                 </section>
                             )}
                             {flatResults.items.length > 0 && (
@@ -899,17 +898,13 @@ function ComponentList({ components, isEs, tx, onPrint }) {
                             </span>
                             <span className="text-[10px] text-dd-text-2/60">· {items.length}</span>
                         </div>
-                        <div className="space-y-1 pl-1">
-                            {items.map(c => (
-                                <ComponentRow key={c.id}
-                                    component={c}
-                                    tone={tone}
-                                    isEs={isEs}
-                                    tx={tx}
-                                    onPrint={onPrint}
-                                />
-                            ))}
-                        </div>
+                        <StickerGrid
+                            components={items}
+                            toneFor={() => tone}
+                            isEs={isEs}
+                            tx={tx}
+                            onPrint={onPrint}
+                        />
                     </div>
                 );
             })}
@@ -917,120 +912,108 @@ function ComponentList({ components, isEs, tx, onPrint }) {
     );
 }
 
-// ── ComponentSearchResult ──────────────────────────────────────────
-// A search-result row for a component (not a menu item). Shows the
-// component name + a small "Used in:" chip listing the menu items
-// that contain it, and a Print button that opens PrintLabelModal in
-// editable mode pre-filled with the component name. Allergens come
-// in blank — cook can add them via the modal's allergen chips if
-// they apply.
-const ComponentSearchResult = memo(function ComponentSearchResult({ component, isEs, tx, onPrint }) {
-    const tone = COMPONENT_KIND_TONE[component.componentKind] || COMPONENT_KIND_TONE.side;
-    const name = isEs ? (component.nameEs || component.nameEn) : component.nameEn;
-    const usedIn = isEs ? component.usedInEs : component.usedIn;
-    const usedInPreview = (usedIn || []).slice(0, 3);
-    const usedInExtra = Math.max(0, (usedIn || []).length - 3);
-    return (
-        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${tone.bg} border border-dd-line`}>
-            <span className="flex-shrink-0 text-lg">{tone.icon}</span>
-            <div className="flex-1 min-w-0">
-                <div className={`text-[14px] font-bold ${tone.text}`}>
-                    {name}
-                </div>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
-                        {isEs ? tone.labelEs : tone.labelEn}
-                    </span>
-                    {usedInPreview.length > 0 && (
-                        <span className="text-[10.5px] text-dd-text-2 truncate" title={(usedIn || []).join(' · ')}>
-                            · {tx('in', 'en')} {usedInPreview.join(', ')}
-                            {usedInExtra > 0 && ` +${usedInExtra}`}
-                        </span>
-                    )}
-                </div>
-            </div>
-            <button onClick={onPrint}
-                className="flex-shrink-0 px-2.5 py-1.5 rounded-lg bg-purple-600 text-white text-[11px] font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
-                🏷 {tx('Print', 'Imprimir')}
-            </button>
-        </div>
-    );
-});
 
-const ComponentRow = memo(function ComponentRow({ component, tone, isEs, tx, onPrint }) {
-    const isNote = component.kind === 'note';
+// ── StickerCell + StickerGrid — KEPS-style button grid (Andrew 2026-07-24) ──
+// "instead of items and at the end there are print sticker buttons i want
+// buttons with the sticker and thats it. no one line sticker." Every printable
+// item is now ONE big tappable button that IS the sticker — tone-colored,
+// name centered, whole surface prints (the same layout the KEPS / DateCodeGenie
+// food-safety label apps use). Rows/columns instead of one-line rows:
+// 2 columns on phones, 3–4 on tablets/desktop. Items with a matching
+// sub-recipe get a small corner "+N" toggle that opens the ingredients as
+// their own grid of sticker buttons right below.
+//
+// Accessibility: cells are real <button>s ≥64px tall (comfortably above the
+// 44px HIG / 48dp Material minimums), aria-labels say "Print sticker: {name}",
+// the sub-recipe toggle is its own sibling button (never nested), and both
+// keep visible focus rings for keyboard/switch users.
+const StickerCell = memo(function StickerCell({ component, tone, isEs, tx, onPrint, subCount = 0, subOpen = false, onToggleSub }) {
     const name = isEs ? (component.nameEs || component.nameEn) : component.nameEn;
-    // Recursive sub-recipe expansion (Phase 2b): try to find a
-    // matching recipe in MASTER_RECIPES. If found, the user can
-    // expand the row to see ingredients and print labels for each.
-    const [expanded, setExpanded] = useState(false);
-    const subRecipe = useMemo(() => isNote ? null : findSubRecipe(component.nameEn), [component.nameEn, isNote]);
     return (
-        <div className={`rounded-lg ${tone.bg} border border-dd-line`}>
-            <div className="flex items-center gap-2 px-2.5 py-1.5">
-                <div className="flex-1 min-w-0">
-                    <div className={`text-[13px] ${isNote ? 'italic text-dd-text-2 leading-snug' : `font-bold ${tone.text}`}`}>
-                        {name}
-                        {subRecipe && (
-                            <span className="ml-1.5 text-[9px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
-                                {tx(`+${subRecipe.ingredients.length} ingredients`, `+${subRecipe.ingredients.length} ingredientes`)}
-                            </span>
-                        )}
-                    </div>
-                    {component.descEn && !isNote && (
-                        <div className="text-[10.5px] text-dd-text-2 truncate">
-                            {isEs ? (component.descEs || component.descEn) : component.descEn}
-                        </div>
-                    )}
-                    {component.variant && (
-                        <div className="text-[10px] text-dd-text-2 italic">
-                            {tx('style', 'estilo')}: {component.variant}
-                        </div>
-                    )}
-                </div>
-                {subRecipe && (
-                    <button onClick={() => setExpanded(v => !v)}
-                        title={tx('Show ingredients', 'Ver ingredientes')}
-                        className="flex-shrink-0 px-2 py-1 rounded-lg bg-white border border-purple-300 text-purple-700 text-[11px] font-bold hover:bg-purple-50">
-                        {expanded ? '▾' : '▸'}
-                    </button>
-                )}
-                {!isNote && (
-                    <button onClick={() => onPrint(component)}
-                        title={tx('Print date sticker', 'Imprimir etiqueta')}
-                        className="flex-shrink-0 px-2.5 py-1.5 rounded-lg bg-purple-600 text-white text-[11px] font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
-                        🏷 {tx('Print', 'Imprimir')}
-                    </button>
-                )}
-            </div>
-            {/* Nested ingredients from the matched sub-recipe */}
-            {expanded && subRecipe && (
-                <div className="border-t border-dd-line/50 px-2.5 py-2 space-y-1 bg-white/40">
-                    <div className="text-[9.5px] font-bold uppercase tracking-wider text-purple-800 mb-1">
-                        🧪 {tx(`Ingredients in ${component.nameEn}`, `Ingredientes en ${component.nameEn}`)}
-                    </div>
-                    {subRecipe.ingredients.map((ing, i) => (
-                        <div key={i} className="flex items-center gap-2 px-1.5 py-1 rounded bg-white border border-dd-line/60">
-                            <span className="flex-1 text-[12px] text-dd-text truncate">
-                                {isEs ? (ing.nameEs || ing.nameEn) : ing.nameEn}
-                            </span>
-                            <button
-                                onClick={() => onPrint({
-                                    kind: 'topping',
-                                    nameEn: ing.nameEn,
-                                    nameEs: ing.nameEs,
-                                })}
-                                title={tx('Print sticker for this ingredient', 'Imprimir etiqueta')}
-                                className="flex-shrink-0 px-2 py-1 rounded-lg bg-purple-600 text-white text-[10px] font-bold hover:bg-purple-700">
-                                🏷 {tx('Print', 'Imprimir')}
-                            </button>
-                        </div>
-                    ))}
-                </div>
+        <div className="relative">
+            <button
+                type="button"
+                onClick={() => onPrint(component)}
+                aria-label={tx(`Print sticker: ${name}`, `Imprimir etiqueta: ${name}`)}
+                title={tx('Tap to print this sticker', 'Toca para imprimir esta etiqueta')}
+                className={`w-full min-h-[64px] rounded-xl border-2 border-black/10 ${tone.bg} ${tone.text} px-2 py-2.5 flex items-center justify-center text-center text-[13px] font-extrabold leading-tight shadow-sm hover:brightness-[0.97] active:scale-95 transition select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500`}
+            >
+                <span className="break-words">{name}</span>
+            </button>
+            {subCount > 0 && (
+                <button
+                    type="button"
+                    onClick={onToggleSub}
+                    aria-label={tx(`Show ${subCount} ingredients`, `Ver ${subCount} ingredientes`)}
+                    aria-expanded={subOpen}
+                    className={`absolute -top-1.5 -right-1.5 min-w-[26px] h-[22px] px-1 rounded-full text-[10px] font-black border shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${subOpen
+                        ? 'bg-purple-600 text-white border-purple-700'
+                        : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'}`}
+                >
+                    +{subCount}
+                </button>
             )}
         </div>
     );
 });
+
+// Grid wrapper: lays cells out in responsive rows/columns, renders 'note'
+// kind entries as full-width text (guidance, not printable), and hosts the
+// one-open-at-a-time sub-recipe ingredients panel.
+function StickerGrid({ components, toneFor, isEs, tx, onPrint }) {
+    const [subOpenId, setSubOpenId] = useState(null);
+    const open = subOpenId ? components.find((c) => c.id === subOpenId) : null;
+    const openSub = open ? findSubRecipe(open.nameEn) : null;
+    return (
+        <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                {components.map((c) => {
+                    if (c.kind === 'note') {
+                        return (
+                            <div key={c.id} className="col-span-full text-[12px] italic text-dd-text-2 px-1 py-0.5">
+                                ℹ️ {isEs ? (c.nameEs || c.nameEn) : c.nameEn}
+                            </div>
+                        );
+                    }
+                    const sub = findSubRecipe(c.nameEn);
+                    return (
+                        <StickerCell
+                            key={c.id}
+                            component={c}
+                            tone={toneFor(c)}
+                            isEs={isEs}
+                            tx={tx}
+                            onPrint={onPrint}
+                            subCount={sub ? sub.ingredients.length : 0}
+                            subOpen={subOpenId === c.id}
+                            onToggleSub={() => setSubOpenId((prev) => (prev === c.id ? null : c.id))}
+                        />
+                    );
+                })}
+            </div>
+            {open && openSub && (
+                <div className="mt-2 rounded-xl border-2 border-purple-200 bg-purple-50/40 p-2">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-purple-800 mb-1.5 px-1">
+                        🧪 {tx(`Ingredients in ${open.nameEn}`, `Ingredientes en ${open.nameEn}`)}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {openSub.ingredients.map((ing, i) => (
+                            <StickerCell
+                                key={`${open.id}-ing-${i}`}
+                                component={{ kind: 'topping', nameEn: ing.nameEn, nameEs: ing.nameEs }}
+                                tone={COMPONENT_KIND_TONE.topping}
+                                isEs={isEs}
+                                tx={tx}
+                                onPrint={onPrint}
+                            />
+                        ))}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
 
 // ── BuildSheetBrowse ──────────────────────────────────────────────
 // Andrew 2026-05-20: "lets delete the current food items in the
@@ -1279,20 +1262,15 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
                     · {components.length} {tx('printable', 'imprimibles')}
                 </span>
             </h2>
-            <div className="bg-white border border-dd-line rounded-xl p-3">
-                <div className="space-y-1">
-                    {components.map(c => (
-                        <ComponentRow
-                            key={c.id}
-                            component={c}
-                            tone={tone}
-                            isEs={isEs}
-                            tx={tx}
-                            onPrint={onPrint}
-                        />
-                    ))}
-                </div>
-            </div>
+            {/* KEPS-style grid (2026-07-24): each cell IS the sticker —
+                tap anywhere on it to print. No per-row Print buttons. */}
+            <StickerGrid
+                components={components}
+                toneFor={() => tone}
+                isEs={isEs}
+                tx={tx}
+                onPrint={onPrint}
+            />
         </section>
     );
 });
