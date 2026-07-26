@@ -717,7 +717,11 @@ export default function DateStickerPrinter({
                                     ⭐ {tx('Custom items', 'Personalizados')}
                                 </h2>
                                 <div className="space-y-1.5">
-                                    {allItems.map(item => (
+                                    {[...allItems].sort((a, b) => {
+                                        const an = (isEs ? (a.nameEs || a.nameEn) : a.nameEn) || '';
+                                        const bn = (isEs ? (b.nameEs || b.nameEn) : b.nameEn) || '';
+                                        return an.localeCompare(bn, isEs ? 'es' : 'en', { sensitivity: 'base' });
+                                    }).map(item => (
                                         <MenuItemRow
                                             key={item.id}
                                             item={item}
@@ -1294,7 +1298,15 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     }
 
     // Normal (non-edit) render — printable component rows.
-    const components = items.map((s, i) => ({
+    // Alphabetical within the category (Andrew 2026-07-24), by the DISPLAYED
+    // name so the EN and ES views are each properly sorted. Edit Mode keeps
+    // the stored order on purpose — rows jumping around mid-rename would be
+    // maddening — and the sanitizer never persists this sort.
+    const components = [...items].sort((a, b) => {
+        const an = (isEs ? (a.nameEs || a.nameEn) : a.nameEn) || '';
+        const bn = (isEs ? (b.nameEs || b.nameEn) : b.nameEn) || '';
+        return an.localeCompare(bn, isEs ? 'es' : 'en', { sensitivity: 'base' });
+    }).map((s, i) => ({
         id: s.id || `bs-flat::${kind}::${i}`,
         kind,
         nameEn: s.nameEn,
