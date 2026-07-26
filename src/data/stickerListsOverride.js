@@ -120,6 +120,39 @@ export const STICKER_SECTIONS = Object.freeze([
         defaults: BUILD_SHEET_DRINKS,
     },
     {
+        // 2026-07-24 (Andrew): chemical labels — spray bottles, sanitizer
+        // buckets, etc. Same editable-list machinery as the food sections;
+        // starter defaults below, admin curates via Edit Mode.
+        key: 'chemicals',
+        kind: 'chemical',
+        titleEn: '🧪 Chemicals',
+        titleEs: '🧪 Químicos',
+        defaults: [
+            { nameEn: 'Sanitizer', nameEs: 'Desinfectante' },
+            { nameEn: 'Bleach Solution', nameEs: 'Solución de Cloro' },
+            { nameEn: 'Degreaser', nameEs: 'Desengrasante' },
+            { nameEn: 'Glass Cleaner', nameEs: 'Limpiavidrios' },
+            { nameEn: 'Dish Soap', nameEs: 'Jabón de Trastes' },
+            { nameEn: 'Floor Cleaner', nameEs: 'Limpiador de Pisos' },
+        ],
+    },
+    {
+        // 2026-07-24 (Andrew): status labels — "stuff like use first, do
+        // not use." Rotation/condition flags, not items.
+        key: 'statusLabels',
+        kind: 'status',
+        titleEn: '⚠️ Use First / Status',
+        titleEs: '⚠️ Usar Primero / Estado',
+        defaults: [
+            { nameEn: 'USE FIRST', nameEs: 'USAR PRIMERO' },
+            { nameEn: 'DO NOT USE', nameEs: 'NO USAR' },
+            { nameEn: 'THAWING', nameEs: 'DESCONGELANDO' },
+            { nameEn: 'COOLING', nameEs: 'ENFRIANDO' },
+            { nameEn: 'DISCARD', nameEs: 'DESECHAR' },
+            { nameEn: 'NOT FOR SALE', nameEs: 'NO PARA VENTA' },
+        ],
+    },
+    {
         // Catch-all category — Andrew 2026-06-25: "always have an add rows".
         // Starts empty; the editor always shows a "+ Add row" at the section
         // bottom (even when empty), so staff/admin can add any one-off sticker

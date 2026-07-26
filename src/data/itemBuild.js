@@ -679,4 +679,9 @@ export const COMPONENT_KIND_TONE = Object.freeze({
     note:    { bg: 'bg-blue-50',    text: 'text-blue-900',    icon: 'ℹ️', labelEn: 'Note',     labelEs: 'Nota' },
     drink:   { bg: 'bg-cyan-50',    text: 'text-cyan-900',    icon: '🧋', labelEn: 'Drink',    labelEs: 'Bebida' },
     other:   { bg: 'bg-slate-50',   text: 'text-slate-900',   icon: '📦', labelEn: 'Other',    labelEs: 'Otro' },
+    // 2026-07-24 (Andrew): chemical labels + status labels (USE FIRST /
+    // DO NOT USE …). Deliberately louder tones than the food kinds —
+    // a chemical sticker must never look like a food sticker.
+    chemical: { bg: 'bg-rose-100',  text: 'text-rose-950',    icon: '🧪', labelEn: 'Chemical', labelEs: 'Químico' },
+    status:   { bg: 'bg-yellow-100', text: 'text-yellow-950', icon: '⚠️', labelEn: 'Status',   labelEs: 'Estado' },
 });

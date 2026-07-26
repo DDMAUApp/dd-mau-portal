@@ -83,6 +83,11 @@ export default function DateStickerPrinter({
     const adminUser = isAdmin(staffName, staffList);
 
     const [search, setSearch] = useState('');
+    // Category filter driven by the top chip bar (Andrew 2026-07-24: "at the
+    // top have all the category buttons that help bring up that category").
+    // null = show every section; a section key = show just that one;
+    // 'custom' = just the ⭐ Custom items.
+    const [sectionFilter, setSectionFilter] = useState(null);
     // 2026-05-30 perf — defer the search value used by the heavy filter
     // pipeline (queryTokens + AI dispatch + per-row substring + 3-way
     // union). Input reads `search` for instant feedback; downstream
@@ -432,6 +437,10 @@ export default function DateStickerPrinter({
                     </div>
                 </div>
 
+                {/* Sticky command bar — search + category buttons together
+                    (Andrew 2026-07-24). Stays pinned while the grids scroll so
+                    a cook can always jump straight to a category. */}
+                <div className="sticky top-0 z-10 -mx-2 px-2 pt-1 pb-2 mb-2 bg-dd-bg/95 backdrop-blur-sm rounded-b-xl">
                 {/* Search + AI toggle */}
                 <div className="flex items-center gap-2 mb-2">
                     <div className="relative flex-1">
@@ -473,6 +482,43 @@ export default function DateStickerPrinter({
                         ✨ {tx('AI', 'IA')}
                     </button>
                 </div>
+                {/* Category buttons — tap one to bring up just that category
+                    (tap again, or All, to clear). Horizontal scroll on
+                    phones; also clears an active search so the tap always
+                    lands on the category grid. */}
+                <div className="flex gap-1.5 overflow-x-auto scrollbar-thin -mx-1 px-1" role="tablist"
+                    aria-label={tx('Sticker categories', 'Categorías de etiquetas')}>
+                    <button type="button" role="tab" aria-selected={sectionFilter === null}
+                        onClick={() => { setSectionFilter(null); setSearch(''); }}
+                        className={`flex-shrink-0 px-3 py-1.5 rounded-full text-[12px] font-bold border-2 transition ${sectionFilter === null
+                            ? 'bg-purple-600 text-white border-purple-700'
+                            : 'bg-white text-dd-text-2 border-dd-line hover:bg-purple-50'}`}>
+                        {tx('All', 'Todo')}
+                    </button>
+                    {STICKER_SECTIONS.map((s) => {
+                        const on = sectionFilter === s.key;
+                        const tone = COMPONENT_KIND_TONE[s.kind] || COMPONENT_KIND_TONE.side;
+                        return (
+                            <button key={s.key} type="button" role="tab" aria-selected={on}
+                                onClick={() => { setSectionFilter(prev => prev === s.key ? null : s.key); setSearch(''); }}
+                                className={`flex-shrink-0 px-3 py-1.5 rounded-full text-[12px] font-bold border-2 transition whitespace-nowrap ${on
+                                    ? 'bg-purple-600 text-white border-purple-700'
+                                    : `${tone.bg} ${tone.text} border-black/10 hover:brightness-95`}`}>
+                                {isEs ? s.titleEs : s.titleEn}
+                            </button>
+                        );
+                    })}
+                    {allItems.length > 0 && (
+                        <button type="button" role="tab" aria-selected={sectionFilter === 'custom'}
+                            onClick={() => { setSectionFilter(prev => prev === 'custom' ? null : 'custom'); setSearch(''); }}
+                            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-[12px] font-bold border-2 transition whitespace-nowrap ${sectionFilter === 'custom'
+                                ? 'bg-purple-600 text-white border-purple-700'
+                                : 'bg-white text-dd-text border-dd-line hover:bg-purple-50'}`}>
+                            ⭐ {tx('Custom', 'Personalizados')}
+                        </button>
+                    )}
+                </div>
+                </div>{/* /sticky command bar */}
 
                 {/* Action row — Custom Print for everyone; Edit Mode
                     toggle for admins only. Edit Mode flips the flat
@@ -658,13 +704,14 @@ export default function DateStickerPrinter({
                             stickerLists={stickerLists}
                             editMode={editMode}
                             onSaveSection={handleSaveSection}
+                            sectionFilter={sectionFilter}
                         />
                         {/* ⭐ Custom items — Andrew 2026-06-24: "when a new item
                             is added to the stickers make it live + stay." These
                             used to appear ONLY in search; now they're a permanent
                             section in the idle browse view too, so a freshly-added
                             item shows up and stays (live /custom_items subscription). */}
-                        {allItems.length > 0 && (
+                        {allItems.length > 0 && (sectionFilter === null || sectionFilter === 'custom') && (
                             <section className="mt-5">
                                 <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
                                     ⭐ {tx('Custom items', 'Personalizados')}
@@ -1029,7 +1076,7 @@ function StickerGrid({ components, toneFor, isEs, tx, onPrint }) {
 //
 // All copy comes from src/data/buildSheet.js — that's the single
 // source of truth. Update once, both surfaces update.
-function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection }) {
+function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection, sectionFilter = null }) {
     // Andrew 2026-06-11: "too many items. alot of doubles… categorize
     // it by veggie, protein, noodles, rice and so on. we dont need the
     // menu items unless its things like sweets and snacks." The browse
@@ -1045,9 +1092,14 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
         // already carry the same stable ids the subscription will use.
         return getStampedDefaults(key);
     };
+    // Category-chip filter (2026-07-24): a non-null filter shows just that
+    // section. 'custom' is handled by the parent (the ⭐ section lives there).
+    const visibleSections = sectionFilter && sectionFilter !== 'custom'
+        ? STICKER_SECTIONS.filter(s => s.key === sectionFilter)
+        : (sectionFilter === 'custom' ? [] : STICKER_SECTIONS);
     return (
         <div className="space-y-5">
-            {STICKER_SECTIONS.map(section => (
+            {visibleSections.map(section => (
                 <BuildSheetFlatSection
                     key={section.key}
                     sectionKey={section.key}
