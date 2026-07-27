@@ -153,6 +153,8 @@ export default function AppShellV2({
                 onMoreClick={() => setSidebarOpen(true)}
                 storeLocation={storeLocation}
                 staffName={staffName}
+                isAdmin={isAdmin}
+                isManager={isManager}
                 hasOpsAccess={hasOpsAccess}
                 hasRecipesAccess={hasRecipesAccess}
                 hiddenPages={hiddenPages}

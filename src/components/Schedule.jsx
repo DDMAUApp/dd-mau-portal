@@ -63,6 +63,9 @@ import { useAppData } from '../v2/AppDataContext';
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const DAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Stable empty array for empty grid cells (identity-stable so memo'd cell
+// consumers don't churn).
+const EMPTY_CELL_SHIFTS = Object.freeze([]);
 const DAYS_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const DAYS_FULL_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAYS_FULL_ES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -523,6 +526,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         : (_viewerRecord ? resolveStaffSide(_viewerRecord) : 'foh');
     // Initialize to the viewer's resolved side (admin can still flip).
     const [side, setSide] = useState(_viewerSide); // 'foh' | 'boh'
+    // 2026-07-26 audit (M1): `side` was mount-only state. If Schedule
+    // mounted before the live staff list landed (cold launch straight onto
+    // this tab), a BOH staffer resolved to 'foh' and — with the toggle
+    // hidden for fixed-side staff — was stuck on the wrong grid until
+    // remount. Snap to the resolved side when it changes, unless the user
+    // has flipped the toggle themselves this session.
+    const sideTouchedRef = useRef(false);
+    const prevViewerSideRef = useRef(_viewerSide);
+    useEffect(() => {
+        if (prevViewerSideRef.current === _viewerSide) return;
+        prevViewerSideRef.current = _viewerSide;
+        if (!sideTouchedRef.current) setSide(_viewerSide);
+    }, [_viewerSide]);
     // Side-aware edit gates. MUST be declared AFTER `side` — used to be one
     // line before the `useState`, which threw a TDZ ReferenceError on first
     // render of Schedule and broke the whole tab. Same class of bug as the
@@ -574,6 +590,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     useEffect(() => {
         const onVisible = () => {
             if (document.visibilityState !== 'visible') return;
+            // Don't yank the week out from under an open publish preview
+            // (2026-07-26 audit: Saturday-midnight rollover moved the shifts
+            // subscription window, so confirming the preview no-op'd with a
+            // false "deleted by someone else"). Re-checks after it closes
+            // via the 5-min poll / next focus.
+            if (publishPreviewOpenRef.current) return;
             const now = new Date();
             const todayStr = toDateStr(now);
             if (todayStr === lastSeenTodayRef.current) return;   // same day — nothing to do
@@ -829,6 +851,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // SEE every shift before it goes live (vs the old native confirm()
     // dialog that just showed a count).
     const [publishPreview, setPublishPreview] = useState(null);
+    // Mirror for the date-rollover effect (empty deps — reads via ref).
+    const publishPreviewOpenRef = useRef(false);
+    useEffect(() => { publishPreviewOpenRef.current = !!publishPreview; }, [publishPreview]);
     // Esc closes the quick-add chip strip without committing anything.
     // Mounts once; re-checks `quickAddCell` via the closure on every keydown.
     useEffect(() => {
@@ -857,10 +882,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // accept local-only optimistic edits (markAllRead) until the
     // server snapshot rebases it.
     const { notifications: ctxNotifications } = useAppData();
-    const [notifications, setNotifications] = useState([]);
-    useEffect(() => {
-        setNotifications(ctxNotifications || []);
-    }, [ctxNotifications]);
+    // 2026-07-26 perf audit (M1): this used to be mirrored into local state
+    // via an effect — every notifications tick (each chat message writes a
+    // notification doc) rendered the whole 13k-line component TWICE. No
+    // optimistic local edits exist (markAllNotifsRead just writes and lets
+    // the snapshot rebase), so read the context array directly.
+    const notifications = useMemo(() => ctxNotifications || [], [ctxNotifications]);
     // SPLH historical data — last 28 days of laborHistory_{location} feeds
     // the per-daypart staffing advisor that sits above the weekly grid.
     // Same shape used by LaborDashboard; helpers in src/data/splh.js.
@@ -1638,20 +1665,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const sideStaff = useMemo(() => {
         if (!Array.isArray(staffList)) return [];
         return staffList.filter(s => {
+            // Anyone with an actual shift in THIS view (store + side + week)
+            // always gets a row — 2026-07-26 audit H2: the scheduleHome gate
+            // below ran FIRST, so a cross-LOCATION fill (Webster-homed
+            // floater assigned at Maryland — a supported flow via the Add
+            // picker) vanished from the target store's grid the moment it
+            // was saved. crossSideNames is exactly "has a shift at the
+            // viewed store on the viewed side this week".
+            const hasShiftHere = crossSideNames.has(s.name);
             // SCHEDULE GRID FILTER — uses scheduleHome (not location) so a
             // 'both'-location floater with scheduleHome === 'webster' only
             // appears on Webster's grid by default. Add Shift's picker
             // still uses raw `location` so they remain pickable as a
             // fill-in at Maryland. See getScheduleHome() in data/staff.js.
-            if (!isOnScheduleAt(s, storeLocation)) return false;
+            if (!isOnScheduleAt(s, storeLocation) && !hasShiftHere) return false;
             // 2026-05-16 — hideFromSchedule: owners/admins who don't
             // need a grid row by default. Safety net: if they actually
             // have a shift this week, crossSideNames includes them and
             // the row appears so a real assignment can't be invisible.
             // Toggled per-staff in AdminPanel + Bulk Tag modal.
-            if (s.hideFromSchedule === true && !crossSideNames.has(s.name)) return false;
+            if (s.hideFromSchedule === true && !hasShiftHere) return false;
             // Home side OR has any cross-side shift on the current side this week.
-            return isOnSide(s, side) || crossSideNames.has(s.name);
+            return isOnSide(s, side) || hasShiftHere;
         });
     }, [staffList, storeLocation, side, crossSideNames]);
 
@@ -1663,7 +1698,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // the staff's home side.
     const visibleShifts = useMemo(() => {
         return shifts.filter(s => {
-            if (storeLocation !== 'both' && s.location !== storeLocation) return false;
+            // The viewer's OWN shifts are never filtered out by side or
+            // location (2026-07-26 audit H1/H2): a BOH cook who claimed an
+            // FOH cover shift — or picked up a day at the other store —
+            // could see it NOWHERE on their own Schedule (grid, list, My
+            // Schedule, ICS all side/store-filtered). Draft-hiding and the
+            // person filter still apply.
+            const isMine = !canEdit && s.staffName === staffName;
+            // Legacy shifts with NO location match every view (2026-07-26
+            // audit: they counted in the hours badge but were invisible on
+            // both stores' grids — un-editable "ghost hours").
+            if (storeLocation !== 'both' && s.location && s.location !== storeLocation && !isMine) return false;
             if (personFilter && s.staffName !== personFilter) return false;
             // Skip orphan shifts whose assignee no longer exists in staffList
             // (deleted staff). sideStaffNames already gates this for the
@@ -1673,10 +1718,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // is the source of truth for staff; drafts are manager work-in-
             // progress and can change. See viewerTimeOff comment above.
             if (!canEdit && s.published === false) return false;
+            if (isMine) return true;
             const shiftSide = s.side || resolveStaffSide(staffByName.get(s.staffName));
             return shiftSide === side && sideStaffNames.has(s.staffName);
         });
-    }, [shifts, storeLocation, sideStaffNames, personFilter, side, staffByName, canEdit]);
+    }, [shifts, storeLocation, sideStaffNames, personFilter, side, staffByName, canEdit, staffName]);
 
     // ── Conflict detection ──────────────────────────────────────
     // Audit follow-up 2026-05-23: managers were finding double-bookings
@@ -1905,60 +1951,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return tips;
     }, [weather]);
 
-    const hoursScoreboard = useMemo(() => {
-        if (!Array.isArray(staffList)) return null;
-        // Hours scoreboard counts staff whose scheduleHome includes this
-        // location, mirroring the grid filter. Floaters with a single
-        // scheduleHome don't pad the wrong store's totals.
-        const locStaff = staffList.filter(s => isOnScheduleAt(s, storeLocation));
-        // Per-staff weekly hours across BOTH sides — week is the visible week.
-        const weekStartStr = toDateStr(weekStart);
-        const weekEndStr = toDateStr(addDays(weekStart, 7));
-        const sumHoursForStaff = (staffName) => {
-            // viewerShifts so the scoreboard doesn't show draft hours to
-            // non-editors. For managers viewerShifts === shifts.
-            const myShifts = viewerShifts.filter(sh =>
-                sh.staffName === staffName &&
-                sh.date >= weekStartStr && sh.date < weekEndStr &&
-                (storeLocation === 'both' || sh.location === storeLocation));
-            const byDate = new Map();
-            for (const sh of myShifts) {
-                const arr = byDate.get(sh.date) || [];
-                arr.push(sh);
-                byDate.set(sh.date, arr);
-            }
-            return Array.from(byDate.values()).reduce((sum, ds) => sum + dayPaidHours(ds), 0);
-        };
-
-        const computeFor = (sideId) => {
-            const list = locStaff.filter(s => resolveStaffSide(s) === sideId);
-            let scheduled = 0, target = 0;
-            const perStaff = [];
-            for (const s of list) {
-                const sh = sumHoursForStaff(s.name);
-                const tg = Number(s.targetHours) || 0;
-                scheduled += sh;
-                target += tg;
-                perStaff.push({ name: s.name, scheduled: sh, target: tg, gap: sh - tg });
-            }
-            // Top under = most hours below target (ignore staff with no target — can't be "under").
-            const under = perStaff
-                .filter(p => p.target > 0 && p.gap < 0)
-                .sort((a, b) => a.gap - b.gap)
-                .slice(0, 3);
-            // Top over = most hours above target (any staff).
-            const over = perStaff
-                .filter(p => p.gap > 2) // ignore noise — only flag >2h over
-                .sort((a, b) => b.gap - a.gap)
-                .slice(0, 3);
-            return { scheduled, target, under, over, count: list.length };
-        };
-
-        return {
-            foh: computeFor('foh'),
-            boh: computeFor('boh'),
-        };
-    }, [staffList, viewerShifts, weekStart, storeLocation]);
+    // hoursScoreboard DELETED 2026-07-26 (perf audit M2): its render was
+    // removed 2026-05-27 but the useMemo kept executing — an O(staff ×
+    // shifts) recompute on every shifts snapshot with the result unused.
+    // Recover it from git history if the scoreboard ever comes back.
 
     // ── Handlers ──
     // Manually-added shifts default to DRAFT (published: false). Manager taps
@@ -2174,6 +2170,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     ).catch(() => {});
                 }
                 fanoutAdmins();
+                // Tell the caller the delete actually happened (publish
+                // preview uses this to drop the row only on real deletion).
+                opts.onDeleted?.();
                 toast(tx(`🗑 Deleted (${detail})`, `🗑 Eliminado (${detail})`));
             } catch (e) {
                 console.error('Delete shift failed:', e);
@@ -2200,6 +2199,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
                     }
                     fanoutAdmins();
+                    opts.onDeleted?.();
                 } catch (e) {
                     console.error('Delete shift failed:', e);
                     toast(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message, { kind: 'error' });
@@ -2700,33 +2700,41 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // same side, same location, not on PTO). Failures swallowed
             // per-staff so one bad token doesn't block the rest.
             if (urgent) {
-                try {
-                    const shiftSide = shift.side || resolveStaffSide((staffList || []).find(s => s.name === shift.staffName));
-                    const sideLabel = shiftSide === 'boh' ? 'BOH' : 'FOH';
-                    const shiftLoc = shift.location || 'webster';
-                    const qualified = (staffList || []).filter(s =>
-                        s && s.name && s.active !== false &&
-                        s.name !== staffName &&
-                        resolveStaffSide(s) === shiftSide &&
-                        (shiftLoc === 'both' || s.location === 'both' || s.location === shiftLoc) &&
-                        !isStaffOffOn(s.name, shift.date)
-                    );
-                    const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
-                    await Promise.allSettled(qualified.map(s =>
-                        notify(s.name, 'cover_request',
-                            { en: `🆘 ${staffName} needs cover`,
-                              es: `🆘 ${staffName} necesita cobertura` },
-                            { en: `${sideLabel} · ${detail}${note ? ` · "${note}"` : ''}`,
-                              es: `${sideLabel} · ${detail}${note ? ` · "${note}"` : ''}` },
-                            // notify() dedups on opts.tagSuffix (NOT `tag` — that
-                            // key is silently ignored and falls back to Date.now(),
-                            // so a retry/double-tap on "post urgent offer" would
-                            // fan out a SECOND toast to every qualified staffer
-                            // instead of the OS collapsing it). Matches the sibling
-                            // handleRequestCover fan-out below, which uses tagSuffix.
-                            null, { tagSuffix: `cover:${shift.id}` })
-                    ));
-                } catch (e) { console.warn('Cover fan-out failed:', e); }
+                // DETACHED (2026-07-26 audit H3, same pattern as publish):
+                // the ~10-25 sequential notify() writes used to be awaited
+                // INSIDE the offer confirm, holding the dialog frozen for
+                // seconds after the offer itself had committed.
+                void (async () => {
+                    try {
+                        const shiftSide = shift.side || resolveStaffSide((staffList || []).find(s => s.name === shift.staffName));
+                        const sideLabel = shiftSide === 'boh' ? 'BOH' : 'FOH';
+                        const shiftLoc = shift.location || 'webster';
+                        const qualified = (staffList || []).filter(s =>
+                            s && s.name && s.active !== false &&
+                            s.name !== staffName &&
+                            // isOnSide, not resolveStaffSide equality — 'both'-side
+                            // floaters (the likeliest yes) were silently skipped.
+                            isOnSide(s, shiftSide) &&
+                            (shiftLoc === 'both' || s.location === 'both' || s.location === shiftLoc) &&
+                            !isStaffOffOn(s.name, shift.date)
+                        );
+                        const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
+                        await Promise.allSettled(qualified.map(s =>
+                            notify(s.name, 'cover_request',
+                                { en: `🆘 ${staffName} needs cover`,
+                                  es: `🆘 ${staffName} necesita cobertura` },
+                                { en: `${sideLabel} · ${detail}${note ? ` · "${note}"` : ''}`,
+                                  es: `${sideLabel} · ${detail}${note ? ` · "${note}"` : ''}` },
+                                // notify() dedups on opts.tagSuffix (NOT `tag` — that
+                                // key is silently ignored and falls back to Date.now(),
+                                // so a retry/double-tap on "post urgent offer" would
+                                // fan out a SECOND toast to every qualified staffer
+                                // instead of the OS collapsing it). Matches the sibling
+                                // handleRequestCover fan-out below, which uses tagSuffix.
+                                null, { tagSuffix: `cover:${shift.id}` })
+                        ));
+                    } catch (e) { console.warn('Cover fan-out failed:', e); }
+                })();
             }
             toast(tx(urgent ? '🆘 Urgent offer posted' : '📢 Offer posted',
                       urgent ? '🆘 Oferta urgente publicada' : '📢 Oferta publicada'),
@@ -2788,7 +2796,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             const qualified = (staffList || []).filter(s =>
                 s && s.name && s.active !== false &&
                 s.name !== staffName &&
-                resolveStaffSide(s) === shiftSide &&
+                // isOnSide, not resolveStaffSide equality — 'both'-side
+                // floaters (the likeliest yes) were silently skipped.
+                isOnSide(s, shiftSide) &&
                 (shiftLoc === 'both' || s.location === 'both' || s.location === shiftLoc) &&
                 !isStaffOffOn(s.name, shift.date)
             );
@@ -3181,8 +3191,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         const newShiftRef = doc(collection(db, 'shifts'));
                         txn.set(newShiftRef, {
                             staffName: oldOwner,
-                            side: live.side,
-                            location: live.location,
+                            // Legacy shifts can miss side/location — an
+                            // `undefined` field value makes txn.set THROW
+                            // client-side, aborting the approval forever
+                            // (claim stuck pending). Null is storable.
+                            side: live.side || null,
+                            location: live.location || null,
                             date: live.date,
                             startTime: piece.startTime,
                             endTime: piece.endTime,
@@ -3423,6 +3437,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!canEdit || !need?.id) return;
         try {
             const { id, ...data } = need;
+            // NEVER write the fill-tracking arrays from an edit (2026-07-26
+            // audit): the modal's copies are frozen at open time, so a fill
+            // committed on another iPad mid-edit would be wiped — the slot
+            // would reopen and get double-filled. They aren't editable
+            // fields; only fillNeedWithStaff/unfillNeedSlot may touch them.
+            delete data.filledStaff;
+            delete data.filledShiftIds;
+            delete data.interestedClaims;
             // Detect transition: false (or missing) → true on
             // openToAllStaff so we can fan-out the broadcast push
             // when a previously-private slot gets flipped to up-
@@ -3472,6 +3494,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //       they can't accidentally be filled twice into the same slot.
     const fillNeedWithStaff = async (need, staffMember) => {
         if (!canEditSide(need?.side)) return;
+        // 2026-07-26 audit: no in-flight guard meant a double-tap created
+        // TWO shifts while arrayUnion deduped the name — filledStaff and
+        // filledShiftIds fell out of step and every index-paired cleanup
+        // (unfill, prune-after-delete) then removed the WRONG shift. Also
+        // refuse re-filling someone already in the slot for the same reason.
+        if (fillNeedBusyRef.current) return;
+        if ((need.filledStaff || []).includes(staffMember?.name)) {
+            toast(tx(`${staffMember.name} is already in this slot.`, `${staffMember.name} ya está en este espacio.`), { kind: 'info' });
+            return;
+        }
+        fillNeedBusyRef.current = true;
+        try {
+            await _fillNeedWithStaffInner(need, staffMember);
+        } finally {
+            fillNeedBusyRef.current = false;
+        }
+    };
+    const _fillNeedWithStaffInner = async (need, staffMember) => {
         // 2026-05-15 — Andrew: "no you didnt fix it. when ... we have slots
         // available i can just click assign and when i do that it doesnt
         // show the warning. dont make me ask again."
@@ -3631,24 +3671,31 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const alreadyIn = existing.some(c => c?.name === staffName);
         try {
             const ref = doc(db, 'staffing_needs', needId);
+            // 2026-07-26 audit: both branches are now a TRANSACTION on the
+            // live server array. The old withdraw wrote a filter of the
+            // LOCAL snapshot (erasing any claim that hadn't echoed here
+            // yet), and the old add relied on arrayUnion dedupe that never
+            // fired — each claim embeds claimedAt, so no two are equal and
+            // a stale double-tap appended duplicates.
             if (alreadyIn) {
-                await updateDoc(ref, {
-                    interestedClaims: existing.filter(c => c?.name !== staffName),
+                await runTransaction(db, async (txn) => {
+                    const snap = await txn.get(ref);
+                    if (!snap.exists()) return;
+                    const live = Array.isArray(snap.data().interestedClaims) ? snap.data().interestedClaims : [];
+                    txn.update(ref, { interestedClaims: live.filter(c => c?.name !== staffName) });
                 });
                 toast(tx('Withdrew your interest.', 'Retiraste tu interés.'), { kind: 'info' });
             } else {
-                // Append (don't overwrite) — atomic via arrayUnion
-                // since we want at-most-once-per-staff but with
-                // first-click-wins ordering. Read-then-write would
-                // race; arrayUnion is safe because the wrapper
-                // object includes the deterministic name field so
-                // duplicates collapse server-side.
                 const claim = {
                     name: staffName,
                     claimedAt: new Date().toISOString(),
                 };
-                await updateDoc(ref, {
-                    interestedClaims: arrayUnion(claim),
+                await runTransaction(db, async (txn) => {
+                    const snap = await txn.get(ref);
+                    if (!snap.exists()) throw new Error('slot_gone');
+                    const live = Array.isArray(snap.data().interestedClaims) ? snap.data().interestedClaims : [];
+                    if (live.some(c => c?.name === staffName)) return; // already queued from another tap/device
+                    txn.update(ref, { interestedClaims: [...live, claim] });
                 });
                 toast(tx('Added — manager will pick from the queue.', 'Agregado — el gerente elegirá de la lista.'), { kind: 'success' });
                 // Notify managers + admins of this location. We
@@ -4180,6 +4227,23 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // ── Time-off (Phase 2: admin-entered) ──
     const handleAddTimeOff = async (entry) => {
         if (!canEdit) return;
+        // 2026-07-26 audit: the staff self-serve path has a busy-ref and an
+        // own-overlap guard; the manager path had neither. A double-tap on
+        // slow Wi-Fi created two approved PTO docs — deleting one later
+        // still left the other silently blocking scheduling.
+        if (addTimeOffBusyRef.current) return;
+        const entryEnd = entry.endDate || entry.startDate;
+        const dupe = (viewerTimeOff || []).some(t =>
+            t.staffName === entry.staffName &&
+            (t.status === 'approved' || t.status === 'pending') &&
+            entry.startDate <= (t.endDate || t.startDate) &&
+            (t.startDate) <= entryEnd);
+        if (dupe && !confirm(tx(
+            `${entry.staffName} already has time off overlapping those dates. Add anyway?`,
+            `${entry.staffName} ya tiene tiempo libre en esas fechas. ¿Agregar de todos modos?`))) {
+            return;
+        }
+        addTimeOffBusyRef.current = true;
         // A manager CAN add time off on a blackout date — that's the whole
         // point of "make an exception". Recompute the overlap here (never
         // trust the modal alone) so the exception is recorded + the staffer
@@ -4227,6 +4291,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         } catch (e) {
             console.error('Add time-off failed:', e);
             toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+        } finally {
+            addTimeOffBusyRef.current = false;
         }
     };
 
@@ -4339,6 +4405,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Validates against no-PTO blackout dates before submitting.
     const ptoSubmitBusyRef = useRef(false);
     const publishBusyRef = useRef(false);
+    const addTimeOffBusyRef = useRef(false);
+    const fillNeedBusyRef = useRef(false);
     const handleSubmitPtoRequest = async (entry) => {
         // One in-flight submit at a time (2026-07-23): the modal button
         // stays enabled while addDoc awaits, so a double-tap on slow Wi-Fi
@@ -5361,9 +5429,27 @@ ${dayBlocks}
             // we queue creates so duplicates WITHIN one run are caught too.
             const wkStartStr = toDateStr(weekStart);
             const wkEndStr = toDateStr(addDays(weekStart, 7));
-            const existingKeys = new Set(shifts
-                .filter(sh => sh.date >= wkStartStr && sh.date < wkEndStr)
-                .map(sh => `${sh.staffName}|${sh.date}|${sh.startTime}|${sh.endTime}`));
+            // 2026-07-26 audit: dedupe against a FRESH server read of the
+            // target week, not just local state — on a fresh mount `shifts`
+            // can be a minutes-old localStorage cache, and two managers
+            // tapping Copy on two iPads each saw "no duplicates" and both
+            // committed the whole week twice. Local state still unions in
+            // (covers this device's un-acked writes).
+            const targetSnap = await getDocs(query(
+                collection(db, 'shifts'),
+                where('date', '>=', wkStartStr),
+                where('date', '<', wkEndStr),
+            ));
+            const existingKeys = new Set();
+            targetSnap.forEach(d => {
+                const sh = d.data();
+                existingKeys.add(`${sh.staffName}|${sh.date}|${sh.startTime}|${sh.endTime}`);
+            });
+            for (const sh of shifts) {
+                if (sh.date >= wkStartStr && sh.date < wkEndStr) {
+                    existingKeys.add(`${sh.staffName}|${sh.date}|${sh.startTime}|${sh.endTime}`);
+                }
+            }
             const toCreate = [];
             for (const sh of filtered) {
                 const oldDate = parseLocalDate(sh.date);
@@ -6069,13 +6155,13 @@ ${dayBlocks}
                 'both'-side staff still see + use it. */}
             {(staffIsAdmin || _viewerIsBothSide) && (
                 <div className="flex gap-1 mb-3 glass-sheet rounded-lg p-1 print:hidden">
-                    <button onClick={() => setSide('foh')}
+                    <button onClick={() => { sideTouchedRef.current = true; setSide('foh'); }}
                         className={`flex-1 py-2 rounded-md text-sm font-bold transition flex items-center justify-center gap-1.5 ${side === 'foh' ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
                         <Sofa size={16} strokeWidth={2.25} aria-hidden="true"
                             className={side === 'foh' ? 'text-white' : 'text-dd-green-700'} />
                         {tx('Front of House', 'Servicio')}
                     </button>
-                    <button onClick={() => setSide('boh')}
+                    <button onClick={() => { sideTouchedRef.current = true; setSide('boh'); }}
                         className={`flex-1 py-2 rounded-md text-sm font-bold transition flex items-center justify-center gap-1.5 ${side === 'boh' ? 'bg-orange-600/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
                         <Utensils size={16} strokeWidth={2.25} aria-hidden="true"
                             className={side === 'boh' ? 'text-white' : 'text-dd-green-700'} />
@@ -7291,15 +7377,20 @@ ${dayBlocks}
                     isEn={isEn}
                     onCancel={() => setPublishPreview(null)}
                     onConfirm={confirmPublishDrafts}
-                    onRemoveDraft={async (shiftId) => {
-                        // Manager spotted a bad draft in the preview — let them
-                        // delete it without leaving the modal. The list re-renders
-                        // immediately because the preview is recomputed from
-                        // visibleShifts (snapshot listener handles it).
-                        await handleDeleteShift(shiftId);
-                        setPublishPreview(prev => prev
-                            ? { ...prev, drafts: prev.drafts.filter(d => d.id !== shiftId) }
-                            : null);
+                    onRemoveDraft={(shiftId) => {
+                        // Manager spotted a bad draft in the preview — delete it
+                        // without leaving the modal. 2026-07-26 audit: the row is
+                        // dropped from the preview ONLY once the delete actually
+                        // commits (immediate path — drafts are scratch work, no
+                        // undo window needed). The old version filtered the row as
+                        // soon as the confirm DIALOG opened, so canceling silently
+                        // excluded a live draft from publish forever.
+                        handleDeleteShift(shiftId, {
+                            immediate: true,
+                            onDeleted: () => setPublishPreview(prev => prev
+                                ? { ...prev, drafts: prev.drafts.filter(d => d.id !== shiftId) }
+                                : null),
+                        });
                     }}
                 />
             )}
@@ -8460,18 +8551,37 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
     // unreachable: pending cells rendered the approved 🌴 look and the ⏳
     // chip was dead code. Visual only — doesn't block anything. Entries
     // with no status field are legacy admin-entered pre-approvals.
-    const staffPtoOn = (staffName, dateStr, status) => (timeOff || []).some(t => {
-        if ((t.status || 'approved') !== status) return false;
-        if (t.staffName !== staffName) return false;
-        const start = t.startDate || t.date;
-        const end = t.endDate || t.date;
-        return dateStr >= start && dateStr <= end;
-    });
     const [dragOverCell, setDragOverCell] = useState(null); // "staffName|date" while dragging
     // Memoized on weekStart so the closedByDate useMemo below (which lists
     // `days` in its deps) actually skips recompute when WeeklyGrid re-renders
     // for a reason other than the week changing.
     const days = useMemo(() => DAYS_EN.map((_, i) => addDays(weekStart, i)), [weekStart]);
+    // PTO lookup map (2026-07-26 perf audit M3): the old per-cell closure
+    // scanned the FULL 6-month timeOff array twice per body cell — ~35k+
+    // predicate calls per grid render, re-run on every drag-over highlight
+    // change. Pre-bucket once per (timeOff, week): key `name|date` →
+    // 'approved' | 'pending'. Approved wins on overlap (matches the old
+    // first-check-approved behavior).
+    const ptoByCell = useMemo(() => {
+        const map = new Map();
+        const weekDates = days.map(d => toDateStr(d));
+        for (const t of (timeOff || [])) {
+            const status = t.status || 'approved';
+            if (status !== 'approved' && status !== 'pending') continue;
+            const start = t.startDate || t.date;
+            const end = t.endDate || t.date;
+            if (!start || !t.staffName) continue;
+            for (const dStr of weekDates) {
+                if (dStr >= start && dStr <= (end || start)) {
+                    const key = `${t.staffName}|${dStr}`;
+                    const prev = map.get(key);
+                    if (prev !== 'approved') map.set(key, status === 'approved' ? 'approved' : (prev || 'pending'));
+                }
+            }
+        }
+        return map;
+    }, [timeOff, days]);
+    const staffPtoOn = (staffName, dateStr, status) => ptoByCell.get(`${staffName}|${dateStr}`) === status;
 
     // ── Auto-scroll the page while dragging a shift near a screen edge ──
     // 2026-06-06 — Andrew: "we can drag a shift from one staff to another
@@ -8562,13 +8672,19 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
         return map;
     }, [days, blocksByDate, dateHasOpenOverride, dateClosedByRecurring, isEn]);
 
-    // Group shifts by staff and date for fast lookup.
+    // Group shifts by staff and date for fast lookup. Sorted here ONCE per
+    // snapshot (2026-07-26 perf audit M4) — the per-cell `.sort()` in the
+    // row render re-ran for every cell on every render, including each
+    // drag-over highlight tick.
     const shiftsByCell = useMemo(() => {
         const map = new Map();
         for (const sh of shifts) {
             const key = `${sh.staffName}|${sh.date}`;
             if (!map.has(key)) map.set(key, []);
             map.get(key).push(sh);
+        }
+        for (const arr of map.values()) {
+            arr.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
         }
         return map;
     }, [shifts]);
@@ -9046,8 +9162,7 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
                             </td>
                             {days.map((d, i) => {
                                 const dStr = toDateStr(d);
-                                const cellShifts = (shiftsByCell.get(`${s.name}|${dStr}`) || [])
-                                    .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+                                const cellShifts = shiftsByCell.get(`${s.name}|${dStr}`) || EMPTY_CELL_SHIFTS;
                                 const isToday = dStr === today;
                                 const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
                                 // 2026-05-16 — use the shared closedByDate map
@@ -9959,6 +10074,56 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
 }
 
 // ── SwapPanels: open offers + pending swap approval + pending PTO queue ────
+// Reusable card chrome — clean white card with semantic accent stripe.
+// When `collapsible` + `open` + `onToggle` are provided, the header
+// becomes a tappable button + chevron and the children render only
+// when open. Without those props, behavior is unchanged.
+// HOISTED to module scope 2026-07-26 (perf audit H2): defined inside
+// SwapPanels' render, its function identity changed every render, so
+// React treated each <Panel> as a NEW element type and unmounted +
+// rebuilt the entire panel DOM on every parent tick — the single
+// biggest per-tick DOM churn on the page.
+const Panel = ({ accent, icon, title, count, children, collapsible = false, open = true, onToggle }) => {
+    const HeaderTag = collapsible ? 'button' : 'div';
+    return (
+        <div className="rounded-xl glass-sheet shadow-card overflow-hidden">
+            <HeaderTag
+                type={collapsible ? 'button' : undefined}
+                onClick={collapsible ? onToggle : undefined}
+                className={`w-full flex items-center gap-2 px-3 py-2 border-b border-dd-line bg-dd-bg/40 text-left ${collapsible ? 'hover:bg-dd-bg/70 active:bg-dd-bg/90 transition-colors' : ''}`}
+                aria-expanded={collapsible ? open : undefined}
+            >
+                <span className={`w-1 h-5 rounded-full ${accent}`} />
+                {/* Sage-green disc treatment matches the weather-forecast
+                    chip pattern that Andrew flagged: small rounded square
+                    with a sage-50 fill + dd-green-700 stroke. Applied
+                    uniformly across panel headers so every panel has the
+                    same icon language. The accent stripe to the left
+                    still carries the panel's semantic color (amber for
+                    PTO, blue for offers, etc.). */}
+                <span className="text-sm font-bold text-dd-text flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                        {icon}
+                    </span>
+                    {title}
+                </span>
+                {count != null && <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{count}</span>}
+                {collapsible && (
+                    <ChevronDown
+                        size={16}
+                        strokeWidth={2.25}
+                        aria-hidden="true"
+                        className={`shrink-0 text-dd-text-2 transition-transform duration-glass-fast ease-glass-out ${open ? 'rotate-180' : ''} ${count == null ? 'ml-auto' : ''}`}
+                    />
+                )}
+            </HeaderTag>
+            {(!collapsible || open) && (
+                <div className="p-2.5 space-y-1.5">{children}</div>
+            )}
+        </div>
+    );
+};
+
 function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, onApprove, onDeny, storeLocation, timeOff, onApprovePto, onDenyPto, onCancelOwnPto, swapRequests = [], onApproveSwapRequest, onDenySwapRequest }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
@@ -10043,50 +10208,6 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
         return when ? tx(`Submitted ${when}`, `Enviado ${when}`) : '';
     };
 
-    // Reusable card chrome — clean white card with semantic accent stripe.
-    // When `collapsible` + `open` + `onToggle` are provided, the header
-    // becomes a tappable button + chevron and the children render only
-    // when open. Without those props, behavior is unchanged.
-    const Panel = ({ accent, icon, title, count, children, collapsible = false, open = true, onToggle }) => {
-        const HeaderTag = collapsible ? 'button' : 'div';
-        return (
-            <div className="rounded-xl glass-sheet shadow-card overflow-hidden">
-                <HeaderTag
-                    type={collapsible ? 'button' : undefined}
-                    onClick={collapsible ? onToggle : undefined}
-                    className={`w-full flex items-center gap-2 px-3 py-2 border-b border-dd-line bg-dd-bg/40 text-left ${collapsible ? 'hover:bg-dd-bg/70 active:bg-dd-bg/90 transition-colors' : ''}`}
-                    aria-expanded={collapsible ? open : undefined}
-                >
-                    <span className={`w-1 h-5 rounded-full ${accent}`} />
-                    {/* Sage-green disc treatment matches the weather-forecast
-                        chip pattern that Andrew flagged: small rounded square
-                        with a sage-50 fill + dd-green-700 stroke. Applied
-                        uniformly across panel headers so every panel has the
-                        same icon language. The accent stripe to the left
-                        still carries the panel's semantic color (amber for
-                        PTO, blue for offers, etc.). */}
-                    <span className="text-sm font-bold text-dd-text flex items-center gap-2">
-                        <span className="w-7 h-7 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
-                            {icon}
-                        </span>
-                        {title}
-                    </span>
-                    {count != null && <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{count}</span>}
-                    {collapsible && (
-                        <ChevronDown
-                            size={16}
-                            strokeWidth={2.25}
-                            aria-hidden="true"
-                            className={`shrink-0 text-dd-text-2 transition-transform duration-glass-fast ease-glass-out ${open ? 'rotate-180' : ''} ${count == null ? 'ml-auto' : ''}`}
-                        />
-                    )}
-                </HeaderTag>
-                {(!collapsible || open) && (
-                    <div className="p-2.5 space-y-1.5">{children}</div>
-                )}
-            </div>
-        );
-    };
     return (
         <div className="mb-3 space-y-2 print:hidden">
             {/* My own open offers — gentle reminder this is still mine */}

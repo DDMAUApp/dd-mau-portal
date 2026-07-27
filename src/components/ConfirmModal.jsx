@@ -41,6 +41,7 @@
 // containing-block in the page tree (the same root-cause we hit with
 // every other modal — see ModalPortal.jsx comment).
 
+import { useState } from 'react';
 import ModalPortal from './ModalPortal';
 
 const TONE_CLS = {
@@ -63,7 +64,17 @@ export default function ConfirmModal({
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
+    // 2026-07-26 audit: almost no caller passes `busy`, so during a slow
+    // onConfirm await the buttons stayed ARMED — the dialog looked frozen
+    // and a second tap re-ran the action (double delete/notify). Track
+    // in-flight state internally so every call site gets the disabled
+    // buttons + "Working…" label for free. The `busy` prop still works.
+    const [submitting, setSubmitting] = useState(false);
+    const isBusy = busy || submitting;
+
     const handleConfirm = async () => {
+        if (isBusy) return;
+        setSubmitting(true);
         try {
             await onConfirm?.();
         } finally {
@@ -106,17 +117,17 @@ export default function ConfirmModal({
                     <div className="px-4 py-3 border-t border-dd-line flex items-center justify-end gap-2 shrink-0">
                         <button
                             onClick={onClose}
-                            disabled={busy}
+                            disabled={isBusy}
                             className="px-4 py-2 rounded-full text-sm font-bold text-dd-text-2 hover:bg-dd-bg disabled:opacity-40 min-h-[44px]"
                         >
                             {cancelLabel || tx('Cancel', 'Cancelar')}
                         </button>
                         <button
                             onClick={handleConfirm}
-                            disabled={busy}
+                            disabled={isBusy}
                             className={`px-4 py-2 rounded-full text-sm font-bold shadow-sm disabled:opacity-40 min-h-[44px] ${TONE_CLS[tone] || TONE_CLS.primary}`}
                         >
-                            {busy ? tx('Working…', 'Procesando…') : (confirmLabel || tx('Confirm', 'Confirmar'))}
+                            {isBusy ? tx('Working…', 'Procesando…') : (confirmLabel || tx('Confirm', 'Confirmar'))}
                         </button>
                     </div>
                 </div>

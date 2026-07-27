@@ -121,6 +121,37 @@ async function commitInChunks(ops) {
     return committed;
 }
 
+// staffing_needs stores names in ARRAYS (filledStaff[] parallel to
+// filledShiftIds[], and interestedClaims[{name, claimedAt}]), so the
+// equality-field pass can't reach them. A rename used to silently drop the
+// staffer from filled slots — the slot re-opened and got double-filled
+// (2026-07-26 audit M4). filledStaff is queryable via array-contains;
+// interestedClaims holds objects, so rewrite it on the same matched docs
+// plus a second targeted sweep over recent docs.
+async function renameStaffingNeeds(oldName, newName) {
+    const ops = [];
+    const patchDoc = (d) => {
+        const data = d.data() || {};
+        const patch = {};
+        if (Array.isArray(data.filledStaff) && data.filledStaff.includes(oldName)) {
+            patch.filledStaff = data.filledStaff.map((m) => (m === oldName ? newName : m));
+        }
+        if (Array.isArray(data.interestedClaims) && data.interestedClaims.some(c => c?.name === oldName)) {
+            patch.interestedClaims = data.interestedClaims.map(c => (c?.name === oldName ? { ...c, name: newName } : c));
+        }
+        if (Object.keys(patch).length) ops.push((b) => b.update(d.ref, patch));
+    };
+    const seen = new Set();
+    const filled = await getDocs(query(collection(db, 'staffing_needs'), where('filledStaff', 'array-contains', oldName)));
+    filled.forEach((d) => { seen.add(d.id); patchDoc(d); });
+    // interestedClaims can't be array-contains-queried (objects) — sweep
+    // docs from the last 60 days for claim-only membership.
+    const cutoff = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const recent = await getDocs(query(collection(db, 'staffing_needs'), where('date', '>=', cutoff)));
+    recent.forEach((d) => { if (!seen.has(d.id)) patchDoc(d); });
+    return commitInChunks(ops);
+}
+
 // Rewrite a single equality-joined field across one collection. `extra` are
 // additional fields on the SAME matched docs that should also flip if they
 // equal oldName (e.g. time_off.submittedBy, offsite_shifts.forcedOutBy).
@@ -222,6 +253,14 @@ export async function renameStaffEverywhere({ oldName, newName, staffId, by } = 
     // [label, runner] — runner resolves to a write count.
     const tasks = [
         ['shifts',          () => renameEqualityField('shifts', 'staffName', o, n)],
+        // Offer/claim identity fields live on OTHER people's shifts, so the
+        // staffName pass never touches them. Without these, a rename during
+        // a pending claim made the approval write the DEAD old name into
+        // staffName — the shift then orphan-filtered off every grid
+        // (2026-07-26 audit M4).
+        ['shifts_claims',   () => renameEqualityField('shifts', 'pendingClaimBy', o, n, ['offeredBy'])],
+        ['shifts_offered',  () => renameEqualityField('shifts', 'offeredBy', o, n)],
+        ['staffing_needs',  () => renameStaffingNeeds(o, n)],
         ['recurring_shifts',() => renameEqualityField('recurring_shifts', 'staffName', o, n, ['createdBy', 'updatedBy'])],
         ['time_off',        () => renameEqualityField('time_off', 'staffName', o, n, ['submittedBy', 'createdBy'])],
         // swap_requests stores staff NAMES (fromStaff/toStaff/createdBy).

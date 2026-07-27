@@ -3,7 +3,7 @@ import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
-import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney } from './data/staff';
+import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney, HIDEABLE_PAGES } from './data/staff';
 import { noteStaffSnapshot, nextStaffRev } from './data/staffDoc';
 import { toast } from './toast';
 import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate, isSharedDevice, isSharedDeviceModeEnabled } from './messaging';
@@ -1520,9 +1520,16 @@ export default function App() {
     // staff had no hidden pages. React.memo's shallow compare saw a
     // changed prop and re-rendered the whole route subtree.
     const hiddenPages = useMemo(
-        () => (currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages))
-            ? currentStaffRecord.hiddenPages
-            : EMPTY_ARRAY,
+        () => {
+            if (!currentStaffRecord || !Array.isArray(currentStaffRecord.hiddenPages)) return EMPTY_ARRAY;
+            // Whitelist against HIDEABLE_PAGES (2026-07-26 audit L2): the
+            // AdminPanel only offers those ids, but a hand-edited/imported
+            // record with e.g. 'schedule' or 'home' in the array would
+            // remove the tab from every nav with no route guard noticing.
+            const ok = new Set(HIDEABLE_PAGES.map(p => p.id));
+            const clean = currentStaffRecord.hiddenPages.filter(id => ok.has(id));
+            return clean.length ? clean : EMPTY_ARRAY;
+        },
         [currentStaffRecord],
     );
     // Guard: if a non-admin restored a session that landed on admin/labor,

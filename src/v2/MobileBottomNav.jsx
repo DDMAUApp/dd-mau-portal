@@ -50,6 +50,8 @@ export default function MobileBottomNav({
     onMoreClick,
     storeLocation = 'webster',
     staffName = '',
+    isAdmin = false,
+    isManager = false,
     hasOpsAccess = true,
     hasRecipesAccess = true,
     hiddenPages = [],
@@ -61,12 +63,16 @@ export default function MobileBottomNav({
     // provider mounts in AppShellV2 and owns one listener per data
     // stream; every consumer reads the same in-memory snapshot.
     const { shifts14, eightySixByLoc, unreadCount: unreadNotifs, unreadChat } = useAppData();
+    // Managers/admins only (2026-07-26 audit M3) — staff can't see drafts,
+    // so the amber count was a badge pointing at nothing (and leaked that
+    // an unpublished week exists). Same gate MobileHome already had.
     const draftCount = useMemo(() => {
+        if (!isManager && !isAdmin) return 0;
         return shifts14.filter(sh =>
             sh.published === false &&
             (storeLocation === 'both' || sh.location === storeLocation)
         ).length;
-    }, [shifts14, storeLocation]);
+    }, [shifts14, storeLocation, isManager, isAdmin]);
     const eighty6Count = useMemo(() => {
         const loc = storeLocation === 'both' ? 'webster' : storeLocation;
         return eightySixByLoc[loc]?.count || 0;

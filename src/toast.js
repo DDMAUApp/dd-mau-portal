@@ -70,17 +70,29 @@ export function toast(message, opts = {}) {
 export function undoToast(message, commitFn, opts = {}) {
     const delay = opts.delayMs != null ? opts.delayMs : 5000;
     let cancelled = false;
+    let committed = false;
     const id = toast(message, {
         kind: opts.kind || 'info',
         duration: delay,
         actionLabel: opts.undoLabel || 'Undo',
         onAction: () => { cancelled = true; dismissToast(id); },
     });
-    setTimeout(() => {
-        if (!cancelled) {
-            try { commitFn(); } catch (e) { console.warn('undoToast commit failed:', e); }
-        }
-    }, delay);
+    const commit = () => {
+        if (cancelled || committed) return;
+        committed = true;
+        window.removeEventListener('pagehide', commit);
+        document.removeEventListener('visibilitychange', onHidden);
+        try { commitFn(); } catch (e) { console.warn('undoToast commit failed:', e); }
+    };
+    // 2026-07-26 audit: the buffered action used to die silently if the
+    // webview was killed / iPad locked inside the 5s window — the toast
+    // had already SAID "deleted", but nothing was. Flush immediately when
+    // the page is going away or backgrounding (iOS can kill a hidden
+    // webview at any time; the Firestore write queues offline if needed).
+    const onHidden = () => { if (document.visibilityState === 'hidden') commit(); };
+    window.addEventListener('pagehide', commit);
+    document.addEventListener('visibilitychange', onHidden);
+    setTimeout(commit, delay);
     return { cancel: () => { cancelled = true; dismissToast(id); } };
 }
 

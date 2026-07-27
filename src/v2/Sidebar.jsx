@@ -194,12 +194,16 @@ export default function Sidebar({
     // instead of four component-local Firestore subscriptions. Each
     // badge is now a cheap useMemo over the shared data.
     const { shifts14, eightySixByLoc, timeOff, unreadCount: unreadNotifs, unreadChat } = useAppData();
+    // Managers/admins only (2026-07-26 audit M3) — staff can't see drafts,
+    // so the amber count was a badge pointing at nothing (and leaked that
+    // an unpublished week exists). Same gate MobileHome already had.
     const draftCount = useMemo(() => {
+        if (!isManager && !isAdmin) return 0;
         return shifts14.filter(sh =>
             sh.published === false &&
             (storeLocation === 'both' || sh.location === storeLocation)
         ).length;
-    }, [shifts14, storeLocation]);
+    }, [shifts14, storeLocation, isManager, isAdmin]);
     const eighty6Count = useMemo(() => {
         const loc = storeLocation === 'both' ? 'webster' : storeLocation;
         return eightySixByLoc[loc]?.count || 0;

@@ -12,7 +12,7 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot } from 'firebase/firestore';
-import { canViewLabor, canViewClockedIn, isAdmin as isAdminFn } from '../data/staff';
+import { canViewLabor, canViewClockedIn, isAdmin as isAdminFn, isManagerRoleTitle } from '../data/staff';
 import { isSharedDeviceModeEnabled, setSharedDeviceMode } from '../messaging';
 import useSecretHold from '../data/useSecretHold';
 import { toast } from '../toast';
@@ -216,9 +216,15 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
     const pendingPto = useMemo(() => timeOff.filter(t => t.status === 'pending'), [timeOff]);
 
     // ── Derived ──
-    const draftCount = useMemo(() =>
-        shifts.list.filter(s => s.published === false && (storeLocation === 'both' || s.location === storeLocation)).length,
-        [shifts.list, storeLocation]);
+    // Draft count is managers/admins only (2026-07-26 audit M3) — staff
+    // can't open drafts, so the "Review & publish" card/stat pointed at
+    // nothing and leaked that an unpublished week exists. Same gate
+    // MobileHome already had.
+    const viewerIsManager = viewerIsAdmin || isManagerRoleTitle(viewer?.role);
+    const draftCount = useMemo(() => {
+        if (!viewerIsManager) return 0;
+        return shifts.list.filter(s => s.published === false && (storeLocation === 'both' || s.location === storeLocation)).length;
+    }, [shifts.list, storeLocation, viewerIsManager]);
 
     const upcomingShifts = useMemo(() => {
         const today = todayKey();
