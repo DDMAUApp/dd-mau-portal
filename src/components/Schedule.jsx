@@ -5021,20 +5021,45 @@ ${dayBlocks}
         const printMealCounts = new Map();
         {
             const toMin = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+            // Position lookup mirrors the live grid's dots: one emerald dot
+            // per shift lead + one orange dot per manager on that meal.
+            const positionByName = new Map();
+            for (const s of staffSummary) positionByName.set(s.name, s.position || 'regular');
             for (const d of days) {
                 const dStr = toDateStr(d);
                 const lunch = new Set(), dinner = new Set();
+                let lunchLeads = 0, lunchManagers = 0, dinnerLeads = 0, dinnerManagers = 0;
                 for (const sh of visibleShifts) {
                     if (sh.date !== dStr) continue;
                     if (sh.offerStatus === 'open' || !sh.staffName) continue;
                     const sm = toMin(sh.startTime), em = toMin(sh.endTime);
                     if (sm == null || em == null) continue;
-                    if (sm < LUNCH_WIN_END && em > LUNCH_WIN_START) lunch.add(sh.staffName);
-                    if (sm < DINNER_WIN_END && em > DINNER_WIN_START) dinner.add(sh.staffName);
+                    const pos = positionByName.get(sh.staffName) || 'regular';
+                    if (sm < LUNCH_WIN_END && em > LUNCH_WIN_START) {
+                        lunch.add(sh.staffName);
+                        if (pos === 'manager') lunchManagers += 1;
+                        else if (pos === 'lead') lunchLeads += 1;
+                    }
+                    if (sm < DINNER_WIN_END && em > DINNER_WIN_START) {
+                        dinner.add(sh.staffName);
+                        if (pos === 'manager') dinnerManagers += 1;
+                        else if (pos === 'lead') dinnerLeads += 1;
+                    }
                 }
-                printMealCounts.set(dStr, { lunch: lunch.size, dinner: dinner.size });
+                printMealCounts.set(dStr, {
+                    lunch: lunch.size, dinner: dinner.size,
+                    lunchLeads, lunchManagers, dinnerLeads, dinnerManagers,
+                });
             }
         }
+        // One emerald dot per lead + one orange dot per manager — same as
+        // the live pills (and the grid legend: green = lead, orange = mgr).
+        const mealDots = (leads, managers) => {
+            let dots = '';
+            for (let i = 0; i < leads; i++) dots += '<span class="dot lead-dot"></span>';
+            for (let i = 0; i < managers; i++) dots += '<span class="dot mgr-dot"></span>';
+            return dots;
+        };
 
         const headerRow = `<tr>
             <th class="staff-cell">${isEn ? 'Staff' : 'Personal'}</th>
@@ -5045,8 +5070,8 @@ ${dayBlocks}
                 const isClosed = dayBlocks.some(b => b.type === 'closed');
                 const m = printMealCounts.get(dStr) || { lunch: 0, dinner: 0 };
                 const meals = isClosed ? '' : `<div class="meals">
-                    <span class="meal lunch${m.lunch === 0 ? ' zero' : ''}">${isEn ? 'L' : 'A'} ${m.lunch}</span>
-                    <span class="meal dinner${m.dinner === 0 ? ' zero' : ''}">${isEn ? 'D' : 'C'} ${m.dinner}</span>
+                    <span class="meal lunch${m.lunch === 0 ? ' zero' : ''}">${isEn ? 'L' : 'A'} ${m.lunch}${mealDots(m.lunchLeads, m.lunchManagers)}</span>
+                    <span class="meal dinner${m.dinner === 0 ? ' zero' : ''}">${isEn ? 'D' : 'C'} ${m.dinner}${mealDots(m.dinnerLeads, m.dinnerManagers)}</span>
                 </div>`;
                 return `<th class="${isToday ? 'today' : ''} ${isClosed ? 'closed-cell' : ''}">
                     <div class="dow">${escape(dayLabels[i])}</div>
@@ -5098,6 +5123,9 @@ ${dayBlocks}
     .meal.lunch { background: #fffbeb; color: #92400e; border-color: #fde68a; }
     .meal.dinner { background: #eef2ff; color: #3730a3; border-color: #c7d2fe; }
     .meal.zero { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .meal .dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; margin-left: 2px; vertical-align: middle; }
+    .meal .lead-dot { background: #10b981; }
+    .meal .mgr-dot { background: #f97316; }
     /* Shifts get a solid role tint that mirrors the on-screen glass cubes
        (roleColors): manager = orange, lead = green, staff = blue. Same hex
        as the live grid so paper matches screen. Solid fills, not outlines. */
