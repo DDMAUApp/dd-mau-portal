@@ -5002,12 +5002,14 @@ ${dayBlocks}
                 }
                 cells += `<td class="${isToday ? 'today' : ''} ${cellClosed ? 'closed-cell' : ''}">${cellHtml}</td>`;
             }
-            const hoursClass = s.totalHours >= HOURS_YELLOW_MAX ? 'h-red' : s.totalHours >= HOURS_GREEN_MAX ? 'h-yellow' : 'h-green';
+            // 2026-07-27 — per-person weekly hours under the name are OFF on
+            // the printout (Andrew: "leave everyones hour count under there
+            // name off"). The live grid keeps them; paper copies get posted
+            // where staff compare hours.
             bodyRows += `<tr>
                 <td class="staff-cell">
                     <div class="staff-name">${escape(s.name)}${s.shiftLead ? ' 🛡️' : ''}${s.isMinor ? ' 🔑' : ''}</div>
                     <div class="staff-meta">${escape(s.role || '')}</div>
-                    ${canEdit ? `<div class="hours ${hoursClass}">${escape(formatHours(s.totalHours))}</div>` : ''}
                 </td>
                 ${cells}
             </tr>`;
