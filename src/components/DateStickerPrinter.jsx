@@ -400,17 +400,8 @@ export default function DateStickerPrinter({
     const searchGridComponents = useMemo(
         () => (flatResults.components || []).map(c => ({ ...c, kind: c.componentKind || 'side' })),
         [flatResults]);
-    const handleSearchPrint = useCallback((c) => handlePrintComponent({
-        kind: c.kind,
-        nameEn: c.nameEn,
-        nameEs: c.nameEs,
-        descEn: c.descEn,
-        descEs: c.descEs,
-        // Same use-by default as the browse grid (audit finding 4).
-        ...(c.shelfLifeDays ? { shelfLifeDays: c.shelfLifeDays } : {}),
-        ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
-        ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
-    }, null), [handlePrintComponent]);
+    // handleSearchPrint is defined LOWER, right after handlePrintComponent —
+    // see the temporal-dead-zone note there. Do not move it back up here.
 
     // Browse grouping (no-query view) — by category.
     const grouped = useMemo(() => {
@@ -503,6 +494,23 @@ export default function DateStickerPrinter({
         });
     }, []);
     const handleBrowsePrint = useCallback((c) => handlePrintComponent(c, null), [handlePrintComponent]);
+    // Search-grid print. MUST live here, AFTER handlePrintComponent's const is
+    // initialized — its dep array `[handlePrintComponent]` is read eagerly on
+    // every render, so declaring it above handlePrintComponent (as it was
+    // through v1.0.325–v1.0.330) threw "Cannot access 'handlePrintComponent'
+    // before initialization" — a temporal-dead-zone crash that took down the
+    // whole Date Stickers tab on mount. Keep it below the definition.
+    const handleSearchPrint = useCallback((c) => handlePrintComponent({
+        kind: c.kind,
+        nameEn: c.nameEn,
+        nameEs: c.nameEs,
+        descEn: c.descEn,
+        descEs: c.descEs,
+        // Same use-by default as the browse grid (audit finding 4).
+        ...(c.shelfLifeDays ? { shelfLifeDays: c.shelfLifeDays } : {}),
+        ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
+        ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
+    }, null), [handlePrintComponent]);
 
     // Anyone-can-add (2026-07-26 audit fix): the add now goes through a
     // Firestore TRANSACTION (addStickerRow) instead of rewriting the full
