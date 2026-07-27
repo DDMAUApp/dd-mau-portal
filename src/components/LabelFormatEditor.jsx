@@ -12,14 +12,14 @@
 //   • Free-text labels via PrintCenter
 // Live preview on the right updates as admin toggles fields.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     subscribeLabelFormat, saveLabelFormat,
     DEFAULT_LABEL_FORMAT, clampLabelFormat,
 } from '../data/labelFormat';
-import { buildLabelPayload } from '../data/labelPrinting';
+import { buildLabelPayload, buildLabelPreviewModel } from '../data/labelPrinting';
 import { toast } from '../toast';
-import LabelPrintPreviewModal from './LabelPrintPreviewModal';
+import LabelPrintPreviewModal, { LabelMock } from './LabelPrintPreviewModal';
 
 // Categories that can carry a per-kind override — [kind, EN label, ES
 // label]. `kind` matches the sticker rows' kind field (the color family
@@ -53,15 +53,22 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
     // (unsaved edits included) so the admin can iterate without printing.
     const [printPreview, setPrintPreview] = useState(null);
 
+    // Latest SERVER format, readable inside the once-mounted subscription
+    // below. 2026-07-27 audit finding #2: the old callback compared the
+    // draft against `format` captured on MOUNT (always the defaults), so
+    // once the saved config differed from defaults the draft NEVER
+    // re-synced — another admin's save spontaneously lit "Unsaved" here,
+    // and tapping Save then clobbered their change with this stale draft.
+    const serverFmtRef = useRef(format);
     useEffect(() => {
         const unsub = subscribeLabelFormat((f) => {
             setFormat(f);
             // Only refresh draft from server if admin hasn't made
-            // local edits since last save (heuristic: dirty === false).
-            setDraft(prev => isDirty(prev, format) ? prev : f);
+            // local edits since the LAST server value (dirty === false).
+            setDraft(prev => isDirty(prev, serverFmtRef.current) ? prev : f);
+            serverFmtRef.current = f;
         });
         return unsub;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const dirty = isDirty(draft, format);
@@ -101,7 +108,12 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
         language: isEs ? 'es' : 'en',
         notes: '',
         format: clampLabelFormat(draft),
+        paperWidthMm: 58,
     }), [draft, isEs, byName]);
+    // Render via the SAME segment model the printer uses (2026-07-27
+    // audit #3: the old hand-rolled PreviewBox ignored most knobs — the
+    // new sliders visibly did nothing in the live preview).
+    const previewModel = useMemo(() => buildLabelPreviewModel(previewPayload), [previewPayload]);
 
     return (
         <div className="mt-6 mb-4 bg-white border-2 border-violet-200 rounded-xl p-4">
@@ -150,6 +162,7 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                     { k: 'showNotes',        en: 'Notes',           es: 'Notas' },
                                     { k: 'showFooter',       en: 'Footer (DD MAU)', es: 'Pie' },
                                     { k: 'showUseByBand',    en: 'Use-by band (SAT)', es: 'Banda de caducidad' },
+                                    { k: 'showDividers',     en: 'Divider lines',   es: 'Líneas divisoras' },
                                 ].map(t => (
                                     <ToggleRow key={t.k}
                                         checked={draft[t.k] !== false}
@@ -182,6 +195,20 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                 onChange={(v) => update({ useByBandScale: v })}
                                 min={2} max={8} step={1}
                                 hint={tx('The big weekday / discard-time line near the bottom', 'La línea grande de día / hora de descarte')} />
+                            <SliderRow
+                                label={tx('Time size (under the date)', 'Tamaño de la hora')}
+                                value={draft.timeScale ?? 2}
+                                onChange={(v) => update({ timeScale: v })}
+                                min={1} max={4} step={1} />
+                            <SliderRow
+                                label={tx('Info lines size (Use by / By / Loc)', 'Tamaño de líneas de info')}
+                                value={draft.metaScale ?? 1}
+                                onChange={(v) => update({ metaScale: v })}
+                                min={1} max={3} step={1} />
+                            <ToggleRow
+                                checked={draft.titleBold === true}
+                                onChange={(v) => update({ titleBold: v })}
+                                label={tx('Bold item name', 'Nombre en negrita')} />
                         </FieldsetCard>
 
                         {/* Per-category overrides — Andrew 2026-07-26: "change
@@ -241,6 +268,11 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                             onChange={(v) => setKind({ titleScale: v })}
                                             min={1} max={8} step={1}
                                             hint={tx('Long names print TALL to reach this size (width auto-fits the roll)', 'Nombres largos se imprimen ALTOS (el ancho se ajusta al rollo)')} />
+                                        <SliderRow
+                                            label={tx('Date size (this category)', 'Tamaño de fecha (esta categoría)')}
+                                            value={ov.dateNumberScale ?? draft.dateNumberScale}
+                                            onChange={(v) => setKind({ dateNumberScale: v })}
+                                            min={2} max={8} step={1} />
                                         <ToggleRow
                                             checked={ov.showUseByBand !== false}
                                             onChange={(v) => setKind({ showUseByBand: v ? undefined : false })}
@@ -282,6 +314,18 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                     value={draft.preppedLabelTextEs || ''}
                                     onChange={(v) => update({ preppedLabelTextEs: v })}
                                     placeholder="HECHO" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 mt-2">
+                                <TextRow
+                                    label={tx('"Use by" (EN)', '"Use by" (EN)')}
+                                    value={draft.useByLabelTextEn || ''}
+                                    onChange={(v) => update({ useByLabelTextEn: v })}
+                                    placeholder="Use by" />
+                                <TextRow
+                                    label={tx('"Use by" (ES)', '"Caduca" (ES)')}
+                                    value={draft.useByLabelTextEs || ''}
+                                    onChange={(v) => update({ useByLabelTextEs: v })}
+                                    placeholder="Caduca" />
                             </div>
                             <TextRow
                                 label={tx('Footer text', 'Texto del pie')}
@@ -346,8 +390,8 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                         <div className="text-[10px] font-bold uppercase tracking-wider text-violet-800 mb-1.5">
                             {tx('Live preview', 'Vista previa')}
                         </div>
-                        <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 text-dd-text">
-                            <PreviewBox payload={previewPayload} />
+                        <div className="bg-stone-200/70 border-2 border-dashed border-dd-line rounded-lg p-3 flex justify-center">
+                            <LabelMock model={previewModel} pxPerCol={8} />
                         </div>
                     </div>
                 </div>
@@ -365,86 +409,6 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
     );
 }
 
-// Mirror of LabelPreview from PrintLabelModal so the editor doesn't
-// import it (avoids circular component dependencies). Kept in sync
-// with the printer renderer.
-function PreviewBox({ payload }) {
-    const dateScale = Number(payload.dateNumberScale) || 5;
-    // Map Epson scale to a CSS px size for the preview. The actual
-    // printer's width=5 height=5 is HUGE — we use 8px per scale unit
-    // to give admin a visceral sense without overflowing the card.
-    const dateFontPx = 8 * dateScale;
-    return (
-        <div className="text-center font-sans">
-            {payload.prepDateLabel && (
-                <div className="text-[10px] font-bold uppercase tracking-widest text-dd-text-2">
-                    {payload.prepDateLabel}
-                </div>
-            )}
-            {payload.prepDateNumber && (
-                <div className="font-black tabular-nums text-dd-text leading-none mb-0.5"
-                    style={{ fontSize: `${dateFontPx}px`, letterSpacing: '-1px' }}>
-                    {payload.prepDateNumber}
-                </div>
-            )}
-            {payload.prepTimeBig && (
-                <div className="text-[14px] font-bold text-dd-text-2 tabular-nums mb-1">
-                    {payload.prepTimeBig}
-                </div>
-            )}
-            {payload.titleLines && payload.titleLines.length > 0 && (
-                <>
-                    <hr className="border-t border-dashed border-dd-line my-1.5" />
-                    <div className="text-[14px] font-bold text-dd-text leading-tight">
-                        {payload.titleLines.map((t, i) => <div key={i}>{t}</div>)}
-                    </div>
-                </>
-            )}
-            {payload.metaLines && payload.metaLines.length > 0 && (
-                <>
-                    <hr className="border-t border-dotted border-dd-line my-1.5" />
-                    <div className="text-[11px] text-dd-text font-mono text-left leading-snug">
-                        {payload.metaLines.map((m, i) => <div key={i}>{m}</div>)}
-                    </div>
-                </>
-            )}
-            {payload.allergens && payload.allergens.length > 0 && (
-                <>
-                    <hr className="border-t border-dotted border-dd-line my-1.5" />
-                    <div className="text-[11px] font-bold text-dd-text text-left">
-                        ALLERGENS: {payload.allergens.join(', ')}
-                    </div>
-                </>
-            )}
-            {payload.ingredients && payload.ingredients.length > 0 && (
-                <>
-                    <hr className="border-t border-dotted border-dd-line my-1.5" />
-                    <div className="text-[11px] text-dd-text text-left">
-                        {payload.ingredients.map((ing, i) => (
-                            <div key={i}>• {String(ing).slice(0, 30)}</div>
-                        ))}
-                    </div>
-                </>
-            )}
-            {payload.notes && (
-                <>
-                    <hr className="border-t border-dotted border-dd-line my-1.5" />
-                    <div className="text-[11px] italic text-dd-text-2 text-left">
-                        {payload.notes}
-                    </div>
-                </>
-            )}
-            {payload.footer && (
-                <>
-                    <hr className="border-t border-dashed border-dd-line my-1.5" />
-                    <div className="text-[11px] font-black tracking-wider text-dd-text">
-                        {payload.footer}
-                    </div>
-                </>
-            )}
-        </div>
-    );
-}
 
 function FieldsetCard({ title, children }) {
     return (

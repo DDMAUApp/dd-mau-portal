@@ -30,6 +30,54 @@ const DEFAULT_SAMPLE = { en: 'Pork Bowl', es: 'Bowl de Cerdo', days: 5, allergen
 // fontSize is derived from the target char box rather than the reverse.
 const PX_PER_COL = 10;
 
+// The mock label itself — shared with the Label Format editor's live
+// preview (2026-07-27 audit finding #3: the editor's old hand-rolled
+// preview ignored most knobs; rendering the SAME segment model as the
+// printer keeps every preview honest). pxPerCol shrinks it to fit
+// tighter layouts.
+export function LabelMock({ model, pxPerCol = PX_PER_COL }) {
+    const labelW = model.cols * pxPerCol;
+    return (
+        <div className="bg-white rounded-sm shadow-md py-3 px-2 self-start"
+            style={{ width: `${labelW + 16}px`, minWidth: `${labelW + 16}px` }}>
+            {model.segs.map((s, i) => (
+                // FLEX centering, not text-align (2026-07-27 —
+                // "40mm sanitizer not centered"): a span WIDER
+                // than the label pre-transform gets clamped to
+                // the left edge by text-align before scaleX
+                // shrinks it, landing off-center. Flexbox
+                // truly centers overflowing items, so the
+                // squeezed span stays centered.
+                <div key={i}
+                    style={{
+                        display: 'flex',
+                        justifyContent: s.center ? 'center' : 'flex-start',
+                        overflow: 'hidden',
+                    }}>
+                    <span
+                        style={{
+                            flex: 'none',
+                            fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+                            whiteSpace: 'pre',
+                            // Char box: height tracks h, width tracks w — the
+                            // scaleX squeeze reproduces Epson's independent
+                            // width/height magnification (tall text).
+                            fontSize: `${(pxPerCol / 0.6) * s.h}px`,
+                            lineHeight: 1.05,
+                            fontWeight: s.em ? 800 : 400,
+                            ...(s.w !== s.h ? {
+                                transform: `scaleX(${(s.w / s.h).toFixed(3)})`,
+                                transformOrigin: s.center ? 'center' : 'left',
+                            } : {}),
+                        }}>
+                        {s.text}
+                    </span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 export default function LabelPrintPreviewModal({ format, kind = null, byName, isEs, onClose }) {
     const tx = (en, es) => (isEs ? es : en);
     const [widthMm, setWidthMm] = useState(58);
@@ -54,7 +102,6 @@ export default function LabelPrintPreviewModal({ format, kind = null, byName, is
         return buildLabelPreviewModel(payload);
     }, [format, kind, byName, isEs, widthMm]);
 
-    const labelW = model.cols * PX_PER_COL;
     return (
         <ModalPortal>
         <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
@@ -82,43 +129,7 @@ export default function LabelPrintPreviewModal({ format, kind = null, byName, is
                 </div>
                 <div className="flex-1 overflow-auto p-5 flex justify-center bg-stone-200/70">
                     {/* The mock label — white sticker, roll-width proportions. */}
-                    <div className="bg-white rounded-sm shadow-md py-3 px-2 self-start"
-                        style={{ width: `${labelW + 16}px`, minWidth: `${labelW + 16}px` }}>
-                        {model.segs.map((s, i) => (
-                            // FLEX centering, not text-align (2026-07-27 —
-                            // "40mm sanitizer not centered"): a span WIDER
-                            // than the label pre-transform gets clamped to
-                            // the left edge by text-align before scaleX
-                            // shrinks it, landing off-center. Flexbox
-                            // truly centers overflowing items, so the
-                            // squeezed span stays centered.
-                            <div key={i}
-                                style={{
-                                    display: 'flex',
-                                    justifyContent: s.center ? 'center' : 'flex-start',
-                                    overflow: 'hidden',
-                                }}>
-                                <span
-                                    style={{
-                                        flex: 'none',
-                                        fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-                                        whiteSpace: 'pre',
-                                        // Char box: height tracks h, width tracks w — the
-                                        // scaleX squeeze reproduces Epson's independent
-                                        // width/height magnification (tall text).
-                                        fontSize: `${(PX_PER_COL / 0.6) * s.h}px`,
-                                        lineHeight: 1.05,
-                                        fontWeight: s.em ? 800 : 400,
-                                        ...(s.w !== s.h ? {
-                                            transform: `scaleX(${(s.w / s.h).toFixed(3)})`,
-                                            transformOrigin: s.center ? 'center' : 'left',
-                                        } : {}),
-                                    }}>
-                                    {s.text}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
+                    <LabelMock model={model} />
                 </div>
             </div>
         </div>

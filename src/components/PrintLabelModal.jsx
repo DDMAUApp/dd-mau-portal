@@ -856,8 +856,10 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
     // print-preview modal): a line wider than the card pre-transform gets
     // clamped left by text-align before scaleX shrinks it. Flexbox
     // centers overflowing content correctly.
+    // Bold only when the print bolds it (name-first is always bold;
+    // standard layout only with the titleBold knob) — audit 2026-07-27 #4.
     const titleBlock = payload.titleLines && payload.titleLines.length > 0 && (
-        <div className="font-bold text-dd-text leading-tight">
+        <div className={`${(nameFirst || payload.titleBold) ? 'font-bold ' : ''}text-dd-text leading-tight`}>
             {payload.titleLines.map((t, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
                     <span style={{
@@ -899,11 +901,18 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                     {payload.prepDateBig}
                 </div>
             ) : null}
-            {!nameFirst && payload.prepTimeBig && (
-                <div className="text-[14px] font-bold text-dd-text-2 tabular-nums mb-1">
-                    {payload.prepTimeBig}
-                </div>
-            )}
+            {!nameFirst && payload.prepTimeBig && (() => {
+                // Width-clamp like the print (a 40 mm roll shrinks it).
+                const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+                const cfg = Math.max(1, Math.min(4, Number(payload.timeScale) || 2));
+                const fit = Math.max(1, Math.min(cfg, Math.floor(cols / Math.max(1, payload.prepTimeBig.length))));
+                return (
+                    <div className="font-bold text-dd-text-2 tabular-nums mb-1"
+                        style={{ fontSize: `${7 * fit}px` }}>
+                        {payload.prepTimeBig}
+                    </div>
+                );
+            })()}
         </>
     );
     return (
@@ -911,22 +920,35 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
             {nameFirst ? (
                 <>
                     {titleBlock}
-                    <hr className="border-t border-dashed border-dd-line my-1.5" />
+                    {payload.showDividers !== false && <hr className="border-t border-dashed border-dd-line my-1.5" />}
                     {dateBlock}
                 </>
             ) : (
                 <>
                     {dateBlock}
-                    <hr className="border-t border-dashed border-dd-line my-1.5" />
+                    {payload.showDividers !== false && <hr className="border-t border-dashed border-dd-line my-1.5" />}
                     {titleBlock}
                 </>
             )}
-            <hr className="border-t border-dotted border-dd-line my-1.5" />
-            <div className="text-[11px] text-dd-text font-mono text-left leading-snug">
-                {payload.metaLines && payload.metaLines.map((m, i) => (
-                    <div key={i}>{m}</div>
-                ))}
-            </div>
+            {payload.showDividers !== false
+                && (nameFirst || (payload.titleLines && payload.titleLines.length > 0))
+                && <hr className="border-t border-dotted border-dd-line my-1.5" />}
+            {(() => {
+                // Meta size — width-clamped by the LONGEST line like the
+                // print's per-line fit (a 40 mm roll drops it to 1).
+                const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+                const cfg = Math.max(1, Math.min(3, Number(payload.metaScale) || 1));
+                const maxLen = Math.max(1, ...((payload.metaLines || []).map(m => String(m).length)));
+                const fit = Math.max(1, Math.min(cfg, Math.floor(cols / maxLen)));
+                return (
+                    <div className="text-dd-text font-mono text-left leading-snug"
+                        style={{ fontSize: `${11 * fit}px` }}>
+                        {payload.metaLines && payload.metaLines.map((m, i) => (
+                            <div key={i}>{m}</div>
+                        ))}
+                    </div>
+                );
+            })()}
             {/* Giant use-by band (2026-07-26 feature #3) — WYSIWYG with the
                 printed label's huge weekday / discard-time line. Scale-aware
                 (2026-07-27: admin useByBandScale slider); same flex-center +
@@ -952,7 +974,7 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
             })()}
             {payload.allergens && payload.allergens.length > 0 && (
                 <>
-                    <hr className="border-t border-dotted border-dd-line my-1.5" />
+                    {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
                     <div className="text-[11px] font-bold text-dd-text text-left">
                         ALLERGENS: {payload.allergens.join(', ')}
                     </div>
@@ -960,7 +982,7 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
             )}
             {payload.ingredients && payload.ingredients.length > 0 && (
                 <>
-                    <hr className="border-t border-dotted border-dd-line my-1.5" />
+                    {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
                     <div className="text-[11px] text-dd-text text-left">
                         {payload.ingredients.map((ing, i) => (
                             <div key={i}>• {String(ing).slice(0, 30)}</div>
@@ -970,16 +992,23 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
             )}
             {payload.notes && (
                 <>
-                    <hr className="border-t border-dotted border-dd-line my-1.5" />
+                    {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
                     <div className="text-[11px] italic text-dd-text-2 text-left">
                         {payload.notes}
                     </div>
                 </>
             )}
-            <hr className="border-t border-dashed border-dd-line my-1.5" />
-            <div className="text-[11px] font-black tracking-wider text-dd-text">
-                {payload.footer || 'DD MAU'}
-            </div>
+            {/* Footer only when the print has one (audit 2026-07-27 #1 —
+                the old `|| 'DD MAU'` fallback previewed a footer the
+                printer omits when the admin turned it off). */}
+            {payload.footer && (
+                <>
+                    {payload.showDividers !== false && <hr className="border-t border-dashed border-dd-line my-1.5" />}
+                    <div className="text-[11px] font-black tracking-wider text-dd-text">
+                        {payload.footer}
+                    </div>
+                </>
+            )}
         </div>
     );
 });

@@ -27,7 +27,9 @@ vi.mock('../data/labelFormat', () => ({
     subscribeLabelFormat: (cb) => { cb({ ...DEFAULT }); return () => {}; },
     saveLabelFormat: (...a) => saveSpy(...a),
 }));
-// Pure stub — return enough payload shape that PreviewBox renders.
+// Pure stubs — enough payload/model shape that the live preview
+// (LabelMock via buildLabelPreviewModel) renders. resolveLabelFormatForKind
+// is imported by the (unrendered here) LabelPrintPreviewModal.
 vi.mock('../data/labelPrinting', () => ({
     buildLabelPayload: (args) => ({
         prepDateLabel: args.format?.showPreppedLabel === false ? '' : 'PREPPED',
@@ -37,7 +39,18 @@ vi.mock('../data/labelPrinting', () => ({
         metaLines: [],
         allergens: args.format?.showAllergens === false ? [] : ['Soy'],
         ingredients: [], notes: '', footer: 'DD MAU',
+        cols: 34,
     }),
+    buildLabelPreviewModel: (p) => ({
+        cols: p.cols || 34,
+        segs: [
+            ...(p.prepDateLabel ? [{ text: p.prepDateLabel, w: 2, h: 2, em: true, center: true }] : []),
+            { text: p.prepDateNumber, w: p.dateNumberScale, h: p.dateNumberScale, em: true, center: true },
+            ...(p.titleLines || []).map(t => ({ text: t, w: 2, h: 2, em: false, center: true })),
+            ...((p.allergens || []).length ? [{ text: 'ALLERGENS: ' + p.allergens.join(', '), w: 1, h: 1, em: true, center: false }] : []),
+        ],
+    }),
+    resolveLabelFormatForKind: (f) => f,
 }));
 
 import LabelFormatEditor from './LabelFormatEditor';

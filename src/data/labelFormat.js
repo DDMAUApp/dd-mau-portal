@@ -50,10 +50,17 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
     // old hardcoded cap (Andrew 2026-07-27: "control more, like the SAT
     // or Time to discard").
     useByBandScale:  4,
+    // 2026-07-27 "more control" batch — previously hardcoded:
+    timeScale:       2,       // prep time under the date (1..4)
+    metaScale:       1,       // Use by / By / Loc info lines (1..3)
+    titleBold:       false,   // bold item name (name-first layout is always bold)
+    showDividers:    true,    // the ==== / ---- rule lines
 
     // Text content
     preppedLabelTextEn: 'PREPPED',
     preppedLabelTextEs: 'HECHO',
+    useByLabelTextEn:   'Use by',
+    useByLabelTextEs:   'Caduca',
     footerText:         'DD MAU',
 
     // Format
@@ -91,6 +98,15 @@ export function cleanKindFormats(raw) {
         if (Number.isFinite(Number(v.useByBandScale))) {
             entry.useByBandScale = Math.max(2, Math.min(8, Number(v.useByBandScale)));
         }
+        if (Number.isFinite(Number(v.timeScale))) {
+            entry.timeScale = Math.max(1, Math.min(4, Number(v.timeScale)));
+        }
+        if (Number.isFinite(Number(v.metaScale))) {
+            entry.metaScale = Math.max(1, Math.min(3, Number(v.metaScale)));
+        }
+        // Boolean, not only-true (audit 2026-07-27 #5): a per-kind
+        // titleBold:false must be able to override a global bold ON.
+        if (typeof v.titleBold === 'boolean') entry.titleBold = v.titleBold;
         // Per-kind giant use-by band control (weekday / discard-time line).
         if (v.showUseByBand === false) entry.showUseByBand = false;
         // (rotate90 dropped 2026-07-27 — the TM-L100 ignored ePOS text
@@ -159,10 +175,13 @@ export async function saveLabelFormat({ format, byName }) {
     const safe = {};
     const BOOL_FIELDS = ['showPreppedLabel', 'showTime', 'showTitle', 'showUseBy',
         'showByName', 'showLocation', 'showAllergens', 'showIngredients',
-        'showNotes', 'showFooter', 'showUseByWeekday', 'showUseByBand'];
+        'showNotes', 'showFooter', 'showUseByWeekday', 'showUseByBand',
+        'titleBold', 'showDividers'];
     const STRING_FIELDS = ['preppedLabelTextEn', 'preppedLabelTextEs',
+        'useByLabelTextEn', 'useByLabelTextEs',
         'footerText', 'dateFormat', 'timeFormat'];
-    const NUMBER_FIELDS = ['dateNumberScale', 'titleScale', 'useByBandScale', 'defaultShelfLifeDays'];
+    const NUMBER_FIELDS = ['dateNumberScale', 'titleScale', 'useByBandScale',
+        'timeScale', 'metaScale', 'defaultShelfLifeDays'];
 
     for (const k of BOOL_FIELDS) {
         if (k in format) safe[k] = format[k] === true;
@@ -217,6 +236,8 @@ export function clampLabelFormat(format) {
     // silently undid the editor's bigger slider on save).
     f.titleScale = Math.max(1, Math.min(8, Number(f.titleScale) || 2));
     f.useByBandScale = Math.max(2, Math.min(8, Number(f.useByBandScale) || 4));
+    f.timeScale = Math.max(1, Math.min(4, Number(f.timeScale) || 2));
+    f.metaScale = Math.max(1, Math.min(3, Number(f.metaScale) || 1));
     f.defaultShelfLifeDays = Math.max(1, Math.min(60, Number(f.defaultShelfLifeDays) || 5));
     if (f.kindFormats) f.kindFormats = cleanKindFormats(f.kindFormats);
     return f;

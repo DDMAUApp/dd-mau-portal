@@ -829,17 +829,24 @@ export function buildLabelPayload({
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];
     const metaLines = [];
     if (format?.showUseBy !== false) {
+        // Admin-overridable label word (2026-07-27 — e.g. "DISCARD BY").
+        const useByLabel = isEs
+            ? (format?.useByLabelTextEs || 'Caduca')
+            : (format?.useByLabelTextEn || 'Use by');
         // Hour-based labels carry the discard TIME — "Use by: 07/26/26
         // 2:30p" — because the date alone is useless for a 4-hour hold.
         const useByLine = hoursBased
-            ? `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)} ${fmtTime(useByDate)}`
+            ? `${useByLabel}: ${fmtDate(useByDate)} ${fmtTime(useByDate)}`
             : (showWeekday
-                ? `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)} (${isEs ? weekdayEs : weekday})`
-                : `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)}`);
+                ? `${useByLabel}: ${fmtDate(useByDate)} (${isEs ? weekdayEs : weekday})`
+                : `${useByLabel}: ${fmtDate(useByDate)}`);
         metaLines.push(useByLine);
     }
     if (thawState === 'thawed') {
-        metaLines.push(isEs ? '❄ DESCONGELADO' : '❄ THAWED');
+        // ASCII on purpose (audit 2026-07-27 #6): ❄ U+2744 isn't in the
+        // TM-L100's Font-A codepages and can print as a garbage glyph;
+        // plain asterisks keep the print and every preview identical.
+        metaLines.push(isEs ? '* DESCONGELADO *' : '* THAWED *');
     }
     if (format?.showByName !== false) {
         metaLines.push(`${tx('By', 'Por')}:     ${(preppedBy || '').slice(0, 22)}`);
@@ -902,6 +909,11 @@ export function buildLabelPayload({
         // admin-set (2..8, default 4 = the old hardcoded cap); the
         // renderers still shrink it to fit the roll.
         useByBandScale: Math.max(2, Math.min(8, Number(format?.useByBandScale) || 4)),
+        // 2026-07-27 "more control" batch (all previously hardcoded).
+        timeScale:    Math.max(1, Math.min(4, Number(format?.timeScale) || 2)),
+        metaScale:    Math.max(1, Math.min(3, Number(format?.metaScale) || 1)),
+        titleBold:    !!format?.titleBold,
+        showDividers: format?.showDividers !== false,
         // Per-kind layout (2026-07-26): 'nameFirst' prints the item name
         // as the top/huge element and shrinks the date to one small line
         // (sanitizer buckets etc.).
@@ -1015,8 +1027,12 @@ function renderPrepLabelBody(payload) {
     // an 80 mm assumption; on a 40 mm roll it wrapped to a second ragged
     // row. `cols` comes from paperColumns() via buildLabelPayload.
     const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+    // Dividers admin-toggleable (2026-07-27 "more control"): when off,
+    // the pushes below become no-ops via this helper.
+    const showDiv = payload.showDividers !== false;
     const divEq = '='.repeat(cols);
     const divDash = '-'.repeat(cols);
+    const pushDiv = (d) => { if (showDiv) lines.push(`<text>${d}&#10;</text>`); };
 
     // (90° rotation tried 2026-07-26 via `<text rotate>` — the TM-L100
     // ignored it on hardware, removed 2026-07-27. Tall width/height
@@ -1040,7 +1056,7 @@ function renderPrepLabelBody(payload) {
         }
         lines.push(`<text em="false"/>`);
         lines.push(`<text width="1" height="1"/>`);
-        lines.push(`<text>${divEq}&#10;</text>`);
+        pushDiv(divEq);
         const dateLine = [payload.prepDateLabel,
             payload.prepDateNumber || payload.prepDateBig,
             payload.prepTimeBig].filter(Boolean).join(' ');
@@ -1052,7 +1068,7 @@ function renderPrepLabelBody(payload) {
             lines.push(`<text width="1" height="1"/>`);
         }
         lines.push(`<text align="left"/>`);
-        lines.push(`<text>${divDash}&#10;</text>`);
+        pushDiv(divDash);
     } else {
     // ── HUGE prep date at the top ────────────────────────────
     // 2026-05-20 — Andrew: "lets make the date at the very top in
@@ -1080,36 +1096,48 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text>${escapeXml(payload.prepDateBig)}&#10;</text>`);
     }
     lines.push(`<text em="false"/>`);
-    // Smaller time line under the date
+    // Time line under the date — admin-scalable (timeScale 1..4,
+    // width-fit to the roll).
     if (payload.prepTimeBig) {
-        lines.push(`<text width="2" height="2"/>`);
+        const tsCfg = Math.max(1, Math.min(4, Number(payload.timeScale) || 2));
+        const tsFit = Math.max(1, Math.min(tsCfg,
+            Math.floor(cols / Math.max(1, payload.prepTimeBig.length))));
+        lines.push(`<text width="${tsFit}" height="${tsFit}"/>`);
         lines.push(`<text>${escapeXml(payload.prepTimeBig)}&#10;</text>`);
     }
     // Divider
     lines.push(`<text width="1" height="1"/>`);
-    lines.push(`<text>${divEq}&#10;</text>`);
+    pushDiv(divEq);
 
     // ── Item title (admin-scalable) ──────────────────────────
     if (payload.titleLines && payload.titleLines.length > 0) {
         // Epson supports 1..8 (the buildLabelPayload fit logic already
         // shrank the WIDTH to what the roll + item name can hold; height
         // runs to the configured size so long names still read big).
+        if (payload.titleBold) lines.push(`<text em="true"/>`);
         lines.push(`<text width="${titleScale}" height="${titleH}"/>`);
         for (const t of payload.titleLines) {
             lines.push(`<text>${escapeXml(t)}&#10;</text>`);
         }
+        if (payload.titleBold) lines.push(`<text em="false"/>`);
         lines.push(`<text width="1" height="1"/>`);
         lines.push(`<text align="left"/>`);
-        lines.push(`<text>${divDash}&#10;</text>`);
+        pushDiv(divDash);
     } else {
         lines.push(`<text align="left"/>`);
     }
     }
 
-    // ── Meta (use-by, by, location) ──────────────────────────
+    // ── Meta (use-by, by, location) — admin-scalable (metaScale
+    // 1..3, per-line width-fit so a long line never hard-wraps). ──
     if (payload.metaLines && payload.metaLines.length > 0) {
+        const msCfg = Math.max(1, Math.min(3, Number(payload.metaScale) || 1));
         for (const m of payload.metaLines) {
+            const msFit = Math.max(1, Math.min(msCfg,
+                Math.floor(cols / Math.max(1, m.length))));
+            if (msFit > 1) lines.push(`<text width="${msFit}" height="${msFit}"/>`);
             lines.push(`<text>${escapeXml(m)}&#10;</text>`);
+            if (msFit > 1) lines.push(`<text width="1" height="1"/>`);
         }
     }
     // ── Giant use-by band (2026-07-26 feature #3) ─────────────
@@ -1132,24 +1160,24 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text width="1" height="1"/>`);
         lines.push(`<text align="left"/>`);
     }
-    if (payload.allergens.length > 0) {
-        lines.push(`<text>${divDash}&#10;</text>`);
+    if ((payload.allergens || []).length > 0) {
+        pushDiv(divDash);
         lines.push(`<text em="true"/>`);
         lines.push(`<text>ALLERGENS: ${escapeXml(payload.allergens.join(', '))}&#10;</text>`);
         lines.push(`<text em="false"/>`);
     }
-    if (payload.ingredients.length > 0) {
-        lines.push(`<text>${divDash}&#10;</text>`);
+    if ((payload.ingredients || []).length > 0) {
+        pushDiv(divDash);
         for (const ing of payload.ingredients) {
             lines.push(`<text>- ${escapeXml(ing.slice(0, 30))}&#10;</text>`);
         }
     }
     if (payload.notes) {
-        lines.push(`<text>${divDash}&#10;</text>`);
+        pushDiv(divDash);
         lines.push(`<text>${escapeXml(payload.notes)}&#10;</text>`);
     }
     if (payload.footer) {
-        lines.push(`<text>${divDash}&#10;</text>`);
+        pushDiv(divDash);
         lines.push(`<text align="center"/>`);
         lines.push(`<text em="true"/>`);
         lines.push(`<text>${escapeXml(payload.footer)}&#10;</text>`);
@@ -1174,13 +1202,15 @@ export function buildLabelPreviewModel(payload) {
     const segs = [];
     const push = (text, { w = 1, h = 1, em = false, center = false } = {}) =>
         segs.push({ text: String(text), w, h, em, center });
+    const showDiv = payload.showDividers !== false;
+    const pushDiv = (d) => { if (showDiv) push(d); };
     const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
     const titleH = Math.max(titleScale, Math.min(8, Number(payload.titleHeightScale) || titleScale));
     if (payload.layout === 'nameFirst') {
         for (const t of (payload.titleLines || [])) {
             push(t, { w: titleScale, h: titleH, em: true, center: true });
         }
-        push(divEq, { center: true });
+        pushDiv(divEq);
         const dateLine = [payload.prepDateLabel,
             payload.prepDateNumber || payload.prepDateBig,
             payload.prepTimeBig].filter(Boolean).join(' ');
@@ -1188,7 +1218,7 @@ export function buildLabelPreviewModel(payload) {
             const ds = dateLine.length * 2 <= cols ? 2 : 1;
             push(dateLine, { w: ds, h: ds, center: true });
         }
-        push(divDash);
+        pushDiv(divDash);
     } else {
         if (payload.prepDateLabel) push(payload.prepDateLabel, { w: 2, h: 2, em: true, center: true });
         if (payload.prepDateNumber) {
@@ -1197,14 +1227,26 @@ export function buildLabelPreviewModel(payload) {
         } else if (payload.prepDateBig) {
             push(payload.prepDateBig, { w: 3, h: 3, em: true, center: true });
         }
-        if (payload.prepTimeBig) push(payload.prepTimeBig, { w: 2, h: 2, center: true });
-        push(divEq, { center: true });
-        for (const t of (payload.titleLines || [])) {
-            push(t, { w: titleScale, h: titleH, center: true });
+        if (payload.prepTimeBig) {
+            const tsCfg = Math.max(1, Math.min(4, Number(payload.timeScale) || 2));
+            const tsFit = Math.max(1, Math.min(tsCfg,
+                Math.floor(cols / Math.max(1, payload.prepTimeBig.length))));
+            push(payload.prepTimeBig, { w: tsFit, h: tsFit, center: true });
         }
-        if ((payload.titleLines || []).length) push(divDash);
+        pushDiv(divEq);
+        for (const t of (payload.titleLines || [])) {
+            push(t, { w: titleScale, h: titleH, em: !!payload.titleBold, center: true });
+        }
+        if ((payload.titleLines || []).length) pushDiv(divDash);
     }
-    for (const m of (payload.metaLines || [])) push(m);
+    {
+        const msCfg = Math.max(1, Math.min(3, Number(payload.metaScale) || 1));
+        for (const m of (payload.metaLines || [])) {
+            const msFit = Math.max(1, Math.min(msCfg,
+                Math.floor(cols / Math.max(1, String(m).length))));
+            push(m, { w: msFit, h: msFit });
+        }
+    }
     if (payload.useByBig) {
         const bandCfg = Math.max(2, Math.min(8, Number(payload.useByBandScale) || 4));
         const bandW = Math.max(2, Math.min(bandCfg,
@@ -1212,15 +1254,15 @@ export function buildLabelPreviewModel(payload) {
         push(payload.useByBig, { w: bandW, h: Math.max(bandW, bandCfg), em: true, center: true });
     }
     if ((payload.allergens || []).length > 0) {
-        push(divDash);
+        pushDiv(divDash);
         push('ALLERGENS: ' + payload.allergens.join(', '), { em: true });
     }
     if ((payload.ingredients || []).length > 0) {
-        push(divDash);
+        pushDiv(divDash);
         for (const ing of payload.ingredients) push('- ' + String(ing).slice(0, 30));
     }
-    if (payload.notes) { push(divDash); push(payload.notes); }
-    if (payload.footer) { push(divDash); push(payload.footer, { em: true, center: true }); }
+    if (payload.notes) { pushDiv(divDash); push(payload.notes); }
+    if (payload.footer) { pushDiv(divDash); push(payload.footer, { em: true, center: true }); }
     return { cols, segs };
 }
 
