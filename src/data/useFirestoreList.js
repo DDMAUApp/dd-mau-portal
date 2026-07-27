@@ -105,6 +105,15 @@ export function useFirestoreList(queryFactory, deps, opts = {}) {
             // in loading state without subscribing. The effect will
             // re-run when deps change and the factory returns a real
             // query.
+            //
+            // 2026-07-26 audit — ALSO clear any previously-loaded data.
+            // Before this, a subscription that went not-ready (user
+            // logs out / switches on the shared iPad → staffName goes
+            // null) kept serving the PREVIOUS user's list until the
+            // next subscription's first snapshot landed.
+            setData([]);
+            setLoading(true);
+            setError(null);
             return;
         }
 
@@ -226,7 +235,15 @@ export function useFirestoreDoc(docRefFactory, deps, opts = {}) {
 
     useEffect(() => {
         const ref = docRefFactory();
-        if (ref == null) return;
+        if (ref == null) {
+            // Same stale-data guard as useFirestoreList above — clear
+            // the previous doc when deps go not-ready (2026-07-26 audit).
+            setData(null);
+            setExists(false);
+            setLoading(true);
+            setError(null);
+            return;
+        }
 
         setLoading(true);
         setError(null);

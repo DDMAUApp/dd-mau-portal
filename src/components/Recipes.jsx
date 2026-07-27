@@ -32,13 +32,30 @@ const QUICK_BLUR_MAX_MS = 1500;
 
 function RecipeForm({ language, recipe, onSave, onCancel }) {
     const isEdit = !!recipe;
-    const [form, setForm] = useState(recipe || {
-        titleEn: "", titleEs: "", emoji: "🍽️", category: "",
-        prepTimeEn: "", cookTimeEn: "",
-        yieldsEn: "", yieldsEs: "",
-        allergens: [],
-        ingredientsEn: [""], ingredientsEs: [""],
-        instructionsEn: [""], instructionsEs: [""]
+    const [form, setForm] = useState(() => {
+        const blank = {
+            titleEn: "", titleEs: "", emoji: "🍽️", category: "",
+            prepTimeEn: "", cookTimeEn: "",
+            yieldsEn: "", yieldsEs: "",
+            allergens: [],
+            ingredientsEn: [""], ingredientsEs: [""],
+            instructionsEn: [""], instructionsEs: [""]
+        };
+        if (!recipe) return blank;
+        // Normalize legacy/partial docs — a recipe missing one of the list
+        // fields crashed the editor on `.map`/`.filter` of undefined. Lists
+        // are coerced to non-empty arrays (blank row, NOT the other
+        // language — copying EN into ES here would silently save it as ES).
+        const list = (v) => (Array.isArray(v) && v.length > 0 ? v : [""]);
+        return {
+            ...blank,
+            ...recipe,
+            allergens: Array.isArray(recipe.allergens) ? recipe.allergens : [],
+            ingredientsEn: list(recipe.ingredientsEn),
+            ingredientsEs: list(recipe.ingredientsEs),
+            instructionsEn: list(recipe.instructionsEn),
+            instructionsEs: list(recipe.instructionsEs),
+        };
     });
     const toggleAllergen = (code) => {
         setForm(prev => {
@@ -286,6 +303,10 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // the book's typography). Falls back to one decimal place when nothing
     // matches a clean fraction.
     const scaleIngredient = (text, multiplier) => {
+        // Missing-field guard (2026-07-26 audit): legacy recipes can lack
+        // yieldsEn/Es or carry non-string lines — .match on undefined
+        // crashed the whole tab once a multiplier was set.
+        if (typeof text !== 'string') return text ?? '';
         if (!multiplier || multiplier === 1) return text;
         // Preserve em-dash / hyphen sub-bullet prefix used in dry-seasoning blocks.
         const prefixMatch = text.match(/^(\s*[—–-]\s+)/);
@@ -366,7 +387,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         const mult = recipeMultipliers[recipe.id] || 1;
         const src = language === 'es'
             ? (recipe.ingredientsEs || recipe.ingredientsEn)
-            : recipe.ingredientsEn;
+            : (recipe.ingredientsEn || recipe.ingredientsEs);
         const lines = (src || []).map(item => scaleIngredient(item, mult));
         const title = language === 'es' ? (recipe.titleEs || recipe.titleEn) : recipe.titleEn;
         setPrintingIngredientsId(recipe.id);
@@ -436,13 +457,21 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
 
     // Re-PIN — if it's been > REPIN_INTERVAL_MS since last unlock, the next
     // expand attempt is intercepted and a PIN prompt shown.
-    const stalePin = (Date.now() - lastUnlockAt) > REPIN_INTERVAL_MS;
+    //
+    // 2026-07-26 audit — staleness is computed AT TAP TIME, inside the
+    // handler. It used to be a render-time `const stalePin = …` above this
+    // function: the click handler then used the value snapshotted at the
+    // LAST render, so a tab sitting idle past the 5-minute window (idle ⇒
+    // no re-render ⇒ no recompute) opened recipes without re-asking for
+    // the PIN — and the boundary tap right after a re-render could be
+    // wrongly judged by an already-old Date.now().
     const requestExpand = (recipeId) => {
         // Already open → just close it, no PIN needed.
         if (expandedRecipe === recipeId) {
             setExpandedRecipe(null);
             return;
         }
+        const stalePin = (Date.now() - lastUnlockAt) > REPIN_INTERVAL_MS;
         if (stalePin) {
             setPendingExpandId(recipeId);
             setPinInput('');
@@ -1176,7 +1205,9 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                         <div className="font-bold text-green-700">{t("yields", language)}</div>
                                         <div className="text-green-600">{(() => {
                                             const mult = recipeMultipliers[recipe.id] || 1;
-                                            const yieldText = language === "es" ? (recipe.yieldsEs || recipe.yieldsEn) : recipe.yieldsEn;
+                                            // Fall back to the other language, then blank — legacy
+                                            // recipes missing yieldsEn/Es crashed the scaler.
+                                            const yieldText = (language === "es" ? (recipe.yieldsEs || recipe.yieldsEn) : (recipe.yieldsEn || recipe.yieldsEs)) || '';
                                             return mult === 1 ? yieldText : scaleIngredient(yieldText, mult);
                                         })()}</div>
                                     </div>
@@ -1260,7 +1291,9 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                         </button>
                                     </div>
                                     <ul className="space-y-1">
-                                        {(language === "es" ? (recipe.ingredientsEs || recipe.ingredientsEn) : recipe.ingredientsEn).map((item, i) => {
+                                        {/* Fall back EN↔ES, then [] — recipes missing a language's
+                                            list used to crash the whole tab on .map of undefined. */}
+                                        {((language === "es" ? (recipe.ingredientsEs || recipe.ingredientsEn) : (recipe.ingredientsEn || recipe.ingredientsEs)) || []).map((item, i) => {
                                             const mult = recipeMultipliers[recipe.id] || 1;
                                             const displayItem = scaleIngredient(item, mult);
                                             return (
@@ -1276,7 +1309,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                 <div>
                                     <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">👨‍🍳 {t("instructions", language)}</h4>
                                     <ol className="space-y-2">
-                                        {(language === "es" ? (recipe.instructionsEs || recipe.instructionsEn) : recipe.instructionsEn).map((step, i) => (
+                                        {((language === "es" ? (recipe.instructionsEs || recipe.instructionsEn) : (recipe.instructionsEn || recipe.instructionsEs)) || []).map((step, i) => (
                                             <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
                                                 <span className="bg-mint-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">{i + 1}</span>
                                                 <span>{step}</span>

@@ -50,10 +50,9 @@
 // the underlying data is unchanged, so they're safe to use as
 // useMemo / useEffect deps.
 
-import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, doc, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
-import { postEightySixToChat } from '../data/eightySixChat';
 import { canViewLabor } from '../data/staff';
 
 const AppDataContext = createContext(null);
@@ -272,60 +271,14 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
         return () => { unsubW(); unsubM(); };
     }, []);
 
-    // ── 86 → chat auto-post (transition detector) ───────────────────
-    // Diff each 86 snapshot against the prior state. New "out" item →
-    // post 🚫 alert. Item removed from "out" array → post ✅ back-in-stock.
-    // postEightySixToChat() uses deterministic message IDs so multiple
-    // connected clients racing the same transition only write one doc.
-    //
-    // Skipped on the FIRST snapshot for each location (no prior state to
-    // diff). After that, every change runs the diff. Memo refs hold
-    // prior state so unrelated re-renders don't re-fire.
-    const prev86Ref = useRef({ webster: null, maryland: null });
-    useEffect(() => {
-        // Skip until we have a staff record (cold launches shouldn't
-        // post 86 history they're seeing for the first time).
-        // 2026-05-28 Audit #2 — also gate on staffListReady so we
-        // don't post 86 alerts attributed to a stale-from-sessionStorage
-        // identity that may no longer be valid.
-        if (!staffName) return;
-        if (!staffListReady) return;
-        for (const loc of ['webster', 'maryland']) {
-            const cur = eightySix[loc];
-            const prev = prev86Ref.current[loc];
-            if (cur && prev) {
-                const prevOut = new Set((prev.items || [])
-                    .filter(i => i?.status === 'out' || i?.outOfStock === true)
-                    .map(i => i?.name || i?.itemName).filter(Boolean));
-                const curOut = new Set((cur.items || [])
-                    .filter(i => i?.status === 'out' || i?.outOfStock === true)
-                    .map(i => i?.name || i?.itemName).filter(Boolean));
-                // Newly out
-                for (const name of curOut) {
-                    if (!prevOut.has(name)) {
-                        postEightySixToChat({
-                            location: loc,
-                            itemName: name,
-                            transition: 'out',
-                            actorName: staffName,
-                        }).catch(() => {});
-                    }
-                }
-                // Newly back in
-                for (const name of prevOut) {
-                    if (!curOut.has(name)) {
-                        postEightySixToChat({
-                            location: loc,
-                            itemName: name,
-                            transition: 'in',
-                            actorName: staffName,
-                        }).catch(() => {});
-                    }
-                }
-            }
-            prev86Ref.current[loc] = cur;
-        }
-    }, [eightySix, staffName, staffListReady]);
+    // NOTE (2026-07-26 audit): the client-side "86 → chat auto-post"
+    // transition detector that used to live here was DELETED. Its chat
+    // write was removed from eightySixChat.js back in May (Andrew opted
+    // out of auto-channels), it never passed notifyRecipients (so the
+    // FCM fan-out loop was a no-op), and the server-side Cloud Function
+    // trigger on ops/86_{loc} already diffs transitions and pushes.
+    // All it did in practice was write one duplicate /audit row per
+    // CONNECTED CLIENT, attributed to whoever happened to be looking.
 
     // ops/labor_{loc} — gated on canSeeLabor (see above). Re-subscribes when
     // labor access is granted, tears down + clears when revoked.

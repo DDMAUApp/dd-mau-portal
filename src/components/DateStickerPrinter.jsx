@@ -86,6 +86,23 @@ const CHIP_LABELS = {
     other: ['📦 Other', '📦 Otros'],
 };
 
+// Short label for a section chip/option. The hardcoded CHIP_LABELS only
+// apply while the category still has its DEFAULT title — once an admin
+// renames a category, the live title must show here too (chip bar +
+// Edit-Mode category mover), or the rename looks like it didn't take.
+const DEFAULT_SECTION_TITLES = new Map(STICKER_SECTIONS.map(s => [s.key, s]));
+function sectionChipLabel(s, isEs) {
+    const chip = CHIP_LABELS[s.key];
+    if (chip) {
+        const def = DEFAULT_SECTION_TITLES.get(s.key);
+        const cur = isEs ? s.titleEs : s.titleEn;
+        if (!def || cur === (isEs ? def.titleEs : def.titleEn)) {
+            return isEs ? chip[1] : chip[0];
+        }
+    }
+    return (isEs ? (s.titleEs || s.titleEn) : (s.titleEn || s.titleEs)) || s.key;
+}
+
 function fmtTodaySticker() {
     const d = new Date();
     return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
@@ -614,8 +631,7 @@ export default function DateStickerPrinter({
                     {stickerSections.map((s) => {
                         const on = sectionFilter === s.key;
                         const tone = COMPONENT_KIND_TONE[s.kind] || COMPONENT_KIND_TONE.side;
-                        const chip = CHIP_LABELS[s.key];
-                        const label = chip ? (isEs ? chip[1] : chip[0]) : (isEs ? s.titleEs : s.titleEn);
+                        const label = sectionChipLabel(s, isEs);
                         return (
                             <button key={s.key} type="button" role="tab" aria-selected={on}
                                 onClick={() => { setSectionFilter(prev => prev === s.key ? null : s.key); setSearch(''); }}
@@ -1794,14 +1810,11 @@ function EditableFlatRow({ row, tone, isEs, tx, sectionKey, sections = STICKER_S
                     aria-label={tx('Move to another category', 'Mover a otra categoría')}
                     className="flex-shrink-0 w-[86px] px-1 py-1.5 text-[11px] border border-dd-line rounded bg-white text-dd-text"
                 >
-                    {sections.map((s) => {
-                        const chip = CHIP_LABELS[s.key];
-                        return (
-                            <option key={s.key} value={s.key}>
-                                {chip ? (isEs ? chip[1] : chip[0]) : (isEs ? s.titleEs : s.titleEn)}
-                            </option>
-                        );
-                    })}
+                    {sections.map((s) => (
+                        <option key={s.key} value={s.key}>
+                            {sectionChipLabel(s, isEs)}
+                        </option>
+                    ))}
                 </select>
             )}
             <button

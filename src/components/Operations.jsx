@@ -1703,9 +1703,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             //      from source whenever target's is empty.
             //   3. Combine inventory counts (target += source) and clear source.
             //   4. Remove the source item from customInventory.
-            // All Firestore writes are batched into a single updateDoc per doc so partial
-            // failures can't leave us in a half-merged state. Updates target by ID, not
-            // index, so source removal in the same category doesn't break the lookup.
+            // The inventory-doc writes run in a single runTransaction (re-reading the
+            // live doc) so partial failures can't leave us in a half-merged state and a
+            // concurrent edit on another tablet isn't clobbered. Updates target by ID,
+            // not index, so source removal in the same category doesn't break the lookup.
             const mergeMasterItems = async (sourceCatIdx, sourceItemIdx, targetCatIdx, targetItemIdx) => {
                 const sourceCat = customInventory[sourceCatIdx];
                 const targetCat = customInventory[targetCatIdx];
@@ -1743,88 +1744,129 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         await updateDoc(doc(db, "config", "vendor_matches"), vendorUpdates);
                     }
 
-                    // 2. Build new customInventory: update target by ID, then filter source out.
-                    //    Updating by ID (not index) so source removal in the same category
-                    //    can't shift the target's position out from under us.
-                    const updatedCustomInv = customInventory.map((cat, cIdx) => {
-                        let items = cat.items;
-                        if (cIdx === targetCatIdx) {
-                            items = items.map(it => {
-                                if (it.id !== targetId) return it;
-                                const merged = { ...it };
-                                // Union vendorOptions by vendor name. Target wins on
-                                // price/pack conflicts; source contributes vendors
-                                // target didn't have. Empty-vendor entries are dropped.
-                                const targetOpts = Array.isArray(it.vendorOptions) ? it.vendorOptions : [];
-                                const sourceOpts = Array.isArray(sourceItem.vendorOptions) ? sourceItem.vendorOptions : [];
-                                const seen = new Map();
-                                for (const opt of targetOpts) {
-                                    if (!opt || !opt.vendor) continue;
-                                    seen.set(opt.vendor, { ...opt });
-                                }
-                                for (const opt of sourceOpts) {
-                                    if (!opt || !opt.vendor) continue;
-                                    if (seen.has(opt.vendor)) {
-                                        // Backfill missing fields on target's entry.
-                                        const t = seen.get(opt.vendor);
-                                        if (t.price == null && opt.price != null) t.price = opt.price;
-                                        if (!t.pack && opt.pack) t.pack = opt.pack;
-                                    } else {
+                    // 2-4. One TRANSACTION against the inventory doc.
+                    //
+                    // CONCURRENCY FIX (audit 2026-07-26): was — build
+                    // updatedCustomInv from LOCAL customInventory state and
+                    // write the WHOLE array in one updateDoc. Any item another
+                    // tablet added/edited after this tab's last snapshot was
+                    // silently erased by the stale full-array write. Now the
+                    // merge re-reads the live doc inside runTransaction (same
+                    // race-safe pattern as mutateInventory below), locates
+                    // source/target by ID in the LIVE list, and derives the
+                    // combined counts/meta from the LIVE counts map.
+                    const ref = doc(db, "ops", "inventory_" + storeLocation);
+                    const sourceIsMaster = INVENTORY_CATEGORIES.some(cat => cat.items.some(it => it.id === sourceId));
+                    const txnResult = await runTransaction(db, async (txn) => {
+                        const snap = await txn.get(ref);
+                        const data = snap.exists() ? (snap.data() || {}) : {};
+                        const liveInv = Array.isArray(data.customInventory) ? data.customInventory : customInventory;
+                        // Locate the LIVE source item by ID — the modal's indices
+                        // may be stale if another device moved/reordered items
+                        // since it opened.
+                        let liveSource = null;
+                        let targetFound = false;
+                        for (const cat of liveInv) {
+                            for (const it of (cat.items || [])) {
+                                if (it.id === sourceId) liveSource = it;
+                                else if (it.id === targetId) targetFound = true;
+                            }
+                        }
+                        if (!liveSource || !targetFound) {
+                            throw new Error(language === "es"
+                                ? "El artículo cambió en otro dispositivo. Recarga e intenta de nuevo."
+                                : "Item changed on another device. Reload and try again.");
+                        }
+                        // Build new customInventory: update target by ID, then filter
+                        // source out. Updating by ID (not index) so source removal in
+                        // the same category can't shift the target's position out
+                        // from under us.
+                        const updatedCustomInv = liveInv.map((cat) => {
+                            let items = cat.items || [];
+                            if (items.some(it => it.id === targetId)) {
+                                items = items.map(it => {
+                                    if (it.id !== targetId) return it;
+                                    const merged = { ...it };
+                                    // Union vendorOptions by vendor name. Target wins on
+                                    // price/pack conflicts; source contributes vendors
+                                    // target didn't have. Empty-vendor entries are dropped.
+                                    const targetOpts = Array.isArray(it.vendorOptions) ? it.vendorOptions : [];
+                                    const sourceOpts = Array.isArray(liveSource.vendorOptions) ? liveSource.vendorOptions : [];
+                                    const seen = new Map();
+                                    for (const opt of targetOpts) {
+                                        if (!opt || !opt.vendor) continue;
                                         seen.set(opt.vendor, { ...opt });
                                     }
-                                }
-                                if (seen.size > 0) merged.vendorOptions = Array.from(seen.values());
-
-                                // Inherit scalar vendor fields from source whenever
-                                // target's is empty/missing.
-                                const inherit = ["preferredVendor", "vendor", "supplier", "pack", "addedFromVendor"];
-                                for (const k of inherit) {
-                                    if ((merged[k] == null || merged[k] === "") && sourceItem[k]) {
-                                        merged[k] = sourceItem[k];
+                                    for (const opt of sourceOpts) {
+                                        if (!opt || !opt.vendor) continue;
+                                        if (seen.has(opt.vendor)) {
+                                            // Backfill missing fields on target's entry.
+                                            const t = seen.get(opt.vendor);
+                                            if (t.price == null && opt.price != null) t.price = opt.price;
+                                            if (!t.pack && opt.pack) t.pack = opt.pack;
+                                        } else {
+                                            seen.set(opt.vendor, { ...opt });
+                                        }
                                     }
-                                }
-                                // If target has no price but source does, take source's.
-                                if ((merged.price == null) && sourceItem.price != null) {
-                                    merged.price = sourceItem.price;
-                                }
-                                return merged;
-                            });
+                                    if (seen.size > 0) merged.vendorOptions = Array.from(seen.values());
+
+                                    // Inherit scalar vendor fields from source whenever
+                                    // target's is empty/missing.
+                                    const inherit = ["preferredVendor", "vendor", "supplier", "pack", "addedFromVendor"];
+                                    for (const k of inherit) {
+                                        if ((merged[k] == null || merged[k] === "") && liveSource[k]) {
+                                            merged[k] = liveSource[k];
+                                        }
+                                    }
+                                    // If target has no price but source does, take source's.
+                                    if ((merged.price == null) && liveSource.price != null) {
+                                        merged.price = liveSource.price;
+                                    }
+                                    return merged;
+                                });
+                            }
+                            if (items.some(it => it.id === sourceId)) {
+                                items = items.filter(it => it.id !== sourceId);
+                            }
+                            return { ...cat, items };
+                        });
+
+                        // Combine counts + meta from the LIVE doc (not local state,
+                        // which may lag a concurrent count on another tablet).
+                        const liveCounts = data.counts || {};
+                        const liveMeta = data.countMeta || {};
+                        const sourceCount = Number(liveCounts[sourceId]) || 0;
+                        const targetCount = Number(liveCounts[targetId]) || 0;
+                        const mergedCount = sourceCount + targetCount;
+                        // Prefer target's meta if it had a count (likely more recent
+                        // context), fall back to source's meta otherwise.
+                        const mergedMeta = targetCount > 0 ? liveMeta[targetId] : liveMeta[sourceId];
+
+                        // If sourceId came from inventory.js (the static master list),
+                        // tombstone it so the load merge doesn't reintroduce it.
+                        const update = {
+                            customInventory: updatedCustomInv,
+                            [`counts.${sourceId}`]: deleteField(),
+                            [`countMeta.${sourceId}`]: deleteField(),
+                            date: new Date().toISOString(),
+                        };
+                        if (mergedCount > 0) {
+                            update[`counts.${targetId}`] = mergedCount;
+                            if (mergedMeta) update[`countMeta.${targetId}`] = mergedMeta;
                         }
-                        if (cIdx === sourceCatIdx) {
-                            items = items.filter(it => it.id !== sourceId);
+                        if (sourceIsMaster) {
+                            update.deletedMasterIds = arrayUnion(sourceId);
                         }
-                        return { ...cat, items };
+                        if (snap.exists()) {
+                            txn.update(ref, update);
+                        } else {
+                            // No live doc yet — seed with the merged list (no counts
+                            // to delete on a doc that doesn't exist).
+                            txn.set(ref, { customInventory: updatedCustomInv, date: update.date }, { merge: true });
+                        }
+                        return { updatedCustomInv, mergedCount, mergedMeta };
                     });
-
-                    // 3. Combine counts + meta.
-                    const sourceCount = inventory[sourceId] || 0;
-                    const targetCount = inventory[targetId] || 0;
-                    const mergedCount = sourceCount + targetCount;
-                    const sourceMeta = invCountMeta[sourceId];
-                    const targetMeta = invCountMeta[targetId];
-                    // Prefer target's meta if it had a count (likely more recent context),
-                    // fall back to source's meta otherwise.
-                    const mergedMeta = targetCount > 0 ? targetMeta : sourceMeta;
-
-                    // 4. One atomic write to the inventory doc. If sourceId came from
-                    //    inventory.js (the static master list), tombstone it so the load
-                    //    merge doesn't reintroduce it on next reload.
-                    const ref = doc(db, "ops", "inventory_" + storeLocation);
-                    const update = {
-                        customInventory: updatedCustomInv,
-                        [`counts.${sourceId}`]: deleteField(),
-                        [`countMeta.${sourceId}`]: deleteField(),
-                        date: new Date().toISOString(),
-                    };
-                    if (mergedCount > 0) {
-                        update[`counts.${targetId}`] = mergedCount;
-                        if (mergedMeta) update[`countMeta.${targetId}`] = mergedMeta;
-                    }
-                    const sourceIsMaster = INVENTORY_CATEGORIES.some(cat => cat.items.some(it => it.id === sourceId));
-                    if (sourceIsMaster) {
-                        update.deletedMasterIds = arrayUnion(sourceId);
-                    }
-                    await updateDoc(ref, update);
+                    const { updatedCustomInv, mergedCount, mergedMeta } = txnResult;
 
                     // 5. Mirror to local state (otherwise UI lags one tick behind Firestore).
                     setCustomInventory(updatedCustomInv);
@@ -2778,7 +2820,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // what bulk-reset / list-deletion paths need. For removing only
             // a few check keys (e.g. a single task got deleted), prefer
             // writeCheckPatch({key: undefined}) — that uses deleteField().
-            const writeChecklistPatch = async ({ checks, customTasks, assignments, lists } = {}) => {
+            const writeChecklistPatch = async ({ checks, customTasks, assignments, assignmentsPatch, lists, listsSide } = {}) => {
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
                 // Two shapes: `patch` for updateDoc (can carry a dotted field
@@ -2788,7 +2830,35 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const seed  = { updatedAt: now, date: todayKey, version: CHECKLIST_VERSION };
                 if (checks !== undefined)      { patch.checks = cleanForFirestore(checks); seed.checks = patch.checks; }
                 if (assignments !== undefined) { patch.assignments = cleanForFirestore(assignments); seed.assignments = patch.assignments; }
-                if (lists !== undefined)       { patch.lists = cleanForFirestore(lists); seed.lists = patch.lists; }
+                // CONCURRENCY FIX (audit 2026-07-26): assignment saves used to
+                // read-modify-write the WHOLE assignments map, so two managers
+                // assigning different lists at the same moment clobbered each
+                // other. `assignmentsPatch` writes ONLY the named keys via
+                // dotted paths (value undefined → deleteField). Keys are built
+                // from fixed tokens (side, "L"+idx, periodId) — never staff
+                // names — so they can't contain dots and are safe as paths.
+                if (assignmentsPatch !== undefined) {
+                    const seedAssign = {};
+                    for (const k in assignmentsPatch) {
+                        const v = assignmentsPatch[k];
+                        patch[`assignments.${k}`] = v === undefined ? deleteField() : v;
+                        if (v !== undefined) seedAssign[k] = v;
+                    }
+                    seed.assignments = seedAssign;
+                }
+                if (lists !== undefined) {
+                    // Same side-scoped narrowing as customTasks below: when the
+                    // caller only touched one side's lists, write lists.<side>
+                    // so the other side's lists can't be clobbered by a stale
+                    // full-map write.
+                    if (listsSide && Array.isArray(lists?.[listsSide])) {
+                        patch[`lists.${listsSide}`] = cleanForFirestore(lists[listsSide]);
+                        seed.lists = cleanForFirestore(lists); // full nested for a first-time seed
+                    } else {
+                        patch.lists = cleanForFirestore(lists);
+                        seed.lists = patch.lists;
+                    }
+                }
                 if (customTasks !== undefined) {
                     // CONCURRENCY FIX (correctness audit P2, 2026-07-14): every
                     // task add/edit/delete/move/assign modifies ONLY the active
@@ -2907,8 +2977,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 setChecklistAssignments(updated);
                 setChecklistLists(updatedLists);
-                // Only assignments + lists changed — don't re-write checks/customTasks.
-                await writeChecklistPatch({ assignments: updated, lists: updatedLists });
+                // Only THIS assignment key + this side's lists changed — per-key
+                // dotted write so a concurrent assignment on another device survives.
+                await writeChecklistPatch({ assignmentsPatch: { [key]: staffMemberName }, lists: updatedLists, listsSide: side });
             };
 
             // Per-task assignment: toggle a staff member on/off a task's assignTo array
@@ -2950,8 +3021,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updatedLists[side].push({ id: side + "_" + newIdx, assignee: "" });
                 setChecklistLists(updatedLists);
                 setActiveListIdx(newIdx);
-                // Only lists changed.
-                await writeChecklistPatch({ lists: updatedLists });
+                // Only this side's lists changed.
+                await writeChecklistPatch({ lists: updatedLists, listsSide: side });
             };
 
             const removeChecklistList = async (side, listIdx) => {
@@ -2984,8 +3055,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (Object.keys(checkDeletions).length > 0) {
                     await writeCheckPatch(checkDeletions);
                 }
-                // 2) Update assignments + lists (no checks/customTasks rewrite)
-                await writeChecklistPatch({ assignments: newAssignments, lists: updatedLists });
+                // 2) Atomically delete only the removed list's assignment key +
+                //    write this side's lists (no whole-assignments-map rewrite)
+                await writeChecklistPatch({ assignmentsPatch: { [assignKey]: undefined }, lists: updatedLists, listsSide: side });
             };
 
             // ── Per-task comments ──
@@ -7585,6 +7657,8 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 storeLocation={storeLocation}
                                 setInventory={setInventory}
                                 currentInventory={inventory}
+                                setVendorCounts={setVendorCounts}
+                                currentVendorCounts={vendorCounts}
                                 language={language}
                                 onOpenHistory={openOrderHistory}
                             />
@@ -7595,6 +7669,8 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     storeLocation={storeLocation}
                                     setInventory={setInventory}
                                     currentInventory={inventory}
+                                    setVendorCounts={setVendorCounts}
+                                    currentVendorCounts={vendorCounts}
                                     language={language}
                                     itemNameById={itemNameById}
                                     initialExpandedId={orderHistoryFocusId}
@@ -8886,10 +8962,17 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                     </div>
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                                                                    <input type="number" inputMode="numeric" min="0" value={count || ""}
-                                                                        onChange={(e) => updateVendorCount(it.vendor === "Sysco" ? "sysco" : "usfoods", it.vendorId, e.target.value)}
-                                                                        placeholder="0"
-                                                                        className="w-12 px-2 py-1 border border-orange-300 rounded text-center text-sm font-bold focus:outline-none focus:border-orange-500" />
+                                                                    {/* 2026-07-26 audit — was a raw onChange input that hit
+                                                                        Firestore on EVERY keystroke (typing "12" = two dotted-path
+                                                                        updateDocs racing the onSnapshot reconcile). Same fix as
+                                                                        the location view (2026-06-13): commit-on-blur/Enter
+                                                                        InventoryCountInput — one write per finished entry, and it
+                                                                        flushes a half-typed value on unmount. */}
+                                                                    <InventoryCountInput
+                                                                        value={count}
+                                                                        onCommit={(n) => updateVendorCount(it.vendor === "Sysco" ? "sysco" : "usfoods", it.vendorId, n)}
+                                                                        language={language}
+                                                                        className="w-12 px-2 py-1 border border-orange-300 rounded text-center text-sm font-bold focus:outline-none focus:border-orange-500 tabular-nums" />
                                                                     {currentIsAdmin && (
                                                                         <button onClick={() => { setMatchEditor({ vendor: it.vendor === "Sysco" ? "sysco" : "usfoods", vendorId: it.vendorId, vendorName: it.name, currentInvId: null, matchType: it.matchType }); setMatchSearchQuery(""); }}
                                                                             className="px-2 py-1 rounded-md bg-purple-600 text-white text-[10px] font-bold hover:bg-purple-700"
@@ -10143,18 +10226,33 @@ function SkipOtherInput({ onSubmit, isEs }) {
 //      restore is REFUSED entirely with a "Empty cart first" alert.
 //      Forces the user to make the destructive step (empty) and the
 //      additive step (restore) explicit, separate operations.
-async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, currentInventory, isEs }) {
+async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, currentInventory, setVendorCounts, currentVendorCounts, isEs }) {
     const restored = {};
     for (const [id, qty] of Object.entries(entry?.counts || {})) {
         const n = Number(qty);
         if (n > 0) restored[id] = n;
     }
-    const restoredCount = Object.keys(restored).length;
+    // 2026-07-26 audit — history snapshots also archive vendor-only counts
+    // (`vendorCounts`, added 2026-07-22 audit B1) but restore silently
+    // DROPPED them: master counts came back while every vendor-view item on
+    // the order stayed empty. Restore them alongside counts (local state +
+    // the dotted-path persist below).
+    const restoredVendor = {};
+    for (const [key, qty] of Object.entries(entry?.vendorCounts || {})) {
+        const n = Number(qty);
+        if (n > 0) restoredVendor[key] = n;
+    }
+    const restoredCount = Object.keys(restored).length + Object.keys(restoredVendor).length;
     if (restoredCount === 0) {
         window.alert(isEs ? 'Este pedido no tiene items.' : 'This order is empty.');
         return false;
     }
+    // "Cart already has items" gate counts vendor-only items too — restoring
+    // on top of leftover vendor counts would produce a mixed cart that
+    // matches neither the old cart nor the restored order.
     const currentCount = Object.values(currentInventory || {})
+        .filter(q => Number(q) > 0).length
+        + Object.values(currentVendorCounts || {})
         .filter(q => Number(q) > 0).length;
     if (currentCount > 0) {
         window.alert(isEs
@@ -10177,6 +10275,9 @@ async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, cur
         : `Send this order to cart${dateLabel ? ` (${dateLabel})` : ''}? It has ${restoredCount} items.`);
     if (!confirmed) return false;
     setInventory(restored);
+    // The cart was verified empty above, so replacing the (empty) local
+    // vendorCounts map with the snapshot's is safe.
+    if (setVendorCounts) setVendorCounts(restoredVendor);
     try {
         // 2026-07-22 (audit B4): per-item dotted writes instead of replacing
         // the whole counts map. The empty-cart check above is read-then-write;
@@ -10187,6 +10288,11 @@ async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, cur
         for (const [id, qty] of Object.entries(restored)) {
             patch[`counts.${id}`] = qty;
         }
+        // Vendor keys are "sysco:<id>" / "usfoods:<id>" — colon-joined, never
+        // dotted — so they're safe as dotted paths (same as updateVendorCount).
+        for (const [key, qty] of Object.entries(restoredVendor)) {
+            patch[`vendorCounts.${key}`] = qty;
+        }
         await updateDoc(doc(db, "ops", "inventory_" + storeLocation), patch);
     } catch (e) {
         console.warn('restoreOrderEntryToCart persist failed:', e);
@@ -10195,7 +10301,7 @@ async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, cur
     return true;
 }
 
-function RecentOrdersBar({ storeLocation, setInventory, currentInventory, language, onOpenHistory }) {
+function RecentOrdersBar({ storeLocation, setInventory, currentInventory, setVendorCounts, currentVendorCounts, language, onOpenHistory }) {
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -10284,7 +10390,8 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
         setRestoringId(entry.id);
         try {
             await restoreOrderEntryToCart({
-                entry, storeLocation, setInventory, currentInventory, isEs,
+                entry, storeLocation, setInventory, currentInventory,
+                setVendorCounts, currentVendorCounts, isEs,
             });
         } finally {
             setRestoringId(null);
@@ -10463,7 +10570,7 @@ function DeliveryDateModal({ current, onConfirm, onClose, isEs }) {
     );
 }
 
-function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventory, language, onClose, itemNameById = {}, initialExpandedId = null }) {
+function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventory, setVendorCounts, currentVendorCounts, language, onClose, itemNameById = {}, initialExpandedId = null }) {
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -10534,7 +10641,8 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
         setRestoringId(entry.id);
         try {
             const ok = await restoreOrderEntryToCart({
-                entry, storeLocation, setInventory, currentInventory, isEs,
+                entry, storeLocation, setInventory, currentInventory,
+                setVendorCounts, currentVendorCounts, isEs,
             });
             // Close modal on successful restore so admin lands back at
             // the cart view ready to edit. Cancel/empty stays open so

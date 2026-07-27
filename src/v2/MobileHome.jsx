@@ -181,7 +181,19 @@ export default function MobileHome({
             limit(500),
         );
         const unsub = onSnapshot(q, (snap) => {
-            setPendingApplications(snap.size);
+            // 2026-07-26 audit — was snap.size, which counted EVERY
+            // application ever (hired/rejected/expired included), so the
+            // admin badge never cleared. Count only OPEN pipeline stages;
+            // the closed-status list mirrors Onboarding.jsx's
+            // `closedStatuses` filter (missing status defaults to
+            // 'applied' there too).
+            const closedStatuses = ['hired', 'not_selected', 'withdrew', 'expired'];
+            let open = 0;
+            snap.forEach(d => {
+                const s = (d.data() || {}).status || 'applied';
+                if (!closedStatuses.includes(s)) open++;
+            });
+            setPendingApplications(open);
         }, () => setPendingApplications(0));
         return () => unsub();
     }, [hasOnboardingAccess]);

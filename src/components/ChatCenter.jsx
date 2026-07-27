@@ -237,7 +237,11 @@ export default function ChatCenter({
                 const ua = isChatUnread(a, staffName) ? 1 : 0;
                 const ub = isChatUnread(b, staffName) ? 1 : 0;
                 if (ua !== ub) return ub - ua;
-                return ms(b.lastActivityAt) - ms(a.lastActivityAt);
+                // 2026-07-26 audit — fall back to createdAt so a doc missing
+                // lastActivityAt sorts by its age instead of pinning to an
+                // arbitrary spot (ms() returns 0 for missing).
+                return (ms(b.lastActivityAt) || ms(b.createdAt))
+                     - (ms(a.lastActivityAt) || ms(a.createdAt));
             });
             setChats(list);
             setChatsLoading(false);
@@ -253,6 +257,54 @@ export default function ChatCenter({
             unsub();
         };
     }, [staffName, chatsSubGen, staffListReady]);
+
+    // ── Legacy-chat backfill ─────────────────────────────────────
+    // 2026-07-26 audit — the main listener orders by lastActivityAt, and
+    // Firestore's orderBy implicitly filters to docs that HAVE the field.
+    // Chats created before lastActivityAt existed (or whose stamp write was
+    // lost) silently vanished from the list with no error. One-shot getDocs
+    // (no orderBy, so nothing is filtered out) picks up any members-of-mine
+    // chat the listener missed; they merge in at the bottom of the list via
+    // the allChats memo below. One-shot is enough: the first new message in
+    // such a chat stamps lastActivityAt and promotes it into the live query.
+    const [legacyChats, setLegacyChats] = useState([]);
+    useEffect(() => {
+        if (!staffName || !staffListReady) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const snap = await getDocs(query(
+                    collection(db, 'chats'),
+                    where('members', 'array-contains', staffName),
+                    limit(100),
+                ));
+                if (cancelled) return;
+                const list = [];
+                snap.forEach(d => {
+                    const data = d.data();
+                    if (!data.lastActivityAt) list.push({ id: d.id, ...data });
+                });
+                setLegacyChats(list);
+            } catch (e) {
+                console.warn('legacy chats backfill failed:', e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [staffName, staffListReady, chatsSubGen]);
+
+    // Live (ordered) chats + any legacy stragglers, deduped. Legacy rows go
+    // to the bottom, newest-created first.
+    const allChats = useMemo(() => {
+        if (legacyChats.length === 0) return chats;
+        const seen = new Set(chats.map(c => c.id));
+        const ms = (ts) => ts?.toMillis ? ts.toMillis()
+            : (ts?.seconds ? ts.seconds * 1000 : 0);
+        const extras = legacyChats
+            .filter(c => !seen.has(c.id) && !c.deletedAt)
+            .sort((a, b) => ms(b.createdAt) - ms(a.createdAt));
+        if (extras.length === 0) return chats;
+        return [...chats, ...extras];
+    }, [chats, legacyChats]);
 
     // Retry handler — bumps chatsSubGen to re-fire the subscription
     // effect with a fresh listener. The error-state UI's Retry button
@@ -514,14 +566,14 @@ export default function ChatCenter({
     // own data actually moved. See chatDocEqual in chatThreadHelpers.js.
     const activeChatStableRef = useRef(null);
     const activeChat = useMemo(() => {
-        const found = chats.find(c => c.id === activeChatId) || null;
+        const found = allChats.find(c => c.id === activeChatId) || null;
         const prev = activeChatStableRef.current;
         if (prev && found && prev.id === found.id && chatDocEqual(prev, found)) {
             return prev;
         }
         activeChatStableRef.current = found;
         return found;
-    }, [chats, activeChatId]);
+    }, [allChats, activeChatId]);
 
     // Mobile list-vs-thread switcher: if mobile + a chat is active, hide
     // the list. Desktop shows both panes always.
@@ -618,15 +670,15 @@ export default function ChatCenter({
     // ── Filtered list ─────────────────────────────────────────────
     const filteredChats = useMemo(() => {
         const term = deferredSearch.trim().toLowerCase();
-        if (!term) return chats;
-        return chats.filter(c => {
+        if (!term) return allChats;
+        return allChats.filter(c => {
             if (chatDisplayName(c, staffName).toLowerCase().includes(term)) return true;
             // Match against the viewer's-language preview so Spanish staff
             // searching "foto" hits "📷 Foto" rows.
             const preview = previewOf(c.lastMessage, isEs ? 'es' : 'en').toLowerCase();
             return preview.includes(term);
         });
-    }, [chats, deferredSearch, staffName, isEs]);
+    }, [allChats, deferredSearch, staffName, isEs]);
 
     // Container height uses dynamic viewport units (dvh) instead of vh
     // — iOS Safari treats vh as the INITIAL viewport (address bar
@@ -742,12 +794,12 @@ export default function ChatCenter({
                     Order matters: loading wins, then error, then
                     empty, then the actual rendered list. */}
                 <div className="flex-1 overflow-y-auto">
-                    {chatsLoading && chats.length === 0 ? (
+                    {chatsLoading && allChats.length === 0 ? (
                         <div className="p-8 text-center text-sm text-dd-text-2">
                             <div className="inline-block w-6 h-6 border-2 border-dd-line border-t-dd-green rounded-full animate-spin mb-3" />
                             <div>{tx('Loading chats…', 'Cargando chats…')}</div>
                         </div>
-                    ) : chatsError && chats.length === 0 ? (
+                    ) : chatsError && allChats.length === 0 ? (
                         <div className="p-6 text-center">
                             <div className="text-3xl mb-2">⚠️</div>
                             <div className="text-sm font-bold text-dd-text mb-1">
@@ -879,7 +931,7 @@ export default function ChatCenter({
                     viewer={viewer}
                     viewerTier={viewerTier}
                     isAdmin={isAdmin}
-                    existingChats={chats}
+                    existingChats={allChats}
                     onClose={() => setShowNewChat(false)}
                     onCreated={(chatId) => {
                         setShowNewChat(false);
@@ -995,7 +1047,7 @@ export default function ChatCenter({
             {showSearchPanel && (
                 <Suspense fallback={null}>
                     <ChatSearchPanel
-                        chats={chats}
+                        chats={allChats}
                         language={language}
                         staffName={staffName}
                         viewer={viewer}
@@ -1012,7 +1064,7 @@ export default function ChatCenter({
             {showNotifSettings && (
                 <Suspense fallback={null}>
                     <ChatNotifSettings
-                        chats={chats}
+                        chats={allChats}
                         language={language}
                         staffName={staffName}
                         staffList={staffList}

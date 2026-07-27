@@ -22,9 +22,17 @@ export default function ChatPinsDrawer({
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
     const [pins, setPins] = useState([]);
+    // 2026-07-26 audit — this query (pinned == + orderBy pinnedAt) needs a
+    // composite index (messages: pinned ASC, pinnedAt DESC — added to
+    // firestore.indexes.json in the same release). Before the index existed
+    // the snapshot ERRORED on every open and the console.warn-only handler
+    // left the drawer showing "No pins yet" forever. Surface the failure so
+    // the user knows loading broke instead of believing there are no pins.
+    const [loadError, setLoadError] = useState(null);
 
     useEffect(() => {
         if (!chat?.id) return;
+        setLoadError(null);
         const q = query(
             collection(db, 'chats', chat.id, 'messages'),
             where('pinned', '==', true),
@@ -44,7 +52,11 @@ export default function ChatPinsDrawer({
                 list.push({ id: d.id, ...data });
             });
             setPins(list);
-        }, (err) => console.warn('pins snapshot failed:', err));
+            setLoadError(null);
+        }, (err) => {
+            console.warn('pins snapshot failed:', err);
+            setLoadError(err?.code || err?.message || 'load-failed');
+        });
         return () => unsub();
     }, [chat?.id]);
 
@@ -60,7 +72,17 @@ export default function ChatPinsDrawer({
                     <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
                 </div>
                 <div className="flex-1 overflow-y-auto">
-                    {pins.length === 0 ? (
+                    {loadError ? (
+                        <div className="p-8 text-center text-sm">
+                            <div className="text-2xl mb-2">⚠️</div>
+                            <div className="font-bold text-dd-text mb-1">
+                                {tx("Couldn't load pins", 'No se pudieron cargar los fijados')}
+                            </div>
+                            <div className="text-[11px] text-dd-text-2 font-mono break-all">
+                                {String(loadError).slice(0, 80)}
+                            </div>
+                        </div>
+                    ) : pins.length === 0 ? (
                         <div className="p-8 text-center text-sm text-dd-text-2">
                             {tx('No pins yet. Long-press a message to pin.', 'Sin mensajes fijados. Mantén presionado para fijar.')}
                         </div>

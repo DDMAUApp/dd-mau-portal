@@ -51,33 +51,45 @@ export default function ChatSearchPanel({
     // Promise.all so the panel still feels instant on open.
     const [messagesByChat, setMessagesByChat] = useState({});  // chatId -> [msg]
     const [loading, setLoading] = useState(false);
+    // 2026-07-26 audit — gate the refetch on the SET of chat ids, not the
+    // `chats` array identity. The parent's onSnapshot hands us a brand-new
+    // array on every echo (a typing heartbeat or read-marker in ANY chat,
+    // ~every 2s while someone types), and each identity change re-ran this
+    // effect: ~25 getDocs × 200 docs = up to 5,000 message reads per echo
+    // while the panel sat open. The queries below only need chat IDs, so
+    // key the effect on a stable sorted-id string — it only changes when a
+    // chat actually enters or leaves the searchable top-25.
+    const searchChatIdsKey = useMemo(
+        () => (Array.isArray(chats) ? chats.slice(0, 25).map(c => c.id) : []).sort().join('\n'),
+        [chats]
+    );
     useEffect(() => {
-        if (!Array.isArray(chats) || chats.length === 0) return;
+        const targetIds = searchChatIdsKey ? searchChatIdsKey.split('\n') : [];
+        if (targetIds.length === 0) return;
         let cancelled = false;
         const cutoff = dateRange === '7d' ? Date.now() - 7 * 86400_000
                      : dateRange === '30d' ? Date.now() - 30 * 86400_000
                      : 0;
         setLoading(true);
-        const targets = chats.slice(0, 25);
-        Promise.all(targets.map(async chat => {
+        Promise.all(targetIds.map(async chatId => {
             try {
                 const ref = query(
-                    collection(db, 'chats', chat.id, 'messages'),
+                    collection(db, 'chats', chatId, 'messages'),
                     orderBy('createdAt', 'desc'),
                     limit(200),
                 );
                 const snap = await getDocs(ref);
                 const list = [];
                 snap.forEach(d => {
-                    const data = { id: d.id, chatId: chat.id, ...d.data() };
+                    const data = { id: d.id, chatId, ...d.data() };
                     const ms = data.createdAt?.toMillis ? data.createdAt.toMillis()
                         : (data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0);
                     if (!cutoff || ms >= cutoff) list.push(data);
                 });
-                return [chat.id, list];
+                return [chatId, list];
             } catch (e) {
-                console.warn('search read failed for chat', chat.id, e);
-                return [chat.id, []];
+                console.warn('search read failed for chat', chatId, e);
+                return [chatId, []];
             }
         })).then(pairs => {
             if (cancelled) return;
@@ -87,7 +99,7 @@ export default function ChatSearchPanel({
             setLoading(false);
         });
         return () => { cancelled = true; };
-    }, [chats, dateRange]);
+    }, [searchChatIdsKey, dateRange]);
 
     // Pre-expand the query into [{term, expansions:Set}] once per
     // query-input change. Each token must match SOME synonym in the

@@ -5021,6 +5021,27 @@ exports.pruneSystemLogs = onSchedule(
             // growth (~580 docs and counting). expiresAt is the bucket's last
             // write; anything older than 2 days is long dead.
             { coll: "rate_limits", field: "expiresAt", days: 2 },
+            // 2026-07-26 batch — retention for collections added this month
+            // (audit: all were growing unbounded). sticker_prints is the
+            // highest-volume (one row per label printed); the Expiring view
+            // only ever looks a day ahead, so a quarter is generous.
+            { coll: "sticker_prints",    field: "createdAt",   days: 90  },
+            { coll: "waste_log",         field: "at",          days: 365 },
+            // Announcement pop-ups only show for 14 days; the chat copy is
+            // the durable record. Keep the source docs a year for the
+            // ack/read-rate dashboards, then let them go.
+            { coll: "announcements",     field: "createdAt",   days: 365 },
+            { coll: "health_checks",     field: "ranAt",       days: 90  },
+            { coll: "health_check_runs", field: "ranAt",       days: 90  },
+            // deploys.occurredAt is a NUMBER (ms), not a Timestamp — the
+            // cutoff must be numeric or the range query matches nothing.
+            { coll: "deploys",           field: "occurredAt",  days: 365, numberMs: true },
+            // Vendor-order working sessions go stale fast; order_logs is the
+            // immutable business record and money_counts is cash history —
+            // both keep the full 2 years.
+            { coll: "order_sessions",    field: "createdAt",   days: 365 },
+            { coll: "order_logs",        field: "submittedAt", days: 730 },
+            { coll: "money_counts",      field: "createdAt",   days: 730 },
         ];
 
         const report = [];
@@ -5028,7 +5049,11 @@ exports.pruneSystemLogs = onSchedule(
         let totalErrors = 0;
 
         for (const rule of RULES) {
-            const cutoff = new Date(Date.now() - rule.days * 24 * 60 * 60_000);
+            const cutoffMs = Date.now() - rule.days * 24 * 60 * 60_000;
+            // Timestamp fields compare against a Date; number-ms fields
+            // (rule.numberMs) must compare against a number — Firestore
+            // range queries never match across types.
+            const cutoff = rule.numberMs ? cutoffMs : new Date(cutoffMs);
             let deleted = 0;
             let errors = 0;
             try {

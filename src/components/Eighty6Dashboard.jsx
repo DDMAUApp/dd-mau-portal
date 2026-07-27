@@ -189,12 +189,18 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
 
     // Toggle an hour in/out of the alert schedule. Settings doc is
     // created with merge so concurrent admin edits don't clobber siblings.
+    //
+    // 2026-07-26 audit — each toggle now writes ONLY its own field. The old
+    // code wrote BOTH `enabled` and `enabledHours` from the local snapshot on
+    // every toggle, so two admins editing at the same moment (one flipping
+    // the master switch, one toggling an hour) clobbered each other's change
+    // with stale state. merge:true keeps the untouched field intact and still
+    // seeds the doc on first save.
     const toggleAlertHour = async (hour) => {
         const cur = Array.isArray(alertSettings.enabledHours) ? alertSettings.enabledHours : [];
         const next = cur.includes(hour) ? cur.filter(h => h !== hour) : [...cur, hour].sort((a, b) => a - b);
         try {
             await setDoc(doc(db, 'config', 'eighty_six_alerts'), {
-                enabled: alertSettings.enabled,
                 enabledHours: next,
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName || 'admin',
@@ -208,7 +214,6 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
         try {
             await setDoc(doc(db, 'config', 'eighty_six_alerts'), {
                 enabled: !alertSettings.enabled,
-                enabledHours: alertSettings.enabledHours,
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName || 'admin',
             }, { merge: true });

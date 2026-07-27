@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "../firebase";
-import { doc, setDoc, collection, getDocs, updateDoc, deleteField, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, collection, getDocs, updateDoc, deleteField, onSnapshot, arrayUnion } from "firebase/firestore";
 import { t } from "../data/translations";
 import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";
@@ -170,6 +170,29 @@ function AllergenMatrix({ matrix, isEn }) {
     );
 }
 
+// Wrapper for any view's content. Mobile: just renders children full-width.
+// md+: pins the module sidebar on the left, content fills the rest.
+//
+// 2026-07-26 audit — HOISTED out of TrainingHub's render body. Defined
+// inline, `Shell` got a brand-new function identity every render, so React
+// saw a different element type each time and unmounted/remounted the whole
+// subtree on every render: lesson YouTube iframes reloaded and the
+// LessonEditor's inputs wiped whenever a progress/override snapshot landed.
+// Same bug class as the Schedule.jsx Panel hoist. The sidebar JSX (which
+// closes over TrainingHub state) is threaded in as a prop.
+function Shell({ sidebar, children }) {
+    return (
+        <div className="md:flex md:gap-5 md:p-4">
+            <aside className="hidden md:block md:w-64 lg:w-72 md:flex-shrink-0 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto bg-white md:border md:border-gray-200 md:rounded-xl md:p-3">
+                {sidebar}
+            </aside>
+            <div className="flex-1 min-w-0 md:bg-white md:border md:border-gray-200 md:rounded-xl">
+                {children}
+            </div>
+        </div>
+    );
+}
+
 export default function TrainingHub({ staffName, language, staffList }) {
     const isEn = language !== "es";
     const tx = (en, es) => (isEn ? en : es);
@@ -330,7 +353,22 @@ export default function TrainingHub({ staffName, language, staffList }) {
         }
     };
 
-    const moduleState = (mId) => progress?.modules?.[mId] || { lessonsCompleted: [], attempts: [], passed: false, locked: false };
+    // Defensive normalize (2026-07-26 audit): a partial/legacy progress doc
+    // (e.g. a module entry seeded by a manual unlock write, or an older
+    // build that only stamped `passed`) can be missing the array fields —
+    // `.includes` / `.length` on undefined then crashed the whole page.
+    // Normalize here so ANY doc shape renders; extra fields (unlockedAt,
+    // passedAt, …) pass through untouched.
+    const moduleState = (mId) => {
+        const raw = progress?.modules?.[mId] || {};
+        return {
+            ...raw,
+            lessonsCompleted: Array.isArray(raw.lessonsCompleted) ? raw.lessonsCompleted : [],
+            attempts: Array.isArray(raw.attempts) ? raw.attempts : [],
+            passed: !!raw.passed,
+            locked: !!raw.locked,
+        };
+    };
 
     const markLessonComplete = async (mId, lId) => {
         const cur = moduleState(mId);
@@ -372,7 +410,16 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const passed = score >= m.quiz.passThreshold;
 
         const cur = moduleState(m.id);
-        const attempts = [...(cur.attempts || []), { at: new Date().toISOString(), score, passed, answers: { ...quizAnswers } }];
+        const attempt = { at: new Date().toISOString(), score, passed, answers: { ...quizAnswers } };
+        // Local view of the appended history — used for the lock math and
+        // the optimistic UI update below. The WRITE uses arrayUnion instead
+        // (2026-07-26 audit): writing this whole array back was a stale
+        // read-modify-write, so a second device (or a quick retry) racing
+        // this submit could silently drop an attempt. Attempt objects carry
+        // ISO-string timestamps (never serverTimestamp), so arrayUnion is
+        // safe, and two real submits always differ in `at`/answers so the
+        // union can't dedupe distinct attempts.
+        const attempts = [...(cur.attempts || []), attempt];
 
         // Lock after 2 consecutive failed attempts. 2026-06-20 (QA audit T1):
         // only count attempts AFTER the most recent manager unlock. Before this,
@@ -387,7 +434,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const locked = passed ? false : lastTwoFailed;
 
         const patch = {
-            attempts,
+            attempts: arrayUnion(attempt),
             passed: cur.passed || passed,
             locked,
         };
@@ -399,7 +446,10 @@ export default function TrainingHub({ staffName, language, staffList }) {
             ...(prev || {}),
             modules: {
                 ...(prev?.modules || {}),
-                [m.id]: { ...cur, ...patch, lockedAt: patch.lockedAt ?? cur.lockedAt ?? null, passedAt: patch.passedAt ?? cur.passedAt },
+                // `attempts` (the plain local array) intentionally overrides
+                // patch.attempts, which is the arrayUnion sentinel — local
+                // state must hold real data, not a FieldValue.
+                [m.id]: { ...cur, ...patch, attempts, lockedAt: patch.lockedAt ?? cur.lockedAt ?? null, passedAt: patch.passedAt ?? cur.passedAt },
             },
         }));
         await persistModulePatch(m.id, patch);
@@ -504,25 +554,15 @@ export default function TrainingHub({ staffName, language, staffList }) {
         );
     })();
 
-    // Wrapper for any view's content. Mobile: just renders children full-width.
-    // md+: pins the module sidebar on the left, content fills the rest.
-    const Shell = ({ children }) => (
-        <div className="md:flex md:gap-5 md:p-4">
-            <aside className="hidden md:block md:w-64 lg:w-72 md:flex-shrink-0 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto bg-white md:border md:border-gray-200 md:rounded-xl md:p-3">
-                {moduleListSidebar}
-            </aside>
-            <div className="flex-1 min-w-0 md:bg-white md:border md:border-gray-200 md:rounded-xl">
-                {children}
-            </div>
-        </div>
-    );
+    // The Shell wrapper itself lives at module scope (see above) so its
+    // element type is stable across renders; each view passes the sidebar in.
 
     // Quiz view
     if (view === "quiz" && activeModule) {
         const m = activeModule;
         const allAnswered = m.quiz.questions.every(q => quizAnswers[q.id]);
         return (
-            <Shell><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <h2 className="text-xl font-bold text-mint-700 mb-1">{m.icon} {tx(m.titleEn, m.titleEs)} — {tx("Quiz", "Examen")}</h2>
                 <p className="text-xs text-gray-500 mb-4">{tx(`Pass ${Math.round(m.quiz.passThreshold * 100)}% to clear this module. Two failed attempts in a row will lock the module — your manager has to clear the lock.`, `Aprueba con ${Math.round(m.quiz.passThreshold * 100)}% para completar este módulo. Dos intentos fallidos seguidos bloquean el módulo — tu gerente debe quitar el bloqueo.`)}</p>
@@ -556,7 +596,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     if (view === "quiz-result" && lastResult && activeModule) {
         const r = lastResult;
         return (
-            <Shell><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
                 <div className={`rounded-2xl p-6 text-center ${r.passed ? "bg-green-50 border-2 border-green-300" : r.locked ? "bg-red-50 border-2 border-red-300" : "bg-amber-50 border-2 border-amber-300"}`}>
                     <div className="text-5xl mb-3">{r.passed ? "🎉" : r.locked ? "🔒" : "❌"}</div>
                     <h2 className="text-2xl font-bold mb-2">
@@ -597,7 +637,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const overrideKey = `${m.id}__${activeLesson.id}`;
         const hasOverride = !!overrides[overrideKey];
         return (
-            <Shell><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <p className="text-xs text-gray-500 mb-1">{m.code} · {tx("Lesson", "Lección")} {lIdx + 1} / {m.lessons.length}</p>
                 <div className="flex items-start gap-2 mb-4">
@@ -707,7 +747,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
             return c;
         })();
         return (
-            <Shell><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => { setView("list"); setActiveModuleId(null); }} className="text-sm text-mint-700 mb-3">← {tx("All modules", "Todos los módulos")}</button>
                 <div className="flex items-start gap-3 mb-4">
                     <div className="text-4xl">{m.icon}</div>
@@ -778,7 +818,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     if (view === "tracker" && adminUser) {
         const docs = Object.entries(allProgress);
         return (
-            <Shell><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => setView("list")} className="text-sm text-mint-700 mb-3">← {tx("Back", "Atrás")}</button>
                 <div className="flex items-center justify-between mb-3">
                     <h2 className="text-xl font-bold text-mint-700">📊 {tx("Training Tracker", "Progreso de Capacitación")}</h2>
@@ -834,7 +874,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     })).filter(g => g.modules.length > 0);
 
     return (
-        <Shell><div className="p-4 pb-bottom-nav md:p-5">
+        <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
             <PageHeader
                 icon={GraduationCap}
                 title={t("trainingHub", language) || tx("Training Hub", "Centro de Capacitación")}

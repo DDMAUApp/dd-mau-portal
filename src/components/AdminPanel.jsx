@@ -1336,7 +1336,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     limit(500),
                 );
                 const unsubA = onSnapshot(appsQ,
-                    (snap) => setOnboardingPendingApps(snap.size),
+                    // Count only OPEN pipeline stages — hired/closed apps used to
+                    // keep the badge lit forever (same fix as MobileHome's
+                    // pendingApplications counter; status vocabulary from
+                    // Onboarding.jsx closedStatuses, missing status = 'applied').
+                    (snap) => {
+                        const closed = ['hired', 'not_selected', 'withdrew', 'expired'];
+                        let open = 0;
+                        snap.forEach((d) => {
+                            const st = d.data()?.status || 'applied';
+                            if (!closed.includes(st)) open++;
+                        });
+                        setOnboardingPendingApps(open);
+                    },
                     // 2026-06-20 (QA audit L3) — DON'T reset the badge to 0 on a
                     // load error. A transient blip used to silently hide real
                     // pending applications from managers ("0" reads as "nothing to

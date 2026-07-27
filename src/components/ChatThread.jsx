@@ -712,6 +712,45 @@ function ChatThreadInner({
         return () => { clearTimeout(t); clearTimeout(t2); };
     }, [jumpToMessageId, messages]);
 
+    // 2026-07-26 audit — the effect above is a silent no-op when the search
+    // hit is OLDER than the loaded window (the search panel reads up to 200
+    // messages per chat; the thread loads 50). Tapping such a result opened
+    // the chat scrolled to the bottom with no highlight and no explanation.
+    // Auto-grow the window (same re-subscribe mechanism as Load-older) until
+    // the target is in range, bounded at 500 messages; past the bound — or
+    // when server-confirmed history is exhausted (message deleted) — fall
+    // back to an honest toast instead of doing nothing.
+    const JUMP_AUTO_LOAD_LIMIT = 500;
+    useEffect(() => {
+        if (!jumpToMessageId) return;
+        if (lastJumpedRef.current === jumpToMessageId) return; // already handled
+        if (loading) return;                 // wait for the current window to land
+        if (!messages.length) return;        // first snapshot not in yet
+        if (messages.some(m => m.id === jumpToMessageId)) return; // main effect handles it
+        // Only act once the CURRENT window has actually filled — after a limit
+        // bump the effect re-fires on cached echoes of the old (smaller)
+        // window, and without this gate those echoes would race the limit
+        // straight to the cap (and toast) before any new data arrived.
+        const windowSettled = messages.length >= messageLimit;
+        if (hasMore && windowSettled && messageLimit < JUMP_AUTO_LOAD_LIMIT) {
+            setMessageLimit(n => Math.min(n + 100, JUMP_AUTO_LOAD_LIMIT));
+            return;
+        }
+        if (!hasMore || (windowSettled && messageLimit >= JUMP_AUTO_LOAD_LIMIT)) {
+            // Give up honestly — mark handled so the toast fires once per target.
+            lastJumpedRef.current = jumpToMessageId;
+            toast(
+                hasMore
+                    ? tx('Older message — tap "Load older messages" to reach it.',
+                         'Mensaje antiguo — toca "Cargar mensajes antiguos" para verlo.')
+                    : tx('Message not found — it may have been deleted.',
+                         'Mensaje no encontrado — puede haber sido eliminado.'),
+                { kind: 'warn' }
+            );
+        }
+        // Otherwise a bigger window is in flight — wait for its snapshot.
+    }, [jumpToMessageId, messages, loading, hasMore, messageLimit]);
+
     // ── My personal ack set for this chat (so I can show "✓ Read") ──
     // Subscribe to /chats/{id}/acks where userName == me. Small per-user
     // set; renderer checks if (msg.id in myAcks) to flip the announcement
@@ -805,23 +844,39 @@ function ChatThreadInner({
         // Filter the chat.typingByName map for fresh entries (<5s old),
         // excluding the viewer themselves. We pull from chat (passed in
         // from parent's snapshot) so this updates live.
+        //
+        // 2026-07-26 audit — sticky-indicator fix. This effect only re-ran on
+        // a NEW snapshot; if the typer's clear write was lost (app killed /
+        // offline mid-type), no further snapshot ever arrived and the last
+        // computed "X is typing…" stuck on screen FOREVER. Re-run the same
+        // staleness filter on a timer at the earliest entry's expiry so the
+        // indicator always clears client-side — no new writes needed.
         const map = chat?.typingByName || {};
-        const now = Date.now();
-        const fresh = Object.entries(map)
-            .filter(([name, ts]) => {
-                if (name === staffName) return false;
-                const ms = ts?.toMillis ? ts.toMillis()
-                    : (ts?.seconds ? ts.seconds * 1000 : 0);
-                return ms && (now - ms) < TYPING_TTL_MS;
-            })
-            .map(([name]) => name);
-        // 2026-07-21 (chat audit, perf) — the parent re-fires this on every
-        // chats snapshot (typing heartbeats fire ~every 2s per typer). Bail out
-        // when the computed list is unchanged so we don't trigger a needless
-        // re-render of the whole thread each heartbeat.
-        setTypingNames(prev =>
-            (prev.length === fresh.length && prev.every((n, i) => n === fresh[i]))
-                ? prev : fresh);
+        let timer = null;
+        const recompute = () => {
+            const now = Date.now();
+            const entries = Object.entries(map)
+                .filter(([name]) => name !== staffName)
+                .map(([name, ts]) => [
+                    name,
+                    ts?.toMillis ? ts.toMillis() : (ts?.seconds ? ts.seconds * 1000 : 0),
+                ])
+                .filter(([, ms]) => ms && (now - ms) < TYPING_TTL_MS);
+            const fresh = entries.map(([name]) => name);
+            // 2026-07-21 (chat audit, perf) — the parent re-fires this on every
+            // chats snapshot (typing heartbeats fire ~every 2s per typer). Bail out
+            // when the computed list is unchanged so we don't trigger a needless
+            // re-render of the whole thread each heartbeat.
+            setTypingNames(prev =>
+                (prev.length === fresh.length && prev.every((n, i) => n === fresh[i]))
+                    ? prev : fresh);
+            if (entries.length > 0) {
+                const nextExpiry = Math.min(...entries.map(([, ms]) => ms + TYPING_TTL_MS));
+                timer = setTimeout(recompute, Math.max(nextExpiry - now, 250));
+            }
+        };
+        recompute();
+        return () => { if (timer) clearTimeout(timer); };
     }, [chat?.typingByName, staffName]);
 
     // Pick a target to reply to. Snapshots the relevant fields so the
@@ -1310,7 +1365,12 @@ function ChatThreadInner({
                 details: { chatId: chat.id },
             });
         } catch (e) {
+            // 2026-07-26 audit — was console.warn only: an offline/failed
+            // write looked like success (the card never flipped to "✓ Read"
+            // and the user had no idea why). Same fix on the pin / delete /
+            // react / vote / close-poll handlers below.
             console.warn('ack failed:', e);
+            toast(tx('Mark-as-read failed — check connection.', 'Error al marcar leído — revisa la conexión.'), { kind: 'error' });
         }
     }
 
@@ -1341,6 +1401,12 @@ function ChatThreadInner({
             });
         } catch (e) {
             console.warn('pin toggle failed:', e);
+            toast(
+                isPinned
+                    ? tx('Unpin failed — check connection.', 'Error al quitar fijado — revisa la conexión.')
+                    : tx('Pin failed — check connection.', 'Error al fijar — revisa la conexión.'),
+                { kind: 'error' }
+            );
         }
     }
 
@@ -1375,6 +1441,7 @@ function ChatThreadInner({
             });
         } catch (e) {
             console.warn('delete failed:', e);
+            toast(tx('Delete failed — check connection.', 'Error al eliminar — revisa la conexión.'), { kind: 'error' });
         }
     }
 
@@ -1526,6 +1593,7 @@ function ChatThreadInner({
             });
         } catch (e) {
             console.warn('react failed:', e);
+            toast(tx('Reaction failed — check connection.', 'Error al reaccionar — revisa la conexión.'), { kind: 'error' });
         }
     }
 
@@ -1589,6 +1657,7 @@ function ChatThreadInner({
             await updateDoc(ref, updates);
         } catch (e) {
             console.warn('poll vote failed:', e);
+            toast(tx('Vote failed — check connection.', 'Error al votar — revisa la conexión.'), { kind: 'error' });
         }
     }
 
@@ -1706,6 +1775,7 @@ function ChatThreadInner({
             });
         } catch (e) {
             console.warn('poll close failed:', e);
+            toast(tx('Could not close poll — check connection.', 'No se pudo cerrar la encuesta — revisa la conexión.'), { kind: 'error' });
         }
     }
 
@@ -4577,13 +4647,19 @@ function PhotoIssueCard({ message, chat, isEs, isManager, staffName, viewer, tar
     const cat = ISSUE_CATEGORIES.find(c => c.key === data.category);
     const urg = ISSUE_URGENCIES.find(u => u.key === data.urgency);
     const longPressHandlers = useCardLongPress(onLongPress);
+    // 2026-07-26 audit — emergency issues rendered identically to a "Low"
+    // supply note (same orange card; the only difference was the small
+    // urgency chip's tint). A flooding dish pit should not look like a
+    // low-priority note in the scroll. Unresolved emergencies get the full
+    // red treatment + 🚨 so managers can't miss them.
+    const isEmergency = data.urgency === 'emergency' && data.status !== 'resolved';
     return (
-        <div className="rounded-xl overflow-hidden border-2 border-orange-300 bg-white shadow-card"
+        <div className={`rounded-xl overflow-hidden border-2 bg-white shadow-card ${isEmergency ? 'border-red-400' : 'border-orange-300'}`}
              {...longPressHandlers}>
-            <div className="px-4 py-2 bg-orange-100 border-b border-orange-300 flex items-center gap-2">
-                <span className="text-base">{cat?.emoji || '📸'}</span>
-                <span className="text-[11px] font-black uppercase tracking-widest text-orange-900 flex-1">
-                    {tx('Issue', 'Problema')} · {cat ? (isEs ? cat.es : cat.en) : data.category}
+            <div className={`px-4 py-2 border-b flex items-center gap-2 ${isEmergency ? 'bg-red-100 border-red-300' : 'bg-orange-100 border-orange-300'}`}>
+                <span className="text-base">{isEmergency ? '🚨' : (cat?.emoji || '📸')}</span>
+                <span className={`text-[11px] font-black uppercase tracking-widest flex-1 ${isEmergency ? 'text-red-900' : 'text-orange-900'}`}>
+                    {isEmergency ? tx('Emergency', 'Emergencia') + ' · ' : ''}{tx('Issue', 'Problema')} · {cat ? (isEs ? cat.es : cat.en) : data.category}
                 </span>
                 {urg && (
                     <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${urg.color}`}>

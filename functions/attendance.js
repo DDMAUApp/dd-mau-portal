@@ -149,6 +149,35 @@ async function markNoShows(dateKey) {
         const a = doc.data();
         if (a && a.clockedInAt) clockedKeys.add(a.staffKey);
     });
+    // Second evidence source: a clock-in >4h from the scheduled start is
+    // outside pickBestShift's window, so it never writes an attendance row —
+    // someone who came in and worked a very different block than scheduled
+    // would still get flagged no_show. Timecards + the live rosters are
+    // Toast truth for "did they work AT ALL today"; anyone found there is
+    // never a no-show. Best-effort — on failure fall back to attendance-only.
+    try {
+        const [tcSnap, liveW, liveM] = await Promise.all([
+            db.collection("timecards").where("date", "==", day).get(),
+            db.collection("ops").doc("clocked_in_webster").get(),
+            db.collection("ops").doc("clocked_in_maryland").get(),
+        ]);
+        tcSnap.forEach(doc => {
+            const t = doc.data();
+            if (!t || !t.staffKey) return;
+            if ((Array.isArray(t.sessions) && t.sessions.length) || t.openClockIn) {
+                clockedKeys.add(t.staffKey);
+            }
+        });
+        for (const snap of [liveW, liveM]) {
+            const entries = snap.exists ? snap.data()?.entries : null;
+            if (!Array.isArray(entries)) continue;
+            for (const e of entries) {
+                if (e && e.employeeName && e.clockedInAt) clockedKeys.add(normName(e.employeeName));
+            }
+        }
+    } catch (e) {
+        console.warn("markNoShows: worked-today evidence read failed:", e?.message || e);
+    }
     let wrote = 0;
     const batch = db.batch();
     const noShowSeen = new Set();

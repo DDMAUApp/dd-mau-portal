@@ -32,7 +32,7 @@
 import { db } from '../firebase';
 import {
     collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, query, limit,
-    serverTimestamp,
+    serverTimestamp, FieldPath,
 } from 'firebase/firestore';
 
 // SessionStorage key that Schedule.jsx reads on mount to auto-open one
@@ -161,14 +161,17 @@ export function subscribeAllCustomTodos(callback) {
 }
 
 // Mark a custom todo as done by this staff. Writes completedBy.{name} =
-// serverTimestamp. Dot-path so we don't clobber other staff's
-// completion timestamps.
+// serverTimestamp via the updateDoc VARARGS FieldPath form so we don't
+// clobber other staff's completion timestamps. FieldPath (not a
+// template-string dot-path) because staff names are free text — a name
+// containing a dot ("J.R. Smith") would otherwise be split into nested
+// map keys. NEVER use a FieldPath as a computed object key: it
+// stringifies to "[object Object]" and updateDoc throws.
 export async function markTodoDone(todoId, staffName) {
     if (!todoId || !staffName) return;
     try {
-        await updateDoc(doc(db, 'staff_todos', todoId), {
-            [`completedBy.${staffName}`]: serverTimestamp(),
-        });
+        await updateDoc(doc(db, 'staff_todos', todoId),
+            new FieldPath('completedBy', staffName), serverTimestamp());
     } catch (e) {
         console.warn('markTodoDone failed:', e);
         throw e;
@@ -180,14 +183,13 @@ export async function markTodoDone(todoId, staffName) {
 export async function clearCompletionFor(todoId, staffName) {
     if (!todoId || !staffName) return;
     try {
-        // Firestore lets us write `null` to remove a key from a map via
-        // dot-path; we use FieldValue.delete() for the truer "remove
-        // the key" semantics, imported lazily so this module stays
-        // skinny for the staff-side consumers that don't need it.
+        // deleteField() for the truer "remove the key" semantics,
+        // imported lazily so this module stays skinny for the
+        // staff-side consumers that don't need it. Varargs FieldPath
+        // form for the same dot-in-name reason as markTodoDone above.
         const { deleteField } = await import('firebase/firestore');
-        await updateDoc(doc(db, 'staff_todos', todoId), {
-            [`completedBy.${staffName}`]: deleteField(),
-        });
+        await updateDoc(doc(db, 'staff_todos', todoId),
+            new FieldPath('completedBy', staffName), deleteField());
     } catch (e) {
         console.warn('clearCompletionFor failed:', e);
         throw e;

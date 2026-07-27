@@ -42,6 +42,7 @@
 import { db } from '../firebase';
 import {
     collection, query, where, getDocs, writeBatch, addDoc, serverTimestamp,
+    doc, getDoc, orderBy, limit, deleteField, FieldPath,
 } from 'firebase/firestore';
 
 // Replace oldName with newName everywhere it appears in a string array.
@@ -192,6 +193,74 @@ async function renameAssignedTasks(oldName, newName, staffId) {
     return commitInChunks(ops);
 }
 
+// Announcements (2026-07-26 audit). Three name joins the equality pass
+// can't reach:
+//   • /announcements.acks — a MAP keyed by staff name (drives the "Got
+//     it" pop-up suppression + the manager ack dashboard).
+//   • the chat copy's audienceNames[] — the REAL audience list the ack
+//     dashboard counts against (reachable via the chatId/chatMessageId
+//     back-links stored on the announcement doc).
+//   • the mirrored ack doc /chats/{chatId}/acks/{chatMessageId}_{name}
+//     — the NAME is baked into the doc ID, so a move = copy + delete.
+// Without this pass a renamed staffer's pop-up re-fires (their ack is
+// under the dead old name) and they show as "pending" forever on the
+// dashboard. Bounded to the 50 most recent announcements — the pop-up
+// feed itself only reads 20, so older docs are cosmetic history.
+//
+// All map-key writes use the updateDoc/batch VARARGS FieldPath form:
+// staff names are free text (a dot would corrupt a template-string
+// dot-path), and a FieldPath used as a computed OBJECT KEY stringifies
+// to "[object Object]" and throws.
+async function renameAnnouncements(oldName, newName) {
+    const snap = await getDocs(query(
+        collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(50),
+    ));
+    const ops = [];
+    for (const d of snap.docs) {
+        const data = d.data() || {};
+        const hasAck = !!data.acks && Object.prototype.hasOwnProperty.call(data.acks, oldName);
+
+        // Announcement doc: move acks[oldName] → acks[newName] (keep the
+        // original ack timestamp) + flip createdBy attribution.
+        const args = [];
+        if (hasAck) {
+            args.push(new FieldPath('acks', newName), data.acks[oldName]);
+            args.push(new FieldPath('acks', oldName), deleteField());
+        }
+        if (data.createdBy === oldName) args.push('createdBy', newName);
+        if (args.length) ops.push((b) => b.update(d.ref, ...args));
+
+        // Chat-copy fixups — only where the back-links exist (older docs
+        // from before the back-link write may lack them; skip those).
+        if (!data.chatId || !data.chatMessageId) continue;
+        const msgRef = doc(db, 'chats', data.chatId, 'messages', data.chatMessageId);
+        try {
+            const msgSnap = await getDoc(msgRef);
+            if (msgSnap.exists()) {
+                const names = mapNameInArray(msgSnap.data()?.audienceNames, oldName, newName);
+                if (names) ops.push((b) => b.update(msgRef, { audienceNames: names }));
+            }
+        } catch (err) {
+            console.warn('renameAnnouncements: chat-copy read failed:', err);
+        }
+        if (hasAck) {
+            const oldAckRef = doc(db, 'chats', data.chatId, 'acks', `${data.chatMessageId}_${oldName}`);
+            try {
+                const oldAck = await getDoc(oldAckRef);
+                if (oldAck.exists()) {
+                    const newAckRef = doc(db, 'chats', data.chatId, 'acks', `${data.chatMessageId}_${newName}`);
+                    const ackData = { ...(oldAck.data() || {}), userName: newName };
+                    ops.push((b) => b.set(newAckRef, ackData, { merge: true }));
+                    ops.push((b) => b.delete(oldAckRef));
+                }
+            } catch (err) {
+                console.warn('renameAnnouncements: mirrored ack read failed:', err);
+            }
+        }
+    }
+    return commitInChunks(ops);
+}
+
 async function renameChats(oldName, newName) {
     const snap = await getDocs(
         query(collection(db, 'chats'), where('members', 'array-contains', oldName)),
@@ -274,6 +343,7 @@ export async function renameStaffEverywhere({ oldName, newName, staffId, by } = 
         ['offsite_shifts',  () => renameEqualityField('offsite_shifts', 'staffName', o, n, ['forcedOutBy', 'createdBy'])],
         ['tardies',         () => renameEqualityField('tardies', 'staffName', o, n)],
         ['assigned_tasks',  () => renameAssignedTasks(o, n, staffId)],
+        ['announcements',   () => renameAnnouncements(o, n)],
         ['chats',           () => renameChats(o, n)],
     ];
 

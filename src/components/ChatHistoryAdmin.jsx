@@ -525,10 +525,13 @@ function renderMessageBody(m, isEs) {
         );
     }
     if (t === 'photo_issue') {
+        // 2026-07-26 audit — surface emergency urgency in the admin history
+        // view too (matches the red treatment on the chat card).
+        const isEmergency = m.issueData?.urgency === 'emergency';
         return (
             <div>
-                <div className="text-[10px] font-bold text-orange-700 uppercase tracking-wide">
-                    [{isEs ? 'Foto/Issue' : 'Photo issue'}]
+                <div className={`text-[10px] font-bold uppercase tracking-wide ${isEmergency ? 'text-red-700' : 'text-orange-700'}`}>
+                    [{isEmergency ? '🚨 ' : ''}{isEs ? 'Foto/Issue' : 'Photo issue'}]
                 </div>
                 {m.mediaUrl && (
                     <img src={m.mediaUrl} alt="" loading="lazy" decoding="async"
