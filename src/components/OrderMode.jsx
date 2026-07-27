@@ -236,9 +236,14 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
         return { pending, ordered, oos, partial };
     }, [items]);
 
-    const onToggleVendor = async (v) => {
-        await setCurrentVendor({ sessionId, vendor: v === currentVendor ? null : v });
-    };
+    // Stable identity (2026-07-27 perf): reads the vendor via the ref
+    // below so PlanPanel's memo isn't busted by a fresh closure per
+    // render. (The ref is declared a few lines down — that's fine: the
+    // callback BODY only runs on tap, long after mount. Only hook DEP
+    // ARRAYS evaluate at render time.)
+    const onToggleVendor = useCallback(async (v) => {
+        await setCurrentVendor({ sessionId, vendor: v === currentVendorRef.current ? null : v });
+    }, [sessionId]);
 
     // Perf-fix 2026-05-22 — Andrew: "very slow" in order mode.
     //
@@ -700,7 +705,10 @@ function OrderItemRowInner({ itemId, item, isEs, currentVendor, onAction }) {
     const isDone = item.status !== ITEM_STATUS.PENDING;
 
     return (
-        <div className={`border-b border-dd-line px-3 py-2 ${isDone ? 'bg-dd-bg/40' : 'bg-white'}`}>
+        // ddmau-order-cv (content-visibility) — off-screen rows skip
+        // layout/paint entirely; a 100+ item session first-paints in the
+        // time of ~a screenful instead of the whole list (2026-07-27).
+        <div className={`ddmau-order-cv border-b border-dd-line px-3 py-2 ${isDone ? 'bg-dd-bg/40' : 'bg-white'}`}>
             <div className="flex items-start gap-2">
                 {/* Name + meta */}
                 <div className="flex-1 min-w-0">

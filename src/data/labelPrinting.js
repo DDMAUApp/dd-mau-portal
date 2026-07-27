@@ -1151,6 +1151,69 @@ function renderPrepLabelBody(payload) {
     return lines.join('');
 }
 
+// Fake-print preview model (Andrew 2026-07-27: "print a fake preview that
+// pops up a window so we can see what the print will look like").
+// Mirrors renderPrepLabelBody EXACTLY — same blocks, same order, same
+// scales — but returns render segments instead of ePOS XML so the
+// LabelPrintPreviewModal can draw a to-scale mock label on screen.
+// ⚠ KEEP IN SYNC with renderPrepLabelBody above: any block added/moved
+// there must be added/moved here, or the preview lies.
+export function buildLabelPreviewModel(payload) {
+    const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+    const divEq = '='.repeat(cols);
+    const divDash = '-'.repeat(cols);
+    const segs = [];
+    const push = (text, { w = 1, h = 1, em = false, center = false } = {}) =>
+        segs.push({ text: String(text), w, h, em, center });
+    const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
+    const titleH = Math.max(titleScale, Math.min(8, Number(payload.titleHeightScale) || titleScale));
+    if (payload.layout === 'nameFirst') {
+        for (const t of (payload.titleLines || [])) {
+            push(t, { w: titleScale, h: titleH, em: true, center: true });
+        }
+        push(divEq, { center: true });
+        const dateLine = [payload.prepDateLabel,
+            payload.prepDateNumber || payload.prepDateBig,
+            payload.prepTimeBig].filter(Boolean).join(' ');
+        if (dateLine) {
+            const ds = dateLine.length * 2 <= cols ? 2 : 1;
+            push(dateLine, { w: ds, h: ds, center: true });
+        }
+        push(divDash);
+    } else {
+        if (payload.prepDateLabel) push(payload.prepDateLabel, { w: 2, h: 2, em: true, center: true });
+        if (payload.prepDateNumber) {
+            const dateScale = Math.max(2, Math.min(8, Number(payload.dateNumberScale) || 5));
+            push(payload.prepDateNumber, { w: dateScale, h: dateScale, em: true, center: true });
+        } else if (payload.prepDateBig) {
+            push(payload.prepDateBig, { w: 3, h: 3, em: true, center: true });
+        }
+        if (payload.prepTimeBig) push(payload.prepTimeBig, { w: 2, h: 2, center: true });
+        push(divEq, { center: true });
+        for (const t of (payload.titleLines || [])) {
+            push(t, { w: titleScale, h: titleH, center: true });
+        }
+        if ((payload.titleLines || []).length) push(divDash);
+    }
+    for (const m of (payload.metaLines || [])) push(m);
+    if (payload.useByBig) {
+        const bandScale = Math.max(2, Math.min(4,
+            Math.floor(cols / Math.max(1, payload.useByBig.length))));
+        push(payload.useByBig, { w: bandScale, h: bandScale, em: true, center: true });
+    }
+    if ((payload.allergens || []).length > 0) {
+        push(divDash);
+        push('ALLERGENS: ' + payload.allergens.join(', '), { em: true });
+    }
+    if ((payload.ingredients || []).length > 0) {
+        push(divDash);
+        for (const ing of payload.ingredients) push('- ' + String(ing).slice(0, 30));
+    }
+    if (payload.notes) { push(divDash); push(payload.notes); }
+    if (payload.footer) { push(divDash); push(payload.footer, { em: true, center: true }); }
+    return { cols, segs };
+}
+
 // Public: render N copies of a prep label inside one SOAP envelope.
 // Stitching copies inside a single envelope = one HTTP round-trip,
 // printer handles N cuts. Same trick the free-text printer uses.

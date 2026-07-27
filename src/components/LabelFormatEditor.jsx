@@ -19,6 +19,7 @@ import {
 } from '../data/labelFormat';
 import { buildLabelPayload } from '../data/labelPrinting';
 import { toast } from '../toast';
+import LabelPrintPreviewModal from './LabelPrintPreviewModal';
 
 // Categories that can carry a per-kind override — [kind, EN label, ES
 // label]. `kind` matches the sticker rows' kind field (the color family
@@ -47,6 +48,10 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
     // Per-category overrides (Andrew 2026-07-26): which kind is being
     // edited in the "Per-category" card below.
     const [kindSel, setKindSel] = useState('chemical');
+    // Fake-print preview pop-up (2026-07-27) — null closed, or the kind
+    // being previewed ('base' = no per-kind override). Previews the DRAFT
+    // (unsaved edits included) so the admin can iterate without printing.
+    const [printPreview, setPrintPreview] = useState(null);
 
     useEffect(() => {
         const unsub = subscribeLabelFormat((f) => {
@@ -233,6 +238,10 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                             checked={ov.showUseByBand !== false}
                                             onChange={(v) => setKind({ showUseByBand: v ? undefined : false })}
                                             label={tx('Giant use-by band (THU / discard time)', 'Banda grande de caducidad (JUE / hora)')} />
+                                        <button type="button" onClick={() => setPrintPreview(kindSel)}
+                                            className="w-full py-2 rounded-lg bg-white border-2 border-violet-300 text-violet-700 text-xs font-bold hover:bg-violet-50 active:scale-95">
+                                            🖨 {tx('Preview a print (uses your unsaved edits)', 'Vista previa (incluye cambios sin guardar)')}
+                                        </button>
                                         <button type="button" onClick={save} disabled={saving}
                                             className="w-full py-2 rounded-lg bg-violet-600 text-white text-xs font-bold disabled:opacity-40 active:scale-95">
                                             {saving ? tx('Saving…', 'Guardando…') : tx('💾 Save category format', '💾 Guardar formato de categoría')}
@@ -307,6 +316,10 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                 className="px-3 py-2 rounded-lg bg-white border border-stone-300 text-stone-700 text-xs font-bold hover:bg-stone-50">
                                 {tx('Reset to defaults', 'Restaurar')}
                             </button>
+                            <button onClick={() => setPrintPreview('base')}
+                                className="px-3 py-2 rounded-lg bg-white border-2 border-violet-300 text-violet-700 text-xs font-bold hover:bg-violet-50">
+                                🖨 {tx('Preview', 'Vista previa')}
+                            </button>
                             <button onClick={save} disabled={saving || !dirty}
                                 className="flex-1 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-40">
                                 {saving ? tx('Saving…', 'Guardando…') : tx('Save & apply to all labels', 'Guardar')}
@@ -324,6 +337,15 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                         </div>
                     </div>
                 </div>
+            )}
+            {printPreview && (
+                <LabelPrintPreviewModal
+                    format={clampLabelFormat(draft)}
+                    kind={printPreview === 'base' ? null : printPreview}
+                    byName={byName}
+                    isEs={isEs}
+                    onClose={() => setPrintPreview(null)}
+                />
             )}
         </div>
     );

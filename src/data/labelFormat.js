@@ -21,7 +21,7 @@
 //   - Default shelf life days
 
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, serverTimestamp, deleteField } from 'firebase/firestore';
 import { recordAudit } from './audit';
 
 const DOC_PATH = 'config/label_format';
@@ -169,15 +169,26 @@ export async function saveLabelFormat({ format, byName }) {
         }
     }
     if ('kindFormats' in format) {
-        safe.kindFormats = cleanKindFormats(format.kindFormats);
+        // merge:true deep-merges maps, so a kind override the admin
+        // REMOVED would silently survive in the doc forever. Solve it
+        // with explicit deleteField() sentinels for every known kind
+        // that has no override — inside a merged map, the sentinel
+        // deletes that key. (2026-07-27: replaced a mergeFields-based
+        // whole-field replace that failed on device — this keeps the
+        // battle-tested merge:true path every other save uses.)
+        const cleaned = cleanKindFormats(format.kindFormats);
+        const KNOWN_KINDS = ['chemical', 'status', 'drink', 'protein',
+            'topping', 'sauce', 'broth', 'base', 'side', 'other'];
+        const out = { ...cleaned };
+        for (const k of KNOWN_KINDS) {
+            if (!(k in out)) out[k] = deleteField();
+        }
+        safe.kindFormats = out;
     }
     safe.updatedAt = serverTimestamp();
     safe.updatedBy = byName || null;
 
-    // mergeFields (not merge:true): each listed field is REPLACED whole.
-    // merge:true deep-merges maps, so a kind override the admin removed
-    // from kindFormats would silently survive in the doc forever.
-    await setDoc(doc(db, DOC_PATH), safe, { mergeFields: Object.keys(safe) });
+    await setDoc(doc(db, DOC_PATH), safe, { merge: true });
     recordAudit({
         action: 'label_format.save',
         actorName: byName || 'admin',

@@ -1727,6 +1727,16 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     contain-intrinsic-size: auto 56px;
 }
 
+/* 2026-07-27 — Order Mode row perf (Andrew: "the order rendering is slow").
+   Same trick as chat bubbles / inventory rows: a big order session mounts
+   every row (name + status badge + qty input + 3 buttons + note input) and
+   paints them all up front. Skip layout/paint for off-screen rows; 148px
+   matches a typical row. Progressive enhancement as above. */
+.ddmau-order-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 148px;
+}
+
 @media (max-width: 767px) {
     /* Other-person message bubble — light card with hairline border.
        (Mentioned messages keep their amber tint via the JSX
