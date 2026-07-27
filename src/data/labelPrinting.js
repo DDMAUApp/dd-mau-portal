@@ -341,6 +341,17 @@ export function applyLabelSizePreset(format, presetId, printerType) {
     return out;
 }
 
+// Per-kind format overrides (Andrew 2026-07-26: "change certain stickers
+// to be formatted differently — sanitizers with the item name larger").
+// /config/label_format carries kindFormats: { [kind]: {...} }; a sticker's
+// kind ('chemical', 'status', …) rides on the recipe object into every
+// print path, so matching overrides shallow-merge over the base format.
+export function resolveLabelFormatForKind(format, kind) {
+    const ov = kind && format?.kindFormats?.[kind];
+    if (!ov || typeof ov !== 'object') return format;
+    return { ...format, ...ov };
+}
+
 function printerDocPath(location, slot) {
     const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
     return `printers_${location}_${safeSlot}`;
@@ -880,6 +891,12 @@ export function buildLabelPayload({
         // admin's chosen scales; on a narrow roll they shrink to fit.
         dateNumberScale: fitDateScale,
         titleScale:      fitTitleScale,
+        // Per-kind layout (2026-07-26): 'nameFirst' prints the item name
+        // as the top/huge element and shrinks the date to one small line
+        // (sanitizer buckets etc.). rotate90 emits ePOS text rotation —
+        // experimental, admin-toggled per kind, Epson only.
+        layout:   format?.layout === 'nameFirst' ? 'nameFirst' : 'standard',
+        rotate90: !!format?.rotate90,
         // Bug fix 2026-05-20: forward the preset's physical dims +
         // id from the format to the payload. printPrepLabel /
         // printFreeText / buildBrotherPrintDoc all read these off
@@ -992,6 +1009,43 @@ function renderPrepLabelBody(payload) {
     const divEq = '='.repeat(cols);
     const divDash = '-'.repeat(cols);
 
+    // Experimental per-kind 90° rotation (Andrew 2026-07-26 — "turn the
+    // whole sticker 90 degrees"). ePOS text rotation; must be set before
+    // any text. Admin-toggled per kind in the Label Format editor —
+    // hardware-verify on the printer before relying on it.
+    if (payload.rotate90) lines.push(`<text rotate="true"/>`);
+
+    const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
+    if (payload.layout === 'nameFirst') {
+        // ── NAME-FIRST layout (per-kind override) ────────────────
+        // Item name HUGE at the top (sanitizer buckets etc. — the name
+        // matters more than the prep date), then one compact date+time
+        // line. Everything after (meta, use-by band, allergens) is
+        // shared with the standard layout below.
+        lines.push(`<text align="center"/>`);
+        lines.push(`<text em="true"/>`);
+        if (payload.titleLines && payload.titleLines.length > 0) {
+            lines.push(`<text width="${titleScale}" height="${titleScale}"/>`);
+            for (const t of payload.titleLines) {
+                lines.push(`<text>${escapeXml(t)}&#10;</text>`);
+            }
+        }
+        lines.push(`<text em="false"/>`);
+        lines.push(`<text width="1" height="1"/>`);
+        lines.push(`<text>${divEq}&#10;</text>`);
+        const dateLine = [payload.prepDateLabel,
+            payload.prepDateNumber || payload.prepDateBig,
+            payload.prepTimeBig].filter(Boolean).join(' ');
+        if (dateLine) {
+            // Compact — scale 2 when it fits this roll, else 1.
+            const ds = dateLine.length * 2 <= cols ? 2 : 1;
+            lines.push(`<text width="${ds}" height="${ds}"/>`);
+            lines.push(`<text>${escapeXml(dateLine)}&#10;</text>`);
+            lines.push(`<text width="1" height="1"/>`);
+        }
+        lines.push(`<text align="left"/>`);
+        lines.push(`<text>${divDash}&#10;</text>`);
+    } else {
     // ── HUGE prep date at the top ────────────────────────────
     // 2026-05-20 — Andrew: "lets make the date at the very top in
     // bold and larger". Split into two lines so the date NUMBER
@@ -1031,7 +1085,6 @@ function renderPrepLabelBody(payload) {
     if (payload.titleLines && payload.titleLines.length > 0) {
         // Epson supports 1..8 (the buildLabelPayload fit logic already
         // shrank this to what the roll + item name can hold).
-        const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
         lines.push(`<text width="${titleScale}" height="${titleScale}"/>`);
         for (const t of payload.titleLines) {
             lines.push(`<text>${escapeXml(t)}&#10;</text>`);
@@ -1041,6 +1094,7 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text>${divDash}&#10;</text>`);
     } else {
         lines.push(`<text align="left"/>`);
+    }
     }
 
     // ── Meta (use-by, by, location) ──────────────────────────
@@ -2423,7 +2477,10 @@ async function _printPrepLabelImpl({
         // section toggles / font scales. So what the Label Format editor
         // previews is exactly what prints. Brother physical dims fall back
         // to the printer config below (payload._presetWidthMm is absent now).
-        const format = baseFormat;
+        // Per-kind overrides (sanitizers etc.) — the sticker's kind rides
+        // on the recipe object; matching /config/label_format.kindFormats
+        // entries shallow-merge over the base format.
+        const format = resolveLabelFormatForKind(baseFormat, recipe?.kind);
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
             : (resolveShelfLifeDays(recipe) || baseFormat?.defaultShelfLifeDays || DEFAULT_SHELF_LIFE_DAYS);

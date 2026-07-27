@@ -20,6 +20,22 @@ import {
 import { buildLabelPayload } from '../data/labelPrinting';
 import { toast } from '../toast';
 
+// Categories that can carry a per-kind override — [kind, EN label, ES
+// label]. `kind` matches the sticker rows' kind field (the color family
+// on the sticker page), which rides on the recipe into every print.
+const KIND_FORMAT_TARGETS = [
+    ['chemical', '🧪 Chemicals / Sanitizer', '🧪 Químicos / Desinfectante'],
+    ['status',   '⚠️ Status labels (RECEIVED…)', '⚠️ Etiquetas de estado'],
+    ['drink',    '🧋 Drinks', '🧋 Bebidas'],
+    ['protein',  '🥩 Proteins', '🥩 Proteínas'],
+    ['topping',  '🥬 Veggies & Toppings', '🥬 Verduras'],
+    ['sauce',    '🥢 Sauces & Dressings', '🥢 Salsas'],
+    ['broth',    '🍲 Broths & Stocks', '🍲 Caldos'],
+    ['base',     '🍜 Noodles & Rice', '🍜 Fideos y Arroz'],
+    ['side',     '🥟 Made Ahead / Sides', '🥟 Pre-Hechos'],
+    ['other',    '📦 Other', '📦 Otros'],
+];
+
 export default function LabelFormatEditor({ language = 'en', byName }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -28,6 +44,9 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
     const [draft, setDraft] = useState({ ...DEFAULT_LABEL_FORMAT });
     const [saving, setSaving] = useState(false);
     const [expanded, setExpanded] = useState(false);
+    // Per-category overrides (Andrew 2026-07-26): which kind is being
+    // edited in the "Per-category" card below.
+    const [kindSel, setKindSel] = useState('chemical');
 
     useEffect(() => {
         const unsub = subscribeLabelFormat((f) => {
@@ -151,6 +170,76 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                     `Epson scale = ${draft.titleScale} · long names auto-shrink to fit the roll`,
                                     `Escala Epson = ${draft.titleScale} · nombres largos se reducen para caber`,
                                 )} />
+                        </FieldsetCard>
+
+                        {/* Per-category overrides — Andrew 2026-07-26: "change
+                            certain stickers to be formatted differently —
+                            sanitizers with the item name larger, maybe turn
+                            the whole sticker 90 degrees". Each override only
+                            touches labels of that category (kind). */}
+                        <FieldsetCard title={tx('Per-category format', 'Formato por categoría')} tx={tx}>
+                            <p className="text-[10px] text-dd-text-2 leading-snug mb-2">
+                                {tx(
+                                    'Give one category its own look — e.g. Sanitizer labels with the item name huge at the top. Categories without an override use the settings above.',
+                                    'Dale a una categoría su propio estilo — p. ej. etiquetas de Desinfectante con el nombre enorme arriba. Sin ajuste, usan la configuración general.',
+                                )}
+                            </p>
+                            <SelectRow
+                                label={tx('Category', 'Categoría')}
+                                value={kindSel}
+                                onChange={setKindSel}
+                                options={KIND_FORMAT_TARGETS.map(([k, en, es]) => ({ v: k, label: isEs ? es : en }))} />
+                            {(() => {
+                                const ov = draft.kindFormats?.[kindSel];
+                                const setKind = (patch) => {
+                                    const next = { ...(draft.kindFormats || {}) };
+                                    next[kindSel] = { ...(next[kindSel] || {}), ...patch };
+                                    // Strip fields explicitly set undefined.
+                                    for (const [k, v] of Object.entries(next[kindSel])) {
+                                        if (v === undefined) delete next[kindSel][k];
+                                    }
+                                    update({ kindFormats: next });
+                                };
+                                const removeKind = () => {
+                                    const next = { ...(draft.kindFormats || {}) };
+                                    delete next[kindSel];
+                                    update({ kindFormats: next });
+                                };
+                                if (!ov) {
+                                    return (
+                                        <button type="button" onClick={() => setKind({ layout: 'nameFirst', titleScale: 6 })}
+                                            className="mt-2 w-full py-2 rounded-lg border-2 border-dashed border-violet-300 text-violet-700 text-xs font-bold hover:bg-violet-50">
+                                            + {tx('Customize this category', 'Personalizar esta categoría')}
+                                        </button>
+                                    );
+                                }
+                                return (
+                                    <div className="mt-2 space-y-2 rounded-lg border border-violet-200 bg-violet-50/40 p-2">
+                                        <SelectRow
+                                            label={tx('Layout', 'Diseño')}
+                                            value={ov.layout === 'nameFirst' ? 'nameFirst' : 'standard'}
+                                            onChange={(v) => setKind({ layout: v === 'nameFirst' ? 'nameFirst' : undefined })}
+                                            options={[
+                                                { v: 'standard', label: tx('Standard (big date first)', 'Estándar (fecha grande arriba)') },
+                                                { v: 'nameFirst', label: tx('Big item NAME first', 'NOMBRE grande arriba') },
+                                            ]} />
+                                        <SliderRow
+                                            label={tx('Item title size (this category)', 'Tamaño del título (esta categoría)')}
+                                            value={ov.titleScale ?? draft.titleScale}
+                                            onChange={(v) => setKind({ titleScale: v })}
+                                            min={1} max={8} step={1}
+                                            hint={tx('Long names still auto-shrink to fit', 'Nombres largos aún se reducen para caber')} />
+                                        <ToggleRow
+                                            checked={ov.rotate90 === true}
+                                            onChange={(v) => setKind({ rotate90: v ? true : undefined })}
+                                            label={tx('⤾ Rotate label 90° (experimental — test a print!)', '⤾ Rotar 90° (experimental — ¡prueba una impresión!)')} />
+                                        <button type="button" onClick={removeKind}
+                                            className="w-full py-1.5 rounded-lg bg-white border border-red-300 text-red-700 text-[11px] font-bold hover:bg-red-50">
+                                            {tx('Remove override (use default format)', 'Quitar ajuste (usar formato general)')}
+                                        </button>
+                                    </div>
+                                );
+                            })()}
                         </FieldsetCard>
 
                         {/* Text content */}
@@ -430,7 +519,14 @@ function isDirty(draft, server) {
     if (!draft || !server) return false;
     for (const k of Object.keys(draft)) {
         if (k === 'updatedAt' || k === 'updatedBy') continue;
-        if (draft[k] !== server[k]) return true;
+        const a = draft[k], b = server[k];
+        // Object fields (kindFormats) compare by VALUE — identity compare
+        // would flag "Unsaved" forever after the first per-category edit.
+        if (typeof a === 'object' || typeof b === 'object') {
+            if (JSON.stringify(a ?? null) !== JSON.stringify(b ?? null)) return true;
+        } else if (a !== b) {
+            return true;
+        }
     }
     return false;
 }

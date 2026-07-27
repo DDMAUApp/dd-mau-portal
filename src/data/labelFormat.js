@@ -57,7 +57,36 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
 
     // Defaults
     defaultShelfLifeDays: 5,
+
+    // Per-KIND overrides (Andrew 2026-07-26: "change certain stickers to
+    // be formatted differently — sanitizers with the item name larger").
+    // Keyed by the sticker's kind ('chemical', 'status', 'protein', …) —
+    // the kind rides on the recipe object into every print path. Each
+    // entry shallow-merges over the base format for that kind only:
+    //   { layout?: 'nameFirst', titleScale?: 1..8, dateNumberScale?: 2..8,
+    //     rotate90?: true }
+    kindFormats: {},
 });
+
+// Sanitize a kindFormats map — only known kinds/fields, clamped.
+export function cleanKindFormats(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    for (const [k, v] of Object.entries(raw)) {
+        if (!v || typeof v !== 'object') continue;
+        const entry = {};
+        if (v.layout === 'nameFirst') entry.layout = 'nameFirst';
+        if (Number.isFinite(Number(v.titleScale))) {
+            entry.titleScale = Math.max(1, Math.min(8, Number(v.titleScale)));
+        }
+        if (Number.isFinite(Number(v.dateNumberScale))) {
+            entry.dateNumberScale = Math.max(2, Math.min(8, Number(v.dateNumberScale)));
+        }
+        if (v.rotate90 === true) entry.rotate90 = true;
+        if (Object.keys(entry).length) out[String(k).slice(0, 24)] = entry;
+    }
+    return out;
+}
 
 // Live subscription. Callback gets the merged format (defaults +
 // any saved overrides). Renderers + preview use this to update
@@ -136,10 +165,16 @@ export async function saveLabelFormat({ format, byName }) {
             safe[k] = Math.max(1, Math.min(99, Number(format[k])));
         }
     }
+    if ('kindFormats' in format) {
+        safe.kindFormats = cleanKindFormats(format.kindFormats);
+    }
     safe.updatedAt = serverTimestamp();
     safe.updatedBy = byName || null;
 
-    await setDoc(doc(db, DOC_PATH), safe, { merge: true });
+    // mergeFields (not merge:true): each listed field is REPLACED whole.
+    // merge:true deep-merges maps, so a kind override the admin removed
+    // from kindFormats would silently survive in the doc forever.
+    await setDoc(doc(db, DOC_PATH), safe, { mergeFields: Object.keys(safe) });
     recordAudit({
         action: 'label_format.save',
         actorName: byName || 'admin',
@@ -155,7 +190,10 @@ export async function saveLabelFormat({ format, byName }) {
 export function clampLabelFormat(format) {
     const f = { ...format };
     f.dateNumberScale = Math.max(2, Math.min(8, Number(f.dateNumberScale) || 5));
-    f.titleScale = Math.max(1, Math.min(4, Number(f.titleScale) || 2));
+    // 8 = Epson max (2026-07-26 "make the item font larger" — was 4, which
+    // silently undid the editor's bigger slider on save).
+    f.titleScale = Math.max(1, Math.min(8, Number(f.titleScale) || 2));
     f.defaultShelfLifeDays = Math.max(1, Math.min(60, Number(f.defaultShelfLifeDays) || 5));
+    if (f.kindFormats) f.kindFormats = cleanKindFormats(f.kindFormats);
     return f;
 }

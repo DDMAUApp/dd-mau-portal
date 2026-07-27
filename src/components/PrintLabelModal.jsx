@@ -39,6 +39,7 @@ import {
     prefetchPdfLib,
     getCachedPrinterConfig,
     pendingPrintCount,
+    resolveLabelFormatForKind,
 } from '../data/labelPrinting';
 import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
@@ -245,7 +246,9 @@ export default function PrintLabelModal({
         ingredients: pickIngredientsForLabel(effectiveRecipe, language),
         language,
         notes,
-        format: labelFormat,
+        // Per-kind override (sanitizers etc.) — same resolution the print
+        // path applies, so the preview stays WYSIWYG.
+        format: resolveLabelFormatForKind(labelFormat, effectiveRecipe?.kind),
         paperWidthMm: printer?.paperWidthMm,
         leftOffsetMm: printer?.leftOffsetMm,
     }), [effectiveRecipe, prepDate, shelfLifeDays, lifeUnit, shelfLifeHours, thawed, staffName, location, language, notes, labelFormat, printer?.paperWidthMm, printer?.leftOffsetMm]);
@@ -838,8 +841,19 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
     // portioning a sauce made on an earlier date).
     const editAttrs = onEditDate ? { onDoubleClick: onEditDate, title: 'Double-click to change the date' } : {};
     const editCls = onEditDate ? ' cursor-pointer' : '';
-    return (
-        <div className="text-center font-sans">
+    const nameFirst = payload.layout === 'nameFirst';
+    // Title font tracks the Epson scale (7px per unit) so a per-kind
+    // "bigger name" override previews at its real relative size.
+    const titleBlock = payload.titleLines && payload.titleLines.length > 0 && (
+        <div className="font-bold text-dd-text leading-tight"
+            style={{ fontSize: `${Math.max(14, 7 * (Number(payload.titleScale) || 2))}px` }}>
+            {payload.titleLines.map((t, i) => (
+                <div key={i}>{t}</div>
+            ))}
+        </div>
+    );
+    const dateBlock = (
+        <>
             {payload.prepDateLabel && (
                 <div {...editAttrs} className={`text-[10px] font-bold uppercase tracking-widest text-dd-text-2${editCls}`}>
                     {payload.prepDateLabel}
@@ -852,30 +866,41 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                         // 8px per Epson scale unit so admin's chosen
                         // size (2..8) maps to a meaningful preview
                         // size (16..64px). Default scale 5 → 40px.
-                        fontSize: `${8 * (Number(payload.dateNumberScale) || 5)}px`,
+                        // Name-first layout shrinks the date to one
+                        // compact line (WYSIWYG with the print).
+                        fontSize: nameFirst ? '14px' : `${8 * (Number(payload.dateNumberScale) || 5)}px`,
                         letterSpacing: '-1px',
                     }}>
-                    {payload.prepDateNumber}
+                    {payload.prepDateNumber}{nameFirst && payload.prepTimeBig ? ` ${payload.prepTimeBig}` : ''}
                 </div>
             ) : payload.prepDateBig ? (
                 <div {...editAttrs}
                     className={`font-black tabular-nums text-dd-text leading-none mb-0.5${editCls}`}
-                    style={{ fontSize: '24px' }}>
+                    style={{ fontSize: nameFirst ? '14px' : '24px' }}>
                     {payload.prepDateBig}
                 </div>
             ) : null}
-            {payload.prepTimeBig && (
+            {!nameFirst && payload.prepTimeBig && (
                 <div className="text-[14px] font-bold text-dd-text-2 tabular-nums mb-1">
                     {payload.prepTimeBig}
                 </div>
             )}
-            <hr className="border-t border-dashed border-dd-line my-1.5" />
-            {payload.titleLines && payload.titleLines.length > 0 && (
-                <div className="text-[14px] font-bold text-dd-text leading-tight">
-                    {payload.titleLines.map((t, i) => (
-                        <div key={i}>{t}</div>
-                    ))}
-                </div>
+        </>
+    );
+    return (
+        <div className="text-center font-sans">
+            {nameFirst ? (
+                <>
+                    {titleBlock}
+                    <hr className="border-t border-dashed border-dd-line my-1.5" />
+                    {dateBlock}
+                </>
+            ) : (
+                <>
+                    {dateBlock}
+                    <hr className="border-t border-dashed border-dd-line my-1.5" />
+                    {titleBlock}
+                </>
             )}
             <hr className="border-t border-dotted border-dd-line my-1.5" />
             <div className="text-[11px] text-dd-text font-mono text-left leading-snug">

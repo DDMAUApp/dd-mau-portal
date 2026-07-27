@@ -1784,20 +1784,26 @@ function mergeDrafts(draft, incoming, deletedIds) {
 // trash button at the right.
 function EditableFlatRow({ row, tone, isEs, tx, sectionKey, sections = STICKER_SECTIONS, onUpdate, onDelete, onMove }) {
     return (
-        <div className={`flex items-stretch gap-1.5 rounded-lg ${tone.bg} border border-dd-line p-1.5`}>
+        // flex-WRAP + real min widths (Andrew 2026-07-26 — "when we edit
+        // the item names and they are longer its difficult since the
+        // window is small"): on phones the two name inputs + mover +
+        // trash used to split one row six ways, leaving each input a few
+        // characters wide. Now an input claims at least ~11rem and the
+        // controls wrap to a second line when the row runs out of room.
+        <div className={`flex flex-wrap items-stretch gap-1.5 rounded-lg ${tone.bg} border border-dd-line p-1.5`}>
             <input
                 type="text"
                 value={row.nameEn}
                 onChange={(e) => onUpdate({ nameEn: e.target.value })}
                 placeholder={tx('Name (English)', 'Nombre (Inglés)')}
-                className="flex-1 min-w-0 px-2 py-1.5 text-xs font-bold border border-dd-line rounded bg-white"
+                className="flex-1 min-w-[11rem] px-2 py-1.5 text-sm font-bold border border-dd-line rounded bg-white"
             />
             <input
                 type="text"
                 value={row.nameEs}
                 onChange={(e) => onUpdate({ nameEs: e.target.value })}
                 placeholder={tx('Name (Spanish)', 'Nombre (Español)')}
-                className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-dd-line rounded bg-white"
+                className="flex-1 min-w-[11rem] px-2 py-1.5 text-sm border border-dd-line rounded bg-white"
             />
             {/* Category mover (Andrew 2026-07-24) — pick a different category
                 and the row jumps there (saves live to both sections). Shows
