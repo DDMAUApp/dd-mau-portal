@@ -634,10 +634,22 @@ const _RECIPE_BY_NORM = (() => {
     return m;
 })();
 
+// Result cache (2026-07-26 perf audit): the sticker grids call this per
+// cell per render, and a MISS is a full linear substring scan over
+// _RECIPE_NORMS. Recipes are static module data, so results are memoized
+// forever by normalized name (misses included — those are the expensive
+// ones).
+const _subRecipeCache = new Map();
 export function findSubRecipe(componentNameEn) {
     if (!componentNameEn) return null;
     const target = normalizeName(componentNameEn);
     if (!target) return null;
+    if (_subRecipeCache.has(target)) return _subRecipeCache.get(target);
+    const result = _findSubRecipeUncached(target);
+    _subRecipeCache.set(target, result);
+    return result;
+}
+function _findSubRecipeUncached(target) {
     // Exact title wins (O(1) Map); else first substring match either
     // direction — same result the old linear scan produced, far less work.
     let best = _RECIPE_BY_NORM.get(target) || null;

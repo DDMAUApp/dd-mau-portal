@@ -356,6 +356,11 @@ export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightS
         // eslint-disable-next-line no-await-in-loop
         if (attempt === 0) await sleep(1200);
     }
+    // Record what the probe learned so the status strip and the offline
+    // confirm guard react immediately (2026-07-26 audit: a failed probe
+    // left the last keep-alive verdict — often 'ready' — in place).
+    _brotherWarmAt.set(ip, Date.now());
+    _brotherReachable.set(ip, awake);
     if (!awake) return { ok: false, status: 0, error: 'printer timeout' };
     let last = { ok: false, status: 0 };
     for (let i = 0; i < n; i++) {

@@ -39,7 +39,7 @@
 // }
 
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, serverTimestamp, runTransaction, deleteField } from 'firebase/firestore';
 import { recordAudit } from './audit';
 import {
     BUILD_SHEET_PROTEINS,
@@ -220,31 +220,66 @@ export function resolveSections(data) {
 }
 
 // Persist the section list (order + titles + custom sections).
+// Runs in a TRANSACTION so a deleted custom category's item list can't be
+// orphaned: any custom `c_*` key dropped from the list has its doc field
+// removed, and if a cook slipped items into it between the admin's
+// empty-check and this save, those rows are moved into 'other' instead of
+// becoming invisible forever (audit 2026-07-26 finding 5).
 export async function saveSections(sections, byName) {
     const seen = new Set();
     const clean = (Array.isArray(sections) ? sections : []).map((s) => {
         const key = String(s?.key || '').trim();
         if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key) || seen.has(key)) return null;
         seen.add(key);
+        // trim BEFORE the falsy check — a whitespace-only title used to
+        // pass `||` and persist as '' (rendered as the raw key).
+        const tEn = String(s.titleEn ?? '').trim();
+        const tEs = String(s.titleEs ?? '').trim();
         return {
             key,
             kind: VALID_SECTION_KINDS.includes(s.kind) ? s.kind : 'other',
-            titleEn: String(s.titleEn || key).slice(0, 60).trim(),
-            titleEs: String(s.titleEs || s.titleEn || key).slice(0, 60).trim(),
+            titleEn: (tEn || key).slice(0, 60),
+            titleEs: (tEs || tEn || key).slice(0, 60),
         };
     }).filter(Boolean);
     if (clean.length === 0) throw new Error('sections list cannot be empty');
-    await setDoc(STICKER_LISTS_DOC_REF(), {
-        sectionsOverride: clean,
-        updatedAt: serverTimestamp(),
-        updatedBy: byName || 'unknown',
-    }, { merge: true });
+    let rescued = 0;
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(STICKER_LISTS_DOC_REF());
+        const data = snap.exists() ? snap.data() : {};
+        const prev = resolveSections(data);
+        const keptKeys = new Set(clean.map(s => s.key));
+        const update = {
+            sectionsOverride: clean,
+            updatedAt: serverTimestamp(),
+            updatedBy: byName || 'unknown',
+        };
+        // Custom sections dropped by this save: delete their list field; any
+        // rows still in it get rescued into 'other' (deduped by id).
+        let other = null; // lazily-built next value of the 'other' field
+        for (const p of prev) {
+            if (keptKeys.has(p.key) || STICKER_SECTIONS.some(b => b.key === p.key)) continue;
+            const orphans = Array.isArray(data[p.key]) ? data[p.key] : [];
+            if (orphans.length > 0) {
+                if (other === null) {
+                    other = Array.isArray(data.other) ? [...data.other] : [...(STAMPED_DEFAULTS.get('other') || [])];
+                }
+                const haveIds = new Set(other.map(r => r?.id));
+                for (const r of orphans) {
+                    if (!haveIds.has(r?.id)) { other.push(r); rescued++; }
+                }
+            }
+            update[p.key] = deleteField();
+        }
+        if (other !== null) update.other = other;
+        tx.set(STICKER_LISTS_DOC_REF(), update, { merge: true });
+    });
     recordAudit({
         action: 'sticker_lists.sections',
         actorName: byName || 'unknown',
         targetType: 'sticker_list',
         targetId: 'sectionsOverride',
-        details: { count: clean.length, keys: clean.map(s => s.key) },
+        details: { count: clean.length, keys: clean.map(s => s.key), rescuedToOther: rescued },
     });
 }
 
@@ -253,16 +288,40 @@ export async function saveSections(sections, byName) {
 // an explicitly-saved EMPTY list, so an admin can clear a section without
 // the defaults resurrecting — default otherwise), sections = the resolved
 // dynamic section list. Existing single-arg callers just ignore arg 2.
+// Identity cache (2026-07-26 perf audit): every snapshot used to mint a
+// FRESH array for each overridden section (`override.map(stamp)`), so any
+// write to the doc — including Edit Mode's own debounced echoes — changed
+// every section's `items` identity and defeated the section memos the UI
+// relies on. Reuse the previous array whenever a section's serialized
+// content is unchanged. (Also keeps stamp()'s random ids stable across
+// echoes for rows that arrived without one.) Module-level: all subscribers
+// watch the same single doc.
+const _sectionArrCache = new Map();     // key -> { json, arr }
+let _sectionsCache = { json: null, arr: STICKER_SECTIONS };
 export function subscribeStickerLists(callback) {
     return onSnapshot(STICKER_LISTS_DOC_REF(), (snap) => {
         const data = snap.exists() ? snap.data() : {};
-        const sections = resolveSections(data);
+        const sectionsJson = JSON.stringify(data.sectionsOverride ?? null);
+        if (_sectionsCache.json !== sectionsJson) {
+            _sectionsCache = { json: sectionsJson, arr: resolveSections(data) };
+        }
+        const sections = _sectionsCache.arr;
         const merged = {};
         for (const section of sections) {
             const override = data[section.key];
-            merged[section.key] = Array.isArray(override)
-                ? override.map(stamp)
-                : (STAMPED_DEFAULTS.get(section.key) || []);
+            if (Array.isArray(override)) {
+                const json = JSON.stringify(override);
+                const hit = _sectionArrCache.get(section.key);
+                if (hit && hit.json === json) {
+                    merged[section.key] = hit.arr;
+                } else {
+                    const arr = override.map(stamp);
+                    _sectionArrCache.set(section.key, { json, arr });
+                    merged[section.key] = arr;
+                }
+            } else {
+                merged[section.key] = STAMPED_DEFAULTS.get(section.key) || [];
+            }
         }
         callback(merged, sections);
     }, (err) => {
@@ -279,13 +338,16 @@ export function subscribeStickerLists(callback) {
 // Save the full list for one section. Replaces whatever was there.
 // Sanitizes inputs to a known shape so a buggy form doesn't write
 // junk to Firestore.
-export async function saveStickerList(sectionKey, items, byName) {
+function assertSectionKey(sectionKey) {
     // Key-shape validation instead of a fixed-list check (2026-07-24) —
     // sections are dynamic now, so any well-formed key is saveable.
     if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(String(sectionKey || ''))) {
         throw new Error(`bad sticker section key: ${sectionKey}`);
     }
-    const clean = (Array.isArray(items) ? items : []).map((item, i) => {
+}
+
+function cleanRows(sectionKey, items) {
+    return (Array.isArray(items) ? items : []).map((item, i) => {
         const row = {
             id:     String(item.id || makeStickerRowId(`${sectionKey}-${item.nameEn || 'row'}-${i}`)).slice(0, 60),
             nameEn: String(item.nameEn || '').slice(0, 80).trim(),
@@ -300,6 +362,19 @@ export async function saveStickerList(sectionKey, items, byName) {
         if (Number.isFinite(sd) && sd > 0) row.shelfLifeDays = Math.min(60, Math.max(1, Math.floor(sd)));
         return row;
     }).filter(r => r.nameEn || r.nameEs); // drop fully-empty rows
+}
+
+// Accent/case/space-insensitive name key for duplicate checks — so
+// "Jalapeño" and "jalapeno " count as the same item.
+export function stickerNameKey(s) {
+    return String(s || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export async function saveStickerList(sectionKey, items, byName) {
+    assertSectionKey(sectionKey);
+    const clean = cleanRows(sectionKey, items);
     await setDoc(STICKER_LISTS_DOC_REF(), {
         [sectionKey]: clean,
         updatedAt: serverTimestamp(),
@@ -312,6 +387,84 @@ export async function saveStickerList(sectionKey, items, byName) {
         targetId: sectionKey,
         details: { sectionKey, rowCount: clean.length },
     });
+}
+
+// Append ONE row to a section — transactionally, so two devices adding at
+// the same moment can't clobber each other (audit 2026-07-26 finding 3:
+// full-array last-write-wins lost one of the adds). Dedupes by normalized
+// name against the CURRENT server array. Returns 'added' | 'duplicate'.
+export async function addStickerRow(sectionKey, { nameEn, nameEs }, byName) {
+    assertSectionKey(sectionKey);
+    const en = String(nameEn || '').trim();
+    if (!en) throw new Error('item name required');
+    let outcome = 'added';
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(STICKER_LISTS_DOC_REF());
+        const data = snap.exists() ? snap.data() : {};
+        const current = Array.isArray(data[sectionKey])
+            ? data[sectionKey]
+            : (STAMPED_DEFAULTS.get(sectionKey) || []);
+        const key = stickerNameKey(en);
+        if (current.some(r => stickerNameKey(r?.nameEn) === key)) {
+            outcome = 'duplicate';
+            return;
+        }
+        const clean = cleanRows(sectionKey, [...current, { nameEn: en, nameEs: String(nameEs || '').trim() }]);
+        tx.set(STICKER_LISTS_DOC_REF(), {
+            [sectionKey]: clean,
+            updatedAt: serverTimestamp(),
+            updatedBy: byName || 'unknown',
+        }, { merge: true });
+    });
+    if (outcome === 'added') {
+        recordAudit({
+            action: 'sticker_lists.add_item',
+            actorName: byName || 'unknown',
+            targetType: 'sticker_list',
+            targetId: sectionKey,
+            details: { sectionKey, nameEn: en },
+        });
+    }
+    return outcome;
+}
+
+// Move ONE row between sections in a single atomic write — both fields live
+// on the same doc, so the append-to-target and remove-from-source can never
+// land separately (audit 2026-07-26 finding 2: the old two-step move could
+// strand the row in both sections, or — raced by a stale debounced save —
+// in neither). Dedupes by normalized name in the target.
+export async function moveStickerRow(fromKey, toKey, row, byName) {
+    assertSectionKey(fromKey);
+    assertSectionKey(toKey);
+    if (fromKey === toKey || !row?.id) return false;
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(STICKER_LISTS_DOC_REF());
+        const data = snap.exists() ? snap.data() : {};
+        const from = Array.isArray(data[fromKey]) ? data[fromKey] : (STAMPED_DEFAULTS.get(fromKey) || []);
+        const to   = Array.isArray(data[toKey])   ? data[toKey]   : (STAMPED_DEFAULTS.get(toKey)   || []);
+        // Prefer the SERVER's copy of the row (it may carry fields — e.g.
+        // shelfLifeDays — the caller's edit-draft stripped); fall back to
+        // the caller's row when the server hasn't seen it yet.
+        const live = from.find(r => r?.id === row.id) || row;
+        const nameKey = stickerNameKey(live.nameEn);
+        const dupe = to.some(r => stickerNameKey(r?.nameEn) === nameKey);
+        const nextFrom = cleanRows(fromKey, from.filter(r => r?.id !== row.id));
+        const nextTo = dupe ? cleanRows(toKey, to) : cleanRows(toKey, [...to, live]);
+        tx.set(STICKER_LISTS_DOC_REF(), {
+            [fromKey]: nextFrom,
+            [toKey]: nextTo,
+            updatedAt: serverTimestamp(),
+            updatedBy: byName || 'unknown',
+        }, { merge: true });
+    });
+    recordAudit({
+        action: 'sticker_lists.move_item',
+        actorName: byName || 'unknown',
+        targetType: 'sticker_list',
+        targetId: toKey,
+        details: { fromKey, toKey, rowId: row.id, nameEn: row.nameEn || '' },
+    });
+    return true;
 }
 
 // Generate a stable, readable ID from a name (slug-like). Includes

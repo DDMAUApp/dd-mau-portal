@@ -65,7 +65,10 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
             for (const sk of changedSections) {
                 const rows = (lists[sk] || []).map((r) => {
                     const v = valueFor(sk, r);
-                    const n = v === '' ? null : Math.min(60, Math.max(1, parseInt(v, 10) || 0));
+                    // '' OR 0 = clear back to the category default ("0" used
+                    // to silently save as 1 day via the clamp).
+                    const parsed = parseInt(v, 10) || 0;
+                    const n = v === '' || parsed <= 0 ? null : Math.min(60, parsed);
                     const row = { ...r };
                     if (n) row.shelfLifeDays = n; else delete row.shelfLifeDays;
                     return row;

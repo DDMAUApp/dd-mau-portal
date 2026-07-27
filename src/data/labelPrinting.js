@@ -1886,8 +1886,17 @@ export function renderFreeTextXml(freePayload) {
 // (Cross-device concurrency is unchanged — the printers already handle
 // one job per device at a time fine.)
 let _printChain = Promise.resolve();
+// Count of print jobs accepted but not yet settled (queued + in flight).
+// The modal checks this before sending: a re-tap while a job is still
+// working gets an explicit "still sending — print again too?" confirm
+// instead of silently queuing a second batch that surprises the cook when
+// the printer wakes (2026-07-26 audit finding 1). Read-only export — the
+// queue itself must never drop or retry a job.
+let _pendingPrints = 0;
+export function pendingPrintCount() { return _pendingPrints; }
 function serializePrint(fn) {
-    const run = _printChain.then(fn, fn);
+    _pendingPrints++;
+    const run = _printChain.then(fn, fn).finally(() => { _pendingPrints = Math.max(0, _pendingPrints - 1); });
     _printChain = run.then(() => {}, () => {});
     return run;
 }
@@ -2141,6 +2150,18 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
                 } catch { /* asleep or off — maybe cold-waking */ }
                 // eslint-disable-next-line no-await-in-loop
                 if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
+            }
+            // Either way, tell the warm-state machinery what the probe just
+            // learned (2026-07-26 audit): a failed probe used to leave the
+            // status strip GREEN (warm state was only ever written by the
+            // keep-alive), so an asleep printer showed "ready", the ~11s
+            // silent failure repeated on every re-tap, and the offline
+            // confirm guard never engaged.
+            const reachKey = `${printer.ip}:${port}`;
+            _epsonWarmAt.set(reachKey, Date.now());
+            _epsonReachable.set(reachKey, probeOk);
+            if (printer.id && printer.slot) {
+                _setWarm(`${printer.id}_${printer.slot}`, probeOk ? 'ready' : 'offline');
             }
             if (!probeOk) {
                 finalize({ ok: false, error: 'timeout' });

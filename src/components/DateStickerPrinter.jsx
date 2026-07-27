@@ -47,6 +47,9 @@ import {
     subscribeStickerLists,
     saveStickerList,
     saveSections,
+    addStickerRow,
+    moveStickerRow,
+    stickerNameKey,
     makeStickerRowId,
     getStampedDefaults,
     STICKER_SECTIONS,
@@ -202,28 +205,20 @@ export default function DateStickerPrinter({
 
     // Move a row into a DIFFERENT category (Andrew 2026-07-24: "when I press
     // edit I want to be able to move items to different categories").
-    // This half appends the row to the TARGET section; the SOURCE section's
-    // editor removes it via its own delete machinery (deletedIdsRef +
-    // debounced save) once this resolves true — so a failed target save
-    // never loses the row from its original home.
-    const handleMoveRow = useCallback(async (row, toKey) => {
+    // 2026-07-26 audit fix: the old two-step (append to target, then let the
+    // source's debounced delete land separately) could strand the row in
+    // both sections — or, raced by a stale pending save, in neither.
+    // moveStickerRow commits BOTH section arrays in ONE transaction; a
+    // same-name row already in the target makes the move a dedupe.
+    const handleMoveRow = useCallback(async (row, fromKey, toKey) => {
         try {
-            const target = Array.isArray(stickerLists?.[toKey])
-                ? stickerLists[toKey]
-                : getStampedDefaults(toKey);
-            const nn = (s) => String(s || '').trim().toLowerCase();
-            const already = target.some(r => nn(r.nameEn) === nn(row.nameEn));
-            if (!already) {
-                await saveStickerList(toKey, [...target, row], staffName);
-            }
-            // already-in-target → treat the move as a dedupe: source still
-            // removes its copy, nothing added twice.
+            await moveStickerRow(fromKey, toKey, row, staffName);
             return true;
         } catch (e) {
             console.warn('handleMoveRow failed:', e);
             return false;
         }
-    }, [stickerLists, staffName]);
+    }, [staffName]);
 
     // Admin-created custom items only — static menu items no longer
     // appear on this page (2026-06-11). Synthesized shape so the
@@ -246,10 +241,26 @@ export default function DateStickerPrinter({
     // "protein" or "salsa" matches the whole group.
     const searchIndex = useMemo(() => {
         const base = [];
+        // Precompute each row's normalized search haystack ONCE here
+        // (2026-07-26 perf audit): it used to be rebuilt + NFD-normalized
+        // per row per keystroke inside the filter pass — a few ms per
+        // keystroke on old kitchen iPads for pure throwaway work.
+        const stampHay = (row) => {
+            row.hay = normalize([
+                row.nameEn, row.nameEs,
+                row.descEn, row.descEs,
+                row.category, row.categoryEs,
+                row.allergens || '',
+                (row.usedIn || []).join(' '),
+                (row.usedInEs || []).join(' '),
+                row.componentKind || '',
+            ].filter(Boolean).join(' '));
+            return row;
+        };
         for (const section of stickerSections) {
             const rows = stickerLists?.[section.key] || section.defaults;
             for (const [i, row] of rows.entries()) {
-                base.push({
+                base.push(stampHay({
                     id: `sec::${section.key}::${row.id || i}`,
                     kind: 'component',
                     componentKind: section.kind,
@@ -259,11 +270,15 @@ export default function DateStickerPrinter({
                     descEs: row.descEs || '',
                     category: section.titleEn,
                     categoryEs: section.titleEs,
-                });
+                    // Carry the per-item shelf life so printing from SEARCH
+                    // results uses the same use-by default as the browse grid
+                    // (audit finding 4: same item, different date by path).
+                    ...(row.shelfLifeDays ? { shelfLifeDays: row.shelfLifeDays } : {}),
+                }));
             }
         }
         for (const ci of customItems) {
-            base.push({
+            base.push(stampHay({
                 id: `mi::${ci.slug}`,
                 kind: 'menuItem',
                 menuItemId: ci.slug,
@@ -274,9 +289,9 @@ export default function DateStickerPrinter({
                 allergens: ci.allergens || '',
                 isCustom: true,
                 usedIn: [],
-            });
+            }));
             for (const c of (ci.components || [])) {
-                base.push({
+                base.push(stampHay({
                     id: `cpcustom::${ci.slug}::${c.id}`,
                     kind: 'component',
                     componentKind: c.kind,
@@ -286,7 +301,7 @@ export default function DateStickerPrinter({
                     descEs: c.descEs || '',
                     usedIn: [ci.nameEn],
                     usedInEs: [ci.nameEs || ci.nameEn],
-                });
+                }));
             }
         }
         return base;
@@ -338,17 +353,9 @@ export default function DateStickerPrinter({
     // every component whose parents include a pho dish.
     const rowMatchesSubstring = (row) => {
         if (!hasQuery) return true;
-        const hayParts = [
-            row.nameEn, row.nameEs,
-            row.descEn, row.descEs,
-            row.category, row.categoryEs,
-            row.allergens || '',
-            (row.usedIn || []).join(' '),
-            (row.usedInEs || []).join(' '),
-            row.componentKind || '',
-        ];
-        const hay = normalize(hayParts.filter(Boolean).join(' '));
-        return haystackMatches(hay, queryTokens);
+        // `hay` is precomputed in the searchIndex memo — per keystroke this
+        // is now just the substring scan, no string building/normalizing.
+        return haystackMatches(row.hay || '', queryTokens);
     };
     // Final per-row match — substring OR AI semantic match.
     const rowMatches = (row) => {
@@ -378,6 +385,22 @@ export default function DateStickerPrinter({
         return { items, components };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchIndex, hasQuery, queryTokens, aiIdSet]);
+
+    // Grid-shaped search hits, memoized (2026-07-26 perf audit): the inline
+    // `.map(c => ({...c}))` minted fresh cell objects per keystroke and
+    // defeated StickerCell's memo for every visible match.
+    const searchGridComponents = useMemo(
+        () => (flatResults.components || []).map(c => ({ ...c, kind: c.componentKind || 'side' })),
+        [flatResults]);
+    const handleSearchPrint = useCallback((c) => handlePrintComponent({
+        kind: c.kind,
+        nameEn: c.nameEn,
+        nameEs: c.nameEs,
+        descEn: c.descEn,
+        descEs: c.descEs,
+        // Same use-by default as the browse grid (audit finding 4).
+        ...(c.shelfLifeDays ? { shelfLifeDays: c.shelfLifeDays } : {}),
+    }, null), [handlePrintComponent]);
 
     // Browse grouping (no-query view) — by category.
     const grouped = useMemo(() => {
@@ -466,6 +489,19 @@ export default function DateStickerPrinter({
         });
     }, []);
     const handleBrowsePrint = useCallback((c) => handlePrintComponent(c, null), [handlePrintComponent]);
+
+    // Anyone-can-add (2026-07-26 audit fix): the add now goes through a
+    // Firestore TRANSACTION (addStickerRow) instead of rewriting the full
+    // array from client state — two cooks adding to the same category at
+    // the same moment can no longer clobber each other's item.
+    const handleAddItem = useCallback(async (sectionKey, nameEn, nameEs) => {
+        try {
+            return await addStickerRow(sectionKey, { nameEn, nameEs }, staffName);
+        } catch (e) {
+            console.warn('addStickerRow failed:', e);
+            return 'error';
+        }
+    }, [staffName]);
 
     return (
         <div className="p-4 pb-bottom-nav">
@@ -691,17 +727,11 @@ export default function DateStickerPrinter({
                                         grid as browse (2026-07-24) — tap the
                                         sticker, it prints. */}
                                     <StickerGrid
-                                        components={flatResults.components.map(c => ({ ...c, kind: c.componentKind || 'side' }))}
-                                        toneFor={(c) => COMPONENT_KIND_TONE[c.kind] || COMPONENT_KIND_TONE.side}
+                                        components={searchGridComponents}
+                                        toneFor={searchToneFor}
                                         isEs={isEs}
                                         tx={tx}
-                                        onPrint={(c) => handlePrintComponent({
-                                            kind: c.kind,
-                                            nameEn: c.nameEn,
-                                            nameEs: c.nameEs,
-                                            descEn: c.descEn,
-                                            descEs: c.descEs,
-                                        }, null)}
+                                        onPrint={handleSearchPrint}
                                     />
                                 </section>
                             )}
@@ -770,6 +800,7 @@ export default function DateStickerPrinter({
                             editMode={editMode}
                             onSaveSection={handleSaveSection}
                             onMoveRow={handleMoveRow}
+                            onAddItem={handleAddItem}
                             sectionFilter={sectionFilter}
                             sections={stickerSections}
                         />
@@ -1061,7 +1092,7 @@ const StickerCell = memo(function StickerCell({ component, tone, isEs, tx, onPri
             {subCount > 0 && (
                 <button
                     type="button"
-                    onClick={onToggleSub}
+                    onClick={() => onToggleSub?.(component.id)}
                     aria-label={tx(`Show ${subCount} ingredients`, `Ver ${subCount} ingredientes`)}
                     aria-expanded={subOpen}
                     className={`absolute -top-1.5 -right-1.5 min-w-[26px] h-[22px] px-1 rounded-full text-[10px] font-black border shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${subOpen
@@ -1080,6 +1111,10 @@ const StickerCell = memo(function StickerCell({ component, tone, isEs, tx, onPri
 // one-open-at-a-time sub-recipe ingredients panel.
 function StickerGrid({ components, toneFor, isEs, tx, onPrint }) {
     const [subOpenId, setSubOpenId] = useState(null);
+    // Stable id-based toggle (2026-07-26 perf audit): the per-cell arrow
+    // closure minted a new function per cell per render, defeating
+    // StickerCell's memo in EVERY grid on the page.
+    const toggleSub = useCallback((id) => setSubOpenId((prev) => (prev === id ? null : id)), []);
     const open = subOpenId ? components.find((c) => c.id === subOpenId) : null;
     const openSub = open ? findSubRecipe(open.nameEn) : null;
     return (
@@ -1104,7 +1139,7 @@ function StickerGrid({ components, toneFor, isEs, tx, onPrint }) {
                             onPrint={onPrint}
                             subCount={sub ? sub.ingredients.length : 0}
                             subOpen={subOpenId === c.id}
-                            onToggleSub={() => setSubOpenId((prev) => (prev === c.id ? null : c.id))}
+                            onToggleSub={toggleSub}
                         />
                     );
                 })}
@@ -1147,7 +1182,7 @@ function StickerGrid({ components, toneFor, isEs, tx, onPrint }) {
 //
 // All copy comes from src/data/buildSheet.js — that's the single
 // source of truth. Update once, both surfaces update.
-function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection, onMoveRow, sectionFilter = null, sections = STICKER_SECTIONS }) {
+function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection, onMoveRow, onAddItem, sectionFilter = null, sections = STICKER_SECTIONS }) {
     // Andrew 2026-06-11: "too many items. alot of doubles… categorize
     // it by veggie, protein, noodles, rice and so on. we dont need the
     // menu items unless its things like sweets and snacks." The browse
@@ -1184,6 +1219,7 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
                     editMode={editMode}
                     onSaveSection={onSaveSection}
                     onMoveRow={onMoveRow}
+                    onAddItem={onAddItem}
                     allSections={sections}
                 />
             ))}
@@ -1210,7 +1246,7 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
 // useCallback'd; items arrays identity-stable via STAMPED_DEFAULTS).
 const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     sectionKey, titleEn, titleEs, items, kind, isEs, tx, onPrint,
-    editMode = false, onSaveSection, onMoveRow, allSections = STICKER_SECTIONS,
+    editMode = false, onSaveSection, onMoveRow, onAddItem, allSections = STICKER_SECTIONS,
 }) {
     const tone = COMPONENT_KIND_TONE[kind] || COMPONENT_KIND_TONE.side;
 
@@ -1235,28 +1271,29 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     // We now stash the pending flush in a ref and synchronously fire
     // it from flushPendingSave() before tearing the draft state down.
     const saveTimer = useRef(null);
-    const pendingFlush = useRef(null);
-    const queueSave = (next) => {
-        pendingFlush.current = () => {
-            if (onSaveSection) onSaveSection(sectionKey, next);
-        };
+    const pendingDirty = useRef(false);
+    // 2026-07-26 audit fix (finding 2): the flush used to save the array
+    // CAPTURED at keystroke time. If a subscription echo merged new rows
+    // into `draft` inside the 600ms window (e.g. a row moved IN from
+    // another section/device), the stale payload rewrote the section
+    // WITHOUT them — the moved row vanished from both sections. Flush now
+    // reads the LIVE draft through a ref.
+    const draftRef = useRef(null);
+    const queueSave = () => {
+        pendingDirty.current = true;
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(() => {
-            const run = pendingFlush.current;
             saveTimer.current = null;
-            pendingFlush.current = null;
-            if (run) run();
+            flushPendingSave();
         }, 600);
     };
     // Idempotent — no-op if nothing's pending. Called from the
     // editMode→false branch below AND from the unmount cleanup.
     const flushPendingSave = () => {
-        if (!saveTimer.current) return;
-        clearTimeout(saveTimer.current);
-        saveTimer.current = null;
-        const run = pendingFlush.current;
-        pendingFlush.current = null;
-        if (run) run();
+        if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+        if (!pendingDirty.current) return;
+        pendingDirty.current = false;
+        if (onSaveSection && draftRef.current) onSaveSection(sectionKey, draftRef.current);
     };
 
     useEffect(() => {
@@ -1272,9 +1309,15 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
             // Leaving edit mode resets the per-session deletion log;
             // next time they re-enter we trust the live items[].
             deletedIdsRef.current = new Set();
-            setDraft(normalizeForEdit(items));
+            const next = normalizeForEdit(items);
+            draftRef.current = next;
+            setDraft(next);
         } else {
-            setDraft(prev => mergeDrafts(prev, normalizeForEdit(items), deletedIdsRef.current));
+            setDraft(prev => {
+                const merged = mergeDrafts(prev, normalizeForEdit(items), deletedIdsRef.current);
+                draftRef.current = merged;
+                return merged;
+            });
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [items, editMode]);
@@ -1294,29 +1337,35 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     const updateRow = (id, patch) => {
         setDraft(prev => {
             const next = prev.map(r => r.id === id ? { ...r, ...patch } : r);
-            queueSave(next);
+            draftRef.current = next;
             return next;
         });
+        queueSave();
     };
-    const deleteRow = (id) => {
+    const deleteRow = (id, { save = true } = {}) => {
         // Remember this deletion so mergeDrafts doesn't undo it on
         // the next live subscription tick (before our save lands).
         deletedIdsRef.current.add(id);
         setDraft(prev => {
             const next = prev.filter(r => r.id !== id);
-            queueSave(next);
+            draftRef.current = next;
             return next;
         });
+        if (save) queueSave();
     };
-    // Cross-category move: append to the target first (parent handles it);
-    // only remove locally once that succeeded, reusing the delete machinery
-    // so a subscription echo can't resurrect the moved row here.
+    // Cross-category move: the parent commits BOTH sections in one atomic
+    // Firestore write (moveStickerRow transaction), so this side only
+    // updates the local draft — no debounced source save needed, and a
+    // stale echo can't resurrect the row thanks to deletedIdsRef.
     const moveRow = async (id, toKey) => {
         if (!onMoveRow || toKey === sectionKey) return;
         const row = draft.find(r => r.id === id);
         if (!row || !String(row.nameEn || '').trim()) return; // unnamed new row — nothing to move
-        const ok = await onMoveRow(row, toKey);
-        if (ok) deleteRow(id);
+        // Any pending rename in THIS section must land first, or the move
+        // transaction reads the server's pre-rename copy of the row.
+        flushPendingSave();
+        const ok = await onMoveRow(row, sectionKey, toKey);
+        if (ok) deleteRow(id, { save: false });
     };
     const addRow = () => {
         setDraft(prev => {
@@ -1427,7 +1476,8 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
                 isEs={isEs}
                 tx={tx}
                 existing={items}
-                onAdd={(nameEn, nameEs) => onSaveSection?.(sectionKey, [...items, { nameEn, nameEs }])}
+                sectionKey={sectionKey}
+                onAdd={onAddItem}
             />
         </section>
     );
@@ -1559,20 +1609,34 @@ function CategoryEditor({ sections, stickerLists, staffName, isEs, tx }) {
 // Collapsed "+ Add item" dashed button → tiny inline form (EN + optional ES
 // name). Saves the row to the section's live list; the subscription echoes
 // it back into the grid (in its alphabetical spot) within a second.
-function AddItemCell({ isEs, tx, existing, onAdd }) {
+function AddItemCell({ isEs, tx, existing, sectionKey, onAdd }) {
     const [open, setOpen] = useState(false);
     const [nameEn, setNameEn] = useState('');
     const [nameEs, setNameEs] = useState('');
-    const save = () => {
+    const [busy, setBusy] = useState(false);
+    const save = async () => {
         const en = nameEn.trim();
-        if (!en) return;
-        const nn = (s) => String(s || '').trim().toLowerCase();
-        if ((existing || []).some(r => nn(r.nameEn) === nn(en))) {
+        if (!en || busy) return;
+        // Quick local check (accent/case-insensitive — "Jalapeño" ==
+        // "jalapeno"); the transaction re-checks against the live server
+        // array, so a race with another device is caught there too.
+        if ((existing || []).some(r => stickerNameKey(r.nameEn) === stickerNameKey(en))) {
             window.alert(tx('That item is already in this category.', 'Ese artículo ya está en esta categoría.'));
             return;
         }
-        onAdd(en, nameEs.trim());
-        setNameEn(''); setNameEs(''); setOpen(false);
+        setBusy(true);
+        try {
+            const outcome = await onAdd(sectionKey, en, nameEs.trim());
+            if (outcome === 'duplicate') {
+                window.alert(tx('That item is already in this category.', 'Ese artículo ya está en esta categoría.'));
+                return;
+            }
+            if (outcome === 'error') {
+                window.alert(tx('Could not save — try again.', 'No se pudo guardar — inténtalo de nuevo.'));
+                return;
+            }
+            setNameEn(''); setNameEs(''); setOpen(false);
+        } finally { setBusy(false); }
     };
     if (!open) {
         return (
@@ -1592,9 +1656,9 @@ function AddItemCell({ isEs, tx, existing, onAdd }) {
                 onKeyDown={(e) => e.key === 'Enter' && save()}
                 placeholder={tx('Spanish (optional)', 'Español (opcional)')}
                 className="flex-1 min-w-[8rem] px-2 py-2 text-sm border border-dd-line rounded-lg bg-white" />
-            <button type="button" onClick={save} disabled={!nameEn.trim()}
+            <button type="button" onClick={save} disabled={!nameEn.trim() || busy}
                 className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold disabled:opacity-40 active:scale-95">
-                {tx('Save', 'Guardar')}
+                {busy ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
             </button>
             <button type="button" onClick={() => { setOpen(false); setNameEn(''); setNameEs(''); }}
                 className="px-2.5 py-2 rounded-lg bg-white border border-dd-line text-dd-text-2 text-xs font-bold active:scale-95">
@@ -1604,11 +1668,16 @@ function AddItemCell({ isEs, tx, existing, onAdd }) {
     );
 }
 
-// Strip the build-sheet rows down to the four editable fields + id
-// so the edit form has clean state. Generates an id if the source
-// row lacks one (hardcoded defaults sometimes do).
+// Normalize rows for the edit form: guarantee the four editable fields +
+// id, but PRESERVE everything else on the row (spread first). Stripping to
+// only the editable fields silently wiped `shelfLifeDays` for the whole
+// section on every Edit-Mode save — the admin would fill the Shelf life
+// table, fix one typo in Edit Mode, and lose all of it (audit 2026-07-26
+// finding 1; this predates v317 and likely caused "most of them were
+// wrong"). Generates an id if the source row lacks one.
 function normalizeForEdit(items) {
     return (items || []).map((row, i) => ({
+        ...row,
         id:     row.id || `tmp-${i}-${row.nameEn || ''}`,
         nameEn: row.nameEn || '',
         nameEs: row.nameEs || row.nameEn || '',
@@ -1739,4 +1808,14 @@ const KIND_TO_CATEGORY = Object.freeze({
     broth:   'Stocks & Broths',
     side:    'Other',
     garnish: 'Vegetables',
+    // 2026-07-26 audit: the newer kinds fell through to 'Other' implicitly;
+    // explicit entries so a future category-default change can't surprise.
+    drink:    'Other',
+    other:    'Other',
+    chemical: 'Other',
+    status:   'Other',
 });
+
+// Stable tone lookup for the search-results grid (identity-stable so the
+// memo'd StickerGrid/StickerCell props don't churn per render).
+const searchToneFor = (c) => COMPONENT_KIND_TONE[c.kind] || COMPONENT_KIND_TONE.side;

@@ -38,6 +38,7 @@ import {
     subscribePrinterWarmState,
     prefetchPdfLib,
     getCachedPrinterConfig,
+    pendingPrintCount,
 } from '../data/labelPrinting';
 import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
@@ -278,6 +279,19 @@ export default function PrintLabelModal({
                 'La impresora no responde. ¿Intentar imprimir de todos modos?',
             ));
             if (!goAnyway) return;
+        }
+        // 2026-07-26 audit: a job can still be working (or waiting on a
+        // sleeping printer) after the modal's optimistic close. A second
+        // tap used to queue silently behind it — when the printer woke,
+        // BOTH batches came out and it looked like a double-print. Make
+        // the second tap an informed choice; never auto-drop the queued
+        // job (two batches on purpose is legitimate).
+        if (pendingPrintCount() > 0) {
+            const printToo = window.confirm(tx(
+                'The last print is still being sent to the printer. Print this one too?',
+                'La impresión anterior todavía se está enviando. ¿Imprimir esta también?',
+            ));
+            if (!printToo) return;
         }
         cancelledRef.current = false;
         setPrinting(true);
