@@ -149,6 +149,7 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                     { k: 'showIngredients',  en: 'Ingredients',     es: 'Ingredientes' },
                                     { k: 'showNotes',        en: 'Notes',           es: 'Notas' },
                                     { k: 'showFooter',       en: 'Footer (DD MAU)', es: 'Pie' },
+                                    { k: 'showUseByBand',    en: 'Use-by band (SAT)', es: 'Banda de caducidad' },
                                 ].map(t => (
                                     <ToggleRow key={t.k}
                                         checked={draft[t.k] !== false}

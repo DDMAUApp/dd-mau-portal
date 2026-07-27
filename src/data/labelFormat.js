@@ -40,6 +40,7 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
     showIngredients:  true,
     showNotes:        true,
     showFooter:       true,
+    showUseByBand:    true,   // giant "SAT" / discard-time band
 
     // Size scaling
     dateNumberScale: 5,    // Epson: width=height=5. Brother CSS: ~28% of label width
@@ -158,7 +159,7 @@ export async function saveLabelFormat({ format, byName }) {
     const safe = {};
     const BOOL_FIELDS = ['showPreppedLabel', 'showTime', 'showTitle', 'showUseBy',
         'showByName', 'showLocation', 'showAllergens', 'showIngredients',
-        'showNotes', 'showFooter', 'showUseByWeekday'];
+        'showNotes', 'showFooter', 'showUseByWeekday', 'showUseByBand'];
     const STRING_FIELDS = ['preppedLabelTextEn', 'preppedLabelTextEs',
         'footerText', 'dateFormat', 'timeFormat'];
     const NUMBER_FIELDS = ['dateNumberScale', 'titleScale', 'useByBandScale', 'defaultShelfLifeDays'];
