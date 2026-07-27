@@ -15,7 +15,9 @@
 //     the pop-up greets them when they open up.
 //
 // Doc shape: { text, title?, audience ('all'|'foh'|'boh'|'managers'|
-//   'webster'|'maryland'), includeManagers, mediaUrl?, mediaPath?,
+//   'webster'|'maryland'|'custom'), audienceCustom? (names, when audience
+//   === 'custom' — Andrew 2026-07-26: "pick certain staff not just
+//   groups"), includeManagers, mediaUrl?, mediaPath?,
 //   translations?, sourceLang?, ackRequired, ackDeadline?, createdBy,
 //   createdAt, active, acks: { [staffName]: ISO } }
 import { db } from '../firebase';
@@ -40,6 +42,10 @@ export function audienceMatches(a, staff) {
     switch (a?.audience || 'all') {
         case 'all': return true;
         case 'managers': return isMgr(staff);
+        // Hand-picked staff — exact name match only (names are the app's
+        // join key). No err-toward-showing here: the poster chose the
+        // exact list, so nobody outside it should get the pop-up.
+        case 'custom': return Array.isArray(a?.audienceCustom) && a.audienceCustom.includes(staff.name);
         case 'foh':
         case 'boh': {
             const side = staff.scheduleSide;
@@ -94,7 +100,7 @@ export async function ensureAnnouncementsChannel(staffList, byName) {
 // Returns { id, chatId, recipients }.
 export async function postAnnouncement({
     text, staffName, viewer, staffList,
-    audience = 'all', includeManagers = false,
+    audience = 'all', customNames = [], includeManagers = false,
     ackRequired = false, ackDeadline = null,
     media = null,                       // { url, path, mime } | null
     translations = null, sourceLang = null, translationStatus = null,
@@ -102,6 +108,16 @@ export async function postAnnouncement({
 }) {
     const body = String(text || '').trim();
     if (!body && !media) throw new Error('empty announcement');
+    // Hand-picked audience (Andrew 2026-07-26): exact names, deduped.
+    const audienceCustom = audience === 'custom'
+        ? [...new Set((customNames || []).filter(Boolean))]
+        : null;
+    if (audience === 'custom' && audienceCustom.length === 0) {
+        throw new Error('pick at least one staff member');
+    }
+    // One audience object threaded through matching, the chat copy's
+    // audienceNames, and the push fan-out — they must never disagree.
+    const aud = { audience, includeManagers, ...(audienceCustom ? { audienceCustom } : {}) };
 
     const translationsField = translations
         ? { translations, sourceLang, translationStatus: translationStatus || 'reviewed' }
@@ -111,6 +127,7 @@ export async function postAnnouncement({
     const annRef = await addDoc(collection(db, 'announcements'), {
         text: body,
         audience,
+        ...(audienceCustom ? { audienceCustom } : {}),
         includeManagers: !!includeManagers,
         audienceLabel: audienceLabel || audience,
         ...(media ? { mediaUrl: media.url, mediaPath: media.path, mediaType: media.mime } : {}),
@@ -128,7 +145,7 @@ export async function postAnnouncement({
     // audienceNames rides on the message so the ack dashboard counts the
     // REAL audience (the channel's members are the whole staff — an
     // FOH-only announcement must not show BOH as "pending" forever).
-    const audienceNames = audienceRecipients({ audience, includeManagers }, staffList)
+    const audienceNames = audienceRecipients(aud, staffList)
         .filter(n => n !== staffName);
     const chatId = await ensureAnnouncementsChannel(staffList, staffName);
     const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), {
@@ -167,7 +184,7 @@ export async function postAnnouncement({
 
     // 3. Push fan-out to the audience (closed apps get the ping; the
     // pop-up greets them at open). Best-effort per recipient.
-    const recipients = audienceRecipients({ audience, includeManagers }, staffList)
+    const recipients = audienceRecipients(aud, staffList)
         .filter(n => n !== staffName);
     for (const r of recipients) {
         notifyStaff({

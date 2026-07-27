@@ -778,13 +778,21 @@ export function buildLabelPayload({
     // Date: largest magnification that keeps the whole date on one line.
     const fitDateScale = Math.max(2, Math.min(cfgDateScale,
         Math.floor(cols / Math.max(1, prepDateNumberStr.length))));
-    // Title: keep at least ~8 chars per line of room before shrinking.
-    const fitTitleScale = Math.max(1, Math.min(cfgTitleScale,
-        Math.max(1, Math.floor(cols / 8))));
-    const titleWrap = Math.max(6, Math.floor(cols / fitTitleScale));
-
+    // Title: fit to the ACTUAL name (Andrew 2026-07-26 — "make the item
+    // font larger"; the old flat floor(cols/8) rule capped the title at
+    // scale 4 on the 58 mm roll no matter what). The binding constraint
+    // is the LONGEST WORD: wrapWords never splits inside a word, so the
+    // scale must let the longest word fit one line. Short names ("PHO")
+    // can now print huge; long words auto-shrink — never clipped.
     const titleLine = (isEs && itemNameEs) ? itemNameEs : itemName;
-    const titleLines = wrapWords(String(titleLine || 'Item').toUpperCase(), titleWrap);
+    const titleUpper = String(titleLine || 'Item').toUpperCase();
+    const longestWord = Math.max(1,
+        ...titleUpper.split(/\s+/).filter(Boolean).map(w => w.length));
+    const fitTitleScale = Math.max(1, Math.min(cfgTitleScale,
+        Math.floor(cols / longestWord)));
+    const titleWrap = Math.max(longestWord, Math.floor(cols / fitTitleScale));
+
+    const titleLines = wrapWords(titleUpper, titleWrap);
 
     // Big prep date at the top — for FIFO scanning. Format-aware:
     // admin can override the "PREPPED" prefix text (e.g. "MADE",
@@ -1021,7 +1029,9 @@ function renderPrepLabelBody(payload) {
 
     // ── Item title (admin-scalable) ──────────────────────────
     if (payload.titleLines && payload.titleLines.length > 0) {
-        const titleScale = Math.max(1, Math.min(4, Number(payload.titleScale) || 2));
+        // Epson supports 1..8 (the buildLabelPayload fit logic already
+        // shrank this to what the roll + item name can hold).
+        const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
         lines.push(`<text width="${titleScale}" height="${titleScale}"/>`);
         for (const t of payload.titleLines) {
             lines.push(`<text>${escapeXml(t)}&#10;</text>`);

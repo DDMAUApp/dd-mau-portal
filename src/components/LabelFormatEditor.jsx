@@ -146,8 +146,11 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                 label={tx('Item title size', 'Tamaño del título')}
                                 value={draft.titleScale}
                                 onChange={(v) => update({ titleScale: v })}
-                                min={1} max={4} step={1}
-                                hint={`Epson scale = ${draft.titleScale}`} />
+                                min={1} max={8} step={1}
+                                hint={tx(
+                                    `Epson scale = ${draft.titleScale} · long names auto-shrink to fit the roll`,
+                                    `Escala Epson = ${draft.titleScale} · nombres largos se reducen para caber`,
+                                )} />
                         </FieldsetCard>
 
                         {/* Text content */}

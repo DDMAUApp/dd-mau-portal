@@ -27,7 +27,9 @@ export default function ChatAnnouncementComposer({
     const canPost = canPostAnnouncements(viewer, isAdmin, isManager);
 
     const [audience, setAudience] = useState('all'); // who gets the pop-up
-    const [customChannels, setCustomChannels] = useState([]); // channelIds (for custom)
+    // Hand-picked staff names, for audience === 'custom' (Andrew
+    // 2026-07-26: "pick certain staff not just groups").
+    const [customNames, setCustomNames] = useState(() => new Set());
     const [body, setBody] = useState('');
     const [photo, setPhoto] = useState(null); // { file, previewUrl }
     const [ackRequired, setAckRequired] = useState(false);
@@ -150,9 +152,26 @@ export default function ChatAnnouncementComposer({
             { value: 'managers', label: tx('🧑‍💼 Managers only', '🧑‍💼 Solo gerentes') },
             { value: 'webster',  label: tx('🏠 Webster only', '🏠 Solo Webster') },
             { value: 'maryland', label: tx('🏠 Maryland Hts only', '🏠 Solo Maryland') },
+            { value: 'custom',   label: tx('🎯 Pick specific staff…', '🎯 Elegir personal específico…') },
         ];
         return opts;
     }, [isEs]);
+
+    // Active staff, alphabetical — the pick-list for the custom audience.
+    const pickableStaff = useMemo(() => (
+        (staffList || [])
+            .filter(s => s?.name && s.active !== false)
+            .map(s => s.name)
+            .sort((a, b) => a.localeCompare(b))
+    ), [staffList]);
+
+    const toggleCustomName = (name) => {
+        setCustomNames(prev => {
+            const next = new Set(prev);
+            if (next.has(name)) next.delete(name); else next.add(name);
+            return next;
+        });
+    };
 
     if (!canPost) {
         return (
@@ -209,17 +228,25 @@ export default function ChatAnnouncementComposer({
                 ? translation.trim()
                 : null;
 
+            // Custom audience label = the actual names (truncated) so the
+            // chat copy + ack dashboard read naturally.
+            const pickedNames = [...customNames];
+            const audienceLabel = audience === 'custom'
+                ? '🎯 ' + (pickedNames.slice(0, 4).join(', ') + (pickedNames.length > 4 ? ` +${pickedNames.length - 4}` : ''))
+                : (audienceOptions.find(o => o.value === audience)?.label || audience);
+
             const res = await postAnnouncement({
                 text: body,
                 staffName, viewer, staffList,
                 audience,
-                includeManagers: crosspostManagers && audience !== 'managers',
+                customNames: pickedNames,
+                includeManagers: crosspostManagers && audience !== 'managers' && audience !== 'custom',
                 ackRequired, ackDeadline,
                 media,
                 translations: reviewedTranslation ? { [targetLang]: reviewedTranslation } : null,
                 sourceLang: reviewedTranslation ? sourceLang : null,
                 translationStatus: reviewedTranslation ? 'reviewed' : (skipTranslation ? 'skipped' : null),
-                audienceLabel: audienceOptions.find(o => o.value === audience)?.label || audience,
+                audienceLabel,
             });
             onPosted?.({ announcementGroupId: res.id, recipientCount: res.recipients.length });
 
@@ -264,7 +291,42 @@ export default function ChatAnnouncementComposer({
                                 <option key={o.value} value={o.value}>{o.label}</option>
                             ))}
                         </select>
-                        {audience !== 'managers' && (
+                        {audience === 'custom' && (
+                            <div className="mt-2 rounded-lg border border-dd-line bg-dd-bg/50 p-2 max-h-52 overflow-y-auto">
+                                <div className="flex items-center justify-between px-1 pb-1.5">
+                                    <span className="text-[11px] font-bold text-dd-text-2">
+                                        {customNames.size > 0
+                                            ? tx(`${customNames.size} selected`, `${customNames.size} seleccionados`)
+                                            : tx('Tap the staff who should get this', 'Toca al personal que debe recibirlo')}
+                                    </span>
+                                    {customNames.size > 0 && (
+                                        <button type="button" onClick={() => setCustomNames(new Set())}
+                                            className="text-[11px] font-bold text-dd-green hover:text-dd-green-700">
+                                            {tx('Clear', 'Limpiar')}
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {pickableStaff.map(name => {
+                                        const on = customNames.has(name);
+                                        return (
+                                            <button key={name} type="button" onClick={() => toggleCustomName(name)}
+                                                className={`px-2.5 py-1.5 rounded-full text-xs font-bold border transition ${on
+                                                    ? 'bg-dd-green text-white border-dd-green'
+                                                    : 'bg-white text-dd-text border-dd-line hover:border-dd-green/50'}`}>
+                                                {on ? '✓ ' : ''}{name}
+                                            </button>
+                                        );
+                                    })}
+                                    {pickableStaff.length === 0 && (
+                                        <span className="text-xs text-dd-text-2 italic px-1">
+                                            {tx('No staff found', 'No hay personal')}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        {audience !== 'managers' && audience !== 'custom' && (
                             <label className="mt-2 flex items-center gap-2 text-xs text-dd-text-2 cursor-pointer">
                                 <input
                                     type="checkbox"
@@ -469,7 +531,7 @@ export default function ChatAnnouncementComposer({
                     </button>
                     <button
                         onClick={handlePost}
-                        disabled={busy || (!body.trim() && !photo)}
+                        disabled={busy || (!body.trim() && !photo) || (audience === 'custom' && customNames.size === 0)}
                         className="px-4 py-2 rounded-full bg-dd-green text-white font-bold text-sm shadow-sm disabled:opacity-40 hover:bg-dd-green-700"
                     >
                         {busy ? tx('Posting…', 'Publicando…') : tx('📣 Post Announcement', '📣 Publicar Anuncio')}
