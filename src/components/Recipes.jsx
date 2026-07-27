@@ -1270,7 +1270,8 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                                 handlePrintIngredients(recipe);
                                             }}
                                             disabled={printingIngredientsId === recipe.id}
-                                            className="text-xs bg-purple-600 text-white px-3 py-1 rounded-full font-bold hover:bg-purple-700 active:scale-95 transition disabled:opacity-50 flex items-center gap-1">
+                                            translate="no"
+                                            className="notranslate text-xs bg-purple-600 text-white px-3 py-1 rounded-full font-bold hover:bg-purple-700 active:scale-95 transition disabled:opacity-50 flex items-center gap-1">
                                             {/* 2026-06-25 — NotFoundError "Failed to execute 'removeChild'
                                                 on 'Node'" crash fix (Recipes tab, userRole BOH). BOH staff
                                                 routinely run their phone browser in Google Translate
@@ -1284,7 +1285,21 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                                 stable <span> means React only ever swaps one element for
                                                 another (it never touches the inner text nodes Translate
                                                 mutates), so reconciliation can't fail. Keep the wrappers —
-                                                do NOT collapse back to a bare string / fragment. */}
+                                                do NOT collapse back to a bare string / fragment.
+
+                                                2026-07-27 — RECURRED (v1.0.349, userRole BOH, 1 hit). The
+                                                span-wrap ALONE was insufficient here: both branches render
+                                                the SAME element type (<span>), so React reconciles it in
+                                                place and still adds/removes the inner text children (1 node
+                                                for "Printing…" vs 2–3 for "🖨 Print 2x") — the exact nodes
+                                                Translate had wrapped → removeChild threw again. Unlike the
+                                                shared PrintLabelModal button (which is safe because it lives
+                                                inside ModalPortal's translate="no"/.notranslate wrapper),
+                                                this button is inline in the recipe card with NO such wrapper.
+                                                Fix: mark the button itself translate="no" + .notranslate so
+                                                Google Translate never touches the label. The app already
+                                                renders ES/EN itself (language ===), so nothing is lost. Keep
+                                                BOTH the notranslate marking AND the span wrappers. */}
                                             {printingIngredientsId === recipe.id
                                                 ? <span>{language === 'es' ? 'Imprimiendo…' : 'Printing…'}</span>
                                                 : <span>🖨 {language === 'es' ? 'Imprimir' : 'Print'}{(recipeMultipliers[recipe.id] || 1) !== 1 ? ` ${recipeMultipliers[recipe.id]}x` : ''}</span>}
