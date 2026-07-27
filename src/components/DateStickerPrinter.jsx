@@ -192,6 +192,31 @@ export default function DateStickerPrinter({
         }
     }, [staffName]);
 
+    // Move a row into a DIFFERENT category (Andrew 2026-07-24: "when I press
+    // edit I want to be able to move items to different categories").
+    // This half appends the row to the TARGET section; the SOURCE section's
+    // editor removes it via its own delete machinery (deletedIdsRef +
+    // debounced save) once this resolves true — so a failed target save
+    // never loses the row from its original home.
+    const handleMoveRow = useCallback(async (row, toKey) => {
+        try {
+            const target = Array.isArray(stickerLists?.[toKey])
+                ? stickerLists[toKey]
+                : getStampedDefaults(toKey);
+            const nn = (s) => String(s || '').trim().toLowerCase();
+            const already = target.some(r => nn(r.nameEn) === nn(row.nameEn));
+            if (!already) {
+                await saveStickerList(toKey, [...target, row], staffName);
+            }
+            // already-in-target → treat the move as a dedupe: source still
+            // removes its copy, nothing added twice.
+            return true;
+        } catch (e) {
+            console.warn('handleMoveRow failed:', e);
+            return false;
+        }
+    }, [stickerLists, staffName]);
+
     // Admin-created custom items only — static menu items no longer
     // appear on this page (2026-06-11). Synthesized shape so the
     // existing renderers / build resolver treat them as items.
@@ -723,6 +748,7 @@ export default function DateStickerPrinter({
                             stickerLists={stickerLists}
                             editMode={editMode}
                             onSaveSection={handleSaveSection}
+                            onMoveRow={handleMoveRow}
                             sectionFilter={sectionFilter}
                         />
                         {/* ⭐ Custom items — Andrew 2026-06-24: "when a new item
@@ -1099,7 +1125,7 @@ function StickerGrid({ components, toneFor, isEs, tx, onPrint }) {
 //
 // All copy comes from src/data/buildSheet.js — that's the single
 // source of truth. Update once, both surfaces update.
-function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection, sectionFilter = null }) {
+function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection, onMoveRow, sectionFilter = null }) {
     // Andrew 2026-06-11: "too many items. alot of doubles… categorize
     // it by veggie, protein, noodles, rice and so on. we dont need the
     // menu items unless its things like sweets and snacks." The browse
@@ -1135,6 +1161,7 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
                     onPrint={onPrint}
                     editMode={editMode}
                     onSaveSection={onSaveSection}
+                    onMoveRow={onMoveRow}
                 />
             ))}
         </div>
@@ -1160,7 +1187,7 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
 // useCallback'd; items arrays identity-stable via STAMPED_DEFAULTS).
 const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     sectionKey, titleEn, titleEs, items, kind, isEs, tx, onPrint,
-    editMode = false, onSaveSection,
+    editMode = false, onSaveSection, onMoveRow,
 }) {
     const tone = COMPONENT_KIND_TONE[kind] || COMPONENT_KIND_TONE.side;
 
@@ -1258,6 +1285,16 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
             return next;
         });
     };
+    // Cross-category move: append to the target first (parent handles it);
+    // only remove locally once that succeeded, reusing the delete machinery
+    // so a subscription echo can't resurrect the moved row here.
+    const moveRow = async (id, toKey) => {
+        if (!onMoveRow || toKey === sectionKey) return;
+        const row = draft.find(r => r.id === id);
+        if (!row || !String(row.nameEn || '').trim()) return; // unnamed new row — nothing to move
+        const ok = await onMoveRow(row, toKey);
+        if (ok) deleteRow(id);
+    };
     const addRow = () => {
         setDraft(prev => {
             const next = [...prev, {
@@ -1297,8 +1334,10 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
                                 tone={tone}
                                 isEs={isEs}
                                 tx={tx}
+                                sectionKey={sectionKey}
                                 onUpdate={(patch) => updateRow(row.id, patch)}
                                 onDelete={() => deleteRow(row.id)}
+                                onMove={(toKey) => moveRow(row.id, toKey)}
                             />
                         ))}
                         {draft.length === 0 && (
@@ -1409,7 +1448,7 @@ function mergeDrafts(draft, incoming, deletedIds) {
 
 // One inline-edit row. Name EN + Name ES side by side, with a
 // trash button at the right.
-function EditableFlatRow({ row, tone, isEs, tx, onUpdate, onDelete }) {
+function EditableFlatRow({ row, tone, isEs, tx, sectionKey, onUpdate, onDelete, onMove }) {
     return (
         <div className={`flex items-stretch gap-1.5 rounded-lg ${tone.bg} border border-dd-line p-1.5`}>
             <input
@@ -1426,6 +1465,27 @@ function EditableFlatRow({ row, tone, isEs, tx, onUpdate, onDelete }) {
                 placeholder={tx('Name (Spanish)', 'Nombre (Español)')}
                 className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-dd-line rounded bg-white"
             />
+            {/* Category mover (Andrew 2026-07-24) — pick a different category
+                and the row jumps there (saves live to both sections). Shows
+                the short chip labels; current category selected. */}
+            {onMove && (
+                <select
+                    value={sectionKey}
+                    onChange={(e) => { if (e.target.value !== sectionKey) onMove(e.target.value); }}
+                    title={tx('Move to another category', 'Mover a otra categoría')}
+                    aria-label={tx('Move to another category', 'Mover a otra categoría')}
+                    className="flex-shrink-0 w-[86px] px-1 py-1.5 text-[11px] border border-dd-line rounded bg-white text-dd-text"
+                >
+                    {STICKER_SECTIONS.map((s) => {
+                        const chip = CHIP_LABELS[s.key];
+                        return (
+                            <option key={s.key} value={s.key}>
+                                {chip ? (isEs ? chip[1] : chip[0]) : (isEs ? s.titleEs : s.titleEn)}
+                            </option>
+                        );
+                    })}
+                </select>
+            )}
             <button
                 onClick={onDelete}
                 title={tx('Delete row', 'Borrar fila')}
