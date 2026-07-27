@@ -44,14 +44,23 @@ import { db } from '../firebase';
 import {
     collection, doc, getDoc, getDocs, onSnapshot, query, where, limit,
     addDoc, updateDoc, setDoc, deleteDoc, serverTimestamp, arrayUnion,
+    runTransaction,
 } from 'firebase/firestore';
 
 // ── Date helpers (string-based, DST-safe) ──────────────────────────────
 // All plan math runs on LOCAL 'YYYY-MM-DD' strings; day arithmetic goes
 // through UTC-noon so a DST edge can never shift the calendar day.
 
+// "Today" is the BUSINESS day (America/Chicago), not the device's day —
+// the whole checklist system is Chicago-anchored (see Operations.jsx
+// getTodayKey/getBusinessDow, added because Andrew's phone runs in HKT).
+// Device-local dates here made a phone abroad materialize tomorrow's
+// rules a business-day early and mis-classify the DaySheet's "today".
+const _chiDateFmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+});
 export function toDateStr(d = new Date()) {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return _chiDateFmt.format(d); // en-CA emits YYYY-MM-DD
 }
 
 function strToUtcNoon(dateStr) {
@@ -126,12 +135,21 @@ export async function createTaskPlanRule({
     const text = String(task || '').trim();
     if (!text) throw new Error('task text required');
     if (side !== 'FOH' && side !== 'BOH') throw new Error('side required');
-    if (!assignTo?.staffName) throw new Error('assignee required');
+    // Assignee is OPTIONAL (Andrew 2026-07-27: "add a task and not assign
+    // to a staff like the main list") — null assignTo materializes as an
+    // unassigned board task anyone can pick up. Normalize BOTH caller
+    // shapes ({staffId,staffName} and the UI's {id,name}) — the DaySheet
+    // was passing {id,name}, which this validation used to reject, so
+    // every planner add silently failed with "assignee required".
+    const who = assignTo
+        ? { staffId: assignTo.staffId ?? assignTo.id ?? null, staffName: assignTo.staffName || assignTo.name || '' }
+        : null;
+    if (who && !who.staffName) throw new Error('assignee name missing');
     const ref = await addDoc(collection(db, 'task_plan'), {
         task: text.slice(0, 200),
         category: String(category || 'other').trim() || 'other',
         side,
-        assignTo: { staffId: assignTo.staffId ?? null, staffName: assignTo.staffName },
+        assignTo: who,
         recurrence: recurrence || { type: 'once', date: toDateStr() },
         extraDates: [],
         skipDates: [],
@@ -293,6 +311,7 @@ export function checklistTasksForDay(customTasks, checks, side, dateStr) {
             const subsDone = subs.filter(x => !!ch[x.id]).length;
             return {
                 id: t.id, task: t.task, category: t.category || 'other',
+                recurrence: t.recurrence || 'daily',
                 done, subCount: subs.length, subsDone,
             };
         });
@@ -314,4 +333,66 @@ export async function fetchOpsChecklistDay(location, dateStr) {
     const d = snap.exists() ? (snap.data() || {}) : {};
     const checks = (dateStr === todayStr && d.date === dateStr) ? (d.checks || {}) : {};
     return { customTasks: d.customTasks || {}, checks };
+}
+
+// ── Edit the Daily Ops checklist from the planner ──────────────────────
+// (Andrew 2026-07-27: "click on the daily op list from the task planner
+// and that also pops up a menu that can edit the tasks.") Writes go
+// through a TRANSACTION that rewrites ONLY the one period array that
+// contains the task (dot-path field update) — never the whole doc, per
+// the 2026-07-14 checklists2 clobber lesson. Searches both the migrated
+// `all` array and the legacy morning/afternoon arrays.
+async function _editOpsChecklistTask(location, taskId, mutate) {
+    if (!location || !taskId) throw new Error('missing location/taskId');
+    const ref = doc(db, 'ops', 'checklists2_' + location);
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('checklist not found');
+        const customTasks = snap.data()?.customTasks || {};
+        for (const side of ['FOH', 'BOH']) {
+            for (const period of ['all', 'morning', 'afternoon']) {
+                const arr = customTasks?.[side]?.[period];
+                if (!Array.isArray(arr)) continue;
+                const idx = arr.findIndex(t => t?.id === taskId);
+                if (idx === -1) continue;
+                const next = mutate === null
+                    ? arr.filter(t => t?.id !== taskId)
+                    : arr.map(t => (t?.id === taskId ? mutate(t) : t));
+                const patch = {
+                    [`customTasks.${side}.${period}`]: next,
+                    updatedAt: new Date().toISOString(),
+                };
+                if (mutate === null) {
+                    // Deleting: also purge the task's check keys across EVERY
+                    // list prefix ({side}_L{n}_{id}, bare {id}, and the _by/_at/
+                    // _photo/_followUp suffixes + subtask ids) so the doc doesn't
+                    // accumulate orphans. Safe as a whole-map rewrite ONLY
+                    // because we're inside the transaction (retries on conflict).
+                    const old = arr[idx] || {};
+                    const ids = [taskId, ...(Array.isArray(old.subtasks) ? old.subtasks.map(s => s?.id).filter(Boolean) : [])];
+                    const checks = snap.data()?.checks || {};
+                    const cleaned = {};
+                    for (const [k, v] of Object.entries(checks)) {
+                        if (!ids.some(id => k === id || k.endsWith('_' + id) || k.includes(id + '_'))) cleaned[k] = v;
+                    }
+                    if (Object.keys(cleaned).length !== Object.keys(checks).length) patch.checks = cleaned;
+                }
+                tx.update(ref, patch);
+                return;
+            }
+        }
+        throw new Error('task not found');
+    });
+}
+
+export async function updateOpsChecklistTask(location, taskId, patch) {
+    const clean = {};
+    if (typeof patch?.task === 'string' && patch.task.trim()) clean.task = patch.task.trim().slice(0, 300);
+    if (typeof patch?.recurrence === 'string') clean.recurrence = patch.recurrence;
+    if (Object.keys(clean).length === 0) return;
+    await _editOpsChecklistTask(location, taskId, t => ({ ...t, ...clean }));
+}
+
+export async function deleteOpsChecklistTask(location, taskId) {
+    await _editOpsChecklistTask(location, taskId, null);
 }

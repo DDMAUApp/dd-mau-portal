@@ -21,6 +21,7 @@ import {
     archiveTaskPlanRule, deleteTaskPlanRule, skipOccurrence, moveOccurrence,
     rulesDueOn, ensureMaterializedForToday, toDateStr, addDaysStr, weekdayOf,
     fetchOpsChecklistDay, checklistTasksForDay,
+    updateOpsChecklistTask, deleteOpsChecklistTask,
 } from '../data/taskPlan';
 import { inferStaffSide } from '../data/assignedTasks';
 import { toast } from '../toast';
@@ -241,6 +242,9 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
     const [listSide, setListSide] = useState('FOH');
     const [listLoc, setListLoc] = useState(storeLocation === 'maryland' ? 'maryland' : 'webster');
     const [dayList, setDayList] = useState(null); // null = loading; {missing} | {customTasks, checks}
+    const [listRefresh, setListRefresh] = useState(0); // bumped after an edit/delete
+    const [opsEdit, setOpsEdit] = useState(null);      // checklist task being edited
+    const todayStr = toDateStr();
     useEffect(() => {
         let alive = true;
         setDayList(null);
@@ -248,7 +252,7 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
             .then(d => { if (alive) setDayList(d); })
             .catch(() => { if (alive) setDayList({ missing: true }); });
         return () => { alive = false; };
-    }, [dateStr, listLoc]);
+    }, [dateStr, listLoc, listRefresh]);
     const listTasks = (dayList && !dayList.missing)
         ? checklistTasksForDay(dayList.customTasks, dayList.checks, listSide, dateStr)
         : [];
@@ -272,8 +276,10 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
     const add = async () => {
         const text = task.trim();
         if (!text || busy) return;
-        const who = sideStaff.find(s => s.name === assignee);
-        if (!who) { toast(tx('Pick who gets this task.', 'Elige quién recibe la tarea.'), { kind: 'error' }); return; }
+        // Assignee optional (Andrew 2026-07-27) — blank = unassigned task,
+        // shows in the 📥 Unassigned column on the Tasks page until a
+        // manager hands it to someone (or just checks it off).
+        const who = sideStaff.find(s => s.name === assignee) || null;
         const recurrence =
             repeat === 'daily'  ? { type: 'daily', anchor: dateStr } :
             repeat === 'every2' ? { type: 'everyN', n: 2, anchor: dateStr } :
@@ -283,7 +289,9 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
         setBusy(true);
         try {
             await createTaskPlanRule({
-                task: text, side, assignTo: who, recurrence, createdBy: staffName,
+                task: text, side,
+                assignTo: who ? { staffId: who.id ?? null, staffName: who.name } : null,
+                recurrence, createdBy: staffName,
             });
             setTask('');
             toast(tx('✓ Planned', '✓ Planificada'), { kind: 'success' });
@@ -292,16 +300,30 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
         } finally { setBusy(false); }
     };
 
+    // Full-page takeover (Andrew 2026-07-27: "make the popup window a new
+    // page so we can see everything · a back arrow that reminds to save").
+    // The ← is the ONLY way out (no backdrop-tap), and it warns when the
+    // add form holds a typed-but-unplanned task.
+    const handleBack = () => {
+        if (task.trim()) {
+            const ok = window.confirm(tx(
+                'You typed a task but haven\'t planned it yet — leave anyway?',
+                'Escribiste una tarea pero no la has planificado — ¿salir de todos modos?'));
+            if (!ok) return;
+        }
+        onClose();
+    };
+
     return (
         <ModalPortal>
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3" onClick={onClose}>
-            <div className="bg-white w-full sm:max-w-md max-h-[90vh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden"
-                onClick={(e) => e.stopPropagation()}>
-                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between">
-                    <h3 className="text-base font-black text-dd-text">🗓 {dayTitle}</h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="fixed inset-0 z-[60] bg-dd-bg flex flex-col">
+            <div className="bg-white border-b border-dd-line px-3 py-3 flex items-center gap-2 shrink-0">
+                <button onClick={handleBack} aria-label={tx('Back', 'Atrás')}
+                    className="w-10 h-10 rounded-full hover:bg-dd-bg active:scale-95 flex items-center justify-center text-xl font-bold text-dd-text">←</button>
+                <h3 className="text-base font-black text-dd-text">🗓 {dayTitle}</h3>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+                <div className="max-w-2xl mx-auto p-4 space-y-4 pb-bottom-nav">
                     <div>
                         <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
                             <div className="text-[11px] font-bold uppercase tracking-widest text-dd-text-2">
@@ -330,19 +352,25 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
                         ) : listTasks.length === 0 ? (
                             <p className="text-xs text-dd-text-2 italic">{tx('No tasks on this list for this day.', 'Sin tareas en esta lista para este día.')}</p>
                         ) : (
-                            <div className="space-y-1 max-h-56 overflow-y-auto pr-0.5">
-                                {listTasks.map(t => (
-                                    <div key={t.id}
-                                        className={`px-2.5 py-1.5 rounded-lg border border-dd-line ${t.done ? 'bg-emerald-50/60' : 'bg-white'}`}>
-                                        <div className="flex items-center gap-1.5">
-                                            <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
-                                            <span className={`text-sm flex-1 ${t.done ? 'text-dd-text-2 line-through' : 'text-dd-text font-medium'}`}>{t.task}</span>
-                                            {t.subCount > 0 && (
-                                                <span className="text-[10px] text-dd-text-2">{t.subsDone}/{t.subCount}</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
+                            <div className="space-y-1">
+                                {listTasks.map(t => {
+                                    // Tap-to-edit (today/future only — past days are archive).
+                                    const editable = dateStr >= todayStr;
+                                    const Row = editable ? 'button' : 'div';
+                                    return (
+                                        <Row key={t.id} {...(editable ? { onClick: () => setOpsEdit(t) } : {})}
+                                            className={`w-full text-left px-2.5 py-1.5 rounded-lg border border-dd-line ${t.done ? 'bg-emerald-50/60' : 'bg-white'} ${editable ? 'hover:bg-dd-bg active:scale-[0.99]' : ''}`}>
+                                            <div className="flex items-center gap-1.5">
+                                                <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
+                                                <span className={`text-sm flex-1 ${t.done ? 'text-dd-text-2 line-through' : 'text-dd-text font-medium'}`}>{t.task}</span>
+                                                {t.subCount > 0 && (
+                                                    <span className="text-[10px] text-dd-text-2">{t.subsDone}/{t.subCount}</span>
+                                                )}
+                                                {editable && <span className="text-[10px] text-dd-text-2">✏️</span>}
+                                            </div>
+                                        </Row>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -363,7 +391,7 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
                                             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${r.side === 'BOH' ? 'bg-blue-100 text-blue-900' : 'bg-emerald-100 text-emerald-900'}`}>{r.side}</span>
                                         </div>
                                         <div className="text-[10px] text-dd-text-2 mt-0.5">
-                                            {recurrenceLabel(r, isEs)} · → {r.assignTo?.staffName || '?'}
+                                            {recurrenceLabel(r, isEs)} · → {r.assignTo?.staffName || tx('📥 unassigned', '📥 sin asignar')}
                                         </div>
                                     </button>
                                 ))}
@@ -386,7 +414,7 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
                             </select>
                             <select value={assignee} onChange={e => setAssignee(e.target.value)}
                                 className="px-2 py-2 rounded-lg border border-dd-line bg-white text-sm">
-                                <option value="">{tx('Who gets it…', 'Quién la recibe…')}</option>
+                                <option value="">{tx('📥 No one (main list)', '📥 Nadie (lista principal)')}</option>
                                 {sideStaff.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
                             </select>
                         </div>
@@ -436,7 +464,88 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
                 </div>
             </div>
         </div>
+        {opsEdit && (
+            <OpsTaskEditor
+                task={opsEdit} location={listLoc} isEs={isEs} tx={tx}
+                onSaved={() => { setOpsEdit(null); setListRefresh(n => n + 1); }}
+                onClose={() => setOpsEdit(null)}
+            />
+        )}
         </ModalPortal>
+    );
+}
+
+// ── Edit one Daily Ops checklist task from the planner ─────────────────
+// (Andrew 2026-07-27.) Rename, change which days it appears, or delete —
+// writes via updateOpsChecklistTask/deleteOpsChecklistTask (transaction
+// on the one period array; the Operations page live-updates on its own).
+const OPS_RECUR_OPTS = [
+    ['daily',     'Every day',  'Cada día'],
+    ['weekday',   'Weekdays',   'Lunes-Viernes'],
+    ['weekend',   'Weekends',   'Fines de semana'],
+    ['monday',    'Mondays',    'Lunes'],
+    ['tuesday',   'Tuesdays',   'Martes'],
+    ['wednesday', 'Wednesdays', 'Miércoles'],
+    ['thursday',  'Thursdays',  'Jueves'],
+    ['friday',    'Fridays',    'Viernes'],
+    ['saturday',  'Saturdays',  'Sábados'],
+    ['sunday',    'Sundays',    'Domingos'],
+];
+
+function OpsTaskEditor({ task, location, isEs, tx, onSaved, onClose }) {
+    const [text, setText] = useState(task.task || '');
+    const [recur, setRecur] = useState(task.recurrence || 'daily');
+    const [busy, setBusy] = useState(false);
+
+    const run = async (fn, okMsg) => {
+        if (busy) return;
+        setBusy(true);
+        try {
+            await fn();
+            toast(okMsg, { kind: 'success' });
+            onSaved();
+        } catch (e) {
+            toast(tx('Failed: ', 'Error: ') + (e?.message || ''), { kind: 'error' });
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3" onClick={onClose}>
+            <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-4 space-y-3"
+                onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                    <h3 className="text-base font-black text-dd-text">📋 {tx('Edit list task', 'Editar tarea de lista')}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
+                </div>
+                <div className="text-[11px] text-dd-text-2 -mt-2">
+                    {tx('Daily Ops list', 'Lista de Ops diaria')} · 📍 {location === 'webster' ? 'Webster' : 'Maryland'}
+                </div>
+                <input type="text" value={text} onChange={e => setText(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-dd-line text-base" />
+                <select value={recur} onChange={e => setRecur(e.target.value)}
+                    className="w-full px-2 py-2 rounded-lg border border-dd-line bg-white text-sm">
+                    {OPS_RECUR_OPTS.map(([id, en, es]) => (
+                        <option key={id} value={id}>{isEs ? es : en}</option>
+                    ))}
+                </select>
+                <button disabled={busy || !text.trim()}
+                    onClick={() => run(
+                        () => updateOpsChecklistTask(location, task.id, { task: text, recurrence: recur }),
+                        tx('✓ Saved', '✓ Guardado'))}
+                    className="w-full py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm disabled:opacity-40">
+                    {busy ? tx('Saving…', 'Guardando…') : tx('💾 Save changes', '💾 Guardar cambios')}
+                </button>
+                <button disabled={busy}
+                    onClick={() => {
+                        if (!window.confirm(tx(`Delete "${task.task}" from the list?`, `¿Eliminar "${task.task}" de la lista?`))) return;
+                        run(() => deleteOpsChecklistTask(location, task.id), tx('✓ Deleted', '✓ Eliminada'));
+                    }}
+                    className="w-full py-2 rounded-xl bg-white border-2 border-red-200 text-red-700 text-xs font-bold disabled:opacity-40">
+                    🗑 {tx('Delete from list', 'Eliminar de la lista')}
+                </button>
+            </div>
+        </div>
     );
 }
 
@@ -482,14 +591,15 @@ function RuleEditor({ rule, date, isEs, tx, staffList, onArmMove, onClose }) {
                     className="w-full px-3 py-2 rounded-lg border border-dd-line text-base" />
                 <select value={assignee} onChange={e => setAssignee(e.target.value)}
                     className="w-full px-2 py-2 rounded-lg border border-dd-line bg-white text-sm">
+                    <option value="">{tx('📥 No one (main list)', '📥 Nadie (lista principal)')}</option>
                     {sideStaff.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
                 </select>
                 <button disabled={busy || !task.trim()}
                     onClick={() => run(() => {
-                        const who = sideStaff.find(s => s.name === assignee) || rule.assignTo;
+                        const who = sideStaff.find(s => s.name === assignee) || null;
                         return updateTaskPlanRule(rule.id, {
                             task: task.trim(),
-                            assignTo: { staffId: who?.staffId ?? who?.id ?? null, staffName: who?.staffName || who?.name },
+                            assignTo: who ? { staffId: who.id ?? null, staffName: who.name } : null,
                         });
                     }, tx('✓ Saved', '✓ Guardado'))}
                     className="w-full py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm disabled:opacity-40">

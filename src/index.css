@@ -1748,6 +1748,16 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     contain-intrinsic-size: auto 104px;
 }
 
+/* 2026-07-27 — Operations Tasks tab perf (audit). ~51 checklist cards
+   (chips, notes, photo blocks) all lay out + paint on mount and on every
+   snapshot echo. `auto` keeps the last measured height so variable-height
+   cards don't jump the scroll. Edit-mode cards render a different branch
+   without this class. */
+.ddmau-task-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 96px;
+}
+
 @media (max-width: 767px) {
     /* Other-person message bubble — light card with hairline border.
        (Mentioned messages keep their amber tint via the JSX

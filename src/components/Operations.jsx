@@ -2284,9 +2284,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: todayKey, updatedAt: new Date().toISOString() });
                             } catch (err) { console.error("Error resetting for new day:", err); }
                         } else {
-                            setChecks(data.checks || {});
+                            // PERF (2026-07-27 audit): with includeMetadataChanges
+                            // this handler fired on our own write echoes and
+                            // fromCache flips, and every unconditional setState
+                            // re-rendered the entire ~10k-line component (felt as
+                            // tap-jank while rapid-checking a list). The *Ref
+                            // mirrors always hold current state (incl. optimistic
+                            // toggles), so skip identical payloads.
+                            const same = (a, b) => { try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; } };
+                            const nextChecks = data.checks || {};
+                            if (!same(nextChecks, checksRef.current || {})) setChecks(nextChecks);
                             setChecklistDate(data.date || todayKey);
                         }
+                        const sameDoc = (a, b) => { try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; } };
                         if (data.customTasks) {
                             // Migrate morning/afternoon {"\u{2192}"} single "all" period
                             const migrated = {};
@@ -2297,10 +2307,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     migrated[side] = { all: [...(s.morning || []), ...(s.afternoon || [])] };
                                 }
                             });
-                            setCustomTasks(migrated);
+                            if (!sameDoc(migrated, customTasksRef.current || {})) setCustomTasks(migrated);
                         }
                         // Load checklist assignments
-                        if (data.assignments) setChecklistAssignments(data.assignments);
+                        if (data.assignments && !sameDoc(data.assignments, checklistAssignmentsRef.current || {})) setChecklistAssignments(data.assignments);
                         // Load multi-list data
                         if (data.lists) {
                             setChecklistLists(data.lists);
@@ -2628,6 +2638,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const now = getTodayKey();
                     if (now === lastKnownDate) return;
                     lastKnownDate = now;
+                    // ⚠ CRITICAL sleep-wake guard (2026-07-27 audit). A device
+                    // suspended on this tab overnight fires this tick once on
+                    // resume (possibly at 2 PM). By then another device — or our
+                    // own snapshot handler — has already rolled the doc to today
+                    // and staff have recorded checks. The blind reset below
+                    // would archive our STALE cached checks and write checks:{}
+                    // over everyone's real progress. checklistDateRef mirrors
+                    // the live doc's date: if it already says today, the
+                    // rollover happened — skip entirely.
+                    if (checklistDateRef.current === now) return;
                     const prevChecks = checksRef.current || {};
                     const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
                     const prevDate = checklistDateRef.current || addDaysKey(now, -1);
@@ -2657,6 +2677,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // 2026-05-14 — saves a forced full Operations re-render every
             // 30 seconds.
             const dismissedAlertsRef = useRef(new Set());
+            // 2026-07-27 audit: the FCM/bell push for a still-open task used to
+            // re-setDoc the SAME notification doc (read:false, new body) every
+            // 30s tick until the local banner was dismissed — the assignee's
+            // bell resurrected as unread all day (same class as the chat DM
+            // resurrect bug). Send each (task, phase, day) push exactly once.
+            const pushedRemindersRef = useRef(new Set());
 
             const checkDeadlines = () => {
                 const now = new Date();
@@ -2678,12 +2704,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         if (!k.includes(todayKey)) dismissedAlertsRef.current.delete(k);
                     }
                 }
+                if (pushedRemindersRef.current.size > 0) {
+                    for (const k of pushedRemindersRef.current) {
+                        if (!k.includes(todayKey)) pushedRemindersRef.current.delete(k);
+                    }
+                }
                 const alerts = [];
                 ["FOH", "BOH"].forEach(side => {
                     TIME_PERIODS.forEach(p => {
                         const periodTasks = (tasks[side] && tasks[side][p.id]) || [];
                         periodTasks.forEach(item => {
                             if (!item.completeBy || !item.assignTo) return;
+                            // 2026-07-27 audit: a task not due today (e.g. a
+                            // Saturdays-only recurrence) used to warn/OVERDUE-push
+                            // every day — for a row that isn't even rendered.
+                            if (!taskShowsToday(item, now)) return;
                             const itemAssignees = Array.isArray(item.assignTo) ? item.assignTo : [item.assignTo];
                             if (!itemAssignees.includes(staffName)) return;
                             // Check all lists for this side to find where task might be checked
@@ -2691,6 +2726,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             const sideListCount = (lists[side] && lists[side].length) || 1;
                             for (let listIdx = 0; listIdx < sideListCount; listIdx++) {
                                 const prefix = getCheckPrefix(side, listIdx);
+                                // A skipped task ("equipment broken") is resolved —
+                                // it must not keep alarming (2026-07-27 audit).
+                                if (ch[prefix + item.id + "_skipped"]) { done = true; break; }
                                 if (item.subtasks && item.subtasks.length > 0) {
                                     if (item.subtasks.every(s => ch[prefix + s.id])) { done = true; break; }
                                 } else {
@@ -2709,6 +2747,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 alerts.push({ key: warn30Key, type: "warning", taskName, timeStr, message: `${minsLeft} min left` });
                                 // Push to all assignees (idempotent doc IDs so multiple
                                 // devices firing this don't duplicate the FCM trigger).
+                                if (!pushedRemindersRef.current.has(warn30Key)) {
+                                    pushedRemindersRef.current.add(warn30Key);
                                 for (const a of itemAssignees) {
                                     const docId = `taskremind_${item.id}_${todayKey}_30_${a.replace(/\W/g, '_')}`;
                                     taskNotify(a, 'task_due_soon',
@@ -2716,12 +2756,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         { en: `Due at ${timeStr}.`, es: `Vence a las ${timeStr}.` },
                                         null, { docId, allowSelf: true });
                                 }
+                                }
                             }
                             // At deadline or overdue
                             const dueKey = item.id + "_due_" + todayKey;
                             if (currentMinutes >= deadlineMinutes && !dismissedAlertsRef.current.has(dueKey)) {
                                 const overBy = currentMinutes - deadlineMinutes;
                                 alerts.push({ key: dueKey, type: "overdue", taskName, timeStr, message: overBy === 0 ? "Due NOW" : `${overBy} min overdue` });
+                                if (!pushedRemindersRef.current.has(dueKey)) {
+                                    pushedRemindersRef.current.add(dueKey);
                                 for (const a of itemAssignees) {
                                     const docId = `taskremind_${item.id}_${todayKey}_due_${a.replace(/\W/g, '_')}`;
                                     taskNotify(a, 'task_overdue',
@@ -2729,6 +2772,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         { en: overBy === 0 ? `Due now (${timeStr}).` : `${overBy} min overdue (was due ${timeStr}).`,
                                           es: overBy === 0 ? `Vence ahora (${timeStr}).` : `${overBy} min vencida (debía a las ${timeStr}).` },
                                         null, { docId, allowSelf: true });
+                                }
                                 }
                             }
                         });
@@ -3580,6 +3624,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const deleteChecklistTask = async (idx) => {
                 const tasks = customTasksRef.current;
                 const removed = tasks?.[checklistSide]?.[PERIOD_KEY]?.[idx];
+                // 2026-07-27 audit: this was the only destructive tap in the
+                // Tasks area with NO confirm — and it permanently deletes the
+                // task's photos too. The 🗑 sits right under the ▼ reorder
+                // arrow, so a mis-tap was one pixel away.
+                if (removed && !window.confirm(language === "es"
+                    ? `¿Eliminar "${(removed.task || '').split('\n')[0]}" y sus fotos?`
+                    : `Delete "${(removed.task || '').split('\n')[0]}" and its photos?`)) return;
                 const updated = JSON.parse(JSON.stringify(tasks));
                 updated[checklistSide][PERIOD_KEY].splice(idx, 1);
                 setCustomTasks(updated);
@@ -5455,7 +5506,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const todayDate = new Date();
                 const today = todayDate.toLocaleDateString(language === "es" ? "es-US" : "en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
                 const tasks = getCurrentTasks();
-                const sideLabel = checklistSide === "FOH" ? "Front of House" : "Back of House";
+                // 2026-07-27 audit: the printout handed to a Spanish-speaking
+                // shift lead was English-only despite the es date locale.
+                const esP = language === "es";
+                const sideLabel = checklistSide === "FOH"
+                    ? (esP ? "Frente de Casa" : "Front of House")
+                    : (esP ? "Cocina" : "Back of House");
                 const filterLabel = taskFilter ? ` · ${taskFilter}` : "";
                 const groupedByCat = {};
                 for (const t of tasks) {
@@ -5470,8 +5526,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         <h3>${escape(cat.emoji)} ${escape(language === "es" ? cat.labelEs : cat.labelEn)}</h3>
                         <ul>${items.map(t => {
                             const subs = (t.subtasks || []).map(s => `<li class="sub">☐ ${escape(s.task)}</li>`).join("");
-                            const photo = t.requirePhoto ? '<span class="badge">📸 photo</span>' : '';
-                            const completeBy = t.completeBy ? `<span class="badge">⏰ by ${escape(t.completeBy)}</span>` : '';
+                            const photo = t.requirePhoto ? `<span class="badge">📸 ${esP ? 'foto' : 'photo'}</span>` : '';
+                            const completeBy = t.completeBy ? `<span class="badge">⏰ ${esP ? 'antes de' : 'by'} ${escape(t.completeBy)}</span>` : '';
                             const assignees = (t.assignTo ? (Array.isArray(t.assignTo) ? t.assignTo : [t.assignTo]) : []).map(a => `<span class="badge person">👤 ${escape(a)}</span>`).join('');
                             return `<li class="main">☐ ${escape(t.task)} ${photo} ${completeBy} ${assignees}${subs ? `<ul>${subs}</ul>` : ''}</li>`;
                         }).join("")}</ul>
@@ -5479,7 +5535,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }).join("");
                 const html = `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
-<title>${escape(`Pre-shift Tasks · ${sideLabel} · ${today}`)}</title>
+<title>${escape(`${esP ? 'Tareas pre-turno' : 'Pre-shift Tasks'} · ${sideLabel} · ${today}`)}</title>
 <style>
     @page { size: letter portrait; margin: 0.5in; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; color: #1f2937; }
@@ -5497,11 +5553,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
 </style>
 </head><body>
 <div class="header">
-    <h1>📋 ${escape(sideLabel)} — Pre-Shift Tasks${escape(filterLabel)}</h1>
-    <div class="sub">${escape(today)} · ${escape(LOCATION_LABELS[storeLocation] || storeLocation)} · ${tasks.length} tasks</div>
+    <h1>📋 ${escape(sideLabel)} — ${esP ? 'Tareas Pre-Turno' : 'Pre-Shift Tasks'}${escape(filterLabel)}</h1>
+    <div class="sub">${escape(today)} · ${escape(LOCATION_LABELS[storeLocation] || storeLocation)} · ${tasks.length} ${esP ? 'tareas' : 'tasks'}</div>
 </div>
-${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks for today.</p>'}
-<div class="footer">Printed ${new Date().toLocaleString()} · DD Mau</div>
+${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? 'No hay tareas para hoy.' : 'No tasks for today.'}</p>`}
+<div class="footer">${esP ? 'Impreso' : 'Printed'} ${new Date().toLocaleString(esP ? 'es-US' : 'en-US')} · DD Mau</div>
 <script>setTimeout(() => window.print(), 300);</script>
 </body></html>`;
                 if (window?.Capacitor?.isNativePlatform?.()) { printViaNative(html, 'DD Mau Tasks'); return; }
@@ -5527,7 +5583,12 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                 // task), so checking off in any column flips master.
                 const assigneeColumns = (() => {
                     const map = new Map();
+                    // 2026-07-27 audit: columns used the UNFILTERED task list, so
+                    // a Mondays-only task sat in its assignee's column all week
+                    // (and flashed overdue on days it wasn't even due). Match the
+                    // master list's recurrence filtering.
                     for (const t of allTasks) {
+                        if (!taskShowsToday(t)) continue;
                         const names = getAssignees(t);
                         for (const n of names) {
                             if (!n) continue;
@@ -5878,13 +5939,21 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             return (
                                 <div key={item.id}
                                     data-task-id={item.id}
-                                    className={"rounded-lg border-2 transition overflow-hidden " +
+                                    className={"ddmau-task-cv rounded-lg border-2 transition overflow-hidden " +
                                     (taskComplete ? "border-green-300 bg-green-50"
                                         : taskUrgency === "overdue" ? "task-flash-red"
                                         : taskUrgency === "warning" ? "task-flash-yellow"
                                         : "border-gray-200 bg-white")}>
                                     <div className="flex items-center gap-1">
-                                        <div className={"flex-1 flex items-start p-3 " + (!editMode && !hasSubtasks ? "cursor-pointer" : "")}>
+                                        {/* 2026-07-27 audit: the row advertised cursor-pointer but only
+                                            the 20px checkbox toggled — phone taps on the task TEXT did
+                                            nothing. Whole-row tap now toggles; interactive children
+                                            (assign/message/note buttons, photo, links) are excluded. */}
+                                        <div className={"flex-1 flex items-start p-3 " + (!editMode && !hasSubtasks ? "cursor-pointer" : "")}
+                                            onClick={(!editMode && !hasSubtasks) ? ((e) => {
+                                                if (e.target.closest('button,a,input,textarea,select,label,img')) return;
+                                                toggleCheckItem(item.id, item);
+                                            }) : undefined}>
                                             {!editMode && !hasSubtasks && (
                                                 <input type="checkbox" checked={checks[currentPrefix + item.id] || false}
                                                     onChange={() => toggleCheckItem(item.id, item)}

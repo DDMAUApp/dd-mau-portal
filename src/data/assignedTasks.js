@@ -293,6 +293,18 @@ export async function setAssignmentDone(assignmentId, { done, staffName }) {
     });
 }
 
+// Hand an existing assignment to a staff member — used by the 📥
+// Unassigned column (planner tasks created with no assignee). Updates
+// the SAME doc (keeps planRuleId/planDate so the planner's carry-over
+// logic still tracks it) rather than creating a new assignment.
+export async function reassignAssignment(assignmentId, { staffId, staffName }) {
+    if (!assignmentId || !staffName) return;
+    await updateDoc(doc(db, 'assigned_tasks', assignmentId), {
+        staffId: staffId ?? null,
+        staffName,
+    });
+}
+
 // Hard-delete an assignment (manager backs out of a mistake). Library
 // entry survives so the task text is still available next time.
 export async function deleteAssignment(assignmentId) {

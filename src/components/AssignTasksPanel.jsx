@@ -51,6 +51,7 @@ import {
     renameLibraryEntry,
     deleteAssignment,
     setAssignmentDone,
+    reassignAssignment,
     inferStaffSide,
 } from '../data/assignedTasks';
 import { ensureMaterializedForToday } from '../data/taskPlan';
@@ -205,6 +206,15 @@ export default function AssignTasksPanel({
 
     // Map task text (lowercase) → array of staff names currently assigned.
     // Used to render "assigned to X, Y" chips next to each master row.
+    // 📥 Unassigned — open tasks with no staffId (planner rules created
+    // with no assignee, Andrew 2026-07-27 "add a task and not assign to a
+    // staff like the main list"). They render as their own column so a
+    // manager can check them off directly or hand them to someone.
+    const unassignedTasks = useMemo(
+        () => openAssignments.filter((a) => a.staffId == null),
+        [openAssignments]
+    );
+
     const assignmentsByTask = useMemo(() => {
         const map = new Map();
         for (const a of openAssignments) {
@@ -244,6 +254,11 @@ export default function AssignTasksPanel({
                 if (member) {
                     return { staff: member, items };
                 }
+                // 2026-07-27 audit: in the managersOnly view this fallback
+                // defeated the filter — a task assigned to a regular staffer
+                // rendered a full interactive column inside "Mgr Tasks".
+                // Managers-only mode drops unknown ids instead.
+                if (managersOnly) return null;
                 // Fallback to assignment's own staffName so the
                 // column still renders. Pull from the first item
                 // (all items in this bucket share the same staffId
@@ -273,7 +288,7 @@ export default function AssignTasksPanel({
                 return (a.staff.name || '').localeCompare(b.staff.name || '');
             });
         return enriched;
-    }, [assignmentsByStaff, sideStaff, staffName]);
+    }, [assignmentsByStaff, sideStaff, staffName, managersOnly]);
 
     // ── Master library — search + sort ──────────────────────────────
     const [librarySearch, setLibrarySearch] = useState('');
@@ -415,8 +430,25 @@ export default function AssignTasksPanel({
 
     // ── Per-assignment actions ──────────────────────────────────────
     async function handleMarkDone(a) {
-        try { await setAssignmentDone(a.id, { done: true, staffName }); }
+        try {
+            await setAssignmentDone(a.id, { done: true, staffName });
+            // 2026-07-27 audit: the row vanishes instantly with no way back —
+            // a fat-finger silently cleared a task off the board. Offer Undo
+            // (setAssignmentDone explicitly supports re-opening).
+            setUndoTask(a);
+            toastFlash(tx(`✓ "${a.task}" done`, `✓ "${a.task}" hecha`, isEs));
+        }
         catch (err) { console.warn('setAssignmentDone failed:', err); }
+    }
+    const [undoTask, setUndoTask] = useState(null); // last checked-off assignment
+    async function handleUndoDone() {
+        const a = undoTask;
+        if (!a) return;
+        setUndoTask(null);
+        try {
+            await setAssignmentDone(a.id, { done: false, staffName });
+            toastFlash(tx('↩ Restored', '↩ Restaurada', isEs));
+        } catch (err) { console.warn('undo setAssignmentDone failed:', err); }
     }
     async function handleUnassign(a) {
         if (!window.confirm(tx(
@@ -682,6 +714,65 @@ export default function AssignTasksPanel({
                     </div>
                 </div>
 
+                {/* ─── 📥 UNASSIGNED — planner tasks created with no
+                       assignee (Andrew 2026-07-27). Managers check them
+                       off directly or hand them to someone; staff see
+                       them view-only. Sits between master and the staff
+                       columns in the same horizontal scroller. ─── */}
+                {unassignedTasks.length > 0 && (
+                    <div className="glass-card p-3 w-[80vw] sm:w-[280px] shrink-0 flex flex-col max-h-[calc(100vh-200px)] ring-2 ring-amber-300/60">
+                        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-glass-border-light">
+                            <span className="w-9 h-9 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center text-base shrink-0">📥</span>
+                            <div className="min-w-0 flex-1">
+                                <div className="text-headline text-dd-text truncate leading-tight">
+                                    {tx('Unassigned', 'Sin asignar', isEs)}
+                                </div>
+                                <div className="text-[10px] text-dd-text-2">
+                                    {tx('Anyone can do these', 'Cualquiera puede hacerlas', isEs)}
+                                </div>
+                            </div>
+                            <span className="text-[11px] font-bold text-dd-text-2">{unassignedTasks.length}</span>
+                        </div>
+                        <div className="space-y-1.5 overflow-y-auto">
+                            {unassignedTasks.map((a) => (
+                                <div key={a.id} className="px-2.5 py-2 rounded-lg border border-dd-line bg-white">
+                                    <div className="text-sm font-medium text-dd-text">{a.task}</div>
+                                    {canModify && (
+                                        <div className="flex items-center gap-1.5 mt-1.5">
+                                            <button onClick={() => handleMarkDone(a)}
+                                                className="px-2 py-1 rounded-md bg-dd-green text-white text-[11px] font-bold active:scale-95"
+                                                title={tx('Mark done', 'Marcar hecha', isEs)}>
+                                                ✓ {tx('Done', 'Hecha', isEs)}
+                                            </button>
+                                            <select value="" onChange={async (e) => {
+                                                const m = sideStaff.find((s) => String(s.id) === e.target.value);
+                                                if (!m) return;
+                                                try {
+                                                    await reassignAssignment(a.id, { staffId: m.id, staffName: m.name });
+                                                    toastFlash(tx(`Assigned to ${m.name}`, `Asignada a ${m.name}`, isEs));
+                                                } catch {
+                                                    toastFlash(tx('Assign failed — try again', 'Error — intenta otra vez', isEs));
+                                                }
+                                            }}
+                                                className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-dd-line bg-white text-[11px]">
+                                                <option value="">{tx('👤 Assign to…', '👤 Asignar a…', isEs)}</option>
+                                                {sideStaff.map((s) => (
+                                                    <option key={s.id} value={String(s.id)}>{s.name}</option>
+                                                ))}
+                                            </select>
+                                            <button onClick={() => handleUnassign(a)}
+                                                className="w-7 h-7 rounded-md text-dd-text-2/70 hover:text-red-600 hover:bg-red-50 flex items-center justify-center"
+                                                title={tx('Delete', 'Eliminar', isEs)}>
+                                                <Trash2 size={13} strokeWidth={2.25} aria-hidden="true" />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 {/* ─── STAFF COLUMNS (sit immediately next to the
                        master list inside the same horizontal scroller
                        so the columns are always physically next to
@@ -809,8 +900,14 @@ export default function AssignTasksPanel({
 
             {/* Toast pinned to the bottom-center */}
             {toast && (
-                <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 glass-card px-4 py-2 text-body-md font-bold shadow-glass-floating z-50 max-w-[92vw] text-center">
-                    {toast}
+                <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 glass-card px-4 py-2 text-body-md font-bold shadow-glass-floating z-50 max-w-[92vw] text-center flex items-center gap-3">
+                    <span className="truncate">{toast}</span>
+                    {undoTask && (
+                        <button onClick={handleUndoDone}
+                            className="shrink-0 px-2.5 py-1 rounded-md bg-dd-green text-white text-[12px] font-bold active:scale-95">
+                            ↩ {tx('Undo', 'Deshacer', isEs)}
+                        </button>
+                    )}
                 </div>
             )}
         </div>
