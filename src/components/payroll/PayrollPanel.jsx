@@ -237,6 +237,17 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     if (!owner) return <p className="text-sm text-dd-text-2 px-1 py-2">Payroll is owner-only.</p>;
     if (!unlocked) return <PayrollGate staffName={staffName} onUnlock={() => setUnlocked(true)} onClose={onClose} />;
     if (!rosterRef.current) return <p className="text-sm text-dd-text-2 px-1 py-2">Loading payroll…</p>;
+    // Read FAILURE (offline/flaky) — block the wizard entirely (2026-07-26
+    // audit): proceeding on a blank roster meant the next save silently
+    // wiped config/payroll_roster. Close + reopen retries the load.
+    if (rosterRef.current.__error) {
+        return (
+            <div className="px-1 py-3">
+                <p className="text-sm font-bold text-red-700 mb-1">Couldn't load the payroll roster.</p>
+                <p className="text-xs text-dd-text-2">Check your connection, then close and reopen Payroll. Nothing was changed.</p>
+            </div>
+        );
+    }
 
     const roster = rosterRef.current;
     const imported = !!parsed;
@@ -447,7 +458,10 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     const blocked = noPeriod || fails.length > 0 || (live && live.extrasErrors.length > 0) || (warns && !ack);
 
     const generate = async () => {
-        if (blocked) return;
+        // busy too (2026-07-26 audit): a fast double-tap before React
+        // disabled the button ran TWO full generations → duplicate
+        // payroll_runs docs corrupting the next run's comparison.
+        if (blocked || busy) return;
         setBusy(true);
         // Track which stage we're in so a failure tells us (and the owner) exactly
         // where it broke instead of an opaque "Generate failed".

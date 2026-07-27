@@ -565,12 +565,11 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                         } else {
                             writeAudit('hire_edited', { hireId: hire.id, hireName: hire.name });
                         }
-                        // If converted from an application, clean it up.
-                        // Only on CREATE — edits won't have a sourceApplicationId.
-                        if (token && convertPrefill && convertPrefill.sourceApplicationId) {
-                            try { await deleteDoc(doc(db, 'onboarding_applications', convertPrefill.sourceApplicationId)); }
-                            catch (e) { console.warn('Could not delete source application:', e); }
-                        }
+                        // 2026-07-26 audit: DON'T delete the source application —
+                        // AddHireModal already marks it status:'hired' (which both
+                        // hides it from the Open filter AND exempts it from the
+                        // 180-day purge). Deleting here permanently destroyed the
+                        // SIGNED application Andrew wants exportable later.
                         setConvertPrefill(null);
                     }}
                 />
@@ -1536,16 +1535,18 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
                 }
                 daysVal = n;
             }
+            // Dotted paths ONLY (2026-07-26 audit): the old spread-of-`state`
+            // wrote the whole checklist.{docId} map from a render-time
+            // snapshot — if the hire submitted this doc while the editor was
+            // open, Save regressed their submission back to "needed" (the
+            // exact clobber class the setStatus fix documents).
             await updateDoc(doc(db, 'onboarding_hires', hire.id), {
-                [`checklist.${docDef.id}`]: {
-                    ...state,
-                    descOverride: trimmedDesc || null,
-                    descOverrideAt: trimmedDesc ? new Date().toISOString() : null,
-                    descOverrideBy: trimmedDesc ? staffName : null,
-                    daysOverride: daysVal,
-                    daysOverrideAt: daysVal !== null ? new Date().toISOString() : null,
-                    daysOverrideBy: daysVal !== null ? staffName : null,
-                },
+                [`checklist.${docDef.id}.descOverride`]: trimmedDesc || null,
+                [`checklist.${docDef.id}.descOverrideAt`]: trimmedDesc ? new Date().toISOString() : null,
+                [`checklist.${docDef.id}.descOverrideBy`]: trimmedDesc ? staffName : null,
+                [`checklist.${docDef.id}.daysOverride`]: daysVal,
+                [`checklist.${docDef.id}.daysOverrideAt`]: daysVal !== null ? new Date().toISOString() : null,
+                [`checklist.${docDef.id}.daysOverrideBy`]: daysVal !== null ? staffName : null,
             });
             onWriteAudit('doc_override_set', {
                 hireId: hire.id, docId: docDef.id, hireName: hire.name,

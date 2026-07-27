@@ -26,7 +26,7 @@ import { db } from '../firebase';
 import {
     collection, doc, query, where, onSnapshot,
     addDoc, setDoc, updateDoc, getDoc, getDocs,
-    serverTimestamp, orderBy, limit, writeBatch,
+    serverTimestamp, orderBy, limit, writeBatch, deleteField,
 } from 'firebase/firestore';
 import {
     AUTO_CHANNELS, channelDocId, channelMembersFor, dmDocId,
@@ -1327,7 +1327,14 @@ function NewChatModal({
                 const id = dmDocId(staffName, other);
                 const ref = doc(db, 'chats', id);
                 const snap = await getDoc(ref);
-                if (!snap.exists()) {
+                // 2026-07-26 platform audit H4: a soft-deleted DM (members
+                // wiped + deletedAt) still EXISTS at the deterministic id,
+                // so the exists() check alone permanently bricked that pair
+                // — "New chat → same person" opened a dead doc nobody was a
+                // member of. Resurrect it instead.
+                const dead = snap.exists() &&
+                    (snap.data()?.deletedAt || !(snap.data()?.members || []).length);
+                if (!snap.exists() || dead) {
                     await setDoc(ref, {
                         type: 'dm',
                         members: [staffName, other],
@@ -1335,9 +1342,11 @@ function NewChatModal({
                         createdBy: staffName,
                         createdByTier: viewerTier,
                         editTier: 'admin', // DMs aren't editable; nominal floor
-                        createdAt: serverTimestamp(),
+                        ...(snap.exists() ? {} : { createdAt: serverTimestamp() }),
+                        deletedAt: deleteField(),
+                        deletedBy: deleteField(),
                         lastActivityAt: serverTimestamp(),
-                    });
+                    }, { merge: true });
                 }
                 onCreated(id);
             } else {

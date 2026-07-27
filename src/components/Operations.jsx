@@ -5368,20 +5368,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
             const hasOpsAccess = currentIsAdmin || (currentStaffRecord && currentStaffRecord.opsAccess === true);
 
-            if (!hasOpsAccess) {
-                return (
-                    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-mint-50 to-white p-4">
-                        <div className="bg-white rounded-lg border-2 border-mint-700 p-8 w-full max-w-sm text-center">
-                            <h2 className="text-2xl font-bold text-mint-700 mb-2">{"\u{1F512}"} {t("dailyOps", language)}</h2>
-                            <p className="text-gray-600">
-                                {language === "es"
-                                    ? "No tienes acceso a Operaciones. Pídele al gerente que te active el permiso."
-                                    : "You don't have access to Operations. Ask a manager to enable it for you."}
-                            </p>
-                        </div>
-                    </div>
-                );
-            }
+            // NOTE (2026-07-26 platform audit H2): the !hasOpsAccess early
+            // return used to live HERE — above the cartData/vendorViewData
+            // useMemos — so an access flip while the tab was mounted changed
+            // the hook count between renders (React #300 crash). The denied
+            // screen now returns after the last hook, just before the main
+            // return.
 
             // Pre-shift printout — opens a clean HTML page in a new window with
             // today's tasks for the current side, optionally scoped to one staff
@@ -6709,6 +6701,24 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                 // eslint-disable-next-line react-hooks/exhaustive-deps
                 invShowOnlyCounted ? inventory : null,
             ]);
+
+            // Access gate — AFTER every hook (see the audit-H2 note above)
+            // so revoking opsAccess mid-session shows this screen instead
+            // of crashing into the error boundary.
+            if (!hasOpsAccess) {
+                return (
+                    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-mint-50 to-white p-4">
+                        <div className="bg-white rounded-lg border-2 border-mint-700 p-8 w-full max-w-sm text-center">
+                            <h2 className="text-2xl font-bold text-mint-700 mb-2">{"\u{1F512}"} {t("dailyOps", language)}</h2>
+                            <p className="text-gray-600">
+                                {language === "es"
+                                    ? "No tienes acceso a Operaciones. Pídele al gerente que te active el permiso."
+                                    : "You don't have access to Operations. Ask a manager to enable it for you."}
+                            </p>
+                        </div>
+                    </div>
+                );
+            }
 
             return (
                 <div className="p-4 pb-bottom-nav">
@@ -8060,10 +8070,23 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                             ? `¿Vaciar SIN guardar (${rows.length} items)? La lista se perderá — esto no se puede deshacer.`
                                                             : `Empty WITHOUT saving (${rows.length} items)? The list will be lost — this cannot be undone.`);
                                                         if (!ok) return;
+                                                        // 2026-07-26 platform audit H3: this write must mirror
+                                                        // clearAllInventoryCounts EXACTLY. The old bare
+                                                        // {counts:{}} skipped clearedAt + the pending/manual-
+                                                        // clear refs, so other iPads' stability guard ignored
+                                                        // the empty snapshot ("deleted list comes back") and
+                                                        // an in-flight optimistic bump could resurrect items.
+                                                        pendingCountsRef.current = {};
+                                                        manualInvClearRef.current = Date.now();
                                                         setInventory({});
+                                                        setInvCountMeta({});
+                                                        setVendorCounts({});
+                                                        setDeliveryDate(null);
                                                         try {
                                                             await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
-                                                                counts: {},
+                                                                counts: {}, countMeta: {}, vendorCounts: {},
+                                                                deliveryDate: deleteField(),
+                                                                clearedAt: new Date().toISOString(),
                                                                 date: new Date().toISOString(),
                                                             });
                                                             toast(language === "es" ? "✓ Carrito vaciado" : "✓ Cart emptied", { kind: 'success' });
@@ -9296,7 +9319,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                                 </button>
                                                                                             ))}
                                                                                             {wasMoved && (
-                                                                                                <button onClick={() => { const updated = { ...splitOverrides }; delete updated[item.id]; setSplitOverrides(updated); saveSplitConfig({ overrides: updated }); setSplitMovingItem(null); }}
+                                                                                                <button onClick={() => { setSplitOverrides(prev => { const updated = { ...prev }; delete updated[item.id]; return updated; }); saveSplitField('overrides', item.id, deleteField()); setSplitMovingItem(null); }}
                                                                                                     className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-lg font-bold hover:bg-gray-200 active:scale-95 transition">
                                                                                                     {"\u{21A9}"} {language === "es" ? "Original" : "Reset"}
                                                                                                 </button>

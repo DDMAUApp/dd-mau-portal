@@ -16,7 +16,7 @@
 //      bell drawer + FCM deep-link behave identically).
 import { db } from '../firebase';
 import {
-    doc, getDoc, setDoc, addDoc, updateDoc, collection, serverTimestamp,
+    doc, getDoc, setDoc, addDoc, updateDoc, collection, serverTimestamp, deleteField,
 } from 'firebase/firestore';
 import { dmDocId } from './chat';
 import { notifyStaff } from './notify';
@@ -30,7 +30,12 @@ export async function sendDirectMessage({ fromName, fromId = null, toName, text 
         const id = dmDocId(fromName, toName);
         const ref = doc(db, 'chats', id);
         const snap = await getDoc(ref);
-        if (!snap.exists()) {
+        // Resurrect a soft-deleted DM (2026-07-26 platform audit H4): the
+        // deterministic id means a deleted pair doc still exists — without
+        // this, the message landed in a members:[] chat nobody could see.
+        const dead = snap.exists() &&
+            (snap.data()?.deletedAt || !(snap.data()?.members || []).length);
+        if (!snap.exists() || dead) {
             await setDoc(ref, {
                 type: 'dm',
                 members: [fromName, toName],
@@ -38,9 +43,11 @@ export async function sendDirectMessage({ fromName, fromId = null, toName, text 
                 createdBy: fromName,
                 createdByTier: 'admin',   // callers are admin surfaces
                 editTier: 'admin',        // DMs aren't editable; nominal floor
-                createdAt: serverTimestamp(),
+                ...(snap.exists() ? {} : { createdAt: serverTimestamp() }),
+                deletedAt: deleteField(),
+                deletedBy: deleteField(),
                 lastActivityAt: serverTimestamp(),
-            });
+            }, { merge: true });
         }
         await addDoc(collection(db, 'chats', id, 'messages'), {
             senderName: fromName,

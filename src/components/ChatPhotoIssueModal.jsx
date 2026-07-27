@@ -16,7 +16,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { db, storage } from '../firebase';
 import {
-    collection, doc, addDoc, updateDoc, deleteDoc, serverTimestamp,
+    collection, doc, addDoc, updateDoc, deleteDoc, getDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { recordAudit } from '../data/audit';
@@ -127,6 +127,17 @@ export default function ChatPhotoIssueModal({
 
             for (const channelKey of targets) {
                 const chatId = channelDocId(channelKey);
+                // 2026-07-26 platform audit C1: the team channels were purged
+                // in May. Posting into the missing doc THREW, which triggered
+                // the rollback below and deleted the just-created maintenance
+                // ticket + photo — the report vanished entirely. The ticket is
+                // the real record; a dead channel just skips its chat post
+                // (managers still get the direct FCM notify below).
+                const chSnap = await getDoc(doc(db, 'chats', chatId));
+                if (!chSnap.exists() || chSnap.data()?.deletedAt || !(chSnap.data()?.members || []).length) {
+                    console.warn(`photo issue: channel ${chatId} missing/deleted — skipping chat post`);
+                    continue;
+                }
                 const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), {
                     senderName: staffName,
                     senderId: viewer?.id || null,

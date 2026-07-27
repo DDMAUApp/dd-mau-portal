@@ -526,6 +526,11 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         badgeText={draftCount > 0 ? tx('Review', 'Revisar') : '✓'}
                         badgeTone={draftCount > 0 ? 'warn' : 'success'}
                         onClick={() => onNavigate?.('schedule')} />
+                    {/* Managers/admins only (2026-07-26 audit M2) — staff were
+                        shown everyone's pending PTO names+dates with an
+                        "Approve" CTA they can't act on. MobileHome already
+                        gated this. */}
+                    {viewerIsManager && (
                     <AlertCard
                         icon={Mail}
                         tone="info"
@@ -539,6 +544,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         badgeText={pendingPto.length > 0 ? tx('Approve', 'Aprobar') : '✓'}
                         badgeTone={pendingPto.length > 0 ? 'info' : 'success'}
                         onClick={() => onNavigate?.('schedule')} />
+                    )}
                 </div>
             </section>
 

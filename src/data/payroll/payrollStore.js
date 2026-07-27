@@ -93,14 +93,20 @@ export function nameAliasesFromMeta(meta) {
 }
 
 // ── roster ────────────────────────────────────────────────────────────────
+// Returns the roster, or `{ __error: true }` on a READ FAILURE — same
+// contract as loadPayrollMeta and for the same fail-open reason
+// (2026-07-26 audit): masking a flaky/offline read as blankRoster() meant
+// the next rate-blur or Import silently OVERWROTE the real roster doc
+// with a near-empty one. The panel must block edits until a real load.
 export async function loadRoster() {
     try {
         const snap = await getDoc(doc(db, 'config', 'payroll_roster'));
         if (snap.exists()) return normalizeRoster(snap.data());
+        return blankRoster();   // genuinely no doc yet — first-run is fine
     } catch (e) {
         console.warn('[payroll] loadRoster failed:', e?.message);
+        return { __error: true };
     }
-    return blankRoster();
 }
 
 function stripRuntime(data) {

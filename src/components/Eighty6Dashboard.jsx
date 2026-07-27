@@ -293,8 +293,12 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
         } catch { return "—"; }
     };
 
+    // 2026-07-26 platform audit H9: in "Both" mode this page only reads
+    // the WEBSTER doc — the old "Both Locations" label made a green
+    // "All available" read as covering Maryland too, which it never did.
+    // Label honestly until a real two-store merge is built.
     const locationLabel = storeLocation === 'maryland' ? tx('Maryland Heights', 'Maryland Heights')
-                        : storeLocation === 'both'     ? tx('Both Locations', 'Ambas')
+                        : storeLocation === 'both'     ? tx('Webster Groves — switch store for Maryland', 'Webster Groves — cambia de tienda para Maryland')
                         :                                tx('Webster Groves', 'Webster Groves');
 
     // 2026-05-26 — Andrew: "the 2 and 3 should be on the list but it

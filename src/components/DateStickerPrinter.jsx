@@ -179,13 +179,18 @@ export default function DateStickerPrinter({
     // the Epson/Brother, so the real warm-up didn't start until the modal
     // opened. Now it runs the full warm (config live-mirror + Epson HTTP
     // wake + Brother IPP wake) for the store the user is on.
+    // One resolved location for EVERY print surface (2026-07-26 platform
+    // audit M3): admins on "Both" used to warm Webster but hand the raw
+    // 'both' to PrintLabelModal (→ printers_both_kitchen → misleading "no
+    // printer configured") and ExpiringPanel. Normalize once, use it for
+    // the warm-up, the print modal, and the expiring view alike.
+    const printLoc = storeLocation === 'both' ? 'webster' : storeLocation;
     useEffect(() => {
-        const loc = storeLocation === 'both' ? 'webster' : storeLocation;
-        if (loc !== 'webster' && loc !== 'maryland') return;
-        warmPrintConfigs(loc);
-        const id = setInterval(() => warmPrintConfigs(loc), 25000);
+        if (printLoc !== 'webster' && printLoc !== 'maryland') return;
+        warmPrintConfigs(printLoc);
+        const id = setInterval(() => warmPrintConfigs(printLoc), 25000);
         return () => clearInterval(id);
-    }, [storeLocation]);
+    }, [printLoc]);
     // Edit Mode — admin-only. When ON, each row in the flat sections
     // becomes an editable form with delete + add-row buttons. Off
     // by default so the normal print-a-sticker flow stays clean.
@@ -866,7 +871,7 @@ export default function DateStickerPrinter({
                     <PrintLabelModal
                         editable={true}
                         recipe={printingComponent}
-                        location={storeLocation}
+                        location={printLoc}
                         staffName={staffName}
                         language={language}
                         source="datestickers"
@@ -923,7 +928,7 @@ export default function DateStickerPrinter({
             {customPrintOpen && (
                 <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
                     <PrintCenter
-                        location={storeLocation}
+                        location={printLoc}
                         staffName={staffName}
                         language={language}
                         isAdmin={adminUser}
@@ -946,7 +951,7 @@ export default function DateStickerPrinter({
 
             {expiringOpen && (
                 <ExpiringPanel
-                    location={storeLocation}
+                    location={printLoc}
                     staffName={staffName}
                     language={language}
                     onClose={() => setExpiringOpen(false)}

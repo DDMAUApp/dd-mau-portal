@@ -81,13 +81,20 @@ export async function forceRefresh() {
 // a mid-scrolled list (Schedule, Operations, etc.) gets interpreted
 // as a pull-to-refresh and fires the full app reload. The native
 // shell ships its own refresh affordances, so we disable this hook
-// entirely in that environment. Computed at module init — the body
-// class is set on app boot before any component renders, so it's
-// stable across the React lifecycle and we don't need to re-check
-// on every render.
-const IS_CAPACITOR_NATIVE =
-    typeof document !== 'undefined' &&
-    document.body?.classList.contains('capacitor-native');
+// entirely in that environment.
+//
+// 2026-07-26 platform audit H2: this used to be a module-init const
+// reading the 'capacitor-native' body class — but this module is a
+// STATIC import of App.jsx, so it evaluated during the import graph,
+// BEFORE main.jsx adds the class. The gate was permanently false and
+// the gesture was LIVE inside the iOS/Android app: a 150px pull at
+// the top of any page force-reloaded the WebView mid-session (and
+// could hop onto a staged OTA bundle, bypassing the apply-at-login
+// rule). Check the real Capacitor bridge lazily instead — it's
+// injected by the native shell before ANY JS runs, so it's reliable
+// at call time on every platform.
+const isCapacitorNative = () =>
+    !!(typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.());
 
 // Stable no-op return for the disabled (capacitor-native) path. Shape
 // must match the live hook's return so PullToRefreshIndicator + any
@@ -130,7 +137,7 @@ export default function usePullToRefresh() {
         if (typeof window === 'undefined') return;
         // Capacitor native shell — bail before attaching any listeners
         // so the gesture is truly inert (see module-level comment).
-        if (IS_CAPACITOR_NATIVE) return;
+        if (isCapacitorNative()) return;
 
         const setDistance = (v) => {
             distanceRef.current = v;
@@ -275,7 +282,7 @@ export default function usePullToRefresh() {
     // Capacitor native: ignore React state and hand back the frozen
     // no-op snapshot so the PullToRefreshIndicator stays invisible and
     // forceRefresh is never called via the gesture path.
-    if (IS_CAPACITOR_NATIVE) return DISABLED_STATE;
+    if (isCapacitorNative()) return DISABLED_STATE;
 
     return {
         pullDistance,

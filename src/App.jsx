@@ -1726,6 +1726,15 @@ export default function App() {
         // auto-start effect overrides the default above within a few seconds.
         geoStartAppliedRef.current = false;
         manualLocationRef.current = false;
+        // A push-notification deep link that arrived while locked wins over
+        // homeView — the whole point of tapping "New chat message" is to
+        // land in Chat, not on Home (2026-07-26 platform audit H1).
+        const parked = pendingDeepLinkRef.current;
+        pendingDeepLinkRef.current = null;
+        if (parked) {
+            setActiveTab(parked);
+            return;
+        }
         // Per-staff Home view override: if admin set this person's homeView
         // to a specific tab (e.g. 'schedule', 'recipes'), land them on that
         // tab. Empty / 'auto' / 'home' → default Home behavior. Admins can
@@ -1856,10 +1865,24 @@ export default function App() {
     // RequiredTaskAvailability dispatches one when the user taps
     // "Open availability editor" — we switch the active tab and
     // close out of the flow.
+    // 2026-07-26 platform audit H1: a push tap that lands while the app is
+    // LOCKED (cold launch, or idle-relocked — i.e. most taps) used to be
+    // clobbered: setActiveTab ran, but handleSelectStaff then overwrote it
+    // with homeView/'home' on unlock, so "New chat message" taps dumped
+    // staff on Home. Park the routed tab here; unlock consumes it in
+    // preference to homeView. Read through a ref because the listener
+    // below mounts once with empty deps.
+    const pendingDeepLinkRef = useRef(null);
+    const staffNameForNavRef = useRef(staffName);
+    useEffect(() => { staffNameForNavRef.current = staffName; }, [staffName]);
     useEffect(() => {
         const handler = (ev) => {
             const tab = ev?.detail?.tab;
-            if (tab) setActiveTab(tab);
+            if (tab) {
+                setActiveTab(tab);
+                // Not logged in yet → remember the target for the unlock.
+                if (!staffNameForNavRef.current) pendingDeepLinkRef.current = String(tab);
+            }
             // Required-task escape hatch: when a task component asks
             // us to navigate to do the work elsewhere, drop the gate
             // for the rest of this session so the user can complete
@@ -2387,7 +2410,7 @@ export default function App() {
                     isAdmin={staffIsAdmin}
                     isManager={isManager}
                     canMoney={canMoney}
-                    hiddenPages={(currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages)) ? currentStaffRecord.hiddenPages : []}
+                    hiddenPages={hiddenPages}
                     // Passed through to Header → EnableNotificationsHeaderButton
                     // so the header-bell-adjacent fix pill can write the
                     // FCM token to the right staff record.

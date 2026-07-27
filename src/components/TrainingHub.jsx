@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "../firebase";
 import { doc, setDoc, collection, getDocs, updateDoc, deleteField, onSnapshot } from "firebase/firestore";
 import { t } from "../data/translations";
@@ -348,9 +348,24 @@ export default function TrainingHub({ staffName, language, staffList }) {
         await persistModulePatch(mId, { lessonsCompleted: newLessons });
     };
 
+    // Synchronous re-entry guard (2026-07-26 platform audit H7): a fast
+    // double-tap on Submit used to record the SAME attempt twice — two
+    // fails from one real fail → lastTwoFailed → module locked, manager
+    // unlock required. A ref (not state) so the second tap in the same
+    // tick is already blocked.
+    const submittingQuizRef = useRef(false);
     const submitQuiz = async () => {
         const m = activeModule;
         if (!m) return;
+        if (submittingQuizRef.current) return;
+        submittingQuizRef.current = true;
+        try {
+            await _submitQuizInner(m);
+        } finally {
+            submittingQuizRef.current = false;
+        }
+    };
+    const _submitQuizInner = async (m) => {
         let correct = 0;
         m.quiz.questions.forEach(q => { if (quizAnswers[q.id] === q.correct) correct += 1; });
         const score = correct / m.quiz.questions.length;

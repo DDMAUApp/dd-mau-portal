@@ -218,17 +218,26 @@ export default function ChatAnnouncementComposer({
             }
 
             const recipientsAll = new Set();
+            // 2026-07-26 platform audit C1: the standard channels were purged
+            // in May (soft-deleted, members wiped) — posting "succeeded" into
+            // a chat nobody is a member of, so the manager believed the whole
+            // team was notified while nobody saw anything. Count real
+            // deliveries and FAIL LOUDLY when none happened.
+            let postedTo = 0;
             for (const chatId of targets) {
                 // Look up the channel doc to fan-out notifications.
                 const chQ = query(collection(db, 'chats'), where('__name__', '==', chatId));
                 const chSnap = await getDocs(chQ);
                 const chDoc = chSnap.docs[0];
-                if (!chDoc) {
-                    console.warn(`announcement: channel ${chatId} not found, skipping`);
+                const chData0 = chDoc?.data();
+                const liveMembers = Array.isArray(chData0?.members) ? chData0.members : [];
+                if (!chDoc || chData0?.deletedAt || liveMembers.length === 0) {
+                    console.warn(`announcement: channel ${chatId} missing/deleted/empty, skipping`);
                     continue;
                 }
-                const chData = chDoc.data();
-                const members = Array.isArray(chData.members) ? chData.members : [];
+                const chData = chData0;
+                const members = liveMembers;
+                postedTo += 1;
 
                 // Translation: if the manager has a reviewed
                 // translation, embed it on the message doc so
@@ -328,6 +337,15 @@ export default function ChatAnnouncementComposer({
                 });
             }
 
+            if (postedTo === 0) {
+                // No live audience channel exists — surface it instead of the
+                // old silent "success" (audit C1).
+                toast(tx(
+                    'Could not post: the audience channels were removed. Post this in a group chat instead, or ask Andrew to bring channels back.',
+                    'No se pudo publicar: los canales de audiencia fueron eliminados. Publícalo en un chat de grupo.',
+                ), { kind: 'error', duration: 8000 });
+                return;
+            }
             onPosted?.({ announcementGroupId, recipientCount: recipientsAll.size });
         } catch (e) {
             console.error('announcement post failed:', e);

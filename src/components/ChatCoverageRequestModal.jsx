@@ -22,7 +22,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import {
     collection, query, where, onSnapshot, addDoc, doc,
-    serverTimestamp, updateDoc,
+    serverTimestamp, updateDoc, getDoc,
 } from 'firebase/firestore';
 import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
@@ -99,6 +99,21 @@ export default function ChatCoverageRequestModal({
         setBusy(true);
         try {
             const chatId = channelDocId(channelKey);
+
+            // 2026-07-26 platform audit C1: the side channels were purged in
+            // May — posting into a missing/member-less doc either threw AFTER
+            // orphaning the message or "succeeded" invisibly. Verify a live
+            // audience exists BEFORE writing anything.
+            const chSnap = await getDoc(doc(db, 'chats', chatId));
+            const chLive = chSnap.exists() && !chSnap.data()?.deletedAt
+                && (chSnap.data()?.members || []).length > 0;
+            if (!chLive) {
+                toast(tx(
+                    'Could not post: the team channels were removed. Use "Find cover" on your shift in the Schedule tab instead — it notifies everyone directly.',
+                    'No se pudo publicar: los canales fueron eliminados. Usa "Buscar cobertura" en tu turno en Horario — notifica a todos directamente.',
+                ), { kind: 'error', duration: 8000 });
+                return;
+            }
 
             const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), {
                 senderName: staffName,
