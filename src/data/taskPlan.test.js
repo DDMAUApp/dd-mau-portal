@@ -13,7 +13,7 @@ vi.mock('firebase/firestore', () => ({
     serverTimestamp: vi.fn(() => ({})), arrayUnion: vi.fn((...a) => a),
 }));
 
-import { isRuleDueOn, rulesDueOn, addDaysStr, dayDiff, weekdayOf } from './taskPlan';
+import { isRuleDueOn, rulesDueOn, addDaysStr, dayDiff, weekdayOf, mergeDayTasks } from './taskPlan';
 
 const rule = (recurrence, extra = {}) => ({
     id: 'r1', task: 'Clean table bases', side: 'FOH', active: true,
@@ -91,5 +91,45 @@ describe('isRuleDueOn', () => {
         ];
         expect(rulesDueOn(rules, '2026-07-29').map(r => r.id)).toEqual(['a', 'b', 'c']); // Wed
         expect(rulesDueOn(rules, '2026-07-30').map(r => r.id)).toEqual(['a']);
+    });
+});
+
+describe('mergeDayTasks (day-sheet "already on the list")', () => {
+    const t = (id, extra = {}) => ({ id, task: id, staffName: 'Ana', done: false, ...extra });
+
+    it('today = that day\'s instances + all open tasks (manual + carry-over), deduped', () => {
+        const plan = [t('plan_r1_2026-07-27', { planRuleId: 'r1', planDate: '2026-07-27', done: true })];
+        const open = [
+            t('plan_r1_2026-07-27', { planRuleId: 'r1', planDate: '2026-07-27' }), // dup of plan doc
+            t('manual1'),                                                          // manual assignment
+            t('plan_r2_2026-07-25', { planRuleId: 'r2', planDate: '2026-07-25' }), // carry-over
+        ];
+        const out = mergeDayTasks(plan, open, '2026-07-27', '2026-07-27');
+        expect(out.map(x => x.id).sort()).toEqual(['manual1', 'plan_r1_2026-07-27', 'plan_r2_2026-07-25']);
+        // dup kept the planDate-query copy (done:true)
+        expect(out.find(x => x.id === 'plan_r1_2026-07-27').done).toBe(true);
+    });
+
+    it('future day = only manual open tasks; open planner instances stay on their own day', () => {
+        const open = [
+            t('manual1'),
+            t('plan_r1_2026-07-27', { planRuleId: 'r1', planDate: '2026-07-27' }),
+        ];
+        const out = mergeDayTasks([], open, '2026-08-03', '2026-07-27');
+        expect(out.map(x => x.id)).toEqual(['manual1']);
+    });
+
+    it('past day = only that day\'s materialized instances (open list ignored)', () => {
+        const plan = [t('plan_r1_2026-07-20', { planDate: '2026-07-20', done: true })];
+        const open = [t('manual1')];
+        const out = mergeDayTasks(plan, open, '2026-07-20', '2026-07-27');
+        expect(out.map(x => x.id)).toEqual(['plan_r1_2026-07-20']);
+    });
+
+    it('sorts open before done', () => {
+        const out = mergeDayTasks(
+            [t('a', { planDate: '2026-07-27', done: true }), t('b', { planDate: '2026-07-27' })],
+            [], '2026-07-27', '2026-07-27');
+        expect(out.map(x => x.id)).toEqual(['b', 'a']);
     });
 });

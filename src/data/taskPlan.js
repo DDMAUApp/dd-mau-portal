@@ -252,3 +252,50 @@ export async function ensureMaterializedForToday(side, byName) {
         return { created: 0, error: e?.message };
     }
 }
+
+// ── Day sheet: the tasks ALREADY on a day's list ───────────────────────
+// (Andrew 2026-07-27: "when i press the day on the calendar i want to see
+// all the tasks already in the days list.") A day's list is more than the
+// planner's rules — it's the real /assigned_tasks docs:
+//   • instances materialized FOR that day (planDate == dateStr, done or not)
+//   • plus, for today: every open task on the board (manual assignments +
+//     carry-overs from earlier days ARE today's list)
+//   • plus, for future days: open MANUAL tasks (no planDate — they stay on
+//     the board until checked, so they'll still be there that day). Open
+//     planner instances belong to the day they were made for.
+
+// Pure merge (unit-tested): planDocs/openDocs are {id, ...data} arrays.
+export function mergeDayTasks(planDocs, openDocs, dateStr, todayStr) {
+    const byId = new Map();
+    for (const t of planDocs || []) byId.set(t.id, t);
+    if (dateStr >= todayStr) {
+        for (const t of openDocs || []) {
+            if (byId.has(t.id)) continue;
+            if (dateStr > todayStr && t.planDate) continue; // future day: manual only
+            byId.set(t.id, t);
+        }
+    }
+    const out = [...byId.values()];
+    out.sort((a, b) => (!!a.done !== !!b.done)
+        ? (a.done ? 1 : -1)
+        : (a.staffName || '').localeCompare(b.staffName || ''));
+    return out;
+}
+
+// One-shot fetch for the day sheet (bounded; no live subscription — the
+// sheet is short-lived and reopened per tap).
+export async function fetchDayTasks(dateStr) {
+    const todayStr = toDateStr();
+    const col = collection(db, 'assigned_tasks');
+    const reads = [getDocs(query(col, where('planDate', '==', dateStr), limit(300)))];
+    if (dateStr >= todayStr) {
+        reads.push(getDocs(query(col, where('done', '==', false), limit(500))));
+    }
+    const [planSnap, openSnap] = await Promise.all(reads);
+    const toArr = (snap) => {
+        const arr = [];
+        if (snap) snap.forEach(d => arr.push({ id: d.id, ...(d.data() || {}) }));
+        return arr;
+    };
+    return mergeDayTasks(toArr(planSnap), toArr(openSnap), dateStr, todayStr);
+}

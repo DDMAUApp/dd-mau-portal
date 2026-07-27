@@ -20,6 +20,7 @@ import {
     subscribeTaskPlan, createTaskPlanRule, updateTaskPlanRule,
     archiveTaskPlanRule, deleteTaskPlanRule, skipOccurrence, moveOccurrence,
     rulesDueOn, ensureMaterializedForToday, toDateStr, addDaysStr, weekdayOf,
+    fetchDayTasks,
 } from '../data/taskPlan';
 import { inferStaffSide } from '../data/assignedTasks';
 import { toast } from '../toast';
@@ -233,6 +234,18 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, onEdit, onCl
     const wd = weekdayOf(dateStr);
     const dayTitle = `${(isEs ? WD_ES : WD_EN)[wd]} ${Number(dateStr.slice(8))}/${Number(dateStr.slice(5, 7))}`;
 
+    // The tasks ALREADY on this day's list (real /assigned_tasks docs —
+    // materialized planner instances + manual assignments/carry-overs).
+    const [dayTasks, setDayTasks] = useState(null); // null = loading
+    useEffect(() => {
+        let alive = true;
+        setDayTasks(null);
+        fetchDayTasks(dateStr)
+            .then(list => { if (alive) setDayTasks(list); })
+            .catch(() => { if (alive) setDayTasks([]); });
+        return () => { alive = false; };
+    }, [dateStr]);
+
     // Add form state
     const [task, setTask] = useState('');
     const [side, setSide] = useState('FOH');
@@ -282,6 +295,39 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, onEdit, onCl
                     <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    <div>
+                        <div className="text-[11px] font-bold uppercase tracking-widest text-dd-text-2 mb-1">
+                            {tx('Already on the list', 'Ya en la lista')}{dayTasks ? ` · ${dayTasks.length}` : ''}
+                        </div>
+                        {dayTasks === null ? (
+                            <p className="text-xs text-dd-text-2 italic">{tx('Loading…', 'Cargando…')}</p>
+                        ) : dayTasks.length === 0 ? (
+                            <p className="text-xs text-dd-text-2 italic">{tx('No tasks on this day’s list yet.', 'Aún no hay tareas en la lista de este día.')}</p>
+                        ) : (
+                            <div className="space-y-1">
+                                {dayTasks.map(t => {
+                                    const rule = t.planRuleId ? rules.find(r => r.id === t.planRuleId) : null;
+                                    const Row = rule ? 'button' : 'div';
+                                    return (
+                                        <Row key={t.id} {...(rule ? { onClick: () => onEdit(rule) } : {})}
+                                            className={`w-full text-left px-2.5 py-2 rounded-lg border border-dd-line ${t.done ? 'bg-emerald-50/60' : 'bg-white'} ${rule ? 'hover:bg-dd-bg active:scale-[0.99]' : ''}`}>
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
+                                                <span className={`text-sm font-bold ${t.done ? 'text-dd-text-2 line-through' : 'text-dd-text'}`}>{t.task}</span>
+                                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.side === 'BOH' ? 'bg-blue-100 text-blue-900' : 'bg-emerald-100 text-emerald-900'}`}>{t.side}</span>
+                                            </div>
+                                            <div className="text-[10px] text-dd-text-2 mt-0.5">
+                                                → {t.staffName || '?'} · {t.planRuleId
+                                                    ? tx('🗓 planner', '🗓 planificador')
+                                                    : `${tx('assigned by', 'asignada por')} ${t.assignedBy || '?'}`}
+                                            </div>
+                                        </Row>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
                     <div>
                         <div className="text-[11px] font-bold uppercase tracking-widest text-dd-text-2 mb-1">
                             {tx('Planned this day', 'Planificado este día')} · {due.length}
