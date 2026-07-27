@@ -21,6 +21,9 @@ const [VERSION_MAIN, VERSION_HASH = ''] = VERSION.split(' · ');
 
 export default function AppVersion({ language, className = '' }) {
     const [open, setOpen] = useState(false);
+    // On native, Refresh now may genuinely download the newest OTA bundle
+    // (a few seconds) before reloading — show progress so it doesn't look dead.
+    const [refreshing, setRefreshing] = useState(false);
     const isEs = language === 'es';
     const builtLabel = (() => {
         if (!BUILT_AT) return '';
@@ -75,9 +78,17 @@ export default function AppVersion({ language, className = '' }) {
                                 </div>
                             )}
                         </dl>
-                        <button onClick={() => forceRefresh()}
-                            className="w-full py-2 rounded-lg bg-mint-700 text-white text-sm font-bold hover:bg-mint-800">
-                            🔄 {isEs ? 'Refrescar ahora' : 'Refresh now'}
+                        <button
+                            disabled={refreshing}
+                            onClick={async () => {
+                                setRefreshing(true);
+                                try { await forceRefresh(); }
+                                finally { setRefreshing(false); }
+                            }}
+                            className="w-full py-2 rounded-lg bg-mint-700 text-white text-sm font-bold hover:bg-mint-800 disabled:opacity-60">
+                            {refreshing
+                                ? (isEs ? '⏳ Actualizando…' : '⏳ Updating…')
+                                : `🔄 ${isEs ? 'Refrescar ahora' : 'Refresh now'}`}
                         </button>
                         <p className="text-[10px] text-gray-400 text-center">
                             {isEs

@@ -495,6 +495,28 @@ export async function applyNativeOtaRefresh() {
     } catch { return false; }
     try {
         const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
+        // 2026-07-27 — explicit user intent overrides the apply-at-login gate:
+        // the person tapping "Refresh now" IS the person that gate protects.
+        // A bare reload() here was a silent no-op whenever nothing had been
+        // downloaded-and-set yet — worst on always-foreground devices (iOS app
+        // on a Mac never backgrounds, so autoUpdate never re-checks), where the
+        // button reloaded the SAME stale bundle forever (Andrew's laptop).
+        if (_otaBundlePending) {
+            const b = _otaBundlePending;
+            _otaBundlePending = null;
+            await CapacitorUpdater.set(b);   // activates the queued bundle + reloads
+            return true;
+        }
+        // Nothing queued — ask Capgo directly, download, and apply right now.
+        const cur = (await CapacitorUpdater.current().catch(() => null))?.bundle?.version || '';
+        const latest = await CapacitorUpdater.getLatest().catch(() => null);
+        if (latest?.url && latest.version && latest.version !== cur) {
+            const bundle = await CapacitorUpdater.download({ url: latest.url, version: latest.version });
+            await CapacitorUpdater.set(bundle);
+            return true;
+        }
+        // Already on the newest bundle (or Capgo unreachable) — plain WebView
+        // reload so the button still gives a visible refresh.
         await CapacitorUpdater.reload();
         return true;
     } catch (e) {
