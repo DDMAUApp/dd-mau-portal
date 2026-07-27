@@ -13,10 +13,14 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [lists, setLists] = useState(null);          // { sectionKey: rows[] }
+    const [sections, setSections] = useState(STICKER_SECTIONS); // live sections incl. custom categories
     const [edits, setEdits] = useState({});            // { `${key}:${rowId}`: '5' }
     const [saving, setSaving] = useState(false);
 
-    useEffect(() => subscribeStickerLists(setLists), []);
+    useEffect(() => subscribeStickerLists((l, secs) => {
+        setLists(l);
+        if (Array.isArray(secs) && secs.length) setSections(secs);
+    }), []);
 
     const key = (sk, id) => `${sk}:${id}`;
     // Current value for a row = the in-progress edit, else its saved shelfLifeDays.
@@ -39,7 +43,7 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
     const totals = useMemo(() => {
         if (!lists) return { items: 0, set: 0 };
         let items = 0, set = 0;
-        for (const s of STICKER_SECTIONS) {
+        for (const s of sections) {
             const rows = lists[s.key] || [];
             for (const r of rows) {
                 items++;
@@ -47,7 +51,7 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
             }
         }
         return { items, set };
-    }, [lists, edits]);
+    }, [lists, sections, edits]);
 
     const dirty = Object.keys(edits).length > 0;
 
@@ -98,7 +102,7 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
                     <div className="flex-1 overflow-y-auto px-3 pb-2">
                         {!lists ? (
                             <p className="text-center text-sm text-dd-text-2 py-10">{tx('Loading…', 'Cargando…')}</p>
-                        ) : STICKER_SECTIONS.map((s) => {
+                        ) : sections.map((s) => {
                             const rows = lists[s.key] || [];
                             if (rows.length === 0) return null;
                             return (
