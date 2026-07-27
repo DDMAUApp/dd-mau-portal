@@ -82,7 +82,10 @@ export function cleanKindFormats(raw) {
         if (Number.isFinite(Number(v.dateNumberScale))) {
             entry.dateNumberScale = Math.max(2, Math.min(8, Number(v.dateNumberScale)));
         }
-        if (v.rotate90 === true) entry.rotate90 = true;
+        // Per-kind giant use-by band control (weekday / discard-time line).
+        if (v.showUseByBand === false) entry.showUseByBand = false;
+        // (rotate90 dropped 2026-07-27 — the TM-L100 ignored ePOS text
+        // rotation on hardware; stale saved values are stripped here.)
         if (Object.keys(entry).length) out[String(k).slice(0, 24)] = entry;
     }
     return out;

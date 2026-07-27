@@ -802,6 +802,12 @@ export function buildLabelPayload({
     const fitTitleScale = Math.max(1, Math.min(cfgTitleScale,
         Math.floor(cols / longestWord)));
     const titleWrap = Math.max(longestWord, Math.floor(cols / fitTitleScale));
+    // TALL text (2026-07-27 — "SANITIZER unchanged, EGG large"): a long
+    // single word can never get WIDER than the roll, so width-only
+    // scaling left long names small. Epson width/height are independent:
+    // keep width at the fit limit, but let HEIGHT go all the way to the
+    // configured size — tall narrow text reads much bigger, never clips.
+    const titleHeightScale = Math.max(fitTitleScale, Math.min(8, cfgTitleScale));
 
     const titleLines = wrapWords(titleUpper, titleWrap);
 
@@ -891,12 +897,11 @@ export function buildLabelPayload({
         // admin's chosen scales; on a narrow roll they shrink to fit.
         dateNumberScale: fitDateScale,
         titleScale:      fitTitleScale,
+        titleHeightScale,
         // Per-kind layout (2026-07-26): 'nameFirst' prints the item name
         // as the top/huge element and shrinks the date to one small line
-        // (sanitizer buckets etc.). rotate90 emits ePOS text rotation —
-        // experimental, admin-toggled per kind, Epson only.
+        // (sanitizer buckets etc.).
         layout:   format?.layout === 'nameFirst' ? 'nameFirst' : 'standard',
-        rotate90: !!format?.rotate90,
         // Bug fix 2026-05-20: forward the preset's physical dims +
         // id from the format to the payload. printPrepLabel /
         // printFreeText / buildBrotherPrintDoc all read these off
@@ -1009,13 +1014,12 @@ function renderPrepLabelBody(payload) {
     const divEq = '='.repeat(cols);
     const divDash = '-'.repeat(cols);
 
-    // Experimental per-kind 90° rotation (Andrew 2026-07-26 — "turn the
-    // whole sticker 90 degrees"). ePOS text rotation; must be set before
-    // any text. Admin-toggled per kind in the Label Format editor —
-    // hardware-verify on the printer before relying on it.
-    if (payload.rotate90) lines.push(`<text rotate="true"/>`);
-
+    // (90° rotation tried 2026-07-26 via `<text rotate>` — the TM-L100
+    // ignored it on hardware, removed 2026-07-27. Tall width/height
+    // scaling below is the supported way to make names bigger.)
     const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
+    // Height can exceed width (tall text) — how long names get BIG.
+    const titleH = Math.max(titleScale, Math.min(8, Number(payload.titleHeightScale) || titleScale));
     if (payload.layout === 'nameFirst') {
         // ── NAME-FIRST layout (per-kind override) ────────────────
         // Item name HUGE at the top (sanitizer buckets etc. — the name
@@ -1025,7 +1029,7 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text align="center"/>`);
         lines.push(`<text em="true"/>`);
         if (payload.titleLines && payload.titleLines.length > 0) {
-            lines.push(`<text width="${titleScale}" height="${titleScale}"/>`);
+            lines.push(`<text width="${titleScale}" height="${titleH}"/>`);
             for (const t of payload.titleLines) {
                 lines.push(`<text>${escapeXml(t)}&#10;</text>`);
             }
@@ -1084,8 +1088,9 @@ function renderPrepLabelBody(payload) {
     // ── Item title (admin-scalable) ──────────────────────────
     if (payload.titleLines && payload.titleLines.length > 0) {
         // Epson supports 1..8 (the buildLabelPayload fit logic already
-        // shrank this to what the roll + item name can hold).
-        lines.push(`<text width="${titleScale}" height="${titleScale}"/>`);
+        // shrank the WIDTH to what the roll + item name can hold; height
+        // runs to the configured size so long names still read big).
+        lines.push(`<text width="${titleScale}" height="${titleH}"/>`);
         for (const t of payload.titleLines) {
             lines.push(`<text>${escapeXml(t)}&#10;</text>`);
         }

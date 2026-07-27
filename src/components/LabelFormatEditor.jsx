@@ -228,11 +228,15 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                             value={ov.titleScale ?? draft.titleScale}
                                             onChange={(v) => setKind({ titleScale: v })}
                                             min={1} max={8} step={1}
-                                            hint={tx('Long names still auto-shrink to fit', 'Nombres largos aún se reducen para caber')} />
+                                            hint={tx('Long names print TALL to reach this size (width auto-fits the roll)', 'Nombres largos se imprimen ALTOS (el ancho se ajusta al rollo)')} />
                                         <ToggleRow
-                                            checked={ov.rotate90 === true}
-                                            onChange={(v) => setKind({ rotate90: v ? true : undefined })}
-                                            label={tx('⤾ Rotate label 90° (experimental — test a print!)', '⤾ Rotar 90° (experimental — ¡prueba una impresión!)')} />
+                                            checked={ov.showUseByBand !== false}
+                                            onChange={(v) => setKind({ showUseByBand: v ? undefined : false })}
+                                            label={tx('Giant use-by band (THU / discard time)', 'Banda grande de caducidad (JUE / hora)')} />
+                                        <button type="button" onClick={save} disabled={saving}
+                                            className="w-full py-2 rounded-lg bg-violet-600 text-white text-xs font-bold disabled:opacity-40 active:scale-95">
+                                            {saving ? tx('Saving…', 'Guardando…') : tx('💾 Save category format', '💾 Guardar formato de categoría')}
+                                        </button>
                                         <button type="button" onClick={removeKind}
                                             className="w-full py-1.5 rounded-lg bg-white border border-red-300 text-red-700 text-[11px] font-bold hover:bg-red-50">
                                             {tx('Remove override (use default format)', 'Quitar ajuste (usar formato general)')}

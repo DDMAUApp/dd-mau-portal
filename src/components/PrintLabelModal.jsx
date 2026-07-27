@@ -171,6 +171,10 @@ export default function PrintLabelModal({
             ingredientsEn: [],
             ingredientsEs: [],
             category: recipe?.category || 'Other',
+            // kind MUST survive the editable rebuild — per-category label
+            // formats key on it (2026-07-27: sanitizer override silently
+            // no-opped because this rebuilt object dropped it).
+            kind: recipe?.kind || null,
         }
         : recipe
     ), [editable, editTitle, editTitleEs, editAllergens, recipe, isEs]);
@@ -842,11 +846,18 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
     const editAttrs = onEditDate ? { onDoubleClick: onEditDate, title: 'Double-click to change the date' } : {};
     const editCls = onEditDate ? ' cursor-pointer' : '';
     const nameFirst = payload.layout === 'nameFirst';
-    // Title font tracks the Epson scale (7px per unit) so a per-kind
-    // "bigger name" override previews at its real relative size.
+    // Title font tracks the Epson HEIGHT scale (7px per unit); when the
+    // width fit is narrower than the height (tall text — how long names
+    // like SANITIZER get big), squeeze horizontally to preview the real
+    // proportions.
+    const tW = Number(payload.titleScale) || 2;
+    const tH = Math.max(tW, Number(payload.titleHeightScale) || tW);
     const titleBlock = payload.titleLines && payload.titleLines.length > 0 && (
         <div className="font-bold text-dd-text leading-tight"
-            style={{ fontSize: `${Math.max(14, 7 * (Number(payload.titleScale) || 2))}px` }}>
+            style={{
+                fontSize: `${Math.max(14, 7 * tH)}px`,
+                ...(tW < tH ? { transform: `scaleX(${(tW / tH).toFixed(2)})`, transformOrigin: 'center' } : {}),
+            }}>
             {payload.titleLines.map((t, i) => (
                 <div key={i}>{t}</div>
             ))}
