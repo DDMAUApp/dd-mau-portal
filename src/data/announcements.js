@@ -142,16 +142,19 @@ export async function postAnnouncement({
         mentions: [],
         createdAt: serverTimestamp(),
     });
-    await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: {
+    // Varargs form — a FieldPath can't be a computed object key (it would
+    // stringify to "[object Object]"), and the poster's name is free text
+    // so a template-string dot-path would corrupt on names with dots.
+    await updateDoc(doc(db, 'chats', chatId),
+        'lastMessage', {
             text: '📣 ' + (body.slice(0, 100) || 'Announcement'),
             sender: staffName,
             ts: serverTimestamp(),
             type: 'announcement',
         },
-        lastActivityAt: serverTimestamp(),
-        [new FieldPath('lastReadByName', staffName)]: serverTimestamp(),
-    });
+        'lastActivityAt', serverTimestamp(),
+        new FieldPath('lastReadByName', staffName), serverTimestamp(),
+    );
 
     // 3. Push fan-out to the audience (closed apps get the ping; the
     // pop-up greets them at open). Best-effort per recipient.
