@@ -298,32 +298,66 @@ export async function saveSections(sections, byName) {
 // watch the same single doc.
 const _sectionArrCache = new Map();     // key -> { json, arr }
 let _sectionsCache = { json: null, arr: STICKER_SECTIONS };
-export function subscribeStickerLists(callback) {
-    return onSnapshot(STICKER_LISTS_DOC_REF(), (snap) => {
-        const data = snap.exists() ? snap.data() : {};
-        const sectionsJson = JSON.stringify(data.sectionsOverride ?? null);
-        if (_sectionsCache.json !== sectionsJson) {
-            _sectionsCache = { json: sectionsJson, arr: resolveSections(data) };
-        }
-        const sections = _sectionsCache.arr;
-        const merged = {};
-        for (const section of sections) {
-            const override = data[section.key];
-            if (Array.isArray(override)) {
-                const json = JSON.stringify(override);
-                const hit = _sectionArrCache.get(section.key);
-                if (hit && hit.json === json) {
-                    merged[section.key] = hit.arr;
-                } else {
-                    const arr = override.map(stamp);
-                    _sectionArrCache.set(section.key, { json, arr });
-                    merged[section.key] = arr;
-                }
+
+// Resolve one doc-shaped object into { merged, sections } through the
+// identity caches. Shared by the live snapshot handler AND the device
+// cache below, so a cached paint followed by an identical snapshot
+// reuses the exact same array identities (memos never churn).
+function _resolveDoc(data) {
+    const sectionsJson = JSON.stringify(data.sectionsOverride ?? null);
+    if (_sectionsCache.json !== sectionsJson) {
+        _sectionsCache = { json: sectionsJson, arr: resolveSections(data) };
+    }
+    const sections = _sectionsCache.arr;
+    const merged = {};
+    for (const section of sections) {
+        const override = data[section.key];
+        if (Array.isArray(override)) {
+            const json = JSON.stringify(override);
+            const hit = _sectionArrCache.get(section.key);
+            if (hit && hit.json === json) {
+                merged[section.key] = hit.arr;
             } else {
-                merged[section.key] = STAMPED_DEFAULTS.get(section.key) || [];
+                const arr = override.map(stamp);
+                _sectionArrCache.set(section.key, { json, arr });
+                merged[section.key] = arr;
+            }
+        } else {
+            merged[section.key] = STAMPED_DEFAULTS.get(section.key) || [];
+        }
+    }
+    return { merged, sections };
+}
+
+// Device cache — last-known lists (Andrew 2026-07-27: "the items I added
+// myself don't load right away"). On a cold open the first paint used the
+// factory defaults until the Firestore round trip landed; now the previous
+// visit's lists render SYNCHRONOUSLY and the live snapshot replaces them.
+// Only the array fields are cached (Timestamps don't JSON round-trip).
+const STICKER_CACHE_KEY = 'ddmau:stickerLists:v1';
+
+export function subscribeStickerLists(callback) {
+    try {
+        const raw = localStorage.getItem(STICKER_CACHE_KEY);
+        if (raw) {
+            const cached = JSON.parse(raw);
+            if (cached && typeof cached === 'object') {
+                const { merged, sections } = _resolveDoc(cached);
+                callback(merged, sections);
             }
         }
+    } catch { /* private mode / corrupt cache — defaults paint instead */ }
+    return onSnapshot(STICKER_LISTS_DOC_REF(), (snap) => {
+        const data = snap.exists() ? snap.data() : {};
+        const { merged, sections } = _resolveDoc(data);
         callback(merged, sections);
+        try {
+            const toCache = {};
+            for (const [k, v] of Object.entries(data)) {
+                if (Array.isArray(v)) toCache[k] = v;
+            }
+            localStorage.setItem(STICKER_CACHE_KEY, JSON.stringify(toCache));
+        } catch { /* quota / private mode — nonfatal */ }
     }, (err) => {
         console.warn('subscribeStickerLists error:', err);
         // Fall back to defaults so the page still renders.

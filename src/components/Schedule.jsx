@@ -4890,7 +4890,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     .header { padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid #255a37; display: flex; justify-content: space-between; align-items: baseline; }
     h1 { font-size: 22px; margin: 0; color: #255a37; }
     .subhead { font-size: 12px; color: #6b7280; }
-    .day { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; }
+    .day { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; break-inside: avoid; page-break-inside: avoid; }
     .day.today { background: #ecfdf5; }
     .day.closed-day { background: #f3f4f6; opacity: 0.7; }
     .day-header { width: 110px; flex-shrink: 0; }
@@ -4908,9 +4908,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     .empty, .pto, .closed { font-size: 11px; color: #9ca3af; padding: 4px; }
     .pto { color: #92400e; font-weight: 700; }
     .closed { color: #6b7280; font-weight: 700; }
-    .summary { margin-top: 14px; padding: 10px; background: #f9fafb; border-radius: 6px; border: 1px solid #e5e7eb; }
+    .summary { margin-top: 14px; padding: 10px; background: #f9fafb; border-radius: 6px; border: 1px solid #e5e7eb; break-inside: avoid; page-break-inside: avoid; }
     .summary b { color: #255a37; font-size: 16px; }
-    .footer { margin-top: 12px; font-size: 9px; color: #9ca3af; text-align: center; }
+    /* Bottom margin = clip buffer for the native iOS print formatter
+       (2026-07-27 — "the bottom is cutoff"). */
+    .footer { margin-top: 12px; margin-bottom: 24px; font-size: 9px; color: #9ca3af; text-align: center; break-inside: avoid; page-break-inside: avoid; }
     /* Top toolbar — shown only on-screen, hidden during print. Lets the
        user get back to the schedule (close this tab) or re-trigger the
        print dialog. Earlier the print window was a dead end. */
@@ -5041,6 +5043,12 @@ ${dayBlocks}
     h1 { font-size: 18px; margin: 0; color: #255a37; }
     .subhead { font-size: 11px; color: #4b5563; }
     table { width: 100%; border-collapse: collapse; font-size: 9px; }
+    /* 2026-07-27 (Andrew: "the bottom is cutoff") — a staff row landing on
+       a page boundary was SLICED mid-row instead of moving whole to the
+       next page, and the native iOS print formatter clips the last line.
+       Unbreakable rows + repeating header + a trailing buffer fix it. */
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
     th, td { border: 1px solid #d1d5db; padding: 3px; vertical-align: top; }
     th { background: #f3f4f6; text-align: left; font-weight: 600; }
     th.today, td.today { background: #ecfdf5; }
@@ -5069,7 +5077,7 @@ ${dayBlocks}
     .empty { color: #d1d5db; text-align: center; }
     .pto { color: #92400e; text-align: center; font-size: 8px; font-weight: 700; padding: 8px 0; }
     .closed { color: #6b7280; text-align: center; font-size: 8px; font-weight: 700; padding: 8px 0; }
-    .footer { margin-top: 8px; font-size: 8px; color: #6b7280; display: flex; justify-content: space-between; }
+    .footer { margin-top: 8px; margin-bottom: 24px; font-size: 8px; color: #6b7280; display: flex; justify-content: space-between; break-inside: avoid; page-break-inside: avoid; }
     /* Top toolbar — on-screen only, hidden during print. Without this the
        print window was a dead end after the print dialog closed. */
     .toolbar { position: sticky; top: 0; background: white; border-bottom: 1px solid #e5e7eb; padding: 10px 16px; display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: -10px -10px 12px -10px; }
