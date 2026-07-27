@@ -394,23 +394,12 @@ export default function DateStickerPrinter({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchIndex, hasQuery, queryTokens, aiIdSet]);
 
-    // Grid-shaped search hits, memoized (2026-07-26 perf audit): the inline
-    // `.map(c => ({...c}))` minted fresh cell objects per keystroke and
-    // defeated StickerCell's memo for every visible match.
-    const searchGridComponents = useMemo(
-        () => (flatResults.components || []).map(c => ({ ...c, kind: c.componentKind || 'side' })),
-        [flatResults]);
-    const handleSearchPrint = useCallback((c) => handlePrintComponent({
-        kind: c.kind,
-        nameEn: c.nameEn,
-        nameEs: c.nameEs,
-        descEn: c.descEn,
-        descEs: c.descEs,
-        // Same use-by default as the browse grid (audit finding 4).
-        ...(c.shelfLifeDays ? { shelfLifeDays: c.shelfLifeDays } : {}),
-        ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
-        ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
-    }, null), [handlePrintComponent]);
+    // (searchGridComponents + handleSearchPrint moved BELOW
+    // handlePrintComponent — its useCallback dep array evaluated the
+    // not-yet-initialized const during render: the 2026-07-26 "date
+    // stickers can't load" TDZ crash. Same bug class as the Operations
+    // 2026-07-01 incident — in these giant components, anything a hook's
+    // DEP ARRAY references must be declared above it.)
 
     // Browse grouping (no-query view) — by category.
     const grouped = useMemo(() => {
@@ -503,6 +492,25 @@ export default function DateStickerPrinter({
         });
     }, []);
     const handleBrowsePrint = useCallback((c) => handlePrintComponent(c, null), [handlePrintComponent]);
+
+    // Grid-shaped search hits, memoized (2026-07-26 perf audit): the inline
+    // `.map(c => ({...c}))` minted fresh cell objects per keystroke and
+    // defeated StickerCell's memo for every visible match. MUST live below
+    // handlePrintComponent (see the TDZ note at the old site above).
+    const searchGridComponents = useMemo(
+        () => (flatResults.components || []).map(c => ({ ...c, kind: c.componentKind || 'side' })),
+        [flatResults]);
+    const handleSearchPrint = useCallback((c) => handlePrintComponent({
+        kind: c.kind,
+        nameEn: c.nameEn,
+        nameEs: c.nameEs,
+        descEn: c.descEn,
+        descEs: c.descEs,
+        // Same use-by default as the browse grid (audit finding 4).
+        ...(c.shelfLifeDays ? { shelfLifeDays: c.shelfLifeDays } : {}),
+        ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
+        ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
+    }, null), [handlePrintComponent]);
 
     // Anyone-can-add (2026-07-26 audit fix): the add now goes through a
     // Firestore TRANSACTION (addStickerRow) instead of rewriting the full
