@@ -14,6 +14,10 @@ import { forceRefresh } from './hooks/usePullToRefresh';
 const VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev';
 const BUILT_AT = typeof __APP_BUILT_AT__ !== 'undefined' ? __APP_BUILT_AT__ : '';
 const OPERATOR = typeof __APP_OPERATOR__ !== 'undefined' ? __APP_OPERATOR__ : '';
+// One number on every platform (Andrew 2026-07-27): VERSION is now
+// "1.0.346 · abc1234" — the badge shows the 1.0.x part front and center;
+// the build hash stays as small print in the info panel.
+const [VERSION_MAIN, VERSION_HASH = ''] = VERSION.split(' · ');
 
 export default function AppVersion({ language, className = '' }) {
     const [open, setOpen] = useState(false);
@@ -35,7 +39,7 @@ export default function AppVersion({ language, className = '' }) {
                 className={`text-[10px] text-gray-400 hover:text-gray-600 transition px-2 py-1 ${className}`}
                 title={isEs ? 'Información de versión' : 'Version info'}>
                 {OPERATOR && <span>{OPERATOR} · </span>}
-                <span className="font-mono">{VERSION}</span>
+                <span className="font-mono">v{VERSION_MAIN}</span>
             </button>
             {open && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -56,8 +60,14 @@ export default function AppVersion({ language, className = '' }) {
                             )}
                             <div className="flex justify-between gap-3">
                                 <dt className="text-gray-500">{isEs ? 'Versión' : 'Version'}</dt>
-                                <dd className="font-mono text-gray-800 text-right">{VERSION}</dd>
+                                <dd className="font-mono font-bold text-gray-800 text-right">v{VERSION_MAIN}</dd>
                             </div>
+                            {VERSION_HASH && (
+                                <div className="flex justify-between gap-3">
+                                    <dt className="text-gray-500">{isEs ? 'Compilación' : 'Build'}</dt>
+                                    <dd className="font-mono text-gray-500 text-right">{VERSION_HASH}</dd>
+                                </div>
+                            )}
                             {builtLabel && (
                                 <div className="flex justify-between gap-3">
                                     <dt className="text-gray-500">{isEs ? 'Compilado' : 'Built'}</dt>

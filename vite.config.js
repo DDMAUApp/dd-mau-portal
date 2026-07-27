@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
-import { copyFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, writeFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 // Sentry source map upload plugin — Andrew 2026-05-26. Runs on every
 // `npm run build`. Reads three env vars from the local shell or CI:
@@ -63,13 +63,19 @@ const writeVersionManifest = () => ({
 const buildId = Date.now().toString(36)
 
 // Build a human-readable version string at config time. Format:
-//   "2026.05.10 · 3705ba1"  (date + git short hash)
-// Falls back to date-only if git isn't available (shouldn't happen in CI
-// or local dev, but keeps the build alive if it ever does).
+//   "1.0.346 · 3705ba1"  (package.json version + git short hash)
+// 2026-07-27 (Andrew: "I never see the version badge, it's always a
+// different number — move all platforms to 1.0.345 and so on"): the old
+// date-based string never matched the 1.0.x the phones/Capgo/release
+// notes use. Now ONE number everywhere — web badge, native badge, TVs,
+// Sentry release, version.json — with the git hash kept as small print
+// (deploy.sh's propagation check greps version.json for the hash).
 let gitHash = ''
 try { gitHash = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch {}
 const today = new Date()
-const APP_VERSION = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, '0')}.${String(today.getDate()).padStart(2, '0')}${gitHash ? ' · ' + gitHash : ''}`
+let pkgVersion = ''
+try { pkgVersion = JSON.parse(readFileSync(resolve('package.json'), 'utf8')).version || '' } catch {}
+const APP_VERSION = `${pkgVersion || `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, '0')}.${String(today.getDate()).padStart(2, '0')}`}${gitHash ? ' · ' + gitHash : ''}`
 const APP_BUILT_AT = today.toISOString()
 
 export default defineConfig({
