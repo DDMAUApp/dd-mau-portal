@@ -811,6 +811,23 @@ export function buildLabelPayload({
 
     const titleLines = wrapWords(titleUpper, titleWrap);
 
+    // Second-language title (Andrew 2026-07-27 — "item spanish translation
+    // toggle"): when on, the OTHER language's name prints as a smaller line
+    // under the main title so one sticker reads for EN + ES staff. Skipped
+    // when identical (Tofu, Churros…) or missing. Width-fit like the title.
+    let titleLines2 = [];
+    let title2Scale = 1;
+    if (format?.showTitleTranslation) {
+        const altRaw = isEs ? itemName : itemNameEs;
+        const altUpper = String(altRaw || '').toUpperCase().trim();
+        if (altUpper && altUpper !== titleUpper.trim()) {
+            const longest2 = Math.max(1,
+                ...altUpper.split(/\s+/).filter(Boolean).map(w => w.length));
+            title2Scale = Math.max(1, Math.min(2, Math.floor(cols / longest2)));
+            titleLines2 = wrapWords(altUpper, Math.max(longest2, Math.floor(cols / title2Scale)));
+        }
+    }
+
     // Big prep date at the top — for FIFO scanning. Format-aware:
     // admin can override the "PREPPED" prefix text (e.g. "MADE",
     // "PREP") via /config/label_format.
@@ -881,6 +898,8 @@ export function buildLabelPayload({
 
     return {
         titleLines: format?.showTitle === false ? [] : titleLines,
+        titleLines2: format?.showTitle === false ? [] : titleLines2,
+        title2Scale,
         metaLines,
         prepDateLabel,    // e.g. "PREPPED" — small text above the date number
         prepDateNumber,   // e.g. "05/20/26" — printed HUGE
@@ -1055,6 +1074,11 @@ function renderPrepLabelBody(payload) {
             }
         }
         lines.push(`<text em="false"/>`);
+        if (payload.titleLines2 && payload.titleLines2.length > 0) {
+            const t2 = Math.max(1, Math.min(2, Number(payload.title2Scale) || 1));
+            lines.push(`<text width="${t2}" height="${t2}"/>`);
+            for (const t of payload.titleLines2) lines.push(`<text>${escapeXml(t)}&#10;</text>`);
+        }
         lines.push(`<text width="1" height="1"/>`);
         pushDiv(divEq);
         const dateLine = [payload.prepDateLabel,
@@ -1120,6 +1144,11 @@ function renderPrepLabelBody(payload) {
             lines.push(`<text>${escapeXml(t)}&#10;</text>`);
         }
         if (payload.titleBold) lines.push(`<text em="false"/>`);
+        if (payload.titleLines2 && payload.titleLines2.length > 0) {
+            const t2 = Math.max(1, Math.min(2, Number(payload.title2Scale) || 1));
+            lines.push(`<text width="${t2}" height="${t2}"/>`);
+            for (const t of payload.titleLines2) lines.push(`<text>${escapeXml(t)}&#10;</text>`);
+        }
         lines.push(`<text width="1" height="1"/>`);
         lines.push(`<text align="left"/>`);
         pushDiv(divDash);
@@ -1206,10 +1235,17 @@ export function buildLabelPreviewModel(payload) {
     const pushDiv = (d) => { if (showDiv) push(d); };
     const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
     const titleH = Math.max(titleScale, Math.min(8, Number(payload.titleHeightScale) || titleScale));
+    const t2 = Math.max(1, Math.min(2, Number(payload.title2Scale) || 1));
+    const pushTitle2 = () => {
+        for (const t of (payload.titleLines2 || [])) {
+            push(t, { w: t2, h: t2, center: true });
+        }
+    };
     if (payload.layout === 'nameFirst') {
         for (const t of (payload.titleLines || [])) {
             push(t, { w: titleScale, h: titleH, em: true, center: true });
         }
+        pushTitle2();
         pushDiv(divEq);
         const dateLine = [payload.prepDateLabel,
             payload.prepDateNumber || payload.prepDateBig,
@@ -1237,6 +1273,7 @@ export function buildLabelPreviewModel(payload) {
         for (const t of (payload.titleLines || [])) {
             push(t, { w: titleScale, h: titleH, em: !!payload.titleBold, center: true });
         }
+        pushTitle2();
         if ((payload.titleLines || []).length) pushDiv(divDash);
     }
     {

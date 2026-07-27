@@ -871,6 +871,17 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                     </span>
                 </div>
             ))}
+            {/* Second-language name (showTitleTranslation) — smaller,
+                never bold, mirrors the printed line. */}
+            {payload.titleLines2 && payload.titleLines2.length > 0 && payload.titleLines2.map((t, i) => (
+                <div key={`t2-${i}`} className="font-normal text-dd-text-2"
+                    style={{
+                        display: 'flex', justifyContent: 'center', overflow: 'hidden',
+                        fontSize: `${Math.max(11, 7 * Math.max(1, Math.min(2, Number(payload.title2Scale) || 1)))}px`,
+                    }}>
+                    <span style={{ flex: 'none' }}>{t}</span>
+                </div>
+            ))}
         </div>
     );
     const dateBlock = (

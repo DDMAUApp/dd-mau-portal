@@ -55,6 +55,9 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
     metaScale:       1,       // Use by / By / Loc info lines (1..3)
     titleBold:       false,   // bold item name (name-first layout is always bold)
     showDividers:    true,    // the ==== / ---- rule lines
+    // Print the item name in BOTH languages (smaller second line) so one
+    // sticker reads for EN + ES staff (Andrew 2026-07-27).
+    showTitleTranslation: false,
 
     // Text content
     preppedLabelTextEn: 'PREPPED',
@@ -107,6 +110,7 @@ export function cleanKindFormats(raw) {
         // Boolean, not only-true (audit 2026-07-27 #5): a per-kind
         // titleBold:false must be able to override a global bold ON.
         if (typeof v.titleBold === 'boolean') entry.titleBold = v.titleBold;
+        if (typeof v.showTitleTranslation === 'boolean') entry.showTitleTranslation = v.showTitleTranslation;
         // Per-kind giant use-by band control (weekday / discard-time line).
         if (v.showUseByBand === false) entry.showUseByBand = false;
         // (rotate90 dropped 2026-07-27 — the TM-L100 ignored ePOS text
@@ -176,7 +180,7 @@ export async function saveLabelFormat({ format, byName }) {
     const BOOL_FIELDS = ['showPreppedLabel', 'showTime', 'showTitle', 'showUseBy',
         'showByName', 'showLocation', 'showAllergens', 'showIngredients',
         'showNotes', 'showFooter', 'showUseByWeekday', 'showUseByBand',
-        'titleBold', 'showDividers'];
+        'titleBold', 'showDividers', 'showTitleTranslation'];
     const STRING_FIELDS = ['preppedLabelTextEn', 'preppedLabelTextEs',
         'useByLabelTextEn', 'useByLabelTextEs',
         'footerText', 'dateFormat', 'timeFormat'];

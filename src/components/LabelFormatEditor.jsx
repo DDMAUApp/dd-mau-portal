@@ -356,6 +356,10 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                 checked={draft.showUseByWeekday !== false}
                                 onChange={(v) => update({ showUseByWeekday: v })}
                                 label={tx('Show weekday on use-by line (Wed)', 'Mostrar día de la semana')} />
+                            <ToggleRow
+                                checked={draft.showTitleTranslation === true}
+                                onChange={(v) => update({ showTitleTranslation: v })}
+                                label={tx('Item name in BOTH languages (EN + ES)', 'Nombre en AMBOS idiomas (EN + ES)')} />
                             <div className="grid grid-cols-2 gap-2 mt-1">
                                 <NumberRow
                                     label={tx('Default shelf life (days)', 'Caducidad por defecto')}
