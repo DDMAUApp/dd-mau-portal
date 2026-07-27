@@ -347,6 +347,12 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
         lines.push({ text: t, scale: 0.7, bold: false });
     }
 
+    // 3b. Giant use-by band (2026-07-26 feature #3) — weekday for day
+    // clocks, discard time for hour clocks. Mirrors the Epson renderer.
+    if (payload.useByBig) {
+        lines.push({ text: String(payload.useByBig), scale: 1.6, bold: true });
+    }
+
     // 4. Allergens — small + bold + warning prefix
     if (Array.isArray(payload.allergens) && payload.allergens.length > 0) {
         const txt = '⚠ ' + payload.allergens.join(', ');

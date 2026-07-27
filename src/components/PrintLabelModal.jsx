@@ -69,6 +69,23 @@ export default function PrintLabelModal({
 
     const defaultDays = useMemo(() => resolveShelfLifeDays(recipe), [recipe]);
     const [shelfLifeDays, setShelfLifeDays] = useState(defaultDays);
+    // Hour-based shelf life (2026-07-26 feature #2): items whose life is
+    // set in HOURS (hot-hold, line sauces, sanitizer) default to the hours
+    // unit; everything else stays on days. Staff can flip the unit per
+    // print.
+    const defaultHours = Number(recipe?.shelfLifeHours) > 0 ? Math.floor(Number(recipe.shelfLifeHours)) : 4;
+    const [lifeUnit, setLifeUnit] = useState(Number(recipe?.shelfLifeHours) > 0 ? 'hours' : 'days');
+    const [shelfLifeHours, setShelfLifeHours] = useState(defaultHours);
+    // Thaw state (feature #6): items with a `thawedDays` shelf life get a
+    // Fresh/Thawed toggle — Thawed switches the day clock to the shorter
+    // thawed life and stamps ❄ THAWED on the label.
+    const thawedDays = Number(recipe?.thawedDays) > 0 ? Math.floor(Number(recipe.thawedDays)) : 0;
+    const [thawed, setThawed] = useState(false);
+    const pickThawed = (on) => {
+        setThawed(on);
+        if (on && thawedDays) { setLifeUnit('days'); setShelfLifeDays(thawedDays); }
+        if (!on) setShelfLifeDays(defaultDays);
+    };
     const [notes, setNotes] = useState('');
     // Andrew 2026-05-20 — "and then how many copies we want to print".
     // Prep labels can print N at once, stitched into one envelope so
@@ -220,6 +237,8 @@ export default function PrintLabelModal({
         itemNameEs: effectiveRecipe?.titleEs,
         prepDate,
         shelfLifeDays,
+        shelfLifeHours: lifeUnit === 'hours' ? shelfLifeHours : null,
+        thawState: thawed ? 'thawed' : null,
         preppedBy: staffName,
         location: locationLabel(location),
         allergens: effectiveRecipe?.allergens || [],
@@ -229,7 +248,7 @@ export default function PrintLabelModal({
         format: labelFormat,
         paperWidthMm: printer?.paperWidthMm,
         leftOffsetMm: printer?.leftOffsetMm,
-    }), [effectiveRecipe, prepDate, shelfLifeDays, staffName, location, language, notes, labelFormat, printer?.paperWidthMm, printer?.leftOffsetMm]);
+    }), [effectiveRecipe, prepDate, shelfLifeDays, lifeUnit, shelfLifeHours, thawed, staffName, location, language, notes, labelFormat, printer?.paperWidthMm, printer?.leftOffsetMm]);
     // Defer the preview one beat behind input. Without this, every
     // keystroke / chip tap re-painted the preview in the SAME frame as
     // the input echo — on older iPads that dropped frames ("glitchy",
@@ -301,6 +320,8 @@ export default function PrintLabelModal({
             recipe: effectiveRecipe,
             preppedBy: staffName,
             shelfLifeDays,
+            shelfLifeHours: lifeUnit === 'hours' ? shelfLifeHours : null,
+            thawState: thawed ? 'thawed' : null,
             language,
             notes,
             byName: staffName,
@@ -389,11 +410,19 @@ export default function PrintLabelModal({
                         />
                     )}
 
-                    {/* Shelf life — quick chips + step buttons */}
+                    {/* Shelf life — quick chips + step buttons + days/hours unit */}
                     <ShelfLifeSection
                         shelfLifeDays={shelfLifeDays}
                         setShelfLifeDays={setShelfLifeDays}
                         defaultDays={defaultDays}
+                        lifeUnit={lifeUnit}
+                        setLifeUnit={setLifeUnit}
+                        shelfLifeHours={shelfLifeHours}
+                        setShelfLifeHours={setShelfLifeHours}
+                        defaultHours={defaultHours}
+                        thawedDays={thawedDays}
+                        thawed={thawed}
+                        pickThawed={pickThawed}
                         isEs={isEs}
                     />
 
@@ -648,45 +677,92 @@ const EditableIdentity = memo(function EditableIdentity({
     );
 });
 
-const ShelfLifeSection = memo(function ShelfLifeSection({ shelfLifeDays, setShelfLifeDays, defaultDays, isEs }) {
+const ShelfLifeSection = memo(function ShelfLifeSection({
+    shelfLifeDays, setShelfLifeDays, defaultDays,
+    lifeUnit = 'days', setLifeUnit, shelfLifeHours = 4, setShelfLifeHours, defaultHours = 4,
+    thawedDays = 0, thawed = false, pickThawed,
+    isEs,
+}) {
     const tx = (en, es) => (isEs ? es : en);
+    const isHours = lifeUnit === 'hours';
+    const val = isHours ? shelfLifeHours : shelfLifeDays;
+    const step = (delta) => {
+        if (isHours) setShelfLifeHours?.(h => Math.max(1, Math.min(96, h + delta)));
+        else setShelfLifeDays(d => Math.max(1, Math.min(14, d + delta)));
+    };
     return (
         <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
-                {tx('Shelf life (days)', 'Días de vida útil')}
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
+                    {tx('Shelf life', 'Vida útil')}
+                </label>
+                {/* Days ↔ hours unit (2026-07-26 feature #2) — line items
+                    (hot-hold, cut herbs, sanitizer) discard in HOURS. */}
+                <div className="flex rounded-full border border-dd-line overflow-hidden">
+                    {['days', 'hours'].map(u => (
+                        <button key={u} type="button"
+                            onClick={() => setLifeUnit?.(u)}
+                            className={`px-2.5 py-0.5 text-[11px] font-bold ${lifeUnit === u
+                                ? 'bg-dd-green text-white'
+                                : 'bg-white text-dd-text-2'}`}>
+                            {u === 'days' ? tx('days', 'días') : tx('hours', 'horas')}
+                        </button>
+                    ))}
+                </div>
+            </div>
             <div className="flex items-center gap-2">
                 <button
-                    onClick={() => setShelfLifeDays(d => Math.max(1, d - 1))}
+                    onClick={() => step(-1)}
                     className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
                     −
                 </button>
                 <div className="flex-1 text-center">
-                    <div className="text-2xl font-black text-dd-green">{shelfLifeDays}</div>
+                    <div className="text-2xl font-black text-dd-green">{val}</div>
                     <div className="text-[10px] text-dd-text-2">
-                        {tx('days', 'días')}
+                        {isHours ? tx('hours', 'horas') : tx('days', 'días')}
                     </div>
                 </div>
                 <button
-                    onClick={() => setShelfLifeDays(d => Math.min(14, d + 1))}
+                    onClick={() => step(1)}
                     className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
                     +
                 </button>
             </div>
             <div className="flex gap-1 mt-2 flex-wrap">
-                {[1, 3, 5, 7].map(d => (
-                    <button key={d}
-                        onClick={() => setShelfLifeDays(d)}
-                        className={`px-3 py-1 rounded-full text-xs font-bold border transition ${shelfLifeDays === d
+                {(isHours ? [2, 4, 6, 8, 12, 24] : [1, 3, 5, 7]).map(v => (
+                    <button key={v}
+                        onClick={() => (isHours ? setShelfLifeHours?.(v) : setShelfLifeDays(v))}
+                        className={`px-3 py-1 rounded-full text-xs font-bold border transition ${val === v
                             ? 'bg-dd-green text-white border-dd-green'
                             : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
-                        {d}d
+                        {v}{isHours ? 'h' : 'd'}
                     </button>
                 ))}
                 <span className="text-[10px] text-dd-text-2 italic self-center ml-1">
-                    {tx(`default ${defaultDays}d`, `pred. ${defaultDays}d`)}
+                    {isHours
+                        ? tx(`default ${defaultHours}h`, `pred. ${defaultHours}h`)
+                        : tx(`default ${defaultDays}d`, `pred. ${defaultDays}d`)}
                 </span>
             </div>
+            {/* Fresh / Thawed toggle (feature #6) — only for items with a
+                thawed shelf life set in the Shelf life table. Thawed
+                switches to the shorter day clock + stamps ❄ THAWED. */}
+            {thawedDays > 0 && (
+                <div className="flex gap-1 mt-2">
+                    <button type="button" onClick={() => pickThawed?.(false)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition ${!thawed
+                            ? 'bg-dd-green text-white border-dd-green'
+                            : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                        {tx('Fresh / Frozen', 'Fresco / Congelado')}
+                    </button>
+                    <button type="button" onClick={() => pickThawed?.(true)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition ${thawed
+                            ? 'bg-sky-600 text-white border-sky-700'
+                            : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                        ❄ {tx(`Thawed (${thawedDays}d)`, `Descongelado (${thawedDays}d)`)}
+                    </button>
+                </div>
+            )}
         </div>
     );
 });

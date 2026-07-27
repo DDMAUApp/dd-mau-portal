@@ -60,6 +60,7 @@ import { isAdmin } from '../data/staff';
 import { warmPrintConfigs } from '../data/labelPrinting';
 import { subscribeAllBuildOverrides, applyBuildOverride } from '../data/buildOverrides';
 import { subscribeAllCustomItems } from '../data/customItems';
+import ExpiringPanel from './ExpiringPanel';
 
 const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 const BuildEditorModal = lazy(() => import('./BuildEditorModal'));
@@ -270,10 +271,12 @@ export default function DateStickerPrinter({
                     descEs: row.descEs || '',
                     category: section.titleEn,
                     categoryEs: section.titleEs,
-                    // Carry the per-item shelf life so printing from SEARCH
+                    // Carry the per-item shelf lives so printing from SEARCH
                     // results uses the same use-by default as the browse grid
                     // (audit finding 4: same item, different date by path).
                     ...(row.shelfLifeDays ? { shelfLifeDays: row.shelfLifeDays } : {}),
+                    ...(row.shelfLifeHours ? { shelfLifeHours: row.shelfLifeHours } : {}),
+                    ...(row.thawedDays ? { thawedDays: row.thawedDays } : {}),
                 }));
             }
         }
@@ -400,6 +403,8 @@ export default function DateStickerPrinter({
         descEs: c.descEs,
         // Same use-by default as the browse grid (audit finding 4).
         ...(c.shelfLifeDays ? { shelfLifeDays: c.shelfLifeDays } : {}),
+        ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
+        ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
     }, null), [handlePrintComponent]);
 
     // Browse grouping (no-query view) — by category.
@@ -461,6 +466,8 @@ export default function DateStickerPrinter({
     const [customPrintOpen, setCustomPrintOpen] = useState(false);
     // 📅 Bulk shelf-life matrix (admin) — set the use-by days for every item at once.
     const [shelfMatrixOpen, setShelfMatrixOpen] = useState(false);
+    // Expiring-soon panel (2026-07-26 feature #7) — open to all staff.
+    const [expiringOpen, setExpiringOpen] = useState(false);
 
     // Handler: take a component (from the build), synthesize a
     // recipe-shaped object, and hand to PrintLabelModal in editable
@@ -486,6 +493,8 @@ export default function DateStickerPrinter({
             ingredientsEs: [],
             category: KIND_TO_CATEGORY[component.kind] || 'Other',
             ...(shelfFromBuild ? { shelfLifeDays: shelfFromBuild } : {}),
+            ...(component.shelfLifeHours ? { shelfLifeHours: component.shelfLifeHours } : {}),
+            ...(component.thawedDays ? { thawedDays: component.thawedDays } : {}),
         });
     }, []);
     const handleBrowsePrint = useCallback((c) => handlePrintComponent(c, null), [handlePrintComponent]);
@@ -509,7 +518,7 @@ export default function DateStickerPrinter({
                 {/* Header */}
                 <div className="flex items-center gap-3 mb-3">
                     <span className="text-3xl">🏷</span>
-                    <div>
+                    <div className="flex-1 min-w-0">
                         <h1 className="text-xl font-black text-dd-text">
                             {tx('Date Stickers', 'Etiquetas de Fecha')}
                         </h1>
@@ -520,6 +529,14 @@ export default function DateStickerPrinter({
                             )}
                         </p>
                     </div>
+                    {/* Expiring-soon walk-in check (2026-07-26 feature #7) —
+                        everything printed whose use-by is today/tomorrow/past. */}
+                    <button
+                        type="button"
+                        onClick={() => setExpiringOpen(true)}
+                        className="flex-shrink-0 px-3 py-2 rounded-xl bg-amber-100 border border-amber-300 text-amber-800 text-xs font-black active:scale-95">
+                        📅 {tx('Expiring', 'Por caducar')}
+                    </button>
                 </div>
 
                 {/* Sticky command bar — search + category buttons together
@@ -925,6 +942,15 @@ export default function DateStickerPrinter({
                         onClose={() => setShelfMatrixOpen(false)}
                     />
                 </Suspense>
+            )}
+
+            {expiringOpen && (
+                <ExpiringPanel
+                    location={storeLocation}
+                    staffName={staffName}
+                    language={language}
+                    onClose={() => setExpiringOpen(false)}
+                />
             )}
 
             {/* New custom item modal — admin-only. Opens with an
@@ -1444,9 +1470,12 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
         nameEs: s.nameEs || s.nameEn,
         descEn: s.descEn || '',
         descEs: s.descEs || '',
-        // Carry the per-item shelf life so the date sticker auto-fills the
-        // right use-by days (set in the Shelf life table).
+        // Carry the per-item shelf lives so the date sticker auto-fills
+        // the right use-by (set in the Shelf life table): days, hour-based
+        // clocks, and the thawed life for the Fresh/Thawed toggle.
         ...(s.shelfLifeDays ? { shelfLifeDays: s.shelfLifeDays } : {}),
+        ...(s.shelfLifeHours ? { shelfLifeHours: s.shelfLifeHours } : {}),
+        ...(s.thawedDays ? { thawedDays: s.thawedDays } : {}),
     }));
     // Empty sections still render (2026-07-24) — a brand-new category needs
     // its header + "+ Add item" visible or nobody could put the first item in.

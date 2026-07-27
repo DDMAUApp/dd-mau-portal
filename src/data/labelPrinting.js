@@ -696,6 +696,14 @@ export function buildLabelPayload({
     itemNameEs,
     prepDate = new Date(),
     shelfLifeDays = DEFAULT_SHELF_LIFE_DAYS,
+    // Hour-based shelf life (2026-07-26, Andrew feature #2): line items
+    // (hot-hold, cut herbs, sauces on the line) discard in HOURS, not
+    // days. When set (1–96) it overrides shelfLifeDays and the use-by
+    // line carries a time of day.
+    shelfLifeHours = null,
+    // Thaw-state flag (feature #6): 'thawed' stamps the label so a
+    // pulled-from-freezer item is visibly on its shorter clock.
+    thawState = null,
     preppedBy,
     location,
     allergens = [],
@@ -724,8 +732,16 @@ export function buildLabelPayload({
     // and the (Wed) weekday below is then wrong too. setDate() does true
     // calendar-date arithmetic on the local civil date — DST-safe, preserves
     // the prep time-of-day, and rolls month/year correctly.
+    const hoursBased = Number.isFinite(Number(shelfLifeHours)) && Number(shelfLifeHours) > 0;
     const useByDate = new Date(prepDate);
-    useByDate.setDate(useByDate.getDate() + shelfLifeDays);
+    if (hoursBased) {
+        // Hour clocks are literal elapsed time (a 4-hour hold is 4 real
+        // hours even across a DST edge), so plain ms math is CORRECT here —
+        // unlike the calendar-day case below.
+        useByDate.setTime(useByDate.getTime() + Math.min(96, Number(shelfLifeHours)) * 3600000);
+    } else {
+        useByDate.setDate(useByDate.getDate() + shelfLifeDays);
+    }
 
     const dateFmtIsDayFirst = format?.dateFormat === 'dd/mm/yy';
     const timeFmt24h = format?.timeFormat === '24h';
@@ -788,14 +804,30 @@ export function buildLabelPayload({
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];
     const metaLines = [];
     if (format?.showUseBy !== false) {
-        const useByLine = showWeekday
-            ? `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)} (${isEs ? weekdayEs : weekday})`
-            : `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)}`;
+        // Hour-based labels carry the discard TIME — "Use by: 07/26/26
+        // 2:30p" — because the date alone is useless for a 4-hour hold.
+        const useByLine = hoursBased
+            ? `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)} ${fmtTime(useByDate)}`
+            : (showWeekday
+                ? `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)} (${isEs ? weekdayEs : weekday})`
+                : `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)}`);
         metaLines.push(useByLine);
+    }
+    if (thawState === 'thawed') {
+        metaLines.push(isEs ? '❄ DESCONGELADO' : '❄ THAWED');
     }
     if (format?.showByName !== false) {
         metaLines.push(`${tx('By', 'Por')}:     ${(preppedBy || '').slice(0, 22)}`);
     }
+    // Giant use-by band (feature #3 — the day-dot convention, monochrome):
+    // a shelf reads at a glance by the huge weekday ("JUE") instead of
+    // squinting at dates. Hour-based labels show the discard TIME instead.
+    // Off via Label Format `showUseByBand: false`.
+    const useByBig = (format?.showUseByBand === false || format?.showUseBy === false)
+        ? ''
+        : (hoursBased
+            ? fmtTime(useByDate)
+            : (isEs ? weekdayEs : weekday).toUpperCase());
     if (location && format?.showLocation !== false) {
         metaLines.push(`${tx('Loc', 'Loc')}:    ${location}`);
     }
@@ -822,6 +854,12 @@ export function buildLabelPayload({
         prepDateNumber,   // e.g. "05/20/26" — printed HUGE
         prepDateBig,      // legacy combined "PREPPED 05/20/26"
         prepTimeBig,
+        // Giant use-by band — weekday for day clocks, discard time for
+        // hour clocks. Empty string = don't render.
+        useByBig,
+        // Machine-readable use-by for the print log (expiring-today view).
+        useByIso: useByDate.toISOString(),
+        hoursBased,
         allergens: allergenList,
         ingredients: ingredientList,
         notes: format?.showNotes === false ? '' : String(notes || '').slice(0, 120),
@@ -1000,6 +1038,21 @@ function renderPrepLabelBody(payload) {
         for (const m of payload.metaLines) {
             lines.push(`<text>${escapeXml(m)}&#10;</text>`);
         }
+    }
+    // ── Giant use-by band (2026-07-26 feature #3) ─────────────
+    // Weekday ("THU") for day clocks, discard time ("2:30p") for hour
+    // clocks — shelf-scannable without reading the small date line.
+    // Scale clamped so the text always fits this roll's columns.
+    if (payload.useByBig) {
+        const bandScale = Math.max(2, Math.min(4,
+            Math.floor(cols / Math.max(1, payload.useByBig.length))));
+        lines.push(`<text align="center"/>`);
+        lines.push(`<text em="true"/>`);
+        lines.push(`<text width="${bandScale}" height="${bandScale}"/>`);
+        lines.push(`<text>${escapeXml(payload.useByBig)}&#10;</text>`);
+        lines.push(`<text em="false"/>`);
+        lines.push(`<text width="1" height="1"/>`);
+        lines.push(`<text align="left"/>`);
     }
     if (payload.allergens.length > 0) {
         lines.push(`<text>${divDash}&#10;</text>`);
@@ -2315,6 +2368,9 @@ export function printPrepLabel(args) {
 async function _printPrepLabelImpl({
     location, slot = DEFAULT_PRINTER_SLOT,
     recipe, preppedBy, shelfLifeDays, language = 'en',
+    // Hour-based shelf life + thaw state (2026-07-26 features #2/#6) —
+    // when shelfLifeHours is set it overrides the day clock entirely.
+    shelfLifeHours = null, thawState = null,
     notes, byName, copies = 1, source = 'recipe',
     // Andrew 2026-06-24: portioning a sauce made on an EARLIER date —
     // double-clicking the date in the print preview overrides it so the
@@ -2368,6 +2424,8 @@ async function _printPrepLabelImpl({
             itemNameEs: recipe?.titleEs,
             prepDate,
             shelfLifeDays: days,
+            shelfLifeHours,
+            thawState,
             preppedBy: preppedBy || byName,
             location: locationLabel(location),
             allergens: recipe?.allergens || [],
@@ -2474,6 +2532,27 @@ async function _printPrepLabelImpl({
             // (asleep / off / drifted IP) instead of "check paper/cover".
             return { ok: false, error: res.error === 'printer timeout' ? 'printer timeout' : 'printer_rejected' };
         }
+        // Print log (2026-07-26 features #7/#8) — one row per successful
+        // print, keyed on the use-by DAY so the "Expiring today" view and
+        // the waste log can query it. Fire-and-forget; never blocks or
+        // fails the print itself.
+        try {
+            const useByDate = new Date(payload.useByIso);
+            addDoc(collection(db, 'sticker_prints'), {
+                itemName: String(recipe?.titleEn || recipe?.title || 'Item').slice(0, 80),
+                itemNameEs: String(recipe?.titleEs || '').slice(0, 80),
+                qty: c,
+                byName: byName || preppedBy || 'unknown',
+                location: location || 'webster',
+                prepAt: prepDate.toISOString(),
+                useByAt: payload.useByIso,
+                useByDay: `${useByDate.getFullYear()}-${String(useByDate.getMonth() + 1).padStart(2, '0')}-${String(useByDate.getDate()).padStart(2, '0')}`,
+                hoursBased: !!payload.hoursBased,
+                ...(thawState ? { thawState } : {}),
+                source,
+                createdAt: serverTimestamp(),
+            }).catch(() => {});
+        } catch { /* logging is best-effort */ }
         return { ok: true };
     } catch (e) {
         console.warn('printPrepLabel failed:', e);

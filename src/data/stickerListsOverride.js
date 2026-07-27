@@ -360,6 +360,14 @@ function cleanRows(sectionKey, items) {
         // written when set (1–60); omitted rows fall back to the category default.
         const sd = Number(item.shelfLifeDays);
         if (Number.isFinite(sd) && sd > 0) row.shelfLifeDays = Math.min(60, Math.max(1, Math.floor(sd)));
+        // Hour-based life (2026-07-26 feature #2): 1–96 hours, overrides the
+        // day clock in the print modal (hot-hold / line items / sanitizer).
+        const sh = Number(item.shelfLifeHours);
+        if (Number.isFinite(sh) && sh > 0) row.shelfLifeHours = Math.min(96, Math.max(1, Math.floor(sh)));
+        // Thawed life (feature #6): days on the clock once pulled from the
+        // freezer — enables the Fresh/Thawed toggle in the print modal.
+        const td = Number(item.thawedDays);
+        if (Number.isFinite(td) && td > 0) row.thawedDays = Math.min(30, Math.max(1, Math.floor(td)));
         return row;
     }).filter(r => r.nameEn || r.nameEs); // drop fully-empty rows
 }

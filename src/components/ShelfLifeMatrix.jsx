@@ -22,14 +22,29 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
         if (Array.isArray(secs) && secs.length) setSections(secs);
     }), []);
 
+    // Edit keys: `${sk}:${id}` = shelf-life value, `:u` = unit ('d'|'h'),
+    // `:t` = thawed days (2026-07-26 features #2/#6).
     const key = (sk, id) => `${sk}:${id}`;
-    // Current value for a row = the in-progress edit, else its saved shelfLifeDays.
+    // Current value for a row = the in-progress edit, else its saved life.
     const valueFor = (sk, row) => {
         const k = key(sk, row.id);
         if (k in edits) return edits[k];
+        if (row.shelfLifeHours != null) return String(row.shelfLifeHours);
         return row.shelfLifeDays != null ? String(row.shelfLifeDays) : '';
     };
+    const unitFor = (sk, row) => {
+        const k = `${key(sk, row.id)}:u`;
+        if (k in edits) return edits[k];
+        return row.shelfLifeHours != null ? 'h' : 'd';
+    };
+    const thawFor = (sk, row) => {
+        const k = `${key(sk, row.id)}:t`;
+        if (k in edits) return edits[k];
+        return row.thawedDays != null ? String(row.thawedDays) : '';
+    };
     const setOne = (sk, id, v) => setEdits((e) => ({ ...e, [key(sk, id)]: v.replace(/[^0-9]/g, '').slice(0, 2) }));
+    const setUnit = (sk, id, u) => setEdits((e) => ({ ...e, [`${key(sk, id)}:u`]: u === 'h' ? 'h' : 'd' }));
+    const setThaw = (sk, id, v) => setEdits((e) => ({ ...e, [`${key(sk, id)}:t`]: v.replace(/[^0-9]/g, '').slice(0, 2) }));
 
     // "Set all in this section to N" — fills every row in the section.
     const setSection = (sk, rows, v) => {
@@ -65,12 +80,21 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
             for (const sk of changedSections) {
                 const rows = (lists[sk] || []).map((r) => {
                     const v = valueFor(sk, r);
+                    const unit = unitFor(sk, r);
                     // '' OR 0 = clear back to the category default ("0" used
                     // to silently save as 1 day via the clamp).
                     const parsed = parseInt(v, 10) || 0;
-                    const n = v === '' || parsed <= 0 ? null : Math.min(60, parsed);
                     const row = { ...r };
-                    if (n) row.shelfLifeDays = n; else delete row.shelfLifeDays;
+                    delete row.shelfLifeDays;
+                    delete row.shelfLifeHours;
+                    if (v !== '' && parsed > 0) {
+                        if (unit === 'h') row.shelfLifeHours = Math.min(96, parsed);
+                        else row.shelfLifeDays = Math.min(60, parsed);
+                    }
+                    // Thawed life (days once pulled from the freezer) — powers
+                    // the Fresh/Thawed toggle in the print modal.
+                    const t = parseInt(thawFor(sk, r), 10) || 0;
+                    if (t > 0) row.thawedDays = Math.min(30, t); else delete row.thawedDays;
                     return row;
                 });
                 // eslint-disable-next-line no-await-in-loop
@@ -122,14 +146,27 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
                                     </div>
                                     <div className="divide-y divide-dd-line/60 rounded-lg border border-dd-line overflow-hidden">
                                         {rows.map((r) => (
-                                            <div key={r.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-white">
+                                            <div key={r.id} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white">
                                                 <span className="flex-1 min-w-0 text-sm text-dd-text truncate">{r.nameEn || r.nameEs}</span>
-                                                <input type="number" min="1" max="60" inputMode="numeric"
+                                                <input type="number" min="1" max="96" inputMode="numeric"
                                                     value={valueFor(s.key, r)}
                                                     onChange={(e) => setOne(s.key, r.id, e.target.value)}
                                                     placeholder={tx('def', 'pred')}
-                                                    className="w-16 px-2 py-1.5 text-center text-base rounded-lg border border-dd-line tabular-nums focus:border-dd-green outline-none" />
-                                                <span className="text-[11px] text-dd-text-2 w-7">{tx('days', 'días')}</span>
+                                                    className="w-14 px-1.5 py-1.5 text-center text-base rounded-lg border border-dd-line tabular-nums focus:border-dd-green outline-none" />
+                                                {/* days ↔ hours (feature #2) */}
+                                                <select value={unitFor(s.key, r)}
+                                                    onChange={(e) => setUnit(s.key, r.id, e.target.value)}
+                                                    className="px-1 py-1.5 text-[11px] rounded-lg border border-dd-line bg-white">
+                                                    <option value="d">{tx('days', 'días')}</option>
+                                                    <option value="h">{tx('hrs', 'hrs')}</option>
+                                                </select>
+                                                {/* thawed life in days (feature #6) */}
+                                                <input type="number" min="1" max="30" inputMode="numeric"
+                                                    value={thawFor(s.key, r)}
+                                                    onChange={(e) => setThaw(s.key, r.id, e.target.value)}
+                                                    placeholder="❄"
+                                                    title={tx('Thawed shelf life (days)', 'Vida útil descongelado (días)')}
+                                                    className="w-11 px-1 py-1.5 text-center text-sm rounded-lg border border-sky-200 bg-sky-50/40 tabular-nums focus:border-sky-500 outline-none" />
                                             </div>
                                         ))}
                                     </div>
@@ -137,8 +174,8 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
                             );
                         })}
                         <p className="text-[11px] text-dd-text-2 px-1 pb-2 leading-snug">
-                            {tx('Blank = use the category default. These feed the date sticker’s use-by date automatically.',
-                                'Vacío = usa el valor por defecto de la categoría. Alimentan la fecha de caducidad de la etiqueta automáticamente.')}
+                            {tx('Blank = category default. Pick "hrs" for line items that discard the same day (the label prints a discard time). The ❄ box = shelf life in DAYS once thawed — items with one get a Fresh/Thawed button when printing.',
+                                'Vacío = valor por defecto. Elige "hrs" para artículos que se desechan el mismo día (la etiqueta imprime hora de descarte). La casilla ❄ = días de vida útil una vez descongelado — esos artículos muestran un botón Fresco/Descongelado al imprimir.')}
                         </p>
                     </div>
 
