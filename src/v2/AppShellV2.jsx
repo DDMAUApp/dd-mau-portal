@@ -21,6 +21,7 @@ import { useState } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import MobileBottomNav from './MobileBottomNav';
+import AnnouncementPopup from '../components/AnnouncementPopup';
 import NotificationsDrawer from './NotificationsDrawer';
 import { AppDataProvider } from './AppDataContext';
 
@@ -144,6 +145,11 @@ export default function AppShellV2({
                 staffList={staffList}
                 setStaffList={setStaffList}
             />
+
+            {/* 📣 Announcement pop-up (2026-07-26) — greets staff on app
+                open with any unacked announcement whose audience matches
+                them. Mounted here so every logged-in surface gets it. */}
+            <AnnouncementPopup staffName={staffName} staffList={staffList} language={language} />
 
             {/* Mobile bottom nav — fixed, hidden on md+ */}
             <MobileBottomNav

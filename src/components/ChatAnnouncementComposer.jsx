@@ -1,30 +1,19 @@
 // ChatAnnouncementComposer — manager-only "broadcast a thing" modal.
 //
-// Workflow:
-//   1. Pick audience (all-team, FOH, BOH, managers, location, custom)
-//   2. Write body (text + optional photo)
+// Workflow (2026-07-26 rework — Andrew: announcements POP UP on app open
+// for the matched audience, with a copy in the 📣 Announcements chat):
+//   1. Pick audience (all-team, FOH, BOH, managers, location)
+//   2. Write body (text + optional photo) + reviewed translation
 //   3. Toggle "require ack" + optional deadline
-//   4. Post → message lands in target channel(s) as type='announcement'
-//
-// Acknowledgment lives on the message: ackRequired/ackDeadline.
-// Per-user ack records live on the chat subcollection:
-//   /chats/{chatId}/acks/{messageId}_{userName} = { userName, ackedAt }
-//
-// Cross-posting: if "all" is picked but a separate "also send to
-// #managers" is checked, we write TWO message docs — one per channel.
-// They share an `announcementGroupId` so the dashboard can aggregate.
+//   4. Post → postAnnouncement() writes the /announcements doc (drives
+//      AnnouncementPopup), appends the chat copy, and push-notifies the
+//      audience. "Got it" acks live on the announcement doc's acks map.
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { db, storage } from '../firebase';
-import {
-    collection, doc, addDoc, getDocs, query, where, serverTimestamp,
-    updateDoc,
-} from 'firebase/firestore';
+import { storage } from '../firebase';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { recordAudit } from '../data/audit';
-import { notifyStaff } from '../data/notify';
 import { canPostAnnouncements } from '../data/chatPermissions';
-import { channelDocId, AUTO_CHANNELS } from '../data/chat';
+import { postAnnouncement } from '../data/announcements';
 import { translateMessage, detectLanguageHint } from '../data/translation';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
@@ -198,155 +187,39 @@ export default function ChatAnnouncementComposer({
         setBusy(true);
 
         try {
-            // Resolve target channelIds. `audience` maps to a channelKey.
-            const targets = new Set();
-            targets.add(channelDocId(audience));
-            if (crosspostManagers && audience !== 'managers') {
-                targets.add(channelDocId('managers'));
-            }
-
+            // 2026-07-26 (Andrew): announcements are no longer channel posts —
+            // they're a /announcements doc that POPS UP when a matching staff
+            // member opens the app, plus one copy in the revived 📣
+            // Announcements chat and a push to the audience. postAnnouncement
+            // (data/announcements.js) does all three.
             const announcementGroupId = `ann_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             const ackDeadline = ackRequired && ackDeadlineHours > 0
                 ? new Date(Date.now() + ackDeadlineHours * 3600_000)
                 : null;
 
-            // Upload photo once, reuse URL across cross-posts.
-            let mediaShape = null;
+            let media = null;
             if (photo?.file) {
-                const m = await uploadPhoto(photo.file, announcementGroupId);
-                mediaShape = { mediaUrl: m.url, mediaPath: m.path, mediaType: m.mime };
+                media = await uploadPhoto(photo.file, announcementGroupId);
             }
 
-            const recipientsAll = new Set();
-            // 2026-07-26 platform audit C1: the standard channels were purged
-            // in May (soft-deleted, members wiped) — posting "succeeded" into
-            // a chat nobody is a member of, so the manager believed the whole
-            // team was notified while nobody saw anything. Count real
-            // deliveries and FAIL LOUDLY when none happened.
-            let postedTo = 0;
-            for (const chatId of targets) {
-                // Look up the channel doc to fan-out notifications.
-                const chQ = query(collection(db, 'chats'), where('__name__', '==', chatId));
-                const chSnap = await getDocs(chQ);
-                const chDoc = chSnap.docs[0];
-                const chData0 = chDoc?.data();
-                const liveMembers = Array.isArray(chData0?.members) ? chData0.members : [];
-                if (!chDoc || chData0?.deletedAt || liveMembers.length === 0) {
-                    console.warn(`announcement: channel ${chatId} missing/deleted/empty, skipping`);
-                    continue;
-                }
-                const chData = chData0;
-                const members = liveMembers;
-                postedTo += 1;
+            const reviewedTranslation = !skipTranslation && translation.trim().length > 0
+                ? translation.trim()
+                : null;
 
-                // Translation: if the manager has a reviewed
-                // translation, embed it on the message doc so
-                // TranslatableText can short-circuit the API call
-                // (and so the audit trail shows the human-reviewed
-                // copy that went to staff in BOTH languages).
-                //
-                // Status semantics:
-                //   'reviewed' — manager saw + posted (we trust the text)
-                //   'skipped'  — manager chose not to translate
-                //   (no field) — legacy / no translation captured
-                const reviewedTranslation = !skipTranslation && translation.trim().length > 0
-                    ? translation.trim()
-                    : null;
-                const translationsField = reviewedTranslation
-                    ? {
-                        translations: { [targetLang]: reviewedTranslation },
-                        sourceLang,
-                        translationStatus: 'reviewed',
-                        translationReviewedBy: staffName,
-                        translationReviewedAt: serverTimestamp(),
-                    }
-                    : (skipTranslation ? { translationStatus: 'skipped' } : {});
+            const res = await postAnnouncement({
+                text: body,
+                staffName, viewer, staffList,
+                audience,
+                includeManagers: crosspostManagers && audience !== 'managers',
+                ackRequired, ackDeadline,
+                media,
+                translations: reviewedTranslation ? { [targetLang]: reviewedTranslation } : null,
+                sourceLang: reviewedTranslation ? sourceLang : null,
+                translationStatus: reviewedTranslation ? 'reviewed' : (skipTranslation ? 'skipped' : null),
+                audienceLabel: audienceOptions.find(o => o.value === audience)?.label || audience,
+            });
+            onPosted?.({ announcementGroupId: res.id, recipientCount: res.recipients.length });
 
-                // Append the message doc.
-                const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), {
-                    senderName: staffName,
-                    senderId: viewer?.id || null,
-                    senderRole: viewer?.role || null,
-                    type: 'announcement',
-                    text: body.trim(),
-                    ...(mediaShape || {}),
-                    ...translationsField,
-                    ackRequired: !!ackRequired,
-                    ackDeadline: ackDeadline ? ackDeadline.toISOString() : null,
-                    announcementGroupId,
-                    audienceLabel: audienceOptions.find(o => o.value === audience)?.label || audience,
-                    reactions: {},
-                    mentions: [],
-                    createdAt: serverTimestamp(),
-                });
-                // Bump chat preview.
-                await updateDoc(doc(db, 'chats', chatId), {
-                    lastMessage: {
-                        text: '📣 ' + (body.trim().slice(0, 100) || 'Announcement'),
-                        sender: staffName,
-                        ts: serverTimestamp(),
-                        type: 'announcement',
-                    },
-                    lastActivityAt: serverTimestamp(),
-                    [`lastReadByName.${staffName}`]: serverTimestamp(),
-                });
-                // Fan-out per recipient.
-                for (const recipient of members) {
-                    if (recipient === staffName) continue;
-                    recipientsAll.add(recipient);
-                    notifyStaff({
-                        forStaff: recipient,
-                        type: 'announcement',
-                        title: '📣 ' + tx('New announcement', 'Nuevo anuncio'),
-                        body: body.trim().slice(0, 140),
-                        deepLink: 'chat',
-                        link: '/chat',
-                        tag: `announcement:${announcementGroupId}:${recipient}`,
-                        createdBy: staffName,
-                    }).catch(() => {});
-                }
-
-                recordAudit({
-                    action: 'chat.announcement.send',
-                    actorName: staffName,
-                    actorId: viewer?.id,
-                    actorRole: viewer?.role,
-                    targetType: 'chat',
-                    targetId: chatId,
-                    details: {
-                        messageId: msgRef.id,
-                        ackRequired,
-                        ackDeadline: ackDeadline?.toISOString() || null,
-                        audience,
-                        announcementGroupId,
-                        memberCount: members.length,
-                        // Translation review provenance — the audit row
-                        // captures both the original AND the reviewed
-                        // translation so we can later confirm what
-                        // bilingual staff actually saw. Defensible if
-                        // a translation dispute arises (HR / safety).
-                        sourceLang: reviewedTranslation ? sourceLang : null,
-                        translationLang: reviewedTranslation ? targetLang : null,
-                        translationStatus: reviewedTranslation
-                            ? 'reviewed'
-                            : (skipTranslation ? 'skipped' : 'none'),
-                        translationSnippet: reviewedTranslation
-                            ? reviewedTranslation.slice(0, 200)
-                            : null,
-                    },
-                });
-            }
-
-            if (postedTo === 0) {
-                // No live audience channel exists — surface it instead of the
-                // old silent "success" (audit C1).
-                toast(tx(
-                    'Could not post: the audience channels were removed. Post this in a group chat instead, or ask Andrew to bring channels back.',
-                    'No se pudo publicar: los canales de audiencia fueron eliminados. Publícalo en un chat de grupo.',
-                ), { kind: 'error', duration: 8000 });
-                return;
-            }
-            onPosted?.({ announcementGroupId, recipientCount: recipientsAll.size });
         } catch (e) {
             console.error('announcement post failed:', e);
             toast(tx('Send failed: ', 'Error al enviar: ') + (e.message || e), { kind: 'error', duration: 6000 });

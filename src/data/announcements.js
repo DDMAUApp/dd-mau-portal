@@ -1,0 +1,203 @@
+// Announcements v2 (Andrew 2026-07-26): "not in chat — announcements pop up
+// when the app is opened by staff that is part of the announcement. I will
+// also have a copy in the chat."
+//
+// Design:
+//   • /announcements/{id} is the source of truth and drives the pop-up
+//     (AnnouncementPopup.jsx, mounted in AppShellV2 — shows on app open /
+//     unlock to every staff member the audience matches, until they tap
+//     "Got it", which stamps acks.{name}).
+//   • A COPY is appended to the revived 📣 Announcements channel
+//     (channel_announcements) so there's a browsable record in Chat. The
+//     channel's members are refreshed to the FULL staff list on every post
+//     (the May purge emptied it; new hires join automatically this way).
+//   • Push fan-out to the audience so closed-app staff still get pinged;
+//     the pop-up greets them when they open up.
+//
+// Doc shape: { text, title?, audience ('all'|'foh'|'boh'|'managers'|
+//   'webster'|'maryland'), includeManagers, mediaUrl?, mediaPath?,
+//   translations?, sourceLang?, ackRequired, ackDeadline?, createdBy,
+//   createdAt, active, acks: { [staffName]: ISO } }
+import { db } from '../firebase';
+import {
+    doc, getDoc, setDoc, addDoc, updateDoc, collection, query, orderBy,
+    limit, onSnapshot, serverTimestamp, FieldPath,
+} from 'firebase/firestore';
+import { channelDocId } from './chat';
+import { isAdminId, isManagerRoleTitle } from './staff';
+import { notifyStaff } from './notify';
+import { recordAudit } from './audit';
+
+const isMgr = (s) => !!s && (isAdminId(s.id) || isManagerRoleTitle(s.role) ||
+    (s.role || '').trim().toLowerCase() === 'owner');
+
+// Does this announcement apply to this staff member? Unset side/location
+// on a staff record errs toward SHOWING (missing an announcement is worse
+// than seeing one extra).
+export function audienceMatches(a, staff) {
+    if (!staff?.name) return false;
+    if (a?.includeManagers && isMgr(staff)) return true;
+    switch (a?.audience || 'all') {
+        case 'all': return true;
+        case 'managers': return isMgr(staff);
+        case 'foh':
+        case 'boh': {
+            const side = staff.scheduleSide;
+            if (!side || side === 'both') return true;
+            return side === a.audience;
+        }
+        case 'webster':
+        case 'maryland': {
+            const loc = staff.location;
+            if (!loc || loc === 'both') return true;
+            return loc === a.audience;
+        }
+        default: return true;
+    }
+}
+
+// Compute the concrete recipient names for the push fan-out.
+export function audienceRecipients(a, staffList) {
+    return (staffList || [])
+        .filter(s => s?.name && s.active !== false && audienceMatches(a, s))
+        .map(s => s.name);
+}
+
+// Ensure the 📣 Announcements channel exists with EVERY current staff
+// member — resurrects the purged doc and keeps membership fresh.
+export async function ensureAnnouncementsChannel(staffList, byName) {
+    const id = channelDocId('announcements');
+    const ref = doc(db, 'chats', id);
+    const members = (staffList || []).filter(s => s?.name && s.active !== false).map(s => s.name);
+    if (members.length === 0) throw new Error('no staff to announce to');
+    const snap = await getDoc(ref);
+    await setDoc(ref, {
+        type: 'channel',
+        channelKey: 'announcements',
+        name: '📣 Announcements',
+        emoji: '📣',
+        members,
+        admins: [],
+        // Read-mostly: only managers/admins post here (the composer is the
+        // only writer; editTier keeps the thread composer manager-gated).
+        editTier: 'manager',
+        readOnly: true,
+        createdBy: snap.exists() ? (snap.data().createdBy || byName) : byName,
+        ...(snap.exists() ? {} : { createdAt: serverTimestamp() }),
+        deletedAt: null,
+        lastActivityAt: serverTimestamp(),
+    }, { merge: true });
+    return id;
+}
+
+// Post one announcement: doc (drives pop-ups) + chat copy + push fan-out.
+// Returns { id, chatId, recipients }.
+export async function postAnnouncement({
+    text, staffName, viewer, staffList,
+    audience = 'all', includeManagers = false,
+    ackRequired = false, ackDeadline = null,
+    media = null,                       // { url, path, mime } | null
+    translations = null, sourceLang = null, translationStatus = null,
+    audienceLabel = '',
+}) {
+    const body = String(text || '').trim();
+    if (!body && !media) throw new Error('empty announcement');
+
+    const translationsField = translations
+        ? { translations, sourceLang, translationStatus: translationStatus || 'reviewed' }
+        : (translationStatus === 'skipped' ? { translationStatus: 'skipped' } : {});
+
+    // 1. The pop-up doc.
+    const annRef = await addDoc(collection(db, 'announcements'), {
+        text: body,
+        audience,
+        includeManagers: !!includeManagers,
+        audienceLabel: audienceLabel || audience,
+        ...(media ? { mediaUrl: media.url, mediaPath: media.path, mediaType: media.mime } : {}),
+        ...translationsField,
+        ackRequired: !!ackRequired,
+        ackDeadline: ackDeadline ? ackDeadline.toISOString() : null,
+        createdBy: staffName,
+        createdById: viewer?.id || null,
+        createdAt: serverTimestamp(),
+        active: true,
+        acks: {},
+    });
+
+    // 2. Chat copy — revive/refresh the channel, append the message.
+    const chatId = await ensureAnnouncementsChannel(staffList, staffName);
+    await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        senderName: staffName,
+        senderId: viewer?.id || null,
+        senderRole: viewer?.role || null,
+        type: 'announcement',
+        text: body,
+        ...(media ? { mediaUrl: media.url, mediaPath: media.path, mediaType: media.mime } : {}),
+        ...translationsField,
+        ackRequired: !!ackRequired,
+        ackDeadline: ackDeadline ? ackDeadline.toISOString() : null,
+        announcementGroupId: annRef.id,
+        audienceLabel: audienceLabel || audience,
+        reactions: {},
+        mentions: [],
+        createdAt: serverTimestamp(),
+    });
+    await updateDoc(doc(db, 'chats', chatId), {
+        lastMessage: {
+            text: '📣 ' + (body.slice(0, 100) || 'Announcement'),
+            sender: staffName,
+            ts: serverTimestamp(),
+            type: 'announcement',
+        },
+        lastActivityAt: serverTimestamp(),
+        [new FieldPath('lastReadByName', staffName)]: serverTimestamp(),
+    });
+
+    // 3. Push fan-out to the audience (closed apps get the ping; the
+    // pop-up greets them at open). Best-effort per recipient.
+    const recipients = audienceRecipients({ audience, includeManagers }, staffList)
+        .filter(n => n !== staffName);
+    for (const r of recipients) {
+        notifyStaff({
+            forStaff: r,
+            type: 'announcement',
+            title: '📣 New announcement',
+            body: body.slice(0, 140),
+            deepLink: 'home',
+            link: '/',
+            tag: `announcement:${annRef.id}:${r}`,
+            createdBy: staffName,
+        }).catch(() => {});
+    }
+
+    recordAudit({
+        action: 'announcement.post',
+        actorName: staffName,
+        actorId: viewer?.id,
+        targetType: 'announcement',
+        targetId: annRef.id,
+        details: { audience, includeManagers, ackRequired, recipients: recipients.length, chatId },
+    });
+    return { id: annRef.id, chatId, recipients };
+}
+
+// Live feed for the pop-up — recent announcements, newest first. The
+// component filters by audience + own-ack client-side.
+export function subscribeAnnouncements(cb) {
+    const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(20));
+    return onSnapshot(q, (snap) => {
+        const out = [];
+        snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+        cb(out);
+    }, (err) => {
+        console.warn('subscribeAnnouncements error:', err);
+        cb([]);
+    });
+}
+
+// "Got it" — stamp this staffer's ack. FieldPath because staff names are
+// free text (a dot in a name would corrupt a template-string dot-path).
+export function ackAnnouncement(id, staffName) {
+    return updateDoc(doc(db, 'announcements', id),
+        new FieldPath('acks', staffName), new Date().toISOString());
+}
