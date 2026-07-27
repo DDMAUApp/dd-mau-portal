@@ -159,6 +159,10 @@ const prewarmChunks = () => {
     // ChatCenter at the same time so a tap into a specific chat
     // doesn't restart the chunk-fetch dance.
     import('./components/ChatThread').catch(() => {});
+    // My Hours — staff check their timecards daily (Andrew 2026-07-27:
+    // "the my hours loads slow"); without prewarm the first tap paid a
+    // chunk fetch before the page could even start its query.
+    import('./components/MyHoursPage').catch(() => {});
 };
 
 // 2026-06-13 perf (login speed) — the home path is gated behind TWO lazy

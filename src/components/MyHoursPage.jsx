@@ -68,7 +68,23 @@ export default function MyHoursPage({ staffName, language }) {
 
     useEffect(() => {
         if (!staffName) return undefined;
-        return subscribeMyTimecards(staffName, sinceStr, setCards);
+        // Instant first paint (2026-07-27, Andrew: "my hours loads slow") —
+        // same localStorage pattern as recipes/sticker lists: show the
+        // last-seen cards immediately, let the live snapshot correct them.
+        // Keyed per staff so a shared-iPad user switch never shows someone
+        // else's hours. Empty results don't overwrite a good cache (the
+        // error path also reports [] — a network blip must not wipe it).
+        const CACHE_KEY = `ddmau:myhours:${staffName}`;
+        try {
+            const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+            if (Array.isArray(cached) && cached.length > 0) setCards(cached);
+        } catch { /* corrupt/absent cache — spinner until snapshot */ }
+        return subscribeMyTimecards(staffName, sinceStr, (list) => {
+            setCards(list);
+            if (Array.isArray(list) && list.length > 0) {
+                try { localStorage.setItem(CACHE_KEY, JSON.stringify(list)); } catch { /* quota */ }
+            }
+        });
     }, [staffName, sinceStr]);
 
     // A person can have a card at each store the same day (cross-location
