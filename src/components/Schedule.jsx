@@ -4338,6 +4338,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // ── Phase 3: staff submits a PTO request (status='pending') ──
     // Validates against no-PTO blackout dates before submitting.
     const ptoSubmitBusyRef = useRef(false);
+    const publishBusyRef = useRef(false);
     const handleSubmitPtoRequest = async (entry) => {
         // One in-flight submit at a time (2026-07-23): the modal button
         // stays enabled while addDoc awaits, so a double-tap on slow Wi-Fi
@@ -5135,6 +5136,11 @@ ${dayBlocks}
     // Step 2 of publish — runs when the manager confirms in the preview modal.
     const confirmPublishDrafts = async () => {
         if (!publishPreview) return;
+        // One publish at a time — a re-tap while the batch commits would
+        // re-run the whole flow (harmless writes, duplicate toasts/pushes).
+        if (publishBusyRef.current) return;
+        publishBusyRef.current = true;
+        try {
         const { drafts } = publishPreview;
         // 2026-05-24 audit fix: re-check approved time-off RIGHT BEFORE
         // we publish. Without this, a draft built Monday + PTO approved
@@ -5161,31 +5167,60 @@ ${dayBlocks}
             return;
         }
         try {
-            // Per-doc updates, NOT one writeBatch (2026-07-23): a batch fails
-            // ENTIRELY if any doc no longer exists — so a co-manager deleting
-            // one draft while this preview was open used to abort the whole
-            // publish with a raw error and ZERO shifts released. Now the
-            // survivors publish and the deleted ones are reported.
-            const results = await Promise.allSettled(safeDrafts.map(s =>
-                updateDoc(doc(db, 'shifts', s.id), {
-                    published: true,
-                    publishedBy: staffName,
-                    publishedAt: serverTimestamp(),
-                    updatedAt: serverTimestamp(),
-                })));
-            const failedIds = new Set();
-            results.forEach((r, i) => { if (r.status === 'rejected') failedIds.add(safeDrafts[i].id); });
-            if (failedIds.size > 0) {
-                toast(tx(`⚠ ${failedIds.size} draft(s) were deleted by someone else and were skipped.`,
-                         `⚠ ${failedIds.size} borrador(es) fueron eliminados por otra persona y se omitieron.`));
+            // 2026-07-24 (Andrew: "pressing publish is slow, feels like it's
+            // frozen") — the 2026-07-23 per-doc allSettled publish was the
+            // cause: every individual updateDoc ack re-fired the shifts
+            // onSnapshot and re-rendered this whole page once PER SHIFT.
+            // Back to chunked writeBatch (one snapshot tick per chunk). The
+            // co-manager-deleted-draft tolerance that motivated per-doc
+            // writes is kept two ways: (1) pre-filter against the LIVE
+            // shifts subscription (deletions land there in ~realtime), and
+            // (2) if a delete still races the commit, the catch falls back
+            // to per-doc updates so the survivors publish anyway.
+            const liveIds = new Set(shifts.map(s => s.id));
+            let publishedDrafts = safeDrafts.filter(s => liveIds.has(s.id));
+            const goneCount = safeDrafts.length - publishedDrafts.length;
+            if (goneCount > 0) {
+                toast(tx(`⚠ ${goneCount} draft(s) were deleted by someone else and were skipped.`,
+                         `⚠ ${goneCount} borrador(es) fueron eliminados por otra persona y se omitieron.`));
             }
-            // Everything downstream (audit count, toast, staff pushes) should
-            // reflect what actually published.
-            const publishedDrafts = safeDrafts.filter(s => !failedIds.has(s.id));
             if (publishedDrafts.length === 0) {
                 setPublishPreview(null);
                 toast(tx('Nothing published — the drafts no longer exist.', 'Nada publicado — los borradores ya no existen.'));
                 return;
+            }
+            const stamp = () => ({
+                published: true,
+                publishedBy: staffName,
+                publishedAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+            });
+            try {
+                const BATCH_LIMIT = 400;
+                for (let i = 0; i < publishedDrafts.length; i += BATCH_LIMIT) {
+                    const batch = writeBatch(db);
+                    for (const s of publishedDrafts.slice(i, i + BATCH_LIMIT)) {
+                        batch.update(doc(db, 'shifts', s.id), stamp());
+                    }
+                    // eslint-disable-next-line no-await-in-loop
+                    await batch.commit();
+                }
+            } catch (batchErr) {
+                console.warn('publish batch failed — per-doc fallback:', batchErr);
+                const results = await Promise.allSettled(publishedDrafts.map(s =>
+                    updateDoc(doc(db, 'shifts', s.id), stamp())));
+                const failedIds = new Set();
+                results.forEach((r, i) => { if (r.status === 'rejected') failedIds.add(publishedDrafts[i].id); });
+                publishedDrafts = publishedDrafts.filter(s => !failedIds.has(s.id));
+                if (failedIds.size > 0) {
+                    toast(tx(`⚠ ${failedIds.size} draft(s) were deleted by someone else and were skipped.`,
+                             `⚠ ${failedIds.size} borrador(es) fueron eliminados por otra persona y se omitieron.`));
+                }
+                if (publishedDrafts.length === 0) {
+                    setPublishPreview(null);
+                    toast(tx('Nothing published — the drafts no longer exist.', 'Nada publicado — los borradores ya no existen.'));
+                    return;
+                }
             }
             safeDrafts.length = 0;
             safeDrafts.push(...publishedDrafts);
@@ -5209,12 +5244,19 @@ ${dayBlocks}
             // Notify each staffer whose shifts were published — one notification per person.
             // Use safeDrafts (PTO conflicts excluded above) so we don't ping
             // someone about a shift that didn't actually get published.
+            // 2026-07-24: DETACHED (fire-and-forget). This loop awaited one
+            // notification write per staffer sequentially — after a full-week
+            // publish that was 15-25 extra round trips holding the handler
+            // open while the page felt hung. The shifts are already published
+            // and the modal closed; notification delivery is best-effort
+            // background work (same pattern as chat's send fan-out).
             const byStaff = new Map();
             for (const s of safeDrafts) {
                 const list = byStaff.get(s.staffName) || [];
                 list.push(s);
                 byStaff.set(s.staffName, list);
             }
+            void (async () => {
             for (const [name, list] of byStaff) {
                 // Build a date+time summary so the staff push tells them WHAT
                 // shifts were just released, not just "you have N shifts."
@@ -5261,9 +5303,13 @@ ${dayBlocks}
                 tag: `week_published_admin:${weekStartStr}`,
                 createdBy: staffName,
             }).catch(() => {});
+            })().catch((e) => console.warn('publish notification fan-out failed:', e));
         } catch (e) {
             console.error('Publish failed:', e);
             toast(tx('Publish error: ', 'Error al publicar: ') + e.message);
+        }
+        } finally {
+            publishBusyRef.current = false;
         }
     };
 
