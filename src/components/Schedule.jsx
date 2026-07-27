@@ -5013,6 +5013,29 @@ ${dayBlocks}
             </tr>`;
         }
 
+        // Meal-window headcounts per day — same numbers as the live grid's
+        // lunch/dinner pills (Andrew 2026-07-27: "keep the staff count at
+        // the top like when we are looking at the live page"). Same rules
+        // as mealCountsByDate: half-open window overlap, dedupe by name,
+        // open/unassigned shifts don't count.
+        const printMealCounts = new Map();
+        {
+            const toMin = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+            for (const d of days) {
+                const dStr = toDateStr(d);
+                const lunch = new Set(), dinner = new Set();
+                for (const sh of visibleShifts) {
+                    if (sh.date !== dStr) continue;
+                    if (sh.offerStatus === 'open' || !sh.staffName) continue;
+                    const sm = toMin(sh.startTime), em = toMin(sh.endTime);
+                    if (sm == null || em == null) continue;
+                    if (sm < LUNCH_WIN_END && em > LUNCH_WIN_START) lunch.add(sh.staffName);
+                    if (sm < DINNER_WIN_END && em > DINNER_WIN_START) dinner.add(sh.staffName);
+                }
+                printMealCounts.set(dStr, { lunch: lunch.size, dinner: dinner.size });
+            }
+        }
+
         const headerRow = `<tr>
             <th class="staff-cell">${isEn ? 'Staff' : 'Personal'}</th>
             ${days.map((d, i) => {
@@ -5020,10 +5043,16 @@ ${dayBlocks}
                 const isToday = dStr === today;
                 const dayBlocks = (blocksByDate.get(dStr) || []);
                 const isClosed = dayBlocks.some(b => b.type === 'closed');
+                const m = printMealCounts.get(dStr) || { lunch: 0, dinner: 0 };
+                const meals = isClosed ? '' : `<div class="meals">
+                    <span class="meal lunch${m.lunch === 0 ? ' zero' : ''}">${isEn ? 'L' : 'A'} ${m.lunch}</span>
+                    <span class="meal dinner${m.dinner === 0 ? ' zero' : ''}">${isEn ? 'D' : 'C'} ${m.dinner}</span>
+                </div>`;
                 return `<th class="${isToday ? 'today' : ''} ${isClosed ? 'closed-cell' : ''}">
                     <div class="dow">${escape(dayLabels[i])}</div>
                     <div class="dnum">${d.getDate()}</div>
                     ${isClosed ? '<div class="closed">🚫 CLOSED</div>' : ''}
+                    ${meals}
                 </th>`;
             }).join('')}
         </tr>`;
@@ -5062,6 +5091,13 @@ ${dayBlocks}
     .h-red { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
     .dow { font-size: 9px; text-transform: uppercase; color: #6b7280; }
     .dnum { font-size: 14px; font-weight: 700; color: #1f2937; }
+    /* Lunch/dinner headcount pills — same amber/indigo tones as the live
+       grid's day headers; zero staff prints red like on screen. */
+    .meals { margin-top: 2px; display: flex; gap: 3px; justify-content: center; }
+    .meal { font-size: 8px; font-weight: 800; padding: 1px 4px; border-radius: 6px; border: 1px solid; }
+    .meal.lunch { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+    .meal.dinner { background: #eef2ff; color: #3730a3; border-color: #c7d2fe; }
+    .meal.zero { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
     /* Shifts get a solid role tint that mirrors the on-screen glass cubes
        (roleColors): manager = orange, lead = green, staff = blue. Same hex
        as the live grid so paper matches screen. Solid fills, not outlines. */
