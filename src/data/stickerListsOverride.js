@@ -184,21 +184,87 @@ export function getStampedDefaults(sectionKey) {
     return STAMPED_DEFAULTS.get(sectionKey) || [];
 }
 
-// Subscribe to the override doc. Callback receives a `{ [key]:
-// StickerRow[] }` object with merged lists (override if present —
-// including an explicitly-saved EMPTY list, so an admin can clear a
-// section without the defaults resurrecting — default otherwise).
+// ── Dynamic sections (Andrew 2026-07-24: "edit the category names and be
+// able to add a category") ─────────────────────────────────────────────
+// The doc's optional `sectionsOverride` array is the FULL ordered section
+// list: built-ins (possibly retitled) + admin-added custom sections
+// ({key, kind, titleEn, titleEs}). Absent → the hardcoded STICKER_SECTIONS.
+// Built-in sections that a bad save dropped are re-appended, so the
+// Proteins list can never disappear; only CUSTOM sections are deletable.
+const VALID_SECTION_KINDS = [
+    'base', 'topping', 'protein', 'sauce', 'broth', 'side', 'garnish',
+    'note', 'drink', 'other', 'chemical', 'status',
+];
+export function resolveSections(data) {
+    const ov = Array.isArray(data?.sectionsOverride) ? data.sectionsOverride : null;
+    if (!ov || !ov.length) return STICKER_SECTIONS;
+    const seen = new Set();
+    const out = [];
+    for (const s of ov) {
+        const key = String(s?.key || '').trim();
+        if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key) || seen.has(key)) continue;
+        seen.add(key);
+        const builtin = STICKER_SECTIONS.find(b => b.key === key);
+        out.push({
+            key,
+            kind: VALID_SECTION_KINDS.includes(s.kind) ? s.kind : (builtin?.kind || 'other'),
+            titleEn: String(s.titleEn || builtin?.titleEn || key).slice(0, 60),
+            titleEs: String(s.titleEs || s.titleEn || builtin?.titleEs || key).slice(0, 60),
+            defaults: builtin?.defaults || [],
+        });
+    }
+    for (const b of STICKER_SECTIONS) {
+        if (!seen.has(b.key)) out.push(b);
+    }
+    return out;
+}
+
+// Persist the section list (order + titles + custom sections).
+export async function saveSections(sections, byName) {
+    const seen = new Set();
+    const clean = (Array.isArray(sections) ? sections : []).map((s) => {
+        const key = String(s?.key || '').trim();
+        if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key) || seen.has(key)) return null;
+        seen.add(key);
+        return {
+            key,
+            kind: VALID_SECTION_KINDS.includes(s.kind) ? s.kind : 'other',
+            titleEn: String(s.titleEn || key).slice(0, 60).trim(),
+            titleEs: String(s.titleEs || s.titleEn || key).slice(0, 60).trim(),
+        };
+    }).filter(Boolean);
+    if (clean.length === 0) throw new Error('sections list cannot be empty');
+    await setDoc(STICKER_LISTS_DOC_REF(), {
+        sectionsOverride: clean,
+        updatedAt: serverTimestamp(),
+        updatedBy: byName || 'unknown',
+    }, { merge: true });
+    recordAudit({
+        action: 'sticker_lists.sections',
+        actorName: byName || 'unknown',
+        targetType: 'sticker_list',
+        targetId: 'sectionsOverride',
+        details: { count: clean.length, keys: clean.map(s => s.key) },
+    });
+}
+
+// Subscribe to the override doc. Callback receives (mergedLists, sections):
+// mergedLists = `{ [key]: StickerRow[] }` (override if present — including
+// an explicitly-saved EMPTY list, so an admin can clear a section without
+// the defaults resurrecting — default otherwise), sections = the resolved
+// dynamic section list. Existing single-arg callers just ignore arg 2.
 export function subscribeStickerLists(callback) {
     return onSnapshot(STICKER_LISTS_DOC_REF(), (snap) => {
         const data = snap.exists() ? snap.data() : {};
+        const sections = resolveSections(data);
         const merged = {};
-        for (const section of STICKER_SECTIONS) {
+        for (const section of sections) {
             const override = data[section.key];
             merged[section.key] = Array.isArray(override)
                 ? override.map(stamp)
-                : STAMPED_DEFAULTS.get(section.key);
+                : (STAMPED_DEFAULTS.get(section.key) || []);
         }
-        callback(merged);
+        callback(merged, sections);
     }, (err) => {
         console.warn('subscribeStickerLists error:', err);
         // Fall back to defaults so the page still renders.
@@ -206,7 +272,7 @@ export function subscribeStickerLists(callback) {
         for (const section of STICKER_SECTIONS) {
             merged[section.key] = STAMPED_DEFAULTS.get(section.key);
         }
-        callback(merged);
+        callback(merged, STICKER_SECTIONS);
     });
 }
 
@@ -214,8 +280,10 @@ export function subscribeStickerLists(callback) {
 // Sanitizes inputs to a known shape so a buggy form doesn't write
 // junk to Firestore.
 export async function saveStickerList(sectionKey, items, byName) {
-    if (!STICKER_SECTIONS.find(s => s.key === sectionKey)) {
-        throw new Error(`unknown sticker section: ${sectionKey}`);
+    // Key-shape validation instead of a fixed-list check (2026-07-24) —
+    // sections are dynamic now, so any well-formed key is saveable.
+    if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(String(sectionKey || ''))) {
+        throw new Error(`bad sticker section key: ${sectionKey}`);
     }
     const clean = (Array.isArray(items) ? items : []).map((item, i) => {
         const row = {

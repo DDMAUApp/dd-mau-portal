@@ -46,6 +46,7 @@ import {
 import {
     subscribeStickerLists,
     saveStickerList,
+    saveSections,
     makeStickerRowId,
     getStampedDefaults,
     STICKER_SECTIONS,
@@ -142,8 +143,15 @@ export default function DateStickerPrinter({
     // snacks }`, each an array of rows. Defaults come from
     // buildSheet.js; admin overrides live in /config/sticker_lists.
     const [stickerLists, setStickerLists] = useState(null);
+    // Dynamic section list (2026-07-24) — titles are renameable and admins
+    // can add whole new categories, so the section list itself is live data
+    // (doc field `sectionsOverride`), defaulting to the hardcoded sections.
+    const [stickerSections, setStickerSections] = useState(STICKER_SECTIONS);
     useEffect(() => {
-        return subscribeStickerLists(setStickerLists);
+        return subscribeStickerLists((lists, sections) => {
+            setStickerLists(lists);
+            if (Array.isArray(sections) && sections.length) setStickerSections(sections);
+        });
     }, []);
     // Pre-load the print modal's lazy chunk while the user is still
     // browsing — the first 🏷 tap used to pay the chunk download
@@ -238,7 +246,7 @@ export default function DateStickerPrinter({
     // "protein" or "salsa" matches the whole group.
     const searchIndex = useMemo(() => {
         const base = [];
-        for (const section of STICKER_SECTIONS) {
+        for (const section of stickerSections) {
             const rows = stickerLists?.[section.key] || section.defaults;
             for (const [i, row] of rows.entries()) {
                 base.push({
@@ -282,7 +290,7 @@ export default function DateStickerPrinter({
             }
         }
         return base;
-    }, [customItems, stickerLists]);
+    }, [customItems, stickerLists, stickerSections]);
 
     // AI items mirror the index. 2026-06-13 perf — `searchIndex` gets a new
     // reference on every Firestore snapshot echo (subscribeStickerLists /
@@ -537,7 +545,7 @@ export default function DateStickerPrinter({
                             : 'bg-white text-dd-text-2 border-dd-line hover:bg-purple-50'}`}>
                         {tx('All', 'Todo')}
                     </button>
-                    {STICKER_SECTIONS.map((s) => {
+                    {stickerSections.map((s) => {
                         const on = sectionFilter === s.key;
                         const tone = COMPONENT_KIND_TONE[s.kind] || COMPONENT_KIND_TONE.side;
                         const chip = CHIP_LABELS[s.key];
@@ -616,6 +624,19 @@ export default function DateStickerPrinter({
                             '✏️ Modo edición — escribe para renombrar, 🗑 para borrar, + Agregar fila al final de cada sección. Los cambios se guardan automáticamente en todos los dispositivos.',
                         )}
                     </div>
+                )}
+                {/* Category editor (Andrew 2026-07-24): rename any category and
+                    add brand-new ones. Built-in categories can't be deleted
+                    (their lists must always exist); custom ones can be, once
+                    their list is empty. */}
+                {editMode && (
+                    <CategoryEditor
+                        sections={stickerSections}
+                        stickerLists={stickerLists}
+                        staffName={staffName}
+                        isEs={isEs}
+                        tx={tx}
+                    />
                 )}
 
                 {/* AI status strip — shows during a query */}
@@ -750,6 +771,7 @@ export default function DateStickerPrinter({
                             onSaveSection={handleSaveSection}
                             onMoveRow={handleMoveRow}
                             sectionFilter={sectionFilter}
+                            sections={stickerSections}
                         />
                         {/* ⭐ Custom items — Andrew 2026-06-24: "when a new item
                             is added to the stickers make it live + stay." These
@@ -1125,7 +1147,7 @@ function StickerGrid({ components, toneFor, isEs, tx, onPrint }) {
 //
 // All copy comes from src/data/buildSheet.js — that's the single
 // source of truth. Update once, both surfaces update.
-function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection, onMoveRow, sectionFilter = null }) {
+function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection, onMoveRow, sectionFilter = null, sections = STICKER_SECTIONS }) {
     // Andrew 2026-06-11: "too many items. alot of doubles… categorize
     // it by veggie, protein, noodles, rice and so on. we dont need the
     // menu items unless its things like sweets and snacks." The browse
@@ -1144,8 +1166,8 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
     // Category-chip filter (2026-07-24): a non-null filter shows just that
     // section. 'custom' is handled by the parent (the ⭐ section lives there).
     const visibleSections = sectionFilter && sectionFilter !== 'custom'
-        ? STICKER_SECTIONS.filter(s => s.key === sectionFilter)
-        : (sectionFilter === 'custom' ? [] : STICKER_SECTIONS);
+        ? sections.filter(s => s.key === sectionFilter)
+        : (sectionFilter === 'custom' ? [] : sections);
     return (
         <div className="space-y-5">
             {visibleSections.map(section => (
@@ -1162,6 +1184,7 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
                     editMode={editMode}
                     onSaveSection={onSaveSection}
                     onMoveRow={onMoveRow}
+                    allSections={sections}
                 />
             ))}
         </div>
@@ -1187,7 +1210,7 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
 // useCallback'd; items arrays identity-stable via STAMPED_DEFAULTS).
 const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     sectionKey, titleEn, titleEs, items, kind, isEs, tx, onPrint,
-    editMode = false, onSaveSection, onMoveRow,
+    editMode = false, onSaveSection, onMoveRow, allSections = STICKER_SECTIONS,
 }) {
     const tone = COMPONENT_KIND_TONE[kind] || COMPONENT_KIND_TONE.side;
 
@@ -1335,6 +1358,7 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
                                 isEs={isEs}
                                 tx={tx}
                                 sectionKey={sectionKey}
+                                sections={allSections}
                                 onUpdate={(patch) => updateRow(row.id, patch)}
                                 onDelete={() => deleteRow(row.id)}
                                 onMove={(toKey) => moveRow(row.id, toKey)}
@@ -1375,7 +1399,8 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
         // right use-by days (set in the Shelf life table).
         ...(s.shelfLifeDays ? { shelfLifeDays: s.shelfLifeDays } : {}),
     }));
-    if (components.length === 0) return null;
+    // Empty sections still render (2026-07-24) — a brand-new category needs
+    // its header + "+ Add item" visible or nobody could put the first item in.
     return (
         <section>
             <h2 className="text-sm font-black uppercase tracking-widest text-dd-text mb-2 px-1">
@@ -1393,9 +1418,191 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
                 tx={tx}
                 onPrint={onPrint}
             />
+            {/* Anyone-can-add (Andrew 2026-07-24: "at the end of each
+                category there is an add button so anyone can write items
+                in and it stays"). Not admin-gated on purpose — a cook who
+                spots a missing prep item types it in on the spot; the row
+                persists to /config/sticker_lists like any admin edit. */}
+            <AddItemCell
+                isEs={isEs}
+                tx={tx}
+                existing={items}
+                onAdd={(nameEn, nameEs) => onSaveSection?.(sectionKey, [...items, { nameEn, nameEs }])}
+            />
         </section>
     );
 });
+
+// ── CategoryEditor — rename categories + add new ones (2026-07-24) ────────
+// Renders in Edit Mode above the sections. Local draft; explicit Save button
+// (saveSections → doc field `sectionsOverride`) so half-typed titles don't
+// stream to every device. Built-in categories always exist (resolveSections
+// re-appends any that a save dropped); only custom ones show 🗑, and only
+// while their item list is empty — deleting a category must never orphan
+// items silently (move or delete the items first).
+const SECTION_KIND_CHOICES = [
+    ['other', 'Gray'], ['protein', 'Red'], ['topping', 'Green'], ['base', 'Tan'],
+    ['sauce', 'Orange'], ['broth', 'Yellow'], ['side', 'Purple'], ['drink', 'Blue'],
+    ['chemical', 'Pink'], ['status', 'Bright yellow'],
+];
+function CategoryEditor({ sections, stickerLists, staffName, isEs, tx }) {
+    const [draft, setDraft] = useState(() => sections.map(s => ({ ...s })));
+    const [dirty, setDirty] = useState(false);
+    const [busy, setBusy] = useState(false);
+    // Re-sync from live sections whenever they change UNLESS the admin has
+    // unsaved edits (their draft wins until Save/discard).
+    useEffect(() => {
+        if (!dirty) setDraft(sections.map(s => ({ ...s })));
+    }, [sections, dirty]);
+
+    const update = (key, patch) => {
+        setDraft(d => d.map(s => (s.key === key ? { ...s, ...patch } : s)));
+        setDirty(true);
+    };
+    const remove = (key) => {
+        setDraft(d => d.filter(s => s.key !== key));
+        setDirty(true);
+    };
+    const addCategory = () => {
+        const name = window.prompt(tx('New category name (English):', 'Nombre de la nueva categoría (Inglés):'));
+        if (!name || !name.trim()) return;
+        const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24) || 'category';
+        let key = `c_${slug}`;
+        let n = 2;
+        while (draft.some(s => s.key === key)) key = `c_${slug}_${n++}`;
+        setDraft(d => [...d, { key, kind: 'other', titleEn: name.trim(), titleEs: name.trim(), defaults: [] }]);
+        setDirty(true);
+    };
+    const save = async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+            await saveSections(draft, staffName);
+            setDirty(false);
+        } catch (e) {
+            console.warn('saveSections failed:', e);
+            window.alert(tx('Could not save categories: ', 'No se pudieron guardar: ') + (e?.message || e));
+        } finally { setBusy(false); }
+    };
+
+    const isBuiltin = (key) => STICKER_SECTIONS.some(b => b.key === key);
+    const listCount = (key) => (stickerLists?.[key] || []).length;
+
+    return (
+        <div className="mb-3 rounded-xl border-2 border-purple-300 bg-white p-3">
+            <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-black uppercase tracking-widest text-purple-800">
+                    🗂 {tx('Categories', 'Categorías')}
+                </h3>
+                {dirty && (
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                        {tx('unsaved changes', 'cambios sin guardar')}
+                    </span>
+                )}
+            </div>
+            <div className="space-y-1.5">
+                {draft.map((s) => {
+                    const tone = COMPONENT_KIND_TONE[s.kind] || COMPONENT_KIND_TONE.other;
+                    const builtin = isBuiltin(s.key);
+                    const count = listCount(s.key);
+                    return (
+                        <div key={s.key} className={`flex flex-wrap items-center gap-1.5 rounded-lg ${tone.bg} border border-black/10 p-1.5`}>
+                            <input type="text" value={s.titleEn}
+                                onChange={(e) => update(s.key, { titleEn: e.target.value })}
+                                placeholder={tx('Title (English)', 'Título (Inglés)')}
+                                className="flex-1 min-w-[9rem] px-2 py-1.5 text-xs font-bold border border-dd-line rounded bg-white" />
+                            <input type="text" value={s.titleEs}
+                                onChange={(e) => update(s.key, { titleEs: e.target.value })}
+                                placeholder={tx('Title (Spanish)', 'Título (Español)')}
+                                className="flex-1 min-w-[9rem] px-2 py-1.5 text-xs border border-dd-line rounded bg-white" />
+                            <select value={s.kind} onChange={(e) => update(s.key, { kind: e.target.value })}
+                                title={tx('Sticker color', 'Color de etiqueta')}
+                                className="flex-shrink-0 px-1 py-1.5 text-[11px] border border-dd-line rounded bg-white">
+                                {SECTION_KIND_CHOICES.map(([k, label]) => (
+                                    <option key={k} value={k}>{label}</option>
+                                ))}
+                            </select>
+                            <span className="text-[10px] text-dd-text-2 tabular-nums">{count} {tx('items', 'artículos')}</span>
+                            {!builtin && (
+                                <button type="button"
+                                    onClick={() => {
+                                        if (count > 0) {
+                                            window.alert(tx('Move or delete its items first, then delete the category.',
+                                                'Primero mueve o borra sus artículos, luego borra la categoría.'));
+                                            return;
+                                        }
+                                        remove(s.key);
+                                    }}
+                                    title={tx('Delete category (must be empty)', 'Borrar categoría (debe estar vacía)')}
+                                    className="flex-shrink-0 px-2 py-1 rounded-lg bg-red-100 border border-red-300 text-red-700 text-xs active:scale-95">
+                                    🗑
+                                </button>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+            <div className="flex gap-2 mt-2.5">
+                <button type="button" onClick={addCategory}
+                    className="flex-1 py-2 rounded-lg border-2 border-dashed border-purple-300 text-purple-700 text-xs font-bold hover:bg-purple-50">
+                    + {tx('Add category', 'Agregar categoría')}
+                </button>
+                <button type="button" onClick={save} disabled={!dirty || busy}
+                    className="flex-1 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold disabled:opacity-40 active:scale-95">
+                    {busy ? tx('Saving…', 'Guardando…') : tx('Save categories', 'Guardar categorías')}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+// Collapsed "+ Add item" dashed button → tiny inline form (EN + optional ES
+// name). Saves the row to the section's live list; the subscription echoes
+// it back into the grid (in its alphabetical spot) within a second.
+function AddItemCell({ isEs, tx, existing, onAdd }) {
+    const [open, setOpen] = useState(false);
+    const [nameEn, setNameEn] = useState('');
+    const [nameEs, setNameEs] = useState('');
+    const save = () => {
+        const en = nameEn.trim();
+        if (!en) return;
+        const nn = (s) => String(s || '').trim().toLowerCase();
+        if ((existing || []).some(r => nn(r.nameEn) === nn(en))) {
+            window.alert(tx('That item is already in this category.', 'Ese artículo ya está en esta categoría.'));
+            return;
+        }
+        onAdd(en, nameEs.trim());
+        setNameEn(''); setNameEs(''); setOpen(false);
+    };
+    if (!open) {
+        return (
+            <button type="button" onClick={() => setOpen(true)}
+                className="mt-2 w-full py-2.5 rounded-xl border-2 border-dashed border-purple-300 text-purple-700 text-xs font-bold hover:bg-purple-50 active:scale-[0.99] transition">
+                + {tx('Add item', 'Agregar artículo')}
+            </button>
+        );
+    }
+    return (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-xl border-2 border-purple-300 bg-purple-50/50 p-2">
+            <input autoFocus type="text" value={nameEn} onChange={(e) => setNameEn(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && save()}
+                placeholder={tx('Item name (English)', 'Nombre (Inglés)')}
+                className="flex-1 min-w-[8rem] px-2 py-2 text-sm font-bold border border-dd-line rounded-lg bg-white" />
+            <input type="text" value={nameEs} onChange={(e) => setNameEs(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && save()}
+                placeholder={tx('Spanish (optional)', 'Español (opcional)')}
+                className="flex-1 min-w-[8rem] px-2 py-2 text-sm border border-dd-line rounded-lg bg-white" />
+            <button type="button" onClick={save} disabled={!nameEn.trim()}
+                className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold disabled:opacity-40 active:scale-95">
+                {tx('Save', 'Guardar')}
+            </button>
+            <button type="button" onClick={() => { setOpen(false); setNameEn(''); setNameEs(''); }}
+                className="px-2.5 py-2 rounded-lg bg-white border border-dd-line text-dd-text-2 text-xs font-bold active:scale-95">
+                ✕
+            </button>
+        </div>
+    );
+}
 
 // Strip the build-sheet rows down to the four editable fields + id
 // so the edit form has clean state. Generates an id if the source
@@ -1448,7 +1655,7 @@ function mergeDrafts(draft, incoming, deletedIds) {
 
 // One inline-edit row. Name EN + Name ES side by side, with a
 // trash button at the right.
-function EditableFlatRow({ row, tone, isEs, tx, sectionKey, onUpdate, onDelete, onMove }) {
+function EditableFlatRow({ row, tone, isEs, tx, sectionKey, sections = STICKER_SECTIONS, onUpdate, onDelete, onMove }) {
     return (
         <div className={`flex items-stretch gap-1.5 rounded-lg ${tone.bg} border border-dd-line p-1.5`}>
             <input
@@ -1476,7 +1683,7 @@ function EditableFlatRow({ row, tone, isEs, tx, sectionKey, onUpdate, onDelete, 
                     aria-label={tx('Move to another category', 'Mover a otra categoría')}
                     className="flex-shrink-0 w-[86px] px-1 py-1.5 text-[11px] border border-dd-line rounded bg-white text-dd-text"
                 >
-                    {STICKER_SECTIONS.map((s) => {
+                    {sections.map((s) => {
                         const chip = CHIP_LABELS[s.key];
                         return (
                             <option key={s.key} value={s.key}>
