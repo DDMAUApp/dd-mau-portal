@@ -2696,6 +2696,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         language={language}
                         staffName={staffName}
                         staffList={staffList}
+                        storeLocation={storeLocation}
                     />
 
                     {/* ── STAFF LIST (collapsible) ── */}

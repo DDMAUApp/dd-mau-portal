@@ -42,7 +42,7 @@
 
 import { db } from '../firebase';
 import {
-    collection, doc, getDocs, onSnapshot, query, where, limit,
+    collection, doc, getDoc, getDocs, onSnapshot, query, where, limit,
     addDoc, updateDoc, setDoc, deleteDoc, serverTimestamp, arrayUnion,
 } from 'firebase/firestore';
 
@@ -253,49 +253,65 @@ export async function ensureMaterializedForToday(side, byName) {
     }
 }
 
-// ── Day sheet: the tasks ALREADY on a day's list ───────────────────────
-// (Andrew 2026-07-27: "when i press the day on the calendar i want to see
-// all the tasks already in the days list.") A day's list is more than the
-// planner's rules — it's the real /assigned_tasks docs:
-//   • instances materialized FOR that day (planDate == dateStr, done or not)
-//   • plus, for today: every open task on the board (manual assignments +
-//     carry-overs from earlier days ARE today's list)
-//   • plus, for future days: open MANUAL tasks (no planDate — they stay on
-//     the board until checked, so they'll still be there that day). Open
-//     planner instances belong to the day they were made for.
+// ── Day sheet: the Daily Ops checklist for a day ───────────────────────
+// (Andrew 2026-07-27: "the list i want to see is the one in the daily
+// operations, tasks tab" — with a FOH/BOH toggle.) That list lives at
+// /ops/checklists2_{location} (customTasks.{side}.all + checks map that
+// resets each morning); past days are archived by the rollover to
+// /checklistHistory_{location}/{YYYY-MM-DD}. This mirrors the Tasks tab's
+// read model: primary list (bare check ids), per-task recurrence
+// (daily / weekdays / Mondays…) matched on the business day-of-week,
+// subtasks all-checked + required photo = done.
 
-// Pure merge (unit-tested): planDocs/openDocs are {id, ...data} arrays.
-export function mergeDayTasks(planDocs, openDocs, dateStr, todayStr) {
-    const byId = new Map();
-    for (const t of planDocs || []) byId.set(t.id, t);
-    if (dateStr >= todayStr) {
-        for (const t of openDocs || []) {
-            if (byId.has(t.id)) continue;
-            if (dateStr > todayStr && t.planDate) continue; // future day: manual only
-            byId.set(t.id, t);
-        }
-    }
-    const out = [...byId.values()];
-    out.sort((a, b) => (!!a.done !== !!b.done)
-        ? (a.done ? 1 : -1)
-        : (a.staffName || '').localeCompare(b.staffName || ''));
-    return out;
+const CHECKLIST_RECUR = {
+    daily:     () => true,
+    weekday:   w => w >= 1 && w <= 5,
+    weekend:   w => w === 0 || w === 6,
+    monday:    w => w === 1,
+    tuesday:   w => w === 2,
+    wednesday: w => w === 3,
+    thursday:  w => w === 4,
+    friday:    w => w === 5,
+    saturday:  w => w === 6,
+    sunday:    w => w === 0,
+};
+
+// Pure (unit-tested): flatten one side's checklist for a given day with
+// done state. Handles the legacy morning/afternoon shape history docs
+// may still carry (live docs were migrated to a single `all` period).
+export function checklistTasksForDay(customTasks, checks, side, dateStr) {
+    const s = customTasks?.[side] || {};
+    const all = s.all || [...(s.morning || []), ...(s.afternoon || [])];
+    const w = weekdayOf(dateStr);
+    const ch = checks || {};
+    return all
+        .filter(t => (CHECKLIST_RECUR[t?.recurrence || 'daily'] || CHECKLIST_RECUR.daily)(w))
+        .map(t => {
+            const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+            let done = subs.length > 0 ? subs.every(x => !!ch[x.id]) : !!ch[t.id];
+            if (t.requirePhoto && !ch[t.id + '_photo']) done = false;
+            const subsDone = subs.filter(x => !!ch[x.id]).length;
+            return {
+                id: t.id, task: t.task, category: t.category || 'other',
+                done, subCount: subs.length, subsDone,
+            };
+        });
 }
 
-// One-shot fetch for the day sheet (bounded; no live subscription — the
-// sheet is short-lived and reopened per tap).
-export async function fetchDayTasks(dateStr) {
+// One-shot fetch of the checklist doc + check state for a tapped day.
+// Today → live doc (checks only count if the doc has rolled to today);
+// future → live doc, unchecked (the list resets each morning);
+// past → the archived history row ({missing:true} if none was saved).
+export async function fetchOpsChecklistDay(location, dateStr) {
     const todayStr = toDateStr();
-    const col = collection(db, 'assigned_tasks');
-    const reads = [getDocs(query(col, where('planDate', '==', dateStr), limit(300)))];
-    if (dateStr >= todayStr) {
-        reads.push(getDocs(query(col, where('done', '==', false), limit(500))));
+    if (dateStr < todayStr) {
+        const snap = await getDoc(doc(db, 'checklistHistory_' + location, dateStr));
+        if (!snap.exists()) return { missing: true };
+        const d = snap.data() || {};
+        return { customTasks: d.customTasks || {}, checks: d.checks || {} };
     }
-    const [planSnap, openSnap] = await Promise.all(reads);
-    const toArr = (snap) => {
-        const arr = [];
-        if (snap) snap.forEach(d => arr.push({ id: d.id, ...(d.data() || {}) }));
-        return arr;
-    };
-    return mergeDayTasks(toArr(planSnap), toArr(openSnap), dateStr, todayStr);
+    const snap = await getDoc(doc(db, 'ops', 'checklists2_' + location));
+    const d = snap.exists() ? (snap.data() || {}) : {};
+    const checks = (dateStr === todayStr && d.date === dateStr) ? (d.checks || {}) : {};
+    return { customTasks: d.customTasks || {}, checks };
 }

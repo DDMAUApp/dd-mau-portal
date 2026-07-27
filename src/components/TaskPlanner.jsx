@@ -20,7 +20,7 @@ import {
     subscribeTaskPlan, createTaskPlanRule, updateTaskPlanRule,
     archiveTaskPlanRule, deleteTaskPlanRule, skipOccurrence, moveOccurrence,
     rulesDueOn, ensureMaterializedForToday, toDateStr, addDaysStr, weekdayOf,
-    fetchDayTasks,
+    fetchOpsChecklistDay, checklistTasksForDay,
 } from '../data/taskPlan';
 import { inferStaffSide } from '../data/assignedTasks';
 import { toast } from '../toast';
@@ -46,7 +46,7 @@ function recurrenceLabel(rule, isEs) {
     }
 }
 
-export default function TaskPlanner({ language = 'en', staffName, staffList = [] }) {
+export default function TaskPlanner({ language = 'en', staffName, staffList = [], storeLocation }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
@@ -206,6 +206,7 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
                     isEs={isEs} tx={tx}
                     staffName={staffName}
                     staffList={staffList}
+                    storeLocation={storeLocation}
                     onEdit={(rule) => { setEditRule({ rule, date: daySheet }); }}
                     onClose={() => setDaySheet(null)}
                 />
@@ -229,22 +230,28 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
 }
 
 // ── Day sheet — the day's due tasks + the add form ─────────────────────
-function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, onEdit, onClose }) {
+function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocation, onEdit, onClose }) {
     const due = rulesDueOn(rules, dateStr);
     const wd = weekdayOf(dateStr);
     const dayTitle = `${(isEs ? WD_ES : WD_EN)[wd]} ${Number(dateStr.slice(8))}/${Number(dateStr.slice(5, 7))}`;
 
-    // The tasks ALREADY on this day's list (real /assigned_tasks docs —
-    // materialized planner instances + manual assignments/carry-overs).
-    const [dayTasks, setDayTasks] = useState(null); // null = loading
+    // The day's Daily Ops checklist (Operations → Tasks tab), with a
+    // FOH/BOH toggle (Andrew 2026-07-27). One fetch per (location, day);
+    // the side toggle re-filters the same doc client-side.
+    const [listSide, setListSide] = useState('FOH');
+    const [listLoc, setListLoc] = useState(storeLocation === 'maryland' ? 'maryland' : 'webster');
+    const [dayList, setDayList] = useState(null); // null = loading; {missing} | {customTasks, checks}
     useEffect(() => {
         let alive = true;
-        setDayTasks(null);
-        fetchDayTasks(dateStr)
-            .then(list => { if (alive) setDayTasks(list); })
-            .catch(() => { if (alive) setDayTasks([]); });
+        setDayList(null);
+        fetchOpsChecklistDay(listLoc, dateStr)
+            .then(d => { if (alive) setDayList(d); })
+            .catch(() => { if (alive) setDayList({ missing: true }); });
         return () => { alive = false; };
-    }, [dateStr]);
+    }, [dateStr, listLoc]);
+    const listTasks = (dayList && !dayList.missing)
+        ? checklistTasksForDay(dayList.customTasks, dayList.checks, listSide, dateStr)
+        : [];
 
     // Add form state
     const [task, setTask] = useState('');
@@ -296,34 +303,46 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, onEdit, onCl
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     <div>
-                        <div className="text-[11px] font-bold uppercase tracking-widest text-dd-text-2 mb-1">
-                            {tx('Already on the list', 'Ya en la lista')}{dayTasks ? ` · ${dayTasks.length}` : ''}
+                        <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                            <div className="text-[11px] font-bold uppercase tracking-widest text-dd-text-2">
+                                📋 {tx('Daily Ops list', 'Lista de Ops diaria')}{dayList && !dayList.missing ? ` · ${listTasks.filter(t => t.done).length}/${listTasks.length}` : ''}
+                            </div>
+                            <div className="flex items-center gap-1">
+                                {['FOH', 'BOH'].map(s => (
+                                    <button key={s} onClick={() => setListSide(s)}
+                                        className={`px-2 py-1 rounded-md text-[11px] font-bold border ${listSide === s
+                                            ? (s === 'BOH' ? 'bg-blue-600 text-white border-blue-600' : 'bg-emerald-600 text-white border-emerald-600')
+                                            : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                                        {s}
+                                    </button>
+                                ))}
+                                <button onClick={() => setListLoc(l => l === 'webster' ? 'maryland' : 'webster')}
+                                    className="px-2 py-1 rounded-md text-[11px] font-bold border bg-white text-dd-text-2 border-dd-line"
+                                    title={tx('Switch store', 'Cambiar tienda')}>
+                                    {listLoc === 'webster' ? '📍 Webster' : '📍 Maryland'}
+                                </button>
+                            </div>
                         </div>
-                        {dayTasks === null ? (
+                        {dayList === null ? (
                             <p className="text-xs text-dd-text-2 italic">{tx('Loading…', 'Cargando…')}</p>
-                        ) : dayTasks.length === 0 ? (
-                            <p className="text-xs text-dd-text-2 italic">{tx('No tasks on this day’s list yet.', 'Aún no hay tareas en la lista de este día.')}</p>
+                        ) : dayList.missing ? (
+                            <p className="text-xs text-dd-text-2 italic">{tx('No saved list for this day.', 'No hay lista guardada de este día.')}</p>
+                        ) : listTasks.length === 0 ? (
+                            <p className="text-xs text-dd-text-2 italic">{tx('No tasks on this list for this day.', 'Sin tareas en esta lista para este día.')}</p>
                         ) : (
-                            <div className="space-y-1">
-                                {dayTasks.map(t => {
-                                    const rule = t.planRuleId ? rules.find(r => r.id === t.planRuleId) : null;
-                                    const Row = rule ? 'button' : 'div';
-                                    return (
-                                        <Row key={t.id} {...(rule ? { onClick: () => onEdit(rule) } : {})}
-                                            className={`w-full text-left px-2.5 py-2 rounded-lg border border-dd-line ${t.done ? 'bg-emerald-50/60' : 'bg-white'} ${rule ? 'hover:bg-dd-bg active:scale-[0.99]' : ''}`}>
-                                            <div className="flex items-center gap-1.5 flex-wrap">
-                                                <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
-                                                <span className={`text-sm font-bold ${t.done ? 'text-dd-text-2 line-through' : 'text-dd-text'}`}>{t.task}</span>
-                                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.side === 'BOH' ? 'bg-blue-100 text-blue-900' : 'bg-emerald-100 text-emerald-900'}`}>{t.side}</span>
-                                            </div>
-                                            <div className="text-[10px] text-dd-text-2 mt-0.5">
-                                                → {t.staffName || '?'} · {t.planRuleId
-                                                    ? tx('🗓 planner', '🗓 planificador')
-                                                    : `${tx('assigned by', 'asignada por')} ${t.assignedBy || '?'}`}
-                                            </div>
-                                        </Row>
-                                    );
-                                })}
+                            <div className="space-y-1 max-h-56 overflow-y-auto pr-0.5">
+                                {listTasks.map(t => (
+                                    <div key={t.id}
+                                        className={`px-2.5 py-1.5 rounded-lg border border-dd-line ${t.done ? 'bg-emerald-50/60' : 'bg-white'}`}>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
+                                            <span className={`text-sm flex-1 ${t.done ? 'text-dd-text-2 line-through' : 'text-dd-text font-medium'}`}>{t.task}</span>
+                                            {t.subCount > 0 && (
+                                                <span className="text-[10px] text-dd-text-2">{t.subsDone}/{t.subCount}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>
