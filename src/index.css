@@ -1737,6 +1737,17 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     contain-intrinsic-size: auto 148px;
 }
 
+/* 2026-07-27 — Recipes first-load perf (Andrew: "when i first go in it
+   takes alittle bit to load"). ~80 collapsed recipe cards (emoji, title,
+   allergen chips, category pill) all laid out + painted on mount. Skip
+   off-screen cards; 104px matches a collapsed card incl. its mb-3.
+   Applied ONLY while collapsed — an expanded card must keep normal
+   layout so its true height drives the scroll position. */
+.ddmau-recipe-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 104px;
+}
+
 @media (max-width: 767px) {
     /* Other-person message bubble — light card with hairline border.
        (Mentioned messages keep their amber tint via the JSX

@@ -642,6 +642,21 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // we're avoiding.
     const recipesHashRef = useRef(null);
     useEffect(() => {
+        // 2026-07-27 — instant first paint (Andrew: "when i first go in it
+        // takes alittle bit to load"). Same pattern as the sticker lists
+        // (ddmau:stickerLists:v1): serve the last-seen list synchronously
+        // from localStorage so the page renders content immediately, then
+        // let the live snapshot below overwrite it (hash-deduped, so an
+        // unchanged doc costs zero re-renders). Render stays behind the
+        // recipesAccess gate — the cache only feeds this component.
+        const CACHE_KEY = 'ddmau:recipes:v1';
+        try {
+            const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+            if (Array.isArray(cached) && cached.length > 0) {
+                recipesHashRef.current = JSON.stringify(cached);
+                setRecipes(cached);
+            }
+        } catch { /* corrupt/absent cache — normal load path below */ }
         const unsubscribe = onSnapshot(
             doc(db, "config", "recipes"),
             (docSnapshot) => {
@@ -652,6 +667,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                     if (nextHash && nextHash === recipesHashRef.current) return;
                     recipesHashRef.current = nextHash;
                     setRecipes(next);
+                    try { localStorage.setItem(CACHE_KEY, nextHash); } catch { /* quota — live path unaffected */ }
                 }
             },
             // Without an error handler, an offline blip / permission-denied
@@ -1101,7 +1117,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                 const containsAvoided = avoidAllergen && Array.isArray(recipe.allergens) && recipe.allergens.includes(avoidAllergen);
                 const sortedAllergens = sortAllergens(recipe.allergens);
                 return (
-                    <div key={recipe.id} className={`mb-3 bg-white rounded-lg border-2 overflow-hidden ${containsAvoided ? 'border-red-500 ring-2 ring-red-200' : 'border-gray-200'}`}>
+                    <div key={recipe.id} className={`mb-3 bg-white rounded-lg border-2 overflow-hidden ${isExpanded ? '' : 'ddmau-recipe-cv '}${containsAvoided ? 'border-red-500 ring-2 ring-red-200' : 'border-gray-200'}`}>
                         <div
                             className="p-4 cursor-pointer bg-gradient-to-r from-amber-50 to-white"
                             onClick={() => requestExpand(recipe.id)}
