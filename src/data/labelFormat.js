@@ -44,6 +44,11 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
     // Size scaling
     dateNumberScale: 5,    // Epson: width=height=5. Brother CSS: ~28% of label width
     titleScale:      2,    // Epson: width=height=2. Brother CSS: medium-large
+    // Giant use-by band ("SAT" weekday / discard time). Ceiling — the
+    // renderer still auto-shrinks so the text fits the roll. 4 was the
+    // old hardcoded cap (Andrew 2026-07-27: "control more, like the SAT
+    // or Time to discard").
+    useByBandScale:  4,
 
     // Text content
     preppedLabelTextEn: 'PREPPED',
@@ -81,6 +86,9 @@ export function cleanKindFormats(raw) {
         }
         if (Number.isFinite(Number(v.dateNumberScale))) {
             entry.dateNumberScale = Math.max(2, Math.min(8, Number(v.dateNumberScale)));
+        }
+        if (Number.isFinite(Number(v.useByBandScale))) {
+            entry.useByBandScale = Math.max(2, Math.min(8, Number(v.useByBandScale)));
         }
         // Per-kind giant use-by band control (weekday / discard-time line).
         if (v.showUseByBand === false) entry.showUseByBand = false;
@@ -153,7 +161,7 @@ export async function saveLabelFormat({ format, byName }) {
         'showNotes', 'showFooter', 'showUseByWeekday'];
     const STRING_FIELDS = ['preppedLabelTextEn', 'preppedLabelTextEs',
         'footerText', 'dateFormat', 'timeFormat'];
-    const NUMBER_FIELDS = ['dateNumberScale', 'titleScale', 'defaultShelfLifeDays'];
+    const NUMBER_FIELDS = ['dateNumberScale', 'titleScale', 'useByBandScale', 'defaultShelfLifeDays'];
 
     for (const k of BOOL_FIELDS) {
         if (k in format) safe[k] = format[k] === true;
@@ -207,6 +215,7 @@ export function clampLabelFormat(format) {
     // 8 = Epson max (2026-07-26 "make the item font larger" — was 4, which
     // silently undid the editor's bigger slider on save).
     f.titleScale = Math.max(1, Math.min(8, Number(f.titleScale) || 2));
+    f.useByBandScale = Math.max(2, Math.min(8, Number(f.useByBandScale) || 4));
     f.defaultShelfLifeDays = Math.max(1, Math.min(60, Number(f.defaultShelfLifeDays) || 5));
     if (f.kindFormats) f.kindFormats = cleanKindFormats(f.kindFormats);
     return f;

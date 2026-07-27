@@ -898,6 +898,10 @@ export function buildLabelPayload({
         dateNumberScale: fitDateScale,
         titleScale:      fitTitleScale,
         titleHeightScale,
+        // Ceiling for the giant use-by band ("SAT" / discard time) —
+        // admin-set (2..8, default 4 = the old hardcoded cap); the
+        // renderers still shrink it to fit the roll.
+        useByBandScale: Math.max(2, Math.min(8, Number(format?.useByBandScale) || 4)),
         // Per-kind layout (2026-07-26): 'nameFirst' prints the item name
         // as the top/huge element and shrinks the date to one small line
         // (sanitizer buckets etc.).
@@ -1113,11 +1117,16 @@ function renderPrepLabelBody(payload) {
     // clocks — shelf-scannable without reading the small date line.
     // Scale clamped so the text always fits this roll's columns.
     if (payload.useByBig) {
-        const bandScale = Math.max(2, Math.min(4,
+        // Admin-set ceiling (useByBandScale, default 4); width still
+        // auto-fits the roll, and like the title the HEIGHT runs to the
+        // configured size so short bands can print truly big.
+        const bandCfg = Math.max(2, Math.min(8, Number(payload.useByBandScale) || 4));
+        const bandW = Math.max(2, Math.min(bandCfg,
             Math.floor(cols / Math.max(1, payload.useByBig.length))));
+        const bandH = Math.max(bandW, bandCfg);
         lines.push(`<text align="center"/>`);
         lines.push(`<text em="true"/>`);
-        lines.push(`<text width="${bandScale}" height="${bandScale}"/>`);
+        lines.push(`<text width="${bandW}" height="${bandH}"/>`);
         lines.push(`<text>${escapeXml(payload.useByBig)}&#10;</text>`);
         lines.push(`<text em="false"/>`);
         lines.push(`<text width="1" height="1"/>`);
@@ -1197,9 +1206,10 @@ export function buildLabelPreviewModel(payload) {
     }
     for (const m of (payload.metaLines || [])) push(m);
     if (payload.useByBig) {
-        const bandScale = Math.max(2, Math.min(4,
+        const bandCfg = Math.max(2, Math.min(8, Number(payload.useByBandScale) || 4));
+        const bandW = Math.max(2, Math.min(bandCfg,
             Math.floor(cols / Math.max(1, payload.useByBig.length))));
-        push(payload.useByBig, { w: bandScale, h: bandScale, em: true, center: true });
+        push(payload.useByBig, { w: bandW, h: Math.max(bandW, bandCfg), em: true, center: true });
     }
     if ((payload.allergens || []).length > 0) {
         push(divDash);

@@ -503,6 +503,11 @@ export default function DateStickerPrinter({
             ingredientsEn: [],
             ingredientsEs: [],
             category: KIND_TO_CATEGORY[component.kind] || 'Other',
+            // kind drives the per-category label format (sanitizer =
+            // 'chemical' → name-first/big). 2026-07-27: this synthesized
+            // recipe never carried it, so the override silently no-opped
+            // for every sticker-page print even after the modal-side fix.
+            kind: component.kind || null,
             ...(shelfFromBuild ? { shelfLifeDays: shelfFromBuild } : {}),
             ...(component.shelfLifeHours ? { shelfLifeHours: component.shelfLifeHours } : {}),
             ...(component.thawedDays ? { thawedDays: component.thawedDays } : {}),

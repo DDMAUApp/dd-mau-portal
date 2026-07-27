@@ -928,12 +928,28 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                 ))}
             </div>
             {/* Giant use-by band (2026-07-26 feature #3) — WYSIWYG with the
-                printed label's huge weekday / discard-time line. */}
-            {payload.useByBig && (
-                <div className="text-2xl font-black tracking-widest text-dd-text text-center my-0.5">
-                    {payload.useByBig}
-                </div>
-            )}
+                printed label's huge weekday / discard-time line. Scale-aware
+                (2026-07-27: admin useByBandScale slider); same flex-center +
+                scaleX squeeze pattern as the title. */}
+            {payload.useByBig && (() => {
+                const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+                const cfg = Math.max(2, Math.min(8, Number(payload.useByBandScale) || 4));
+                const bW = Math.max(2, Math.min(cfg, Math.floor(cols / Math.max(1, payload.useByBig.length))));
+                const bH = Math.max(bW, cfg);
+                return (
+                    <div className="my-0.5" style={{ display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
+                        <span className="font-black tracking-widest text-dd-text"
+                            style={{
+                                flex: 'none',
+                                fontSize: `${7 * bH}px`,
+                                lineHeight: 1.1,
+                                ...(bW < bH ? { transform: `scaleX(${(bW / bH).toFixed(2)})`, transformOrigin: 'center' } : {}),
+                            }}>
+                            {payload.useByBig}
+                        </span>
+                    </div>
+                );
+            })()}
             {payload.allergens && payload.allergens.length > 0 && (
                 <>
                     <hr className="border-t border-dotted border-dd-line my-1.5" />

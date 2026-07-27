@@ -175,6 +175,12 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                     `Epson scale = ${draft.titleScale} · long names auto-shrink to fit the roll`,
                                     `Escala Epson = ${draft.titleScale} · nombres largos se reducen para caber`,
                                 )} />
+                            <SliderRow
+                                label={tx('Use-by band size (SAT / discard time)', 'Tamaño de banda de caducidad')}
+                                value={draft.useByBandScale ?? 4}
+                                onChange={(v) => update({ useByBandScale: v })}
+                                min={2} max={8} step={1}
+                                hint={tx('The big weekday / discard-time line near the bottom', 'La línea grande de día / hora de descarte')} />
                         </FieldsetCard>
 
                         {/* Per-category overrides — Andrew 2026-07-26: "change
@@ -238,6 +244,13 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                             checked={ov.showUseByBand !== false}
                                             onChange={(v) => setKind({ showUseByBand: v ? undefined : false })}
                                             label={tx('Giant use-by band (THU / discard time)', 'Banda grande de caducidad (JUE / hora)')} />
+                                        {ov.showUseByBand !== false && (
+                                            <SliderRow
+                                                label={tx('Use-by band size (this category)', 'Tamaño de banda (esta categoría)')}
+                                                value={ov.useByBandScale ?? draft.useByBandScale ?? 4}
+                                                onChange={(v) => setKind({ useByBandScale: v })}
+                                                min={2} max={8} step={1} />
+                                        )}
                                         <button type="button" onClick={() => setPrintPreview(kindSel)}
                                             className="w-full py-2 rounded-lg bg-white border-2 border-violet-300 text-violet-700 text-xs font-bold hover:bg-violet-50 active:scale-95">
                                             🖨 {tx('Preview a print (uses your unsaved edits)', 'Vista previa (incluye cambios sin guardar)')}
