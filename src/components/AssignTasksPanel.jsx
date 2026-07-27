@@ -53,6 +53,7 @@ import {
     setAssignmentDone,
     inferStaffSide,
 } from '../data/assignedTasks';
+import { ensureMaterializedForToday } from '../data/taskPlan';
 import { ClipboardList, Search, Plus, Check, X, ChevronDown, Trash2, UserPlus, Pencil } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
 import { isAdminId } from '../data/staff';
@@ -176,6 +177,16 @@ export default function AssignTasksPanel({
     // ── Master library subscription ─────────────────────────────────
     const [libItems, setLibItems] = useState([]);
     useEffect(() => subscribeTaskLibrary(side, setLibItems), [side]);
+
+    // Task Planner materialization (2026-07-27): opening the kanban is the
+    // trigger that turns today's PLANNED tasks into real assignments —
+    // idempotent + throttled per (day, side) inside, so this is cheap on
+    // re-mounts and safe when several managers open at once. Fire-and-
+    // forget; the live subscription below picks up whatever it creates.
+    useEffect(() => {
+        if (!side) return;
+        ensureMaterializedForToday(side).catch(() => {});
+    }, [side]);
 
     // ── Open assignments subscription (kanban data source) ──────────
     const [openAssignments, setOpenAssignments] = useState([]);

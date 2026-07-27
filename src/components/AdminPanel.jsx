@@ -30,6 +30,7 @@ import ImportStaffModal from './ImportStaffModal';
 import ModalPortal from './ModalPortal';
 import OffsiteClockSection from './OffsiteClockSection';
 import StaffTodosAdmin from './StaffTodosAdmin';
+import TaskPlanner from './TaskPlanner';
 // 2026-05-27 — Andrew: "i also want to add another audit to the admin
 // page. i want to know which staff has used the app?" Self-contained
 // read-only card; reads staffList in-place, no new Firestore writes.
@@ -2679,6 +2680,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         not managed here — they disappear when the field
                         is filled. */}
                     <StaffTodosAdmin
+                        language={language}
+                        staffName={staffName}
+                        staffList={staffList}
+                    />
+
+                    {/* ── TASK PLANNER (Andrew 2026-07-27) ──
+                        Calendar for planning repeating manager tasks
+                        (daily / every other day / weekly / one-offs).
+                        Each day the plan materializes into normal
+                        /assigned_tasks docs, so the Tasks page and the
+                        check-off flow are unchanged; unchecked non-daily
+                        tasks carry over until done. */}
+                    <TaskPlanner
                         language={language}
                         staffName={staffName}
                         staffList={staffList}
