@@ -6,6 +6,38 @@ import './index.css';
 import './firebase.js';
 import { setupPWA } from './pwa.js';
 
+// ─── Google-Translate DOM guard (2026-07-27) ──────────────────────────
+// NotFoundError "Failed to execute 'removeChild' on 'Node'" crashed the
+// Recipes tab AGAIN today (web, userRole BOH, v349) — a different button
+// than the one spot-fixed on 2026-06-25. Root cause is always the same:
+// BOH staff run Chrome's page translate (auto-Spanish); Translate replaces
+// React's text nodes with its own <font> wrappers, and the next reconcile
+// that removes/reorders those nodes throws, killing the whole tab through
+// the ErrorBoundary. Spot-wrapping every conditional string in a <span> is
+// whack-a-mole, so this is the standard global guard from the React issue
+// (facebook/react#11538): if the child Translate moved is no longer ours,
+// skip the operation instead of throwing. React's state stays correct; the
+// stale text self-heals on the next render. Installed at module eval so
+// it's in place before the first React commit.
+if (typeof Node === 'function' && Node.prototype) {
+    const origRemoveChild = Node.prototype.removeChild;
+    Node.prototype.removeChild = function (child) {
+        if (child && child.parentNode !== this) {
+            console.warn('[dom-guard] skipped removeChild of a moved node (browser translate?)');
+            return child;
+        }
+        return origRemoveChild.apply(this, arguments);
+    };
+    const origInsertBefore = Node.prototype.insertBefore;
+    Node.prototype.insertBefore = function (newNode, referenceNode) {
+        if (referenceNode && referenceNode.parentNode !== this) {
+            console.warn('[dom-guard] skipped insertBefore at a moved node (browser translate?)');
+            return newNode;
+        }
+        return origInsertBefore.apply(this, arguments);
+    };
+}
+
 // ─── Firestore IndexedDB crash self-heal (2026-07-14) ─────────────────
 // "FIRESTORE (11.x) INTERNAL ASSERTION FAILED … Attempt to get a record
 // from database without an in-progress transaction" is a WKWebView
