@@ -26,7 +26,7 @@ export default function ChatAnnouncementComposer({
     const tx = (en, es) => isEs ? es : en;
     const canPost = canPostAnnouncements(viewer, isAdmin, isManager);
 
-    const [audience, setAudience] = useState('announcements'); // channelKey or 'custom'
+    const [audience, setAudience] = useState('all'); // who gets the pop-up
     const [customChannels, setCustomChannels] = useState([]); // channelIds (for custom)
     const [body, setBody] = useState('');
     const [photo, setPhoto] = useState(null); // { file, previewUrl }
@@ -139,14 +139,17 @@ export default function ChatAnnouncementComposer({
 
     // Audience options based on viewer's role + the standard channels.
     const audienceOptions = useMemo(() => {
+        // 2026-07-26 rework: audiences describe WHO gets the pop-up, not
+        // which channel it posts to (the copy always lands in the 📣
+        // Announcements chat). The old duplicate "Announcements"/"All Team
+        // channel" pair collapsed into one Everyone option.
         const opts = [
-            { value: 'announcements', label: tx('📣 Announcements (everyone, ack-friendly)', '📣 Anuncios (todos)') },
-            { value: 'all',           label: tx('🍜 All Team channel', '🍜 Canal de Todo el Equipo') },
-            { value: 'foh',           label: tx('🪑 Front of House only', '🪑 Solo Front of House') },
-            { value: 'boh',           label: tx('👩‍🍳 Back of House only', '👩‍🍳 Solo Back of House') },
-            { value: 'managers',      label: tx('🧑‍💼 Managers only', '🧑‍💼 Solo gerentes') },
-            { value: 'webster',       label: tx('🏠 Webster only', '🏠 Solo Webster') },
-            { value: 'maryland',      label: tx('🏠 Maryland Hts only', '🏠 Solo Maryland') },
+            { value: 'all',      label: tx('📣 Everyone (all staff)', '📣 Todos (todo el personal)') },
+            { value: 'foh',      label: tx('🪑 Front of House only', '🪑 Solo Front of House') },
+            { value: 'boh',      label: tx('👩‍🍳 Back of House only', '👩‍🍳 Solo Back of House') },
+            { value: 'managers', label: tx('🧑‍💼 Managers only', '🧑‍💼 Solo gerentes') },
+            { value: 'webster',  label: tx('🏠 Webster only', '🏠 Solo Webster') },
+            { value: 'maryland', label: tx('🏠 Maryland Hts only', '🏠 Solo Maryland') },
         ];
         return opts;
     }, [isEs]);

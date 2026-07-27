@@ -292,9 +292,23 @@ async function _tcCloseSession(db, location, prevEntry, clockOutIso) {
             hoursToday: null, hoursThisWeek: null,
         };
         if (!Array.isArray(data.sessions)) data.sessions = [];
-        if (!data.sessions.some(s => s.clockIn === clockIn)) {
+        const existing = data.sessions.find(s => s.clockIn === clockIn);
+        if (!existing) {
             data.sessions.push({ clockIn, clockOut: clockOutIso || null });
             data.sessions.sort((a, b) => String(a.clockIn).localeCompare(String(b.clockIn)));
+        } else if (clockOutIso) {
+            // 2026-07-26 audit: the dedupe used to DISCARD the incoming
+            // clockOut when the clockIn already existed — a false early
+            // close (transient roster dropout) then swallowed the REAL
+            // clock-out forever and My Hours under-reported the shift.
+            // Update instead: prefer the recorded clockedOutAt; otherwise
+            // keep the LATER of the two (the real out can't precede a
+            // transient one).
+            if (prevEntry.clockedOutAt) {
+                existing.clockOut = prevEntry.clockedOutAt;
+            } else if (!existing.clockOut || String(clockOutIso) > String(existing.clockOut)) {
+                existing.clockOut = clockOutIso;
+            }
         }
         // This session is no longer the open one.
         if (data.openClockIn === clockIn) data.openClockIn = null;
@@ -328,7 +342,20 @@ async function recordDurableTimecards(location, before, after) {
         if (!_tcChanged(prev, e)) continue;
         const dateKey = ctDateKey(new Date(e.clockedInAt));
         try {
-            await _tcRef(db, location, dateKey, e.toastEmployeeId).set({
+            // Reappearance after a FALSE close (2026-07-26 audit): if this
+            // clockIn was already closed into sessions[] (transient roster
+            // dropout / week-window edge closed it early), remove that row —
+            // the session is demonstrably still open. The real close will
+            // re-append it later with the true clockOut.
+            const reopenRef = _tcRef(db, location, dateKey, e.toastEmployeeId);
+            const cur = await reopenRef.get();
+            if (cur.exists && Array.isArray(cur.data().sessions)
+                && cur.data().sessions.some(s => s.clockIn === e.clockedInAt)) {
+                await reopenRef.set({
+                    sessions: cur.data().sessions.filter(s => s.clockIn !== e.clockedInAt),
+                }, { merge: true });
+            }
+            await reopenRef.set({
                 location, date: dateKey,
                 toastEmployeeId: String(e.toastEmployeeId),
                 employeeName: e.employeeName,

@@ -58,10 +58,15 @@ export default function ChatAckDashboard({
     }, [chat?.id, message?.id]);
 
     const audience = useMemo(() => {
-        // Audience = chat members minus the sender (author implicitly read).
-        const members = Array.isArray(chat?.members) ? chat.members : [];
-        return members.filter(m => m !== message?.senderName);
-    }, [chat?.members, message?.senderName]);
+        // Prefer the REAL audience stamped on the message (2026-07-26:
+        // pop-up announcements post into the all-staff 📣 channel, so
+        // chat members would show everyone — including people the
+        // announcement never targeted — as "pending" forever).
+        const base = Array.isArray(message?.audienceNames) && message.audienceNames.length
+            ? message.audienceNames
+            : (Array.isArray(chat?.members) ? chat.members : []);
+        return base.filter(m => m !== message?.senderName);
+    }, [chat?.members, message?.audienceNames, message?.senderName]);
 
     const ackedNames = useMemo(() => new Set(acks.map(a => a.userName)), [acks]);
     const pending = useMemo(() => audience.filter(n => !ackedNames.has(n)), [audience, ackedNames]);

@@ -416,6 +416,11 @@ exports.dispatchNotification = onDocumentCreated(
             "invite_sent",             // onboarding
             "tv_offline",              // menu TV went dark — needs reboot
             "tv_back_online",          // menu TV recovered
+            // 2026-07-26 audit — pop-up announcements exist to reach
+            // CLOSED-app (usually off-shift) staff; the gate was eating
+            // the ping for exactly that population. Manager-authored,
+            // rare, deliberate.
+            "announcement",
         ]);
 
         // ── Per-channel mute gate ───────────────────────────────────

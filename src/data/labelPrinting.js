@@ -2543,7 +2543,10 @@ async function _printPrepLabelImpl({
                 itemNameEs: String(recipe?.titleEs || '').slice(0, 80),
                 qty: c,
                 byName: byName || preppedBy || 'unknown',
-                location: location || 'webster',
+                // Normalize 'both' (admin printing from Recipes/Operations
+                // passes it raw) so the ExpiringPanel — which queries per
+                // store — can actually surface the row.
+                location: (location === 'both' ? 'webster' : location) || 'webster',
                 prepAt: prepDate.toISOString(),
                 useByAt: payload.useByIso,
                 useByDay: `${useByDate.getFullYear()}-${String(useByDate.getMonth() + 1).padStart(2, '0')}-${String(useByDate.getDate()).padStart(2, '0')}`,

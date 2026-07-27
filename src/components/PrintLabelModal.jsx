@@ -883,6 +883,13 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                     <div key={i}>{m}</div>
                 ))}
             </div>
+            {/* Giant use-by band (2026-07-26 feature #3) — WYSIWYG with the
+                printed label's huge weekday / discard-time line. */}
+            {payload.useByBig && (
+                <div className="text-2xl font-black tracking-widest text-dd-text text-center my-0.5">
+                    {payload.useByBig}
+                </div>
+            )}
             {payload.allergens && payload.allergens.length > 0 && (
                 <>
                     <hr className="border-t border-dotted border-dd-line my-1.5" />

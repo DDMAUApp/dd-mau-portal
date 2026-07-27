@@ -125,8 +125,13 @@ export async function postAnnouncement({
     });
 
     // 2. Chat copy — revive/refresh the channel, append the message.
+    // audienceNames rides on the message so the ack dashboard counts the
+    // REAL audience (the channel's members are the whole staff — an
+    // FOH-only announcement must not show BOH as "pending" forever).
+    const audienceNames = audienceRecipients({ audience, includeManagers }, staffList)
+        .filter(n => n !== staffName);
     const chatId = await ensureAnnouncementsChannel(staffList, staffName);
-    await addDoc(collection(db, 'chats', chatId, 'messages'), {
+    const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), {
         senderName: staffName,
         senderId: viewer?.id || null,
         senderRole: viewer?.role || null,
@@ -138,10 +143,14 @@ export async function postAnnouncement({
         ackDeadline: ackDeadline ? ackDeadline.toISOString() : null,
         announcementGroupId: annRef.id,
         audienceLabel: audienceLabel || audience,
+        audienceNames,
         reactions: {},
         mentions: [],
         createdAt: serverTimestamp(),
     });
+    // Back-link so a popup "Got it" can mirror into the chat-side ack
+    // store the manager dashboard reads (2026-07-26 regression review #2).
+    await updateDoc(annRef, { chatId, chatMessageId: msgRef.id }).catch(() => {});
     // Varargs form — a FieldPath can't be a computed object key (it would
     // stringify to "[object Object]"), and the poster's name is free text
     // so a template-string dot-path would corrupt on names with dots.
@@ -170,6 +179,10 @@ export async function postAnnouncement({
             link: '/',
             tag: `announcement:${annRef.id}:${r}`,
             createdBy: staffName,
+            // Bypass the off-shift quiet gate (2026-07-26 audit): the whole
+            // point is reaching CLOSED-app staff — who are, by definition,
+            // usually off shift. Announcements are rare and manager-authored.
+            forceDeliver: true,
         }).catch(() => {});
     }
 
@@ -198,9 +211,23 @@ export function subscribeAnnouncements(cb) {
     });
 }
 
-// "Got it" — stamp this staffer's ack. FieldPath because staff names are
-// free text (a dot in a name would corrupt a template-string dot-path).
-export function ackAnnouncement(id, staffName) {
-    return updateDoc(doc(db, 'announcements', id),
+// "Got it" — stamp this staffer's ack on the announcement doc AND mirror
+// it into the chat-side ack store (/chats/{chatId}/acks/{messageId}_{name})
+// so the manager's Read-rate dashboard on the chat copy counts popup acks
+// too (2026-07-26 regression review #2 — the two stores were split-brain).
+// FieldPath because staff names are free text (a dot in a name would
+// corrupt a template-string dot-path). Accepts the full announcement
+// object (needs chatId/chatMessageId); a bare id still acks the doc.
+export async function ackAnnouncement(a, staffName) {
+    const id = typeof a === 'string' ? a : a?.id;
+    if (!id || !staffName) return;
+    await updateDoc(doc(db, 'announcements', id),
         new FieldPath('acks', staffName), new Date().toISOString());
+    if (typeof a === 'object' && a.chatId && a.chatMessageId) {
+        setDoc(doc(db, 'chats', a.chatId, 'acks', `${a.chatMessageId}_${staffName}`), {
+            messageId: a.chatMessageId,
+            userName: staffName,
+            ackedAt: serverTimestamp(),
+        }, { merge: true }).catch(() => {});
+    }
 }

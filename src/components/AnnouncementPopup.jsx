@@ -64,7 +64,7 @@ export default function AnnouncementPopup({ staffName, staffList = [], language 
         if (acking) return;
         setAcking(true);
         try {
-            await ackAnnouncement(current.id, staffName);
+            await ackAnnouncement(current, staffName);
         } catch (e) {
             console.warn('ackAnnouncement failed:', e);
             // Still hide locally — an offline ack queues via Firestore's

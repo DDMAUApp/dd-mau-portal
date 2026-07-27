@@ -75,13 +75,18 @@ export function undoToast(message, commitFn, opts = {}) {
         kind: opts.kind || 'info',
         duration: delay,
         actionLabel: opts.undoLabel || 'Undo',
-        onAction: () => { cancelled = true; dismissToast(id); },
+        onAction: () => { cancelled = true; cleanup(); dismissToast(id); },
     });
-    const commit = () => {
-        if (cancelled || committed) return;
-        committed = true;
+    const cleanup = () => {
         window.removeEventListener('pagehide', commit);
         document.removeEventListener('visibilitychange', onHidden);
+    };
+    const commit = () => {
+        // Always detach the listeners — the early returns used to leak
+        // them on every undone toast (long-lived kitchen iPads accumulate).
+        cleanup();
+        if (cancelled || committed) return;
+        committed = true;
         try { commitFn(); } catch (e) { console.warn('undoToast commit failed:', e); }
     };
     // 2026-07-26 audit: the buffered action used to die silently if the
@@ -93,7 +98,7 @@ export function undoToast(message, commitFn, opts = {}) {
     window.addEventListener('pagehide', commit);
     document.addEventListener('visibilitychange', onHidden);
     setTimeout(commit, delay);
-    return { cancel: () => { cancelled = true; dismissToast(id); } };
+    return { cancel: () => { cancelled = true; cleanup(); dismissToast(id); } };
 }
 
 export function dismissToast(id) {

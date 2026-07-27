@@ -28,6 +28,9 @@ export default function ExpiringPanel({ location = 'webster', staffName, languag
     const [rows, setRows] = useState(null);      // sticker_prints in the window
     const [waste, setWaste] = useState([]);      // recent waste_log entries
     const [busyId, setBusyId] = useState(null);
+    // A food-safety surface must NEVER render "nothing expiring 🎉" on a
+    // query error (2026-07-26 regression review #4).
+    const [loadError, setLoadError] = useState(false);
 
     const todayS = dayStr(new Date());
     const tomorrowS = dayStr(new Date(Date.now() + 86400000));
@@ -46,7 +49,12 @@ export default function ExpiringPanel({ location = 'webster', staffName, languag
             const out = [];
             snap.forEach((d) => out.push({ id: d.id, ...d.data() }));
             setRows(out);
-        }, () => setRows([]));
+            setLoadError(false);
+        }, (err) => {
+            console.warn('sticker_prints subscription failed:', err);
+            setRows([]);
+            setLoadError(true);
+        });
         // This week's waste — composite index: waste_log (location ASC, at DESC).
         const q2 = query(
             collection(db, 'waste_log'),
@@ -164,6 +172,11 @@ export default function ExpiringPanel({ location = 'webster', staffName, languag
                     <div className="flex-1 overflow-y-auto px-3 py-2">
                         {rows === null ? (
                             <p className="text-center text-sm text-dd-text-2 py-10">{tx('Loading…', 'Cargando…')}</p>
+                        ) : loadError ? (
+                            <p className="text-center text-sm font-bold text-red-700 py-10">
+                                {tx('Could not load the expiring list — check your connection and reopen.',
+                                    'No se pudo cargar la lista — revisa tu conexión y vuelve a abrir.')}
+                            </p>
                         ) : (groups.expired.length + groups.today.length + groups.tomorrow.length) === 0 ? (
                             <p className="text-center text-sm text-dd-text-2 py-10">
                                 {tx('Nothing expiring — every printed sticker is still in date. 🎉', 'Nada por caducar — todas las etiquetas siguen vigentes. 🎉')}
