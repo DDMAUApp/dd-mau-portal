@@ -85,12 +85,22 @@ export default function LabelPrintPreviewModal({ format, kind = null, byName, is
                     <div className="bg-white rounded-sm shadow-md py-3 px-2 self-start"
                         style={{ width: `${labelW + 16}px`, minWidth: `${labelW + 16}px` }}>
                         {model.segs.map((s, i) => (
+                            // FLEX centering, not text-align (2026-07-27 —
+                            // "40mm sanitizer not centered"): a span WIDER
+                            // than the label pre-transform gets clamped to
+                            // the left edge by text-align before scaleX
+                            // shrinks it, landing off-center. Flexbox
+                            // truly centers overflowing items, so the
+                            // squeezed span stays centered.
                             <div key={i}
-                                className={s.center ? 'text-center' : 'text-left'}
-                                style={{ overflow: 'hidden' }}>
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: s.center ? 'center' : 'flex-start',
+                                    overflow: 'hidden',
+                                }}>
                                 <span
                                     style={{
-                                        display: 'inline-block',
+                                        flex: 'none',
                                         fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
                                         whiteSpace: 'pre',
                                         // Char box: height tracks h, width tracks w — the

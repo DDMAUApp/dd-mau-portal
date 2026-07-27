@@ -852,14 +852,22 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
     // proportions.
     const tW = Number(payload.titleScale) || 2;
     const tH = Math.max(tW, Number(payload.titleHeightScale) || tW);
+    // Per-LINE flex centering (2026-07-27 — same not-centered bug as the
+    // print-preview modal): a line wider than the card pre-transform gets
+    // clamped left by text-align before scaleX shrinks it. Flexbox
+    // centers overflowing content correctly.
     const titleBlock = payload.titleLines && payload.titleLines.length > 0 && (
-        <div className="font-bold text-dd-text leading-tight"
-            style={{
-                fontSize: `${Math.max(14, 7 * tH)}px`,
-                ...(tW < tH ? { transform: `scaleX(${(tW / tH).toFixed(2)})`, transformOrigin: 'center' } : {}),
-            }}>
+        <div className="font-bold text-dd-text leading-tight">
             {payload.titleLines.map((t, i) => (
-                <div key={i}>{t}</div>
+                <div key={i} style={{ display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
+                    <span style={{
+                        flex: 'none',
+                        fontSize: `${Math.max(14, 7 * tH)}px`,
+                        ...(tW < tH ? { transform: `scaleX(${(tW / tH).toFixed(2)})`, transformOrigin: 'center' } : {}),
+                    }}>
+                        {t}
+                    </span>
+                </div>
             ))}
         </div>
     );
