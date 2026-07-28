@@ -872,9 +872,10 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                 </div>
             ))}
             {/* Second-language name (showTitleTranslation) — smaller,
-                never bold, mirrors the printed line. */}
+                mirrors the printed line (bold only with the title2Bold
+                knob, 2026-07-27 "every text editable"). */}
             {payload.titleLines2 && payload.titleLines2.length > 0 && payload.titleLines2.map((t, i) => (
-                <div key={`t2-${i}`} className="font-normal text-dd-text-2"
+                <div key={`t2-${i}`} className={`${payload.title2Bold ? 'font-bold' : 'font-normal'} text-dd-text-2`}
                     style={{
                         display: 'flex', justifyContent: 'center', overflow: 'hidden',
                         fontSize: `${Math.max(11, 7 * Math.max(1, Math.min(2, Number(payload.title2Scale) || 1)))}px`,
@@ -884,16 +885,19 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
             ))}
         </div>
     );
+    // 2026-07-27 "every text editable": dateBold knob (default true —
+    // the print's date block was always em). Off = normal weight.
+    const dateBold = payload.dateBold !== false;
     const dateBlock = (
         <>
             {payload.prepDateLabel && (
-                <div {...editAttrs} className={`text-[10px] font-bold uppercase tracking-widest text-dd-text-2${editCls}`}>
+                <div {...editAttrs} className={`text-[10px] ${dateBold ? 'font-bold' : 'font-normal'} uppercase tracking-widest text-dd-text-2${editCls}`}>
                     {payload.prepDateLabel}
                 </div>
             )}
             {payload.prepDateNumber ? (
                 <div {...editAttrs}
-                    className={`font-black tabular-nums text-dd-text leading-none mb-0.5${editCls}`}
+                    className={`${dateBold ? 'font-black' : 'font-normal'} tabular-nums text-dd-text leading-none mb-0.5${editCls}`}
                     style={{
                         // 8px per Epson scale unit so admin's chosen
                         // size (2..8) maps to a meaningful preview
@@ -907,7 +911,7 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                 </div>
             ) : payload.prepDateBig ? (
                 <div {...editAttrs}
-                    className={`font-black tabular-nums text-dd-text leading-none mb-0.5${editCls}`}
+                    className={`${dateBold ? 'font-black' : 'font-normal'} tabular-nums text-dd-text leading-none mb-0.5${editCls}`}
                     style={{ fontSize: nameFirst ? '14px' : '24px' }}>
                     {payload.prepDateBig}
                 </div>
@@ -917,8 +921,10 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                 const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
                 const cfg = Math.max(1, Math.min(4, Number(payload.timeScale) || 2));
                 const fit = Math.max(1, Math.min(cfg, Math.floor(cols / Math.max(1, payload.prepTimeBig.length))));
+                // timeBold (2026-07-27): the base style keeps its font-bold
+                // look; the knob steps it up to font-black so ON is visible.
                 return (
-                    <div className="font-bold text-dd-text-2 tabular-nums mb-1"
+                    <div className={`${payload.timeBold ? 'font-black' : 'font-bold'} text-dd-text-2 tabular-nums mb-1`}
                         style={{ fontSize: `${7 * fit}px` }}>
                         {payload.prepTimeBig}
                     </div>
@@ -951,8 +957,9 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                 const cfg = Math.max(1, Math.min(3, Number(payload.metaScale) || 1));
                 const maxLen = Math.max(1, ...((payload.metaLines || []).map(m => String(m).length)));
                 const fit = Math.max(1, Math.min(cfg, Math.floor(cols / maxLen)));
+                // metaBold (2026-07-27 "every text editable").
                 return (
-                    <div className="text-dd-text font-mono text-left leading-snug"
+                    <div className={`text-dd-text font-mono text-left leading-snug${payload.metaBold ? ' font-bold' : ''}`}
                         style={{ fontSize: `${11 * fit}px` }}>
                         {payload.metaLines && payload.metaLines.map((m, i) => (
                             <div key={i}>{m}</div>
@@ -969,9 +976,10 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                 const cfg = Math.max(2, Math.min(8, Number(payload.useByBandScale) || 4));
                 const bW = Math.max(2, Math.min(cfg, Math.floor(cols / Math.max(1, payload.useByBig.length))));
                 const bH = Math.max(bW, cfg);
+                // bandBold (2026-07-27; default true = the old always-em).
                 return (
                     <div className="my-0.5" style={{ display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
-                        <span className="font-black tracking-widest text-dd-text"
+                        <span className={`${payload.bandBold !== false ? 'font-black' : 'font-normal'} tracking-widest text-dd-text`}
                             style={{
                                 flex: 'none',
                                 fontSize: `${7 * bH}px`,
@@ -983,43 +991,74 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                     </div>
                 );
             })()}
-            {payload.allergens && payload.allergens.length > 0 && (
-                <>
-                    {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
-                    <div className="text-[11px] font-bold text-dd-text text-left">
-                        ALLERGENS: {payload.allergens.join(', ')}
-                    </div>
-                </>
-            )}
-            {payload.ingredients && payload.ingredients.length > 0 && (
-                <>
-                    {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
-                    <div className="text-[11px] text-dd-text text-left">
-                        {payload.ingredients.map((ing, i) => (
-                            <div key={i}>• {String(ing).slice(0, 30)}</div>
-                        ))}
-                    </div>
-                </>
-            )}
-            {payload.notes && (
-                <>
-                    {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
-                    <div className="text-[11px] italic text-dd-text-2 text-left">
-                        {payload.notes}
-                    </div>
-                </>
-            )}
+            {/* 2026-07-27 "every text editable": allergens / ingredients /
+                notes / footer honor their new bold + size knobs. Size uses
+                the same width-fit rule as the print (11px per scale unit,
+                like the meta lines); bold defaults mirror the print
+                (allergens + footer were always em → bold ON by default). */}
+            {payload.allergens && payload.allergens.length > 0 && (() => {
+                const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+                const aLine = 'ALLERGENS: ' + payload.allergens.join(', ');
+                const cfg = Math.max(1, Math.min(3, Number(payload.allergensScale) || 1));
+                const fit = Math.max(1, Math.min(cfg, Math.floor(cols / Math.max(1, aLine.length))));
+                return (
+                    <>
+                        {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
+                        <div className={`${payload.allergensBold !== false ? 'font-bold' : 'font-normal'} text-dd-text text-left`}
+                            style={{ fontSize: `${11 * fit}px` }}>
+                            {aLine}
+                        </div>
+                    </>
+                );
+            })()}
+            {payload.ingredients && payload.ingredients.length > 0 && (() => {
+                const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+                const cfg = Math.max(1, Math.min(3, Number(payload.ingredientsScale) || 1));
+                const maxLen = Math.max(1, ...payload.ingredients.map(ing => String(ing).slice(0, 30).length + 2));
+                const fit = Math.max(1, Math.min(cfg, Math.floor(cols / maxLen)));
+                return (
+                    <>
+                        {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
+                        <div className={`text-dd-text text-left${payload.ingredientsBold ? ' font-bold' : ''}`}
+                            style={{ fontSize: `${11 * fit}px` }}>
+                            {payload.ingredients.map((ing, i) => (
+                                <div key={i}>• {String(ing).slice(0, 30)}</div>
+                            ))}
+                        </div>
+                    </>
+                );
+            })()}
+            {payload.notes && (() => {
+                const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+                const cfg = Math.max(1, Math.min(3, Number(payload.notesScale) || 1));
+                const fit = Math.max(1, Math.min(cfg, Math.floor(cols / Math.max(1, String(payload.notes).length))));
+                return (
+                    <>
+                        {payload.showDividers !== false && <hr className="border-t border-dotted border-dd-line my-1.5" />}
+                        <div className={`italic text-dd-text-2 text-left${payload.notesBold ? ' font-bold' : ''}`}
+                            style={{ fontSize: `${11 * fit}px` }}>
+                            {payload.notes}
+                        </div>
+                    </>
+                );
+            })()}
             {/* Footer only when the print has one (audit 2026-07-27 #1 —
                 the old `|| 'DD MAU'` fallback previewed a footer the
                 printer omits when the admin turned it off). */}
-            {payload.footer && (
-                <>
-                    {payload.showDividers !== false && <hr className="border-t border-dashed border-dd-line my-1.5" />}
-                    <div className="text-[11px] font-black tracking-wider text-dd-text">
-                        {payload.footer}
-                    </div>
-                </>
-            )}
+            {payload.footer && (() => {
+                const cols = Math.max(8, Math.min(64, Number(payload.cols) || 30));
+                const cfg = Math.max(1, Math.min(3, Number(payload.footerScale) || 1));
+                const fit = Math.max(1, Math.min(cfg, Math.floor(cols / Math.max(1, String(payload.footer).length))));
+                return (
+                    <>
+                        {payload.showDividers !== false && <hr className="border-t border-dashed border-dd-line my-1.5" />}
+                        <div className={`${payload.footerBold !== false ? 'font-black' : 'font-normal'} tracking-wider text-dd-text`}
+                            style={{ fontSize: `${11 * fit}px` }}>
+                            {payload.footer}
+                        </div>
+                    </>
+                );
+            })()}
         </div>
     );
 });

@@ -174,39 +174,30 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                             </div>
                         </FieldsetCard>
 
-                        {/* Size */}
-                        <FieldsetCard title={tx('Sizes', 'Tamaños')} tx={tx}>
-                            <SliderRow
-                                label={tx('Date number size', 'Tamaño de fecha')}
-                                value={draft.dateNumberScale}
-                                onChange={(v) => update({ dateNumberScale: v })}
-                                min={2} max={8} step={1}
-                                hint={`Epson scale = ${draft.dateNumberScale} · Brother HTML proportional`} />
+                        {/* Sizes — 2026-07-27 "every text editable" (Andrew:
+                            "make every text from the top to bottom editable
+                            for size to bold to italic, font and so on"): one
+                            row per printed block, each with a size stepper +
+                            a compact B (bold) chip. No italic / font pickers
+                            — the TM-L100's ePOS-Print XML has neither. */}
+                        <FieldsetCard title={tx('Sizes & bold (every line)', 'Tamaños y negrita (cada línea)')} tx={tx}>
+                            <p className="text-[10px] text-dd-text-2 leading-snug mb-1">
+                                {tx(
+                                    'Every printed line, top to bottom. B = bold. (No italic — the Epson label printer can\'t print it.)',
+                                    'Cada línea impresa. B = negrita. (Sin cursiva — la impresora Epson no la imprime.)',
+                                )}
+                            </p>
                             <SliderRow
                                 label={tx('Item title size', 'Tamaño del título')}
                                 value={draft.titleScale}
                                 onChange={(v) => update({ titleScale: v })}
                                 min={1} max={8} step={1}
+                                boldChecked={draft.titleBold === true}
+                                onBoldChange={(v) => update({ titleBold: v })}
                                 hint={tx(
                                     `Epson scale = ${draft.titleScale} · long names auto-shrink to fit the roll`,
                                     `Escala Epson = ${draft.titleScale} · nombres largos se reducen para caber`,
                                 )} />
-                            <SliderRow
-                                label={tx('Use-by band size (SAT / discard time)', 'Tamaño de banda de caducidad')}
-                                value={draft.useByBandScale ?? 4}
-                                onChange={(v) => update({ useByBandScale: v })}
-                                min={2} max={8} step={1}
-                                hint={tx('The big weekday / discard-time line near the bottom', 'La línea grande de día / hora de descarte')} />
-                            <SliderRow
-                                label={tx('Time size (under the date)', 'Tamaño de la hora')}
-                                value={draft.timeScale ?? 2}
-                                onChange={(v) => update({ timeScale: v })}
-                                min={1} max={4} step={1} />
-                            <SliderRow
-                                label={tx('Info lines size (Use by / By / Loc)', 'Tamaño de líneas de info')}
-                                value={draft.metaScale ?? 1}
-                                onChange={(v) => update({ metaScale: v })}
-                                min={1} max={3} step={1} />
                             {/* Only meaningful when the both-languages toggle is on
                                 (Format card) — shown always so the control is
                                 discoverable; Andrew 2026-07-27: "the sticker item
@@ -216,11 +207,67 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                 value={draft.title2Scale ?? 2}
                                 onChange={(v) => update({ title2Scale: v })}
                                 min={1} max={6} step={1}
+                                boldChecked={draft.title2Bold === true}
+                                onBoldChange={(v) => update({ title2Bold: v })}
                                 hint={tx('The smaller second-language line under the item name', 'La línea del nombre en el otro idioma')} />
-                            <ToggleRow
-                                checked={draft.titleBold === true}
-                                onChange={(v) => update({ titleBold: v })}
-                                label={tx('Bold item name', 'Nombre en negrita')} />
+                            <SliderRow
+                                label={tx('Date number size', 'Tamaño de fecha')}
+                                value={draft.dateNumberScale}
+                                onChange={(v) => update({ dateNumberScale: v })}
+                                min={2} max={8} step={1}
+                                boldChecked={draft.dateBold !== false}
+                                onBoldChange={(v) => update({ dateBold: v })}
+                                hint={`Epson scale = ${draft.dateNumberScale} · Brother HTML proportional`} />
+                            <SliderRow
+                                label={tx('Time size (under the date)', 'Tamaño de la hora')}
+                                value={draft.timeScale ?? 2}
+                                onChange={(v) => update({ timeScale: v })}
+                                min={1} max={4} step={1}
+                                boldChecked={draft.timeBold === true}
+                                onBoldChange={(v) => update({ timeBold: v })} />
+                            <SliderRow
+                                label={tx('Info lines size (Use by / By / Loc)', 'Tamaño de líneas de info')}
+                                value={draft.metaScale ?? 1}
+                                onChange={(v) => update({ metaScale: v })}
+                                min={1} max={3} step={1}
+                                boldChecked={draft.metaBold === true}
+                                onBoldChange={(v) => update({ metaBold: v })} />
+                            <SliderRow
+                                label={tx('Use-by band size (SAT / discard time)', 'Tamaño de banda de caducidad')}
+                                value={draft.useByBandScale ?? 4}
+                                onChange={(v) => update({ useByBandScale: v })}
+                                min={2} max={8} step={1}
+                                boldChecked={draft.bandBold !== false}
+                                onBoldChange={(v) => update({ bandBold: v })}
+                                hint={tx('The big weekday / discard-time line near the bottom', 'La línea grande de día / hora de descarte')} />
+                            <SliderRow
+                                label={tx('Allergens size', 'Tamaño de alérgenos')}
+                                value={draft.allergensScale ?? 1}
+                                onChange={(v) => update({ allergensScale: v })}
+                                min={1} max={3} step={1}
+                                boldChecked={draft.allergensBold !== false}
+                                onBoldChange={(v) => update({ allergensBold: v })} />
+                            <SliderRow
+                                label={tx('Ingredients size', 'Tamaño de ingredientes')}
+                                value={draft.ingredientsScale ?? 1}
+                                onChange={(v) => update({ ingredientsScale: v })}
+                                min={1} max={3} step={1}
+                                boldChecked={draft.ingredientsBold === true}
+                                onBoldChange={(v) => update({ ingredientsBold: v })} />
+                            <SliderRow
+                                label={tx('Notes size', 'Tamaño de notas')}
+                                value={draft.notesScale ?? 1}
+                                onChange={(v) => update({ notesScale: v })}
+                                min={1} max={3} step={1}
+                                boldChecked={draft.notesBold === true}
+                                onBoldChange={(v) => update({ notesBold: v })} />
+                            <SliderRow
+                                label={tx('Footer size (DD MAU)', 'Tamaño del pie (DD MAU)')}
+                                value={draft.footerScale ?? 1}
+                                onChange={(v) => update({ footerScale: v })}
+                                min={1} max={3} step={1}
+                                boldChecked={draft.footerBold !== false}
+                                onBoldChange={(v) => update({ footerBold: v })} />
                         </FieldsetCard>
 
                         {/* Per-category overrides — Andrew 2026-07-26: "change
@@ -465,7 +512,13 @@ function ToggleRow({ checked, onChange, label }) {
 // a mobile WebView; the −/value/+ stepper mirrors the shelf-life /
 // copies steppers staff already use without trouble. min/max/step are
 // honored; onChange still receives a Number so callers are unchanged.
-function SliderRow({ label, value, onChange, min, max, step = 1, hint }) {
+// 2026-07-27 "every text editable": optional compact bold chip ("B")
+// rendered right after the +/− stepper — pass boldChecked + onBoldChange
+// to show it. Button-based like ToggleRow (native checkboxes are
+// unreliable in the WebView). There is deliberately NO italic chip: the
+// Epson TM-L100's ePOS-Print XML has no italic attribute, so italic
+// can't print.
+function SliderRow({ label, value, onChange, min, max, step = 1, hint, boldChecked, onBoldChange }) {
     const v = Number(value);
     const dec = () => onChange(Math.max(min, v - step));
     const inc = () => onChange(Math.min(max, v + step));
@@ -485,6 +538,17 @@ function SliderRow({ label, value, onChange, min, max, step = 1, hint }) {
                         className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text font-black text-lg leading-none disabled:opacity-30 hover:bg-dd-line active:scale-95">
                         +
                     </button>
+                    {onBoldChange && (
+                        <button type="button"
+                            onClick={() => onBoldChange(!boldChecked)}
+                            aria-pressed={!!boldChecked}
+                            aria-label="bold"
+                            className={`w-8 h-8 rounded-lg border font-black text-sm leading-none transition active:scale-95 ${boldChecked
+                                ? 'bg-violet-600 border-violet-700 text-white'
+                                : 'bg-white border-dd-line text-dd-text-2 hover:bg-dd-bg'}`}>
+                            B
+                        </button>
+                    )}
                 </div>
             </div>
             {hint && <div className="text-[9px] text-dd-text-2/70 italic mt-0.5">{hint}</div>}

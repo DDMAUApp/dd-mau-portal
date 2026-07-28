@@ -63,6 +63,29 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
     // printer still width-fits long words down, same as the main title.
     title2Scale: 2,
 
+    // 2026-07-27 "every text editable" batch (Andrew: "make every text
+    // from the top to bottom editable for size to bold to italic, font
+    // and so on") — per-block bold + size for every remaining line.
+    // Defaults reproduce the old hardcoded output EXACTLY: blocks that
+    // always printed em=true default bold ON, everything else OFF, all
+    // new scales default 1. NO italic and NO font choice anywhere: the
+    // TM-L100's ePOS-Print XML has no italic attribute (only em / ul /
+    // width / height) and one built-in font — italic can't print.
+    dateBold:        true,    // PREPPED label + date number (was hardcoded em)
+    timeBold:        false,   // prep time line (was plain)
+    metaBold:        false,   // Use by / By / Loc info lines (were plain)
+    title2Bold:      false,   // translated-name line (was plain)
+    bandBold:        true,    // giant use-by band (was hardcoded em)
+    allergensBold:   true,    // ALLERGENS line (was hardcoded em)
+    ingredientsBold: false,   // ingredient lines (were plain)
+    notesBold:       false,   // notes line (was plain)
+    footerBold:      true,    // footer (was hardcoded em)
+    // 1..3 — like metaScale, each line still width-auto-fits the roll.
+    allergensScale:   1,
+    ingredientsScale: 1,
+    notesScale:       1,
+    footerScale:      1,
+
     // Text content
     preppedLabelTextEn: 'PREPPED',
     preppedLabelTextEs: 'HECHO',
@@ -120,6 +143,20 @@ export function cleanKindFormats(raw) {
         }
         // Per-kind giant use-by band control (weekday / discard-time line).
         if (v.showUseByBand === false) entry.showUseByBand = false;
+        // 2026-07-27 "every text editable" — per-kind bold + size for the
+        // remaining blocks. Booleans (not only-true) so a per-kind OFF can
+        // override a global ON, same as titleBold above.
+        for (const bk of ['dateBold', 'timeBold', 'metaBold', 'title2Bold',
+            'bandBold', 'allergensBold', 'ingredientsBold', 'notesBold',
+            'footerBold']) {
+            if (typeof v[bk] === 'boolean') entry[bk] = v[bk];
+        }
+        for (const nk of ['allergensScale', 'ingredientsScale',
+            'notesScale', 'footerScale']) {
+            if (Number.isFinite(Number(v[nk]))) {
+                entry[nk] = Math.max(1, Math.min(3, Number(v[nk])));
+            }
+        }
         // (rotate90 dropped 2026-07-27 — the TM-L100 ignored ePOS text
         // rotation on hardware; stale saved values are stripped here.)
         if (Object.keys(entry).length) out[String(k).slice(0, 24)] = entry;
@@ -187,12 +224,17 @@ export async function saveLabelFormat({ format, byName }) {
     const BOOL_FIELDS = ['showPreppedLabel', 'showTime', 'showTitle', 'showUseBy',
         'showByName', 'showLocation', 'showAllergens', 'showIngredients',
         'showNotes', 'showFooter', 'showUseByWeekday', 'showUseByBand',
-        'titleBold', 'showDividers', 'showTitleTranslation'];
+        'titleBold', 'showDividers', 'showTitleTranslation',
+        // 2026-07-27 "every text editable" per-block bold toggles.
+        'dateBold', 'timeBold', 'metaBold', 'title2Bold', 'bandBold',
+        'allergensBold', 'ingredientsBold', 'notesBold', 'footerBold'];
     const STRING_FIELDS = ['preppedLabelTextEn', 'preppedLabelTextEs',
         'useByLabelTextEn', 'useByLabelTextEs',
         'footerText', 'dateFormat', 'timeFormat'];
     const NUMBER_FIELDS = ['dateNumberScale', 'titleScale', 'useByBandScale',
-        'timeScale', 'metaScale', 'title2Scale', 'defaultShelfLifeDays'];
+        'timeScale', 'metaScale', 'title2Scale', 'defaultShelfLifeDays',
+        // 2026-07-27 "every text editable" per-block size scales.
+        'allergensScale', 'ingredientsScale', 'notesScale', 'footerScale'];
 
     for (const k of BOOL_FIELDS) {
         if (k in format) safe[k] = format[k] === true;
@@ -250,6 +292,11 @@ export function clampLabelFormat(format) {
     f.timeScale = Math.max(1, Math.min(4, Number(f.timeScale) || 2));
     f.metaScale = Math.max(1, Math.min(3, Number(f.metaScale) || 1));
     f.title2Scale = Math.max(1, Math.min(6, Number(f.title2Scale) || 2));
+    // 2026-07-27 "every text editable" scales (1..3, default 1).
+    f.allergensScale = Math.max(1, Math.min(3, Number(f.allergensScale) || 1));
+    f.ingredientsScale = Math.max(1, Math.min(3, Number(f.ingredientsScale) || 1));
+    f.notesScale = Math.max(1, Math.min(3, Number(f.notesScale) || 1));
+    f.footerScale = Math.max(1, Math.min(3, Number(f.footerScale) || 1));
     f.defaultShelfLifeDays = Math.max(1, Math.min(60, Number(f.defaultShelfLifeDays) || 5));
     if (f.kindFormats) f.kindFormats = cleanKindFormats(f.kindFormats);
     return f;

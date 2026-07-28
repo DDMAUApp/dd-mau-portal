@@ -937,6 +937,24 @@ export function buildLabelPayload({
         metaScale:    Math.max(1, Math.min(3, Number(format?.metaScale) || 1)),
         titleBold:    !!format?.titleBold,
         showDividers: format?.showDividers !== false,
+        // 2026-07-27 "every text editable" batch — per-block bold + size
+        // (see DEFAULT_LABEL_FORMAT). Defaults reproduce the old hardcoded
+        // output exactly: blocks that always printed em=true default bold
+        // ON (`!== false`), the rest OFF, all new scales 1. No italic —
+        // the TM-L100's ePOS-Print XML has no italic attribute.
+        dateBold:        format?.dateBold !== false,
+        timeBold:        !!format?.timeBold,
+        metaBold:        !!format?.metaBold,
+        title2Bold:      !!format?.title2Bold,
+        bandBold:        format?.bandBold !== false,
+        allergensBold:   format?.allergensBold !== false,
+        ingredientsBold: !!format?.ingredientsBold,
+        notesBold:       !!format?.notesBold,
+        footerBold:      format?.footerBold !== false,
+        allergensScale:   Math.max(1, Math.min(3, Number(format?.allergensScale) || 1)),
+        ingredientsScale: Math.max(1, Math.min(3, Number(format?.ingredientsScale) || 1)),
+        notesScale:       Math.max(1, Math.min(3, Number(format?.notesScale) || 1)),
+        footerScale:      Math.max(1, Math.min(3, Number(format?.footerScale) || 1)),
         // Per-kind layout (2026-07-26): 'nameFirst' prints the item name
         // as the top/huge element and shrinks the date to one small line
         // (sanitizer buckets etc.).
@@ -1080,8 +1098,11 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text em="false"/>`);
         if (payload.titleLines2 && payload.titleLines2.length > 0) {
             const t2 = Math.max(1, Math.min(6, Number(payload.title2Scale) || 1));
+            // 2026-07-27 "every text editable": translated line boldable.
+            if (payload.title2Bold) lines.push(`<text em="true"/>`);
             lines.push(`<text width="${t2}" height="${t2}"/>`);
             for (const t of payload.titleLines2) lines.push(`<text>${escapeXml(t)}&#10;</text>`);
+            if (payload.title2Bold) lines.push(`<text em="false"/>`);
         }
         lines.push(`<text width="1" height="1"/>`);
         pushDiv(divEq);
@@ -1089,6 +1110,11 @@ function renderPrepLabelBody(payload) {
             payload.prepDateNumber || payload.prepDateBig,
             payload.prepTimeBig].filter(Boolean).join(' ');
         if (dateLine) {
+            // (dateBold/timeBold intentionally NOT applied to this fused
+            // compact date+time line — 2026-07-27: like dateNumberScale/
+            // timeScale it keeps its own fixed styling, and defaulting
+            // dateBold=true here would silently bold the date on every
+            // already-saved nameFirst kind. Standard layout honors both.)
             // Compact — scale 2 when it fits this roll, else 1.
             const ds = dateLine.length * 2 <= cols ? 2 : 1;
             lines.push(`<text width="${ds}" height="${ds}"/>`);
@@ -1106,7 +1132,9 @@ function renderPrepLabelBody(payload) {
     //   05/20/26      ← width=5 height=5, bold (the HUGE date)
     //   2:15p         ← width=2 height=2
     lines.push(`<text align="center"/>`);
-    lines.push(`<text em="true"/>`);
+    // 2026-07-27 "every text editable": bold now admin-toggleable
+    // (dateBold, default true — matches the old hardcoded em).
+    if (payload.dateBold !== false) lines.push(`<text em="true"/>`);
     if (payload.prepDateLabel) {
         lines.push(`<text width="2" height="2"/>`);
         lines.push(`<text>${escapeXml(payload.prepDateLabel)}&#10;</text>`);
@@ -1123,15 +1151,18 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text width="3" height="3"/>`);
         lines.push(`<text>${escapeXml(payload.prepDateBig)}&#10;</text>`);
     }
-    lines.push(`<text em="false"/>`);
+    if (payload.dateBold !== false) lines.push(`<text em="false"/>`);
     // Time line under the date — admin-scalable (timeScale 1..4,
-    // width-fit to the roll).
+    // width-fit to the roll) + boldable (timeBold, 2026-07-27; default
+    // false — the time always printed plain).
     if (payload.prepTimeBig) {
         const tsCfg = Math.max(1, Math.min(4, Number(payload.timeScale) || 2));
         const tsFit = Math.max(1, Math.min(tsCfg,
             Math.floor(cols / Math.max(1, payload.prepTimeBig.length))));
+        if (payload.timeBold) lines.push(`<text em="true"/>`);
         lines.push(`<text width="${tsFit}" height="${tsFit}"/>`);
         lines.push(`<text>${escapeXml(payload.prepTimeBig)}&#10;</text>`);
+        if (payload.timeBold) lines.push(`<text em="false"/>`);
     }
     // Divider
     lines.push(`<text width="1" height="1"/>`);
@@ -1150,8 +1181,11 @@ function renderPrepLabelBody(payload) {
         if (payload.titleBold) lines.push(`<text em="false"/>`);
         if (payload.titleLines2 && payload.titleLines2.length > 0) {
             const t2 = Math.max(1, Math.min(6, Number(payload.title2Scale) || 1));
+            // 2026-07-27 "every text editable": translated line boldable.
+            if (payload.title2Bold) lines.push(`<text em="true"/>`);
             lines.push(`<text width="${t2}" height="${t2}"/>`);
             for (const t of payload.titleLines2) lines.push(`<text>${escapeXml(t)}&#10;</text>`);
+            if (payload.title2Bold) lines.push(`<text em="false"/>`);
         }
         lines.push(`<text width="1" height="1"/>`);
         lines.push(`<text align="left"/>`);
@@ -1165,6 +1199,8 @@ function renderPrepLabelBody(payload) {
     // 1..3, per-line width-fit so a long line never hard-wraps). ──
     if (payload.metaLines && payload.metaLines.length > 0) {
         const msCfg = Math.max(1, Math.min(3, Number(payload.metaScale) || 1));
+        // 2026-07-27 "every text editable": info lines boldable.
+        if (payload.metaBold) lines.push(`<text em="true"/>`);
         for (const m of payload.metaLines) {
             const msFit = Math.max(1, Math.min(msCfg,
                 Math.floor(cols / Math.max(1, m.length))));
@@ -1172,6 +1208,7 @@ function renderPrepLabelBody(payload) {
             lines.push(`<text>${escapeXml(m)}&#10;</text>`);
             if (msFit > 1) lines.push(`<text width="1" height="1"/>`);
         }
+        if (payload.metaBold) lines.push(`<text em="false"/>`);
     }
     // ── Giant use-by band (2026-07-26 feature #3) ─────────────
     // Weekday ("THU") for day clocks, discard time ("2:30p") for hour
@@ -1186,35 +1223,69 @@ function renderPrepLabelBody(payload) {
             Math.floor(cols / Math.max(1, payload.useByBig.length))));
         const bandH = Math.max(bandW, bandCfg);
         lines.push(`<text align="center"/>`);
-        lines.push(`<text em="true"/>`);
+        // 2026-07-27 "every text editable": bandBold (default true —
+        // matches the old hardcoded em).
+        if (payload.bandBold !== false) lines.push(`<text em="true"/>`);
         lines.push(`<text width="${bandW}" height="${bandH}"/>`);
         lines.push(`<text>${escapeXml(payload.useByBig)}&#10;</text>`);
-        lines.push(`<text em="false"/>`);
+        if (payload.bandBold !== false) lines.push(`<text em="false"/>`);
         lines.push(`<text width="1" height="1"/>`);
         lines.push(`<text align="left"/>`);
     }
+    // 2026-07-27 "every text editable": allergens / ingredients / notes /
+    // footer get bold toggles + size scales (1..3). Each scaled line
+    // width-auto-fits the roll exactly like the meta lines above, so a
+    // long line at scale 3 can never hard-wrap mid-character. Defaults
+    // (allergens/footer bold ON, all scales 1) emit byte-identical XML
+    // to the old hardcoded output.
     if ((payload.allergens || []).length > 0) {
         pushDiv(divDash);
-        lines.push(`<text em="true"/>`);
-        lines.push(`<text>ALLERGENS: ${escapeXml(payload.allergens.join(', '))}&#10;</text>`);
-        lines.push(`<text em="false"/>`);
+        const aLine = `ALLERGENS: ${payload.allergens.join(', ')}`;
+        const aCfg = Math.max(1, Math.min(3, Number(payload.allergensScale) || 1));
+        const aFit = Math.max(1, Math.min(aCfg,
+            Math.floor(cols / Math.max(1, aLine.length))));
+        if (payload.allergensBold !== false) lines.push(`<text em="true"/>`);
+        if (aFit > 1) lines.push(`<text width="${aFit}" height="${aFit}"/>`);
+        lines.push(`<text>${escapeXml(aLine)}&#10;</text>`);
+        if (aFit > 1) lines.push(`<text width="1" height="1"/>`);
+        if (payload.allergensBold !== false) lines.push(`<text em="false"/>`);
     }
     if ((payload.ingredients || []).length > 0) {
         pushDiv(divDash);
+        const iCfg = Math.max(1, Math.min(3, Number(payload.ingredientsScale) || 1));
+        if (payload.ingredientsBold) lines.push(`<text em="true"/>`);
         for (const ing of payload.ingredients) {
-            lines.push(`<text>- ${escapeXml(ing.slice(0, 30))}&#10;</text>`);
+            const iLine = `- ${String(ing).slice(0, 30)}`;
+            const iFit = Math.max(1, Math.min(iCfg,
+                Math.floor(cols / Math.max(1, iLine.length))));
+            if (iFit > 1) lines.push(`<text width="${iFit}" height="${iFit}"/>`);
+            lines.push(`<text>${escapeXml(iLine)}&#10;</text>`);
+            if (iFit > 1) lines.push(`<text width="1" height="1"/>`);
         }
+        if (payload.ingredientsBold) lines.push(`<text em="false"/>`);
     }
     if (payload.notes) {
         pushDiv(divDash);
+        const nCfg = Math.max(1, Math.min(3, Number(payload.notesScale) || 1));
+        const nFit = Math.max(1, Math.min(nCfg,
+            Math.floor(cols / Math.max(1, String(payload.notes).length))));
+        if (payload.notesBold) lines.push(`<text em="true"/>`);
+        if (nFit > 1) lines.push(`<text width="${nFit}" height="${nFit}"/>`);
         lines.push(`<text>${escapeXml(payload.notes)}&#10;</text>`);
+        if (nFit > 1) lines.push(`<text width="1" height="1"/>`);
+        if (payload.notesBold) lines.push(`<text em="false"/>`);
     }
     if (payload.footer) {
         pushDiv(divDash);
         lines.push(`<text align="center"/>`);
-        lines.push(`<text em="true"/>`);
+        const fCfg = Math.max(1, Math.min(3, Number(payload.footerScale) || 1));
+        const fFit = Math.max(1, Math.min(fCfg,
+            Math.floor(cols / Math.max(1, String(payload.footer).length))));
+        if (payload.footerBold !== false) lines.push(`<text em="true"/>`);
+        if (fFit > 1) lines.push(`<text width="${fFit}" height="${fFit}"/>`);
         lines.push(`<text>${escapeXml(payload.footer)}&#10;</text>`);
-        lines.push(`<text em="false"/>`);
+        if (fFit > 1) lines.push(`<text width="1" height="1"/>`);
+        if (payload.footerBold !== false) lines.push(`<text em="false"/>`);
     }
     lines.push(`<feed line="1"/>`);
     lines.push(`<cut type="feed"/>`);
@@ -1240,9 +1311,12 @@ export function buildLabelPreviewModel(payload) {
     const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
     const titleH = Math.max(titleScale, Math.min(8, Number(payload.titleHeightScale) || titleScale));
     const t2 = Math.max(1, Math.min(6, Number(payload.title2Scale) || 1));
+    // 2026-07-27 "every text editable" — per-block bold, mirroring the
+    // renderer's defaults exactly (date/band/allergens/footer bold ON).
+    const dateBold = payload.dateBold !== false;
     const pushTitle2 = () => {
         for (const t of (payload.titleLines2 || [])) {
-            push(t, { w: t2, h: t2, center: true });
+            push(t, { w: t2, h: t2, em: !!payload.title2Bold, center: true });
         }
     };
     if (payload.layout === 'nameFirst') {
@@ -1256,22 +1330,24 @@ export function buildLabelPreviewModel(payload) {
             payload.prepTimeBig].filter(Boolean).join(' ');
         if (dateLine) {
             const ds = dateLine.length * 2 <= cols ? 2 : 1;
+            // No dateBold/timeBold here — matches the renderer (the fused
+            // nameFirst date line keeps its fixed plain styling).
             push(dateLine, { w: ds, h: ds, center: true });
         }
         pushDiv(divDash);
     } else {
-        if (payload.prepDateLabel) push(payload.prepDateLabel, { w: 2, h: 2, em: true, center: true });
+        if (payload.prepDateLabel) push(payload.prepDateLabel, { w: 2, h: 2, em: dateBold, center: true });
         if (payload.prepDateNumber) {
             const dateScale = Math.max(2, Math.min(8, Number(payload.dateNumberScale) || 5));
-            push(payload.prepDateNumber, { w: dateScale, h: dateScale, em: true, center: true });
+            push(payload.prepDateNumber, { w: dateScale, h: dateScale, em: dateBold, center: true });
         } else if (payload.prepDateBig) {
-            push(payload.prepDateBig, { w: 3, h: 3, em: true, center: true });
+            push(payload.prepDateBig, { w: 3, h: 3, em: dateBold, center: true });
         }
         if (payload.prepTimeBig) {
             const tsCfg = Math.max(1, Math.min(4, Number(payload.timeScale) || 2));
             const tsFit = Math.max(1, Math.min(tsCfg,
                 Math.floor(cols / Math.max(1, payload.prepTimeBig.length))));
-            push(payload.prepTimeBig, { w: tsFit, h: tsFit, center: true });
+            push(payload.prepTimeBig, { w: tsFit, h: tsFit, em: !!payload.timeBold, center: true });
         }
         pushDiv(divEq);
         for (const t of (payload.titleLines || [])) {
@@ -1285,25 +1361,49 @@ export function buildLabelPreviewModel(payload) {
         for (const m of (payload.metaLines || [])) {
             const msFit = Math.max(1, Math.min(msCfg,
                 Math.floor(cols / Math.max(1, String(m).length))));
-            push(m, { w: msFit, h: msFit });
+            push(m, { w: msFit, h: msFit, em: !!payload.metaBold });
         }
     }
     if (payload.useByBig) {
         const bandCfg = Math.max(2, Math.min(8, Number(payload.useByBandScale) || 4));
         const bandW = Math.max(2, Math.min(bandCfg,
             Math.floor(cols / Math.max(1, payload.useByBig.length))));
-        push(payload.useByBig, { w: bandW, h: Math.max(bandW, bandCfg), em: true, center: true });
+        push(payload.useByBig, { w: bandW, h: Math.max(bandW, bandCfg), em: payload.bandBold !== false, center: true });
     }
+    // 2026-07-27 "every text editable" — same bold + width-fit scales as
+    // the renderer for allergens / ingredients / notes / footer.
     if ((payload.allergens || []).length > 0) {
         pushDiv(divDash);
-        push('ALLERGENS: ' + payload.allergens.join(', '), { em: true });
+        const aLine = 'ALLERGENS: ' + payload.allergens.join(', ');
+        const aCfg = Math.max(1, Math.min(3, Number(payload.allergensScale) || 1));
+        const aFit = Math.max(1, Math.min(aCfg,
+            Math.floor(cols / Math.max(1, aLine.length))));
+        push(aLine, { w: aFit, h: aFit, em: payload.allergensBold !== false });
     }
     if ((payload.ingredients || []).length > 0) {
         pushDiv(divDash);
-        for (const ing of payload.ingredients) push('- ' + String(ing).slice(0, 30));
+        const iCfg = Math.max(1, Math.min(3, Number(payload.ingredientsScale) || 1));
+        for (const ing of payload.ingredients) {
+            const iLine = '- ' + String(ing).slice(0, 30);
+            const iFit = Math.max(1, Math.min(iCfg,
+                Math.floor(cols / Math.max(1, iLine.length))));
+            push(iLine, { w: iFit, h: iFit, em: !!payload.ingredientsBold });
+        }
     }
-    if (payload.notes) { pushDiv(divDash); push(payload.notes); }
-    if (payload.footer) { pushDiv(divDash); push(payload.footer, { em: true, center: true }); }
+    if (payload.notes) {
+        pushDiv(divDash);
+        const nCfg = Math.max(1, Math.min(3, Number(payload.notesScale) || 1));
+        const nFit = Math.max(1, Math.min(nCfg,
+            Math.floor(cols / Math.max(1, String(payload.notes).length))));
+        push(payload.notes, { w: nFit, h: nFit, em: !!payload.notesBold });
+    }
+    if (payload.footer) {
+        pushDiv(divDash);
+        const fCfg = Math.max(1, Math.min(3, Number(payload.footerScale) || 1));
+        const fFit = Math.max(1, Math.min(fCfg,
+            Math.floor(cols / Math.max(1, String(payload.footer).length))));
+        push(payload.footer, { w: fFit, h: fFit, em: payload.footerBold !== false, center: true });
+    }
     return { cols, segs };
 }
 
