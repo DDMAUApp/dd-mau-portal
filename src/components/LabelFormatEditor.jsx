@@ -49,8 +49,10 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
     // edited in the "Per-category" card below.
     const [kindSel, setKindSel] = useState('chemical');
     // Fake-print preview pop-up (2026-07-27) — null closed, or the kind
-    // being previewed ('base' = no per-kind override). Previews the DRAFT
-    // (unsaved edits included) so the admin can iterate without printing.
+    // being previewed ('__all__' = no per-kind override; audit R6: the old
+    // 'base' sentinel COLLIDED with the real 'base' kind, Noodles & Rice,
+    // so its override card previewed the default format). Previews the
+    // DRAFT (unsaved edits included) so the admin iterates without printing.
     const [printPreview, setPrintPreview] = useState(null);
 
     // Latest SERVER format, readable inside the once-mounted subscription
@@ -205,6 +207,16 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                 value={draft.metaScale ?? 1}
                                 onChange={(v) => update({ metaScale: v })}
                                 min={1} max={3} step={1} />
+                            {/* Only meaningful when the both-languages toggle is on
+                                (Format card) — shown always so the control is
+                                discoverable; Andrew 2026-07-27: "the sticker item
+                                name in spanish needs a size format too". */}
+                            <SliderRow
+                                label={tx('Translated name size (2nd language)', 'Tamaño del nombre traducido (2º idioma)')}
+                                value={draft.title2Scale ?? 2}
+                                onChange={(v) => update({ title2Scale: v })}
+                                min={1} max={6} step={1}
+                                hint={tx('The smaller second-language line under the item name', 'La línea del nombre en el otro idioma')} />
                             <ToggleRow
                                 checked={draft.titleBold === true}
                                 onChange={(v) => update({ titleBold: v })}
@@ -378,7 +390,7 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
                                 className="px-3 py-2 rounded-lg bg-white border border-stone-300 text-stone-700 text-xs font-bold hover:bg-stone-50">
                                 {tx('Reset to defaults', 'Restaurar')}
                             </button>
-                            <button onClick={() => setPrintPreview('base')}
+                            <button onClick={() => setPrintPreview('__all__')}
                                 className="px-3 py-2 rounded-lg bg-white border-2 border-violet-300 text-violet-700 text-xs font-bold hover:bg-violet-50">
                                 🖨 {tx('Preview', 'Vista previa')}
                             </button>
@@ -403,7 +415,7 @@ export default function LabelFormatEditor({ language = 'en', byName }) {
             {printPreview && (
                 <LabelPrintPreviewModal
                     format={clampLabelFormat(draft)}
-                    kind={printPreview === 'base' ? null : printPreview}
+                    kind={printPreview === '__all__' ? null : printPreview}
                     byName={byName}
                     isEs={isEs}
                     onClose={() => setPrintPreview(null)}
@@ -523,6 +535,17 @@ function SelectRow({ label, value, onChange, options }) {
     );
 }
 
+// 2026-07-27 audit R7: plain JSON.stringify is key-order sensitive and
+// Firestore echoes maps back with SORTED keys — after a save the draft's
+// insertion order differed from the server round-trip, so "Unsaved" stuck
+// forever. Sort keys recursively so equal values always compare equal.
+function stableStringify(v) {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+    return '{' + Object.keys(v).sort()
+        .map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+}
+
 function isDirty(draft, server) {
     if (!draft || !server) return false;
     for (const k of Object.keys(draft)) {
@@ -531,7 +554,7 @@ function isDirty(draft, server) {
         // Object fields (kindFormats) compare by VALUE — identity compare
         // would flag "Unsaved" forever after the first per-category edit.
         if (typeof a === 'object' || typeof b === 'object') {
-            if (JSON.stringify(a ?? null) !== JSON.stringify(b ?? null)) return true;
+            if (stableStringify(a ?? null) !== stableStringify(b ?? null)) return true;
         } else if (a !== b) {
             return true;
         }

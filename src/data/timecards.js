@@ -46,7 +46,11 @@ export function subscribeMyTimecards(staffName, sinceDateStr, cb) {
     );
     return onSnapshot(q,
         (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-        (err) => { console.warn('subscribeMyTimecards failed:', err); cb([]); });
+        // 2026-07-27 (audit) — report null on error, NOT []. An empty array is
+        // indistinguishable from "no timecards" and made MyHoursPage swap the
+        // cached cards for the misleading empty state on a network blip.
+        // (Sole caller: MyHoursPage — it ignores non-array payloads.)
+        (err) => { console.warn('subscribeMyTimecards failed:', err); cb(null); });
 }
 
 /** Sum a card's hours: prefer the scraper's own hoursToday (Toast truth,

@@ -228,6 +228,12 @@ async function renameAnnouncements(oldName, newName) {
             args.push(new FieldPath('acks', oldName), deleteField());
         }
         if (data.createdBy === oldName) args.push('createdBy', newName);
+        // 2026-07-27 audit C3 — audienceCustom (hand-picked audience names,
+        // Andrew 2026-07-26) joins by name too; without this a renamed
+        // staffer silently dropped out of custom-audience announcements
+        // (audienceMatches does an exact-name includes()).
+        const custom = mapNameInArray(data.audienceCustom, oldName, newName);
+        if (custom) args.push('audienceCustom', custom);
         if (args.length) ops.push((b) => b.update(d.ref, ...args));
 
         // Chat-copy fixups — only where the back-links exist (older docs

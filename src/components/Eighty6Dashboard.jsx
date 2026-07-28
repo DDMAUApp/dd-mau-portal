@@ -739,7 +739,10 @@ function Section({
                         <span className={`flex-shrink-0 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md border ${pill}`}>
                             {item.status === 'OUT_OF_STOCK'
                                 ? (isEs ? '86' : "86'd")
-                                : (isEs ? `Quedan ${item.quantity}` : `${item.quantity} left`)}
+                                /* 2026-07-27 (audit E86) — ?? '?' so a LOW_STOCK
+                                   doc missing quantity shows "? left", not
+                                   "undefined left". */
+                                : (isEs ? `Quedan ${item.quantity ?? '?'}` : `${item.quantity ?? '?'} left`)}
                         </span>
                     </li>
                 ))}

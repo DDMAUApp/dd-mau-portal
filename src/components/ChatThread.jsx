@@ -38,7 +38,7 @@ import {
     collection, doc, query, orderBy, limit, onSnapshot,
     addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, where,
     arrayUnion, arrayRemove, getDoc, runTransaction,
-    Timestamp,
+    Timestamp, FieldPath,
 } from 'firebase/firestore';
 import { ref as sref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
@@ -186,6 +186,13 @@ function ChatThreadInner({
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const canEdit = canEditChat(chat, viewer, isAdmin);
+    // 2026-07-27 audit C1 — chat.readOnly (📣 Announcements channel) was
+    // never enforced here: the Composer rendered unconditionally, so any
+    // staffer could reply and fan out priority-high pushes company-wide.
+    // Same manager gate ChatCenter's canAnnounce uses (canPostAnnouncements);
+    // managers keep the composer, everyone else gets a static bar.
+    const composerLocked = chat?.readOnly === true
+        && !canPostAnnouncements(viewer, isAdmin, isManager);
 
     // ── Subscribe to messages ─────────────────────────────────────
     // Fetches the newest N messages and reverses them so display
@@ -1356,6 +1363,19 @@ function ChatThreadInner({
                 userId: viewer?.id || null,
                 ackedAt: serverTimestamp(),
             }, { merge: true });
+            // 2026-07-27 audit C2 — ack split-brain: this wrote only the
+            // chat-side ack, but the AnnouncementPopup keys off
+            // /announcements.{id}.acks, so it kept nagging after "Mark as
+            // read" in the thread. Mirror the ack onto the announcement doc.
+            // Varargs FieldPath form (house rule): a FieldPath can't be a
+            // computed object key, and names are free text (dots corrupt a
+            // template-string dot-path). Best-effort — the chat ack is the
+            // primary write above.
+            if (message.announcementGroupId) {
+                updateDoc(doc(db, 'announcements', message.announcementGroupId),
+                    new FieldPath('acks', staffName), new Date().toISOString(),
+                ).catch(() => {});
+            }
             recordAudit({
                 action: 'chat.ack.complete',
                 actorName: staffName,
@@ -2097,7 +2117,14 @@ function ChatThreadInner({
     // per frame → the scroll freezes. Stringify them ONCE here; the comparator
     // then does a cheap string compare per bubble.
     const lastReadSig = useMemo(() => JSON.stringify(chat?.lastReadByName || null), [chat?.lastReadByName]);
-    const membersSig = useMemo(() => JSON.stringify(chat?.members || null), [chat?.members]);
+    // 2026-07-27 audit C10 — fold seenByVisibility + admins into the sig:
+    // the bubble comparator only checks lastReadSig/membersSig, so a
+    // settings change to who may SEE receipts (seenByVisibility, gated by
+    // admins membership) didn't re-render bubbles until something else did.
+    const membersSig = useMemo(
+        () => JSON.stringify([chat?.members || null, chat?.seenByVisibility || null, chat?.admins || null]),
+        [chat?.members, chat?.seenByVisibility, chat?.admins],
+    );
 
     return (
         <div className="flex flex-col h-full bg-dd-bg">
@@ -2249,8 +2276,13 @@ function ChatThreadInner({
                         </button>
                     </div>
                 )}
+                {/* 2026-07-27 audit C8 — key by group.key (stable
+                    yyyy-mm-dd from groupByDate), not group.label: the
+                    label is year-less (collides across years) and the
+                    "Today"→date relabel at midnight remounted the whole
+                    group. */}
                 {grouped.map((group) => (
-                    <div key={group.label}>
+                    <div key={group.key}>
                         <div className="ddmau-chat-divider text-center text-[11px] font-bold text-dd-text-2 uppercase tracking-widest py-3">
                             {group.label}
                         </div>
@@ -2538,6 +2570,13 @@ function ChatThreadInner({
             )}
 
             {/* ── Composer ────────────────────────────────────── */}
+            {/* 2026-07-27 audit C1 — read-only channels (📣 Announcements)
+                show a static bar to non-managers instead of the composer. */}
+            {composerLocked ? (
+                <div className="shrink-0 px-3 py-3 border-t border-dd-line bg-white text-center text-sm font-bold text-dd-text-2">
+                    📣 {tx('Only managers post here', 'Solo los gerentes publican aquí')}
+                </div>
+            ) : (
             <Composer
                 isEs={isEs}
                 draft={draft}
@@ -2566,6 +2605,7 @@ function ChatThreadInner({
                 pendingAttachment={pendingAttachment}
                 onClearAttachment={clearPendingAttachment}
             />
+            )}
 
             {/* ── Poll modal ──────────────────────────────────── */}
             {showPollModal && (
@@ -3010,7 +3050,14 @@ function MessageBubbleInner({
                             <MediaImage url={message.mediaUrl} alt="Photo" />
                         )}
                         {message.type === 'video' && (
-                            <video src={message.mediaUrl} controls playsInline preload="metadata"
+                            // 2026-07-27 audit C6 — preload="none": with
+                            // "metadata" every video in the render window
+                            // fetched despite content-visibility clipping.
+                            // Poster (when the upload captured one) keeps a
+                            // frame visible; controls-initiated play still
+                            // works with preload none.
+                            <video src={message.mediaUrl} controls playsInline preload="none"
+                                poster={message.thumbnailUrl || undefined}
                                 width="320" height="240" style={{ aspectRatio: '4 / 3' }}
                                 className="rounded-lg w-auto max-w-full max-h-[360px] bg-dd-bg/40" />
                         )}

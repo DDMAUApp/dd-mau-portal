@@ -58,6 +58,10 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
     // Print the item name in BOTH languages (smaller second line) so one
     // sticker reads for EN + ES staff (Andrew 2026-07-27).
     showTitleTranslation: false,
+    // Size of that translated-name line (Andrew 2026-07-27: "the sticker
+    // item name in spanish needs a size format too"). Max size — the
+    // printer still width-fits long words down, same as the main title.
+    title2Scale: 2,
 
     // Text content
     preppedLabelTextEn: 'PREPPED',
@@ -111,6 +115,9 @@ export function cleanKindFormats(raw) {
         // titleBold:false must be able to override a global bold ON.
         if (typeof v.titleBold === 'boolean') entry.titleBold = v.titleBold;
         if (typeof v.showTitleTranslation === 'boolean') entry.showTitleTranslation = v.showTitleTranslation;
+        if (Number.isFinite(Number(v.title2Scale))) {
+            entry.title2Scale = Math.max(1, Math.min(6, Number(v.title2Scale)));
+        }
         // Per-kind giant use-by band control (weekday / discard-time line).
         if (v.showUseByBand === false) entry.showUseByBand = false;
         // (rotate90 dropped 2026-07-27 — the TM-L100 ignored ePOS text
@@ -185,7 +192,7 @@ export async function saveLabelFormat({ format, byName }) {
         'useByLabelTextEn', 'useByLabelTextEs',
         'footerText', 'dateFormat', 'timeFormat'];
     const NUMBER_FIELDS = ['dateNumberScale', 'titleScale', 'useByBandScale',
-        'timeScale', 'metaScale', 'defaultShelfLifeDays'];
+        'timeScale', 'metaScale', 'title2Scale', 'defaultShelfLifeDays'];
 
     for (const k of BOOL_FIELDS) {
         if (k in format) safe[k] = format[k] === true;
@@ -242,6 +249,7 @@ export function clampLabelFormat(format) {
     f.useByBandScale = Math.max(2, Math.min(8, Number(f.useByBandScale) || 4));
     f.timeScale = Math.max(1, Math.min(4, Number(f.timeScale) || 2));
     f.metaScale = Math.max(1, Math.min(3, Number(f.metaScale) || 1));
+    f.title2Scale = Math.max(1, Math.min(6, Number(f.title2Scale) || 2));
     f.defaultShelfLifeDays = Math.max(1, Math.min(60, Number(f.defaultShelfLifeDays) || 5));
     if (f.kindFormats) f.kindFormats = cleanKindFormats(f.kindFormats);
     return f;

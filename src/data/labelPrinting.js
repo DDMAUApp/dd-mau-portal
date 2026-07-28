@@ -823,7 +823,11 @@ export function buildLabelPayload({
         if (altUpper && altUpper !== titleUpper.trim()) {
             const longest2 = Math.max(1,
                 ...altUpper.split(/\s+/).filter(Boolean).map(w => w.length));
-            title2Scale = Math.max(1, Math.min(2, Math.floor(cols / longest2)));
+            // Configurable max size (Andrew 2026-07-27: "the item name in
+            // spanish needs a size format too") — was hardcoded ≤2. Width
+            // auto-fit still shrinks long words, same as the main title.
+            const cfg2 = Math.max(1, Math.min(6, Math.floor(Number(format?.title2Scale)) || 2));
+            title2Scale = Math.max(1, Math.min(cfg2, Math.floor(cols / longest2)));
             titleLines2 = wrapWords(altUpper, Math.max(longest2, Math.floor(cols / title2Scale)));
         }
     }
@@ -1075,7 +1079,7 @@ function renderPrepLabelBody(payload) {
         }
         lines.push(`<text em="false"/>`);
         if (payload.titleLines2 && payload.titleLines2.length > 0) {
-            const t2 = Math.max(1, Math.min(2, Number(payload.title2Scale) || 1));
+            const t2 = Math.max(1, Math.min(6, Number(payload.title2Scale) || 1));
             lines.push(`<text width="${t2}" height="${t2}"/>`);
             for (const t of payload.titleLines2) lines.push(`<text>${escapeXml(t)}&#10;</text>`);
         }
@@ -1145,7 +1149,7 @@ function renderPrepLabelBody(payload) {
         }
         if (payload.titleBold) lines.push(`<text em="false"/>`);
         if (payload.titleLines2 && payload.titleLines2.length > 0) {
-            const t2 = Math.max(1, Math.min(2, Number(payload.title2Scale) || 1));
+            const t2 = Math.max(1, Math.min(6, Number(payload.title2Scale) || 1));
             lines.push(`<text width="${t2}" height="${t2}"/>`);
             for (const t of payload.titleLines2) lines.push(`<text>${escapeXml(t)}&#10;</text>`);
         }
@@ -1235,7 +1239,7 @@ export function buildLabelPreviewModel(payload) {
     const pushDiv = (d) => { if (showDiv) push(d); };
     const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
     const titleH = Math.max(titleScale, Math.min(8, Number(payload.titleHeightScale) || titleScale));
-    const t2 = Math.max(1, Math.min(2, Number(payload.title2Scale) || 1));
+    const t2 = Math.max(1, Math.min(6, Number(payload.title2Scale) || 1));
     const pushTitle2 = () => {
         for (const t of (payload.titleLines2 || [])) {
             push(t, { w: t2, h: t2, center: true });

@@ -21,8 +21,13 @@ export default function SauceLogBohBanner({ language, staffName, staffList, stor
 
     const [data, setData] = useState({ sauces: [], requests: {} });
 
+    // 2026-07-27 (audit) — normalize both → webster, same idiom as
+    // Eighty6Dashboard's docKey / SauceLog.jsx. "Both" viewers used to
+    // read/write a phantom ops/sauceLog_both doc nobody else sees.
+    const sauceLoc = storeLocation === 'both' ? 'webster' : storeLocation;
+
     useEffect(() => {
-        const unsub = onSnapshot(doc(db, 'ops', 'sauceLog_' + storeLocation), (snap) => {
+        const unsub = onSnapshot(doc(db, 'ops', 'sauceLog_' + sauceLoc), (snap) => {
             if (snap.exists()) {
                 const d = snap.data();
                 setData({ sauces: d.sauces || [], requests: d.requests || {} });
@@ -31,7 +36,7 @@ export default function SauceLogBohBanner({ language, staffName, staffList, stor
             }
         }, (e) => console.warn('SauceLog banner subscribe error:', e));
         return unsub;
-    }, [storeLocation]);
+    }, [sauceLoc]);
 
     const sauceById = useMemo(
         () => Object.fromEntries((data.sauces || []).map(s => [s.id, s])),
@@ -55,13 +60,14 @@ export default function SauceLogBohBanner({ language, staffName, staffList, stor
         const cur = data.requests?.[sauceId];
         if (!cur) return;
         try {
-            await updateDoc(doc(db, 'ops', 'sauceLog_' + storeLocation), {
-                ['requests.' + sauceId]: {
-                    ...cur,
-                    status: 'made',
-                    completedBy: staffName,
-                    completedAt: new Date().toISOString(),
-                },
+            // 2026-07-27 (audit) — dotted-path field updates like SauceLog's
+            // markMade: writing the whole request from local state was a stale
+            // read-modify-write that could revert a concurrent batch bump.
+            // Sauce ids are slugified [a-z0-9-] (no dots), so dot-paths are safe.
+            await updateDoc(doc(db, 'ops', 'sauceLog_' + sauceLoc), {
+                ['requests.' + sauceId + '.status']: 'made',
+                ['requests.' + sauceId + '.completedBy']: staffName,
+                ['requests.' + sauceId + '.completedAt']: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
             });
         } catch (e) { console.error('Banner mark made failed:', e); }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, lazy, memo, Suspense, Component } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, memo, Suspense, Component } from 'react';
 import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
@@ -21,10 +21,15 @@ import AppVersion from './components/AppVersion';
 // the staff has no pending/active off-site shift.
 import OffsiteClockPrompt from './components/OffsiteClockPrompt';
 // v2 design preview — gated by ?v2=1 query param.
-const AppShellV2 = lazy(() => import('./v2/AppShellV2'));
-const DownloadAppGate = lazy(() => import('./components/DownloadAppGate'));
-const HomeV2 = lazy(() => import('./v2/HomeV2'));
-const MobileHome = lazy(() => import('./v2/MobileHome'));
+// 2026-07-27: memo-wrapped like every other lazy route below — these four
+// re-render on every App render (roster lastSeen ticks etc.) otherwise,
+// and the shell + home are the two ALWAYS-mounted heavy subtrees. Their
+// callback props are useCallback-stabilized in App so shallow compare
+// can actually catch the no-op renders.
+const AppShellV2 = lazy(() => import('./v2/AppShellV2').then(m => ({ default: memo(m.default) })));
+const DownloadAppGate = lazy(() => import('./components/DownloadAppGate').then(m => ({ default: memo(m.default) })));
+const HomeV2 = lazy(() => import('./v2/HomeV2').then(m => ({ default: memo(m.default) })));
+const MobileHome = lazy(() => import('./v2/MobileHome').then(m => ({ default: memo(m.default) })));
 import useIsMobile from './v2/useIsMobile';
 import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
@@ -386,51 +391,9 @@ function TabLoading({ language }) {
     );
 }
 
-// Version check hook — polls /version.json every 2 minutes
-function useVersionCheck() {
-    const [updateAvailable, setUpdateAvailable] = useState(false);
-    const savedVersion = useRef(null);
-    useEffect(() => {
-        // 2026-06-15 native-perf fix: skip this poll entirely on the native
-        // app. version.json is a BUNDLED asset there, so it can never change
-        // without a Capgo OTA bundle swap — and Capgo's own updateAvailable
-        // listener (capacitor-bridge.js) already owns the "new version" UX on
-        // native. Polling it every 2 min was pure battery/idle-wake waste on a
-        // phone in someone's apron all shift.
-        if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true) return;
-        // 2026-05-24 audit fix:
-        //   1. Was polling unconditionally including while the tab is
-        //      hidden — wasted bandwidth + battery on phones in pockets.
-        //      Now gated on visibilityState === 'visible'.
-        //   2. No AbortController — a slow fetch on cellular could stack
-        //      with the next interval. Now cancels in-flight requests on
-        //      cleanup AND when the next check kicks in.
-        let timer;
-        let currentController = null;
-        async function check() {
-            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-            try { currentController?.abort(); } catch {}
-            currentController = new AbortController();
-            try {
-                const res = await fetch("/version.json?t=" + Date.now(), { signal: currentController.signal });
-                if (!res.ok) return;
-                const data = await res.json();
-                if (savedVersion.current === null) {
-                    savedVersion.current = data.v;
-                } else if (data.v !== savedVersion.current) {
-                    setUpdateAvailable(true);
-                }
-            } catch (e) { /* ignore (aborts + transient network) */ }
-        }
-        check();
-        timer = setInterval(check, 2 * 60 * 1000);
-        return () => {
-            clearInterval(timer);
-            try { currentController?.abort(); } catch {}
-        };
-    }, []);
-    return updateAvailable;
-}
+// (useVersionCheck removed 2026-07-27 — its return value was never read
+// anywhere, so the /version.json poll every 2 min was pure waste. Update
+// handling lives in pwa.js + the forceRefresh broadcast + Capgo autoUpdate.)
 
 // One-time migration: copy old non-suffixed docs/collections to _webster if they exist
 async function runMigrations() {
@@ -573,6 +536,23 @@ function PullToRefreshIndicator({ pullDistance, progress, refreshing, armed }) {
                 />
             </div>
         </div>
+    );
+}
+
+// PullToRefreshOverlay — owns the usePullToRefresh() hook so its
+// per-touchmove setPullDistance state churn stays inside this tiny
+// leaf. 2026-07-27: the hook used to live at the top of App, which
+// meant every pixel of pull re-rendered the ENTIRE app tree even
+// though only the indicator below reads the hook's return values.
+function PullToRefreshOverlay() {
+    const pull = usePullToRefresh();
+    return (
+        <PullToRefreshIndicator
+            pullDistance={pull.pullDistance}
+            progress={pull.progress}
+            refreshing={pull.refreshing}
+            armed={pull.armed}
+        />
     );
 }
 // Module-scope stable empty array used as a default for the
@@ -871,6 +851,11 @@ export default function App() {
             toast(language === 'es'
                 ? 'No tienes acceso a esa página'
                 : "You don't have access to that page");
+            // 2026-07-27: without this, activeTab stays on the denied id —
+            // the user sits on the fall-through home render while the nav
+            // still highlights a tab they can't open (and a re-tap of the
+            // same tab wouldn't even re-toast). Land them on home for real.
+            setActiveTab('home');
         }
     }, [activeTab, language]);
 
@@ -1216,11 +1201,10 @@ export default function App() {
     }, [staffName]);
 
     const { isAtDDMau, nearestLocation: geoNearestLocation, checking: geoChecking, error: geoError, retry: geoRetry, permState: geoPermState } = useGeofence();
-    const updateAvailable = useVersionCheck();
-    // Mobile pull-down-to-refresh — bypasses the cached SW and forces the
-    // app to re-download HTML+JS. Without this, PWAs installed on iOS get
-    // stuck on stale builds (no native pull-to-refresh in standalone mode).
-    const pullRefresh = usePullToRefresh();
+    // Mobile pull-down-to-refresh lives in <PullToRefreshOverlay> (module
+    // scope above) — NOT here. 2026-07-27: the hook's setPullDistance fires
+    // per touchmove frame, so hosting it in App re-rendered the whole app
+    // per pixel of pull; only the indicator consumes its return values.
     // Run migrations once PER DEVICE, not once per launch. The May-2026
     // webster-suffix migration completed long ago, but the module-level
     // `migrationRan` flag reset on every cold start — so EVERY launch
@@ -1523,6 +1507,13 @@ export default function App() {
     // which produced a fresh `[]` reference on every render when the
     // staff had no hidden pages. React.memo's shallow compare saw a
     // changed prop and re-rendered the whole route subtree.
+    // 2026-07-27: prevHiddenPagesRef declared ABOVE the memo that reads it
+    // (TDZ house rule) — .filter() mints a NEW array identity on every
+    // roster tick (currentStaffRecord changes on any lastSeen update), so
+    // for staff who DO have hidden pages the memo still defeated every
+    // child memo downstream. Returning the previous array when contents
+    // are join-equal keeps the reference stable.
+    const prevHiddenPagesRef = useRef(EMPTY_ARRAY);
     const hiddenPages = useMemo(
         () => {
             if (!currentStaffRecord || !Array.isArray(currentStaffRecord.hiddenPages)) return EMPTY_ARRAY;
@@ -1532,7 +1523,13 @@ export default function App() {
             // remove the tab from every nav with no route guard noticing.
             const ok = new Set(HIDEABLE_PAGES.map(p => p.id));
             const clean = currentStaffRecord.hiddenPages.filter(id => ok.has(id));
-            return clean.length ? clean : EMPTY_ARRAY;
+            const next = clean.length ? clean : EMPTY_ARRAY;
+            const prev = prevHiddenPagesRef.current;
+            if (prev !== next && prev.length === next.length && prev.every((id, i) => id === next[i])) {
+                return prev;
+            }
+            prevHiddenPagesRef.current = next;
+            return next;
         },
         [currentStaffRecord],
     );
@@ -2084,6 +2081,48 @@ export default function App() {
         return () => { cancelled = true; clearTimeout(timer); };
     }, [staffName, currentStaffRecord?.id]);
 
+    // ── Stable handler identities (2026-07-27) ──────────────────────────
+    // AppShellV2 / MobileHome / HomeV2 / DownloadAppGate are memo-wrapped;
+    // a fresh inline arrow per render would defeat their shallow compare
+    // on every App re-render (roster lastSeen ticks). These MUST stay up
+    // here with the unconditional hooks — early-return branches start
+    // right below (tvMode etc.), and hooks after an early return break
+    // rules-of-hooks. Setter-only bodies use functional updates so the
+    // dep arrays stay empty (identity never churns).
+    const handleNavigate = useCallback((tab) => setActiveTab(tab), []);
+    const handleBellClick = useCallback(() => setActiveTab('schedule'), []);
+    const handleForceRefresh = useCallback(() => forceRefresh(), []);
+    const handleLanguageToggle = useCallback(
+        () => setLanguage(l => (l === 'en' ? 'es' : 'en')),
+        [],
+    );
+    // staffName in deps: logout must drop the CURRENT staff's FCM token,
+    // not a stale closure's.
+    const handleLogout = useCallback(() => {
+        // 2026-05-24 audit fix: same FCM cleanup as onSignOut.
+        try { disableFcmPush(staffName); } catch {}
+        setStaffName(null);
+        setActiveTab('home');
+        // (2026-06-24: reload-on-logout workaround removed — the
+        // geometry keypad hit-tests correctly on every mount, so
+        // login is instant again. See onSignOut above.)
+    }, [staffName]);
+    // Location cycle — admins can flip between webster / maryland / both;
+    // staff are pinned to their assigned location (no-op when not admin).
+    // Functional update reads the CURRENT location so activeLocation can
+    // stay out of the deps.
+    const handleLocationChange = useCallback(() => {
+        if (!staffIsAdmin) return;
+        // A deliberate toggle wins over the geofence auto-start
+        // for the rest of this session.
+        manualLocationRef.current = true;
+        const cycle = ['webster', 'maryland', 'both'];
+        setActiveLocation(prev => {
+            const idx = cycle.indexOf(prev);
+            return cycle[(idx + 1) % cycle.length];
+        });
+    }, [staffIsAdmin]);
+
     // TV / kiosk deep link (handled before auth):
     //   /?tv=webster   → Webster menu board (digital signage)
     //   /?tv=maryland  → MD Heights menu board
@@ -2218,11 +2257,7 @@ export default function App() {
                 <DownloadAppGate
                     language={language}
                     staffName={staffName}
-                    onSignOut={() => {
-                        try { disableFcmPush(staffName); } catch {}
-                        setStaffName(null);
-                        setActiveTab('home');
-                    }}
+                    onSignOut={handleLogout}
                 />
             </Suspense>
         );
@@ -2296,7 +2331,7 @@ export default function App() {
                         storeLocation={effectiveLocation}
                         staffList={staffList}
                         setStaffList={setStaffList}
-                        onNavigate={(tab) => setActiveTab(tab)}
+                        onNavigate={handleNavigate}
                         hasOpsAccess={hasOpsAccess}
                         hasRecipesAccess={hasRecipesAccess}
                         hasOnboardingAccess={hasOnboardingAccess}
@@ -2312,7 +2347,7 @@ export default function App() {
                         storeLocation={effectiveLocation}
                         staffList={staffList}
                         setStaffList={setStaffList}
-                        onNavigate={(tab) => setActiveTab(tab)} />
+                        onNavigate={handleNavigate} />
                 );
             }
             // For everything else, render the legacy component as-is. They
@@ -2356,17 +2391,26 @@ export default function App() {
             // Tab not accessible — flag for one-shot toast (see useEffect
             // above) and bounce home (uses same mobile/desktop split).
             deniedTabRef.current = activeTab;
+            // 2026-07-27: this fall-through MUST pass the SAME props as the
+            // primary home render above — it used to omit canMoney /
+            // hasOnboardingAccess / hiddenPages / setStaffList, so during
+            // the one denied frame the Money + Onboarding tiles vanished
+            // and admin-hidden pages reappeared.
             return isMobile ? (
                 <MobileHome
                     language={language}
                     staffName={staffName}
                     storeLocation={effectiveLocation}
                     staffList={staffList}
-                    onNavigate={(tab) => setActiveTab(tab)}
+                    setStaffList={setStaffList}
+                    onNavigate={handleNavigate}
                     hasOpsAccess={hasOpsAccess}
                     hasRecipesAccess={hasRecipesAccess}
+                    hasOnboardingAccess={hasOnboardingAccess}
                     isAdmin={staffIsAdmin}
                     isManager={isManager}
+                    canMoney={canMoney}
+                    hiddenPages={hiddenPages}
                 />
             ) : (
                 <HomeV2
@@ -2374,7 +2418,8 @@ export default function App() {
                     staffName={staffName}
                     storeLocation={effectiveLocation}
                     staffList={staffList}
-                    onNavigate={(tab) => setActiveTab(tab)} />
+                    setStaffList={setStaffList}
+                    onNavigate={handleNavigate} />
             );
         };
         // Wrap legacy tabs in a white card so they lift cleanly off the
@@ -2395,19 +2440,16 @@ export default function App() {
                     usePullToRefresh hook returns pullDistance/progress/
                     armed/refreshing; rendering them here is what makes
                     the gesture FEEL connected (was working silently
-                    until the page reloaded). Mobile only. */}
-                <PullToRefreshIndicator
-                    pullDistance={pullRefresh.pullDistance}
-                    progress={pullRefresh.progress}
-                    refreshing={pullRefresh.refreshing}
-                    armed={pullRefresh.armed}
-                />
+                    until the page reloaded). Mobile only. 2026-07-27:
+                    hook + indicator now live inside the overlay leaf so
+                    the per-frame pull state can't re-render App. */}
+                <PullToRefreshOverlay />
                 <AppShellV2
                     language={language}
                     staffName={staffName}
                     storeLocation={effectiveLocation}
                     activeTab={activeTab}
-                    onNavigate={(tab) => setActiveTab(tab)}
+                    onNavigate={handleNavigate}
                     hasOpsAccess={hasOpsAccess}
                     hasRecipesAccess={hasRecipesAccess}
                     hasOnboardingAccess={hasOnboardingAccess}
@@ -2431,37 +2473,24 @@ export default function App() {
                     // Logout returns the app to the lock screen by clearing
                     // the active staffName. The render branches at the top
                     // of App() route to <HomePage /> when staffName is null.
-                    onLogout={() => {
-                        // 2026-05-24 audit fix: same FCM cleanup as onSignOut.
-                        try { disableFcmPush(staffName); } catch {}
-                        setStaffName(null);
-                        setActiveTab('home');
-                        // (2026-06-24: reload-on-logout workaround removed — the
-                        // geometry keypad hit-tests correctly on every mount, so
-                        // login is instant again. See onSignOut above.)
-                    }}
+                    // 2026-07-27: these handlers are useCallback-hoisted (see
+                    // "Stable handler identities" above the tvMode return) —
+                    // AppShellV2 is memo-wrapped, so fresh inline arrows here
+                    // would defeat its shallow compare on every App render.
+                    onLogout={handleLogout}
                     // Same forceRefresh used by pull-to-refresh + the legacy
                     // sidebar's refresh button. Clears all caches and reloads.
-                    onForceRefresh={() => forceRefresh()}
-                    onLanguageToggle={() => setLanguage(language === 'en' ? 'es' : 'en')}
+                    onForceRefresh={handleForceRefresh}
+                    onLanguageToggle={handleLanguageToggle}
                     // Bell click — jumps to Schedule, where the per-user
                     // notification drawer lives (shift offers, swap approvals,
                     // PTO updates). When a real cross-app notifications
                     // panel ships, point this at it instead.
-                    onBellClick={() => setActiveTab('schedule')}
+                    onBellClick={handleBellClick}
                     // Location cycle — admins can flip between webster /
                     // maryland / both; staff are pinned to their assigned
                     // location (no-op when not admin).
-                    onLocationChange={() => {
-                        if (!staffIsAdmin) return;
-                        // A deliberate toggle wins over the geofence auto-start
-                        // for the rest of this session.
-                        manualLocationRef.current = true;
-                        const cycle = ['webster', 'maryland', 'both'];
-                        const idx = cycle.indexOf(activeLocation);
-                        const next = cycle[(idx + 1) % cycle.length];
-                        setActiveLocation(next);
-                    }}
+                    onLocationChange={handleLocationChange}
                 >
                     <Suspense fallback={<TabLoading language={language} />}>
                         <ErrorBoundary language={language} key={activeTab}>

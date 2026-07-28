@@ -1003,6 +1003,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }, []);
 
+    // 2026-07-27 (audit B2) — tighter bound for staffing_needs: every consumer
+    // (memoWeekNeeds, banners, publish preview, grabbable slots) only reads the
+    // viewed/current week, so replaying months of minted slots on every doc add
+    // was pure overhead. ~6 weeks of past keeps recent-week navigation working.
+    const sixWeeksAgo = useMemo(() => {
+        const d = new Date(); d.setDate(d.getDate() - 42);
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }, []);
+
     // ── Listen for recurring weekly closure config ──
     // Single doc that holds per-location "we are closed every X" rules.
     // Most restaurants have one or two of these (DD Mau: Sundays).
@@ -1086,15 +1095,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     }, [sixMonthsAgo]);
 
     // ── Listen for staffing-needs / shift slots ──
+    // 2026-07-27 (audit B2) — 6 weeks, not 6 months (see sixWeeksAgo above).
+    // Same single-field `date` inequality — no new composite index needed.
     useEffect(() => {
-        const q = query(collection(db, 'staffing_needs'), where('date', '>=', sixMonthsAgo));
+        const q = query(collection(db, 'staffing_needs'), where('date', '>=', sixWeeksAgo));
         const unsub = onSnapshot(q, (snap) => {
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setStaffingNeeds(items);
         }, (err) => console.error('staffing_needs snapshot error:', err));
         return unsub;
-    }, [sixMonthsAgo]);
+    }, [sixWeeksAgo]);
 
     // ── Listen for day templates ──
     // MED-2, 2026-05-30: capped at 200 docs. Realistic max for DD Mau is

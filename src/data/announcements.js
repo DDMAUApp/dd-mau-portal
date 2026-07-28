@@ -105,6 +105,12 @@ export async function postAnnouncement({
     media = null,                       // { url, path, mime } | null
     translations = null, sourceLang = null, translationStatus = null,
     audienceLabel = '',
+    // 2026-07-27 audit C11 — caller-minted doc id. addDoc meant a failure
+    // AFTER step 1 (chat copy / push) + a retry minted a SECOND announcement
+    // doc → double pop-up + double push to the whole audience. The composer
+    // already mints announcementGroupId (it names the photo upload); using
+    // it as the doc id makes a retry overwrite the same doc instead.
+    announcementGroupId = null,
 }) {
     const body = String(text || '').trim();
     if (!body && !media) throw new Error('empty announcement');
@@ -123,8 +129,13 @@ export async function postAnnouncement({
         ? { translations, sourceLang, translationStatus: translationStatus || 'reviewed' }
         : (translationStatus === 'skipped' ? { translationStatus: 'skipped' } : {});
 
-    // 1. The pop-up doc.
-    const annRef = await addDoc(collection(db, 'announcements'), {
+    // 1. The pop-up doc. Deterministic id (when the caller minted one) so
+    // a retry after a mid-flow failure OVERWRITES instead of duplicating
+    // (2026-07-27 audit C11). Auto-id fallback for callers without one.
+    const annRef = announcementGroupId
+        ? doc(db, 'announcements', announcementGroupId)
+        : doc(collection(db, 'announcements'));
+    await setDoc(annRef, {
         text: body,
         audience,
         ...(audienceCustom ? { audienceCustom } : {}),

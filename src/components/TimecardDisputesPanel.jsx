@@ -26,14 +26,21 @@ export default function TimecardDisputesPanel({ language = 'en', staffName = '' 
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [expanded, setExpanded] = useState(false);
-    const [rows, setRows] = useState([]);
+    const [rows, setRows] = useState(null);   // null = never loaded (collapsed since mount)
     const [showResolved, setShowResolved] = useState(false);
     const [busyId, setBusyId] = useState(null);
 
-    useEffect(() => subscribeTimecardDisputes(setRows), []);
+    // 2026-07-27 (audit B4) — this 200-doc listener used to attach on Admin
+    // mount even while the card was collapsed (its default). Same gate
+    // MoneyCount uses for its history listener: subscribe only while
+    // expanded. Rows persist after a collapse so the count stays fresh-ish.
+    useEffect(() => {
+        if (!expanded) return undefined;
+        return subscribeTimecardDisputes(setRows);
+    }, [expanded]);
 
-    const open = useMemo(() => rows.filter((r) => r.status === 'open'), [rows]);
-    const resolved = useMemo(() => rows.filter((r) => r.status !== 'open'), [rows]);
+    const open = useMemo(() => (rows || []).filter((r) => r.status === 'open'), [rows]);
+    const resolved = useMemo(() => (rows || []).filter((r) => r.status !== 'open'), [rows]);
     const visible = showResolved ? resolved : open;
 
     const act = async (row, status) => {
@@ -56,7 +63,9 @@ export default function TimecardDisputesPanel({ language = 'en', staffName = '' 
                     <div className="text-left min-w-0">
                         <h3 className="text-headline text-dd-text">{tx('Timecard fix requests', 'Correcciones de horario')}</h3>
                         <p className="text-caption-md text-dd-text-2">
-                            {open.length > 0
+                            {rows === null
+                                ? tx('Tap to load', 'Toca para cargar')
+                                : open.length > 0
                                 ? tx(`${open.length} open request${open.length === 1 ? '' : 's'}`, `${open.length} pendiente${open.length === 1 ? '' : 's'}`)
                                 : tx('No open requests', 'Sin pendientes')}
                         </p>

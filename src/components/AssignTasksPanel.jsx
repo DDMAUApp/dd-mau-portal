@@ -257,8 +257,18 @@ export default function AssignTasksPanel({
                 // 2026-07-27 audit: in the managersOnly view this fallback
                 // defeated the filter — a task assigned to a regular staffer
                 // rendered a full interactive column inside "Mgr Tasks".
-                // Managers-only mode drops unknown ids instead.
-                if (managersOnly) return null;
+                // 2026-07-27 audit R4 rework: but a BLANKET drop also hid real
+                // open tasks whenever the id merely failed to RESOLVE (staffList
+                // briefly [] on first paint, rename race) — and the planner's
+                // carry-over check then starved the rule forever. Only drop when
+                // the record IS found in the full staffList but fails the same
+                // manager-pool predicate sideStaff uses; an unresolvable id
+                // keeps the fallback column so the task stays visible.
+                if (managersOnly) {
+                    const rec = (Array.isArray(staffList) ? staffList : [])
+                        .find((s) => String(s?.id) === idStr);
+                    if (rec && !isManagerLike(rec, { includeShiftLeads })) return null;
+                }
                 // Fallback to assignment's own staffName so the
                 // column still renders. Pull from the first item
                 // (all items in this bucket share the same staffId
@@ -288,7 +298,7 @@ export default function AssignTasksPanel({
                 return (a.staff.name || '').localeCompare(b.staff.name || '');
             });
         return enriched;
-    }, [assignmentsByStaff, sideStaff, staffName, managersOnly]);
+    }, [assignmentsByStaff, sideStaff, staffList, staffName, managersOnly, includeShiftLeads]);
 
     // ── Master library — search + sort ──────────────────────────────
     const [librarySearch, setLibrarySearch] = useState('');
@@ -434,9 +444,10 @@ export default function AssignTasksPanel({
             await setAssignmentDone(a.id, { done: true, staffName });
             // 2026-07-27 audit: the row vanishes instantly with no way back —
             // a fat-finger silently cleared a task off the board. Offer Undo
-            // (setAssignmentDone explicitly supports re-opening).
-            setUndoTask(a);
+            // (setAssignmentDone explicitly supports re-opening). toastFlash
+            // FIRST (it clears any stale undoTask — audit R5), THEN arm Undo.
             toastFlash(tx(`✓ "${a.task}" done`, `✓ "${a.task}" hecha`, isEs));
+            setUndoTask(a);
         }
         catch (err) { console.warn('setAssignmentDone failed:', err); }
     }
@@ -464,9 +475,14 @@ export default function AssignTasksPanel({
     const [toast, setToast] = useState(null);
     const toastTimer = useRef(null);
     function toastFlash(msg) {
+        // 2026-07-27 audit R5: undoTask never cleared, so the Undo button rode
+        // on EVERY later toast and re-opened the wrong task. Any new toast
+        // clears it (handleMarkDone re-arms it right after this call), and the
+        // timeout clears it too so an expired toast can't leave a live Undo.
+        setUndoTask(null);
         setToast(msg);
         if (toastTimer.current) clearTimeout(toastTimer.current);
-        toastTimer.current = setTimeout(() => setToast(null), 2400);
+        toastTimer.current = setTimeout(() => { setToast(null); setUndoTask(null); }, 2400);
     }
     useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
@@ -728,7 +744,12 @@ export default function AssignTasksPanel({
                                     {tx('Unassigned', 'Sin asignar', isEs)}
                                 </div>
                                 <div className="text-[10px] text-dd-text-2">
-                                    {tx('Anyone can do these', 'Cualquiera puede hacerlas', isEs)}
+                                    {/* 2026-07-27 audit R8: the Done/Assign controls below are
+                                        manager-gated, so "Anyone can do these" was a lie for
+                                        regular staff — neutral copy for read-only viewers. */}
+                                    {canModify
+                                        ? tx('Anyone can do these', 'Cualquiera puede hacerlas', isEs)
+                                        : tx('Managers hand these out', 'Los gerentes las asignan', isEs)}
                                 </div>
                             </div>
                             <span className="text-[11px] font-bold text-dd-text-2">{unassignedTasks.length}</span>

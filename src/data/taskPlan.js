@@ -197,9 +197,23 @@ export async function moveOccurrence(rule, fromDate, toDate) {
         });
         return;
     }
-    await updateDoc(doc(db, 'task_plan', rule.id), {
-        skipDates: arrayUnion(fromDate),
-        extraDates: arrayUnion(toDate),
+    // 2026-07-27 audit R1: plain arrayUnions only ever GREW the arrays, and
+    // skipDates wins over extraDates in isRuleDueOn — so moving Tue→Wed→Tue
+    // left BOTH days in skipDates and the occurrence vanished entirely.
+    // Read the live doc and write COMPUTED arrays instead: the day we land
+    // on leaves skipDates, the day we leave stops being an extra.
+    const ref = doc(db, 'task_plan', rule.id);
+    const snap = await getDoc(ref);
+    const cur = (snap?.exists?.() ? snap.data() : null) || rule;
+    const skips = new Set(Array.isArray(cur.skipDates) ? cur.skipDates : []);
+    const extras = new Set(Array.isArray(cur.extraDates) ? cur.extraDates : []);
+    skips.add(fromDate);
+    skips.delete(toDate);
+    extras.add(toDate);
+    extras.delete(fromDate);
+    await updateDoc(ref, {
+        skipDates: [...skips].sort(),
+        extraDates: [...extras].sort(),
         updatedAt: serverTimestamp(),
     });
 }

@@ -191,6 +191,13 @@ export default function ChatCenter({
     // churn for no benefit. We only need to re-fire when the gate
     // flips false → true.
     const staffListReady = Array.isArray(staffList) && staffList.length > 0;
+    // 2026-07-27 audit C4 — previous chat objects by id. The snapshot
+    // handler used to rebuild EVERY chat object fresh per fan-out, so a
+    // typing heartbeat in ANY chat re-rendered all ~100 memoized
+    // ChatListItem rows. Reusing the prior reference when the doc is
+    // value-equal (chatDocEqual, Timestamp-aware) lets unchanged rows
+    // bail in React.memo. Same trick as the activeChat stabilization below.
+    const chatObjsRef = useRef(new Map());
     useEffect(() => {
         if (!staffName) return;
         if (!staffListReady) return;
@@ -228,7 +235,18 @@ export default function ChatCenter({
         const unsub = onSnapshot(q, (snap) => {
             clearTimeout(timeoutId);
             const list = [];
-            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            // 2026-07-27 audit C4 — keep the previous object reference for
+            // docs whose data didn't actually change (see chatObjsRef above).
+            const prevById = chatObjsRef.current;
+            const nextById = new Map();
+            snap.forEach(d => {
+                const fresh = { id: d.id, ...d.data() };
+                const prev = prevById.get(d.id);
+                const chatObj = (prev && chatDocEqual(prev, fresh)) ? prev : fresh;
+                nextById.set(d.id, chatObj);
+                list.push(chatObj);
+            });
+            chatObjsRef.current = nextById;
             // Sort: unread first (within unread, newest first),
             // then read by lastActivityAt desc.
             const ms = (ts) => ts?.toMillis ? ts.toMillis()

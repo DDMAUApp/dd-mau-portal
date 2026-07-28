@@ -784,7 +784,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     return;
                 }
                 let alive = true;
-                const unsub = onSnapshot(doc(db, 'ops', 'sauceLog_' + storeLocation), (snap) => {
+                // 2026-07-27 (audit) — both → webster, matching SauceLog.jsx /
+                // Eighty6Dashboard: "Both" admins were reading a phantom
+                // sauceLog_both doc nobody writes.
+                const unsub = onSnapshot(doc(db, 'ops', 'sauceLog_' + (storeLocation === 'both' ? 'webster' : storeLocation)), (snap) => {
                     if (!alive) return;
                     if (!snap.exists()) {
                         setSauceCounts({ today: 0, tomorrow: 0, later: 0, total: 0 });
@@ -2334,7 +2337,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // Replace customInventory immediately — counts stay
                         // keyed by item.id, so the inventory tab re-renders
                         // with the list's items but the same counts.
-                        setCustomInventory(next.categories.map(c => ({ ...c, items: [...c.items] })));
+                        // 2026-07-27 (audit O6) — guard c.items: a malformed
+                        // category (missing items) crashed the whole page here.
+                        setCustomInventory(next.categories.map(c => ({ ...c, items: [...(c.items || [])] })));
                     }
                 });
 
@@ -2425,7 +2430,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         if (overrideList && Array.isArray(overrideList.categories) && overrideList.categories.length > 0) {
                             return;
                         }
-                        if (data.customInventory) {
+                        // 2026-07-27 (audit O6) — Array.isArray, not truthy: a
+                        // malformed doc (customInventory saved as an object /
+                        // string) crashed the page on EVERY snapshot before.
+                        if (Array.isArray(data.customInventory)) {
                             // Perf-fix 2026-05-22 (production audit): short-circuit
                             // the id-migration merge when customInventory bytes
                             // haven't changed. This fires for every count-only
@@ -2459,7 +2467,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 // (newly-added entries in inventory.js).
                                 const mergedItems = [];
                                 const seenIds = new Set();
-                                savedCat.items.forEach(si => {
+                                // 2026-07-27 (audit O6) — guard items array.
+                                (savedCat.items || []).forEach(si => {
                                     let newId = si.id;
                                     if (typeof si.id === "string" && !si.id.startsWith(expectedPrefix) && !masterIds.has(si.id)) {
                                         // Item from a renamed/moved category. Renumber under
@@ -2517,7 +2526,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 const newIdx = merged.length;
                                 const expectedPrefix = `${newIdx}-`;
                                 const seenIds = new Set();
-                                const renumbered = sc.items.map((si, n) => {
+                                // 2026-07-27 (audit O6) — guard items array.
+                                const renumbered = (sc.items || []).map((si, n) => {
                                     let newId = si.id;
                                     if (typeof si.id !== "string" || !si.id.startsWith(expectedPrefix) || seenIds.has(si.id)) {
                                         let j = n;
@@ -2590,12 +2600,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // remounted them on every Webster ↔ Maryland toggle. Splitting
             // them into their own `[]`-deps effect means a location switch
             // only churns the 5 listeners that actually need to change.
+            //
+            // 2026-07-27 (audit O1) — vendor-only cart rows (vendorCounts keys
+            // like "sysco:12345") can only resolve their name/price once these
+            // vendor_prices docs load. With the pricingEverOpened-only gate, a
+            // persisted cart holding vendor rows counted them in the cart bar
+            // but the order/print builders SILENTLY DROPPED them until someone
+            // happened to open Pricing. Also attach whenever the cart actually
+            // holds vendor rows (boolean only flips at empty↔non-empty, same
+            // gated-dep spirit as vendorViewData's `invShowOnlyCounted ?
+            // inventory : null` below — no per-tap listener churn).
+            const hasVendorOnlyCartRows = Object.values(vendorCounts || {}).some(q => Number(q) > 0);
             useEffect(() => {
                 // 2026-06-13 perf — don't attach the 7 vendor_prices listeners
                 // until the Pricing tab has been opened at least once. Saves 7
                 // doc reads + 7 live listeners on every Operations open for the
                 // common case (Pricing rarely viewed). Once opened they stay.
-                if (!pricingEverOpened) return;
+                if (!pricingEverOpened && !hasVendorOnlyCartRows) return;
                 // Vendor-price subscriptions — log subscription errors
                 // instead of swallowing silently. A perm-denied / offline
                 // blip would leave the price block empty without any
@@ -2626,7 +2647,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     unsubUsfoodsPrices();
                     unsubCostcoPrices();
                 };
-            }, [pricingEverOpened]);
+            }, [pricingEverOpened, hasVendorOnlyCartRows]);
 
             // Midnight auto-reset: check every 60s if the business-day date has changed.
             // All mutable state read here goes through refs so the interval is installed once
@@ -3889,7 +3910,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // inventory grid reads this map and shows a tiny dot.
                 // Auto-clears the "saved" state 2s later so the grid
                 // doesn't stay decorated forever.
-                setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'saving' }));
+                // (2026-07-27 audit O5: the 'saving' flip moved BELOW the
+                // decrement-at-zero skip guard — see note there.)
 
                 // Capture prev/next inside the functional setter so rapid
                 // taps don't read stale closure state. These vars are
@@ -3913,6 +3935,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     return { ...prev, [itemId]: nextCount };
                 });
                 if (skipped) return;
+
+                // 2026-07-27 (audit O5) — set 'saving' only AFTER the skip
+                // guard. It used to fire before it, so a "−" tap on a 0-count
+                // item returned early and left a permanent amber "Saving…"
+                // badge no write would ever clear.
+                setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'saving' }));
 
                 // Remember the value we're about to write so a stale snapshot can't
                 // visibly undo it before the server confirms (see pendingCountsRef).
@@ -4956,14 +4984,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (qty <= 0) return;
                     const [v, vendorId] = key.split(":");
                     const data = findVendorEntry(v, vendorId);
-                    if (!data) return;
                     const vendorName = v === "sysco" ? "Sysco" : "US Foods";
+                    // 2026-07-27 (audit O1) — no vendor_prices data yet? Print a
+                    // placeholder row instead of silently omitting an item the
+                    // cart bar counted (the vendor + item # still identify it).
                     rows.push({
                         id: key,
-                        name: data.name || `${vendorName} #${vendorId}`,
-                        category: data.category || 'Other',
+                        name: data ? (data.name || `${vendorName} #${vendorId}`) : `${vendorName} #${vendorId} (?)`,
+                        category: (data && data.category) || 'Other',
                         qty,
-                        pack: data.pack || '',
+                        pack: (data && data.pack) || '',
                         vendor: cartVendorOverride[key] || vendorName,
                     });
                 });
@@ -5076,15 +5106,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (qty <= 0) return;
                     const [vendor, vendorId] = key.split(":");
                     const data = findVendorEntry(vendor, vendorId);
-                    if (!data) return;
                     const vendorName = vendor === "sysco" ? "Sysco" : "US Foods";
+                    // 2026-07-27 (audit O1) — no vendor_prices data yet? Print a
+                    // placeholder row (null price renders as "—") instead of
+                    // silently omitting an item the cart bar counted.
                     rows.push({
                         kind: "vendor-only",
-                        name: data.name || `${vendorName} #${vendorId}`,
-                        category: data.category || "Other",
+                        name: data ? (data.name || `${vendorName} #${vendorId}`) : `${vendorName} #${vendorId} (?)`,
+                        category: (data && data.category) || "Other",
                         qty,
-                        vendorPrices: [{ vendor: vendorName, vendorId, price: data.price, pack: data.pack }],
-                        pack: data.pack,
+                        vendorPrices: [{ vendor: vendorName, vendorId, price: data ? data.price : null, pack: data ? data.pack : null }],
+                        pack: data ? data.pack : null,
                         vendorOnlyOrigin: vendorName,
                     });
                 });
@@ -6748,8 +6780,26 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                     if (qty <= 0) return;
                     const [vendor, vendorId] = key.split(":");
                     const data = findVendorEntry(vendor, vendorId);
-                    if (!data) return;
                     const vendorName = vendor === "sysco" ? "Sysco" : "US Foods";
+                    if (!data) {
+                        // 2026-07-27 (audit O1) — vendor_prices doc not loaded
+                        // yet (or the item left the feed). NEVER drop the row:
+                        // the cart bar already counts it, so the order must
+                        // list it too. Priceless placeholder — name marks it
+                        // as unresolved, price null renders as "—"/missing.
+                        rows.push({
+                            kind: "vendor-only",
+                            id: key,
+                            name: `${vendorName} #${vendorId} (?)`,
+                            category: "Other",
+                            qty,
+                            vendorPrices: [{ vendor: vendorName, vendorId, price: null, pack: null }],
+                            preferredVendor: vendorName,
+                            pack: null,
+                            vendorOnlyOrigin: vendorName,
+                        });
+                        return;
+                    }
                     rows.push({
                         kind: "vendor-only",
                         id: key,
@@ -6827,7 +6877,16 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                         const v = item.vendor || item.supplier || "Other";
                         if (!vendorGroups[v]) vendorGroups[v] = [];
                         const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
-                        if (itemMatchesSearchAi(item, searchLower) && matchesCounted) {
+                        // 2026-07-27 (audit O4) — Vendor view ignored the "Low
+                        // Only" toggle while category/location/split applied it.
+                        // Same min-based low test as those views.
+                        let matchesLow = true;
+                        if (invShowOnlyLow) {
+                            const min = Number(item?.min);
+                            const c = Number(inventory[item.id] || 0);
+                            matchesLow = Number.isFinite(min) && min > 0 && c > 0 && c <= min;
+                        }
+                        if (itemMatchesSearchAi(item, searchLower) && matchesCounted && matchesLow) {
                             vendorGroups[v].push({ ...item, catIdx, itemIdx: iIdx, catName: cat.name, catNameEs: cat.nameEs });
                         }
                     });
@@ -6838,9 +6897,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                     .sort((a, b) => vendorGroups[b].length - vendorGroups[a].length);
                 return { vendorGroups, vendorNames };
             }, [
-                invViewMode, customInventory, invSearchDeferred, invShowOnlyCounted,
+                invViewMode, customInventory, invSearchDeferred, invShowOnlyCounted, invShowOnlyLow,
                 // eslint-disable-next-line react-hooks/exhaustive-deps
-                invShowOnlyCounted ? inventory : null,
+                (invShowOnlyCounted || invShowOnlyLow) ? inventory : null,
             ]);
 
             // Access gate — AFTER every hook (see the audit-H2 note above)
@@ -10581,7 +10640,9 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, setVen
                             );
                         })}
                     </div>
-                    <button onClick={onOpenHistory}
+                    {/* 2026-07-27 (audit O7) — wrap: a bare handler passed the
+                        click EVENT as the focusId arg to the history modal. */}
+                    <button onClick={() => onOpenHistory()}
                         className="shrink-0 text-[10px] font-bold text-orange-700 hover:text-orange-900 underline px-1">
                         {isEs ? 'Todos →' : 'All →'}
                     </button>

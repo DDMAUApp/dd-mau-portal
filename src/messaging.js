@@ -26,7 +26,7 @@
 // initialized, fixing the TDZ. Web behaviour is identical - the
 // dynamic import resolves synchronously after the first call since
 // the chunk is already loaded.
-import { doc, setDoc, runTransaction, getDoc } from "firebase/firestore";
+import { doc, setDoc, runTransaction } from "firebase/firestore";
 import { nextStaffRev } from "./data/staffDoc";
 import app, { db } from "./firebase";
 import { Capacitor } from "@capacitor/core";
@@ -403,15 +403,11 @@ async function enableNativePush(staffName, staffList, setStaffList) {
                 }
                 tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
             });
-            // Mirror live data into React state after txn commits.
-            if (setStaffList) {
-                try {
-                    const fresh = await getDoc(doc(db, "config", "staff"));
-                    if (fresh.exists()) {
-                        setStaffList(fresh.data().list || []);
-                    }
-                } catch (_) {}
-            }
+            // 2026-07-27: no post-commit setStaffList mirror here — App's
+            // /config/staff onSnapshot already delivers the committed write
+            // through its shape-hash dedupe, and no UI reads fcmTokens off
+            // React state; a raw setStaffList bypassed the dedupe and
+            // re-rendered every heavy tab on each login/token refresh.
             console.log('[push][native] persist OK');
             return { ok: true, token, platform, tokenKind, persisted: true };
         } catch (e) {
@@ -462,7 +458,10 @@ async function getMessagingSafely() {
  *
  * @param {string} staffName — current staff member's display name
  * @param {Array} staffList — full staff list (current state)
- * @param {Function} setStaffList — React setter for the local staff list
+ * @param {Function} setStaffList — UNUSED since 2026-07-27 (kept so the 6+
+ *   call sites don't all need touching): the post-commit roster mirror was
+ *   removed — App's /config/staff onSnapshot delivers the committed write
+ *   through its shape-hash dedupe, and no UI reads fcmTokens off React state.
  * @returns {Promise<{ok: boolean, reason?: string, token?: string}>}
  */
 export async function enableFcmPush(staffName, staffList, setStaffList) {
@@ -711,16 +710,11 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
                 }
                 tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
             });
-            // Mirror the live data into local React state so the app sees
-            // the same as Firestore. Do this AFTER the transaction commits.
-            if (setStaffList) {
-                try {
-                    const fresh = await getDoc(doc(db, "config", "staff"));
-                    if (fresh.exists()) {
-                        setStaffList(fresh.data().list || []);
-                    }
-                } catch (_) {}
-            }
+            // 2026-07-27: no post-commit setStaffList mirror here — App's
+            // /config/staff onSnapshot already delivers the committed write
+            // through its shape-hash dedupe, and no UI reads fcmTokens off
+            // React state; a raw setStaffList bypassed the dedupe and
+            // re-rendered every heavy tab on each login/token refresh.
         } catch (e) {
             console.warn("FCM token persist (transactional) failed:", e);
         }

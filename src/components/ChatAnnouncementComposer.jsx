@@ -65,6 +65,21 @@ export default function ChatAnnouncementComposer({
     const [skipTranslation, setSkipTranslation] = useState(false);
     const lastBodyRef = useRef('');
     const debounceTimerRef = useRef(null);
+    // 2026-07-27 audit C11 — mint the announcement doc id ONCE per compose
+    // session (was inside handlePost, so every retry tap minted a fresh id
+    // and a fresh doc). Stable across retries → postAnnouncement's setDoc
+    // overwrites the same /announcements doc instead of duplicating the
+    // pop-up + push fan-out. Also names the photo upload path.
+    const announcementIdRef = useRef(`ann_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+    // 2026-07-27 audit C11 (leak) — the photo previewUrl was only revoked on
+    // the manual ✕; closing the modal (or a successful post) leaked the blob
+    // URL for the session. Ref mirror + unmount cleanup covers every exit.
+    // (Revoking an already-revoked URL is a harmless no-op.)
+    const photoRef = useRef(null);
+    useEffect(() => { photoRef.current = photo; }, [photo]);
+    useEffect(() => () => {
+        if (photoRef.current?.previewUrl) URL.revokeObjectURL(photoRef.current.previewUrl);
+    }, []);
 
     // The OTHER language — i.e. the one we generate a reviewed
     // translation INTO. Computed from sourceLang. Used for labels +
@@ -214,7 +229,7 @@ export default function ChatAnnouncementComposer({
             // member opens the app, plus one copy in the revived 📣
             // Announcements chat and a push to the audience. postAnnouncement
             // (data/announcements.js) does all three.
-            const announcementGroupId = `ann_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const announcementGroupId = announcementIdRef.current; // stable across retries (audit C11)
             const ackDeadline = ackRequired && ackDeadlineHours > 0
                 ? new Date(Date.now() + ackDeadlineHours * 3600_000)
                 : null;
@@ -238,6 +253,11 @@ export default function ChatAnnouncementComposer({
             const res = await postAnnouncement({
                 text: body,
                 staffName, viewer, staffList,
+                // 2026-07-27 audit C11 — pass the minted id as the doc id so
+                // a retry after a mid-flow failure overwrites the same
+                // /announcements doc instead of double-posting (double push
+                // + double pop-up to the whole audience).
+                announcementGroupId,
                 audience,
                 customNames: pickedNames,
                 includeManagers: crosspostManagers && audience !== 'managers' && audience !== 'custom',
@@ -248,6 +268,8 @@ export default function ChatAnnouncementComposer({
                 translationStatus: reviewedTranslation ? 'reviewed' : (skipTranslation ? 'skipped' : null),
                 audienceLabel,
             });
+            // Post landed — release the local photo preview blob (audit C11).
+            if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
             onPosted?.({ announcementGroupId: res.id, recipientCount: res.recipients.length });
 
         } catch (e) {

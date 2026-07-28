@@ -72,16 +72,20 @@ export default function MyHoursPage({ staffName, language }) {
         // same localStorage pattern as recipes/sticker lists: show the
         // last-seen cards immediately, let the live snapshot correct them.
         // Keyed per staff so a shared-iPad user switch never shows someone
-        // else's hours. Empty results don't overwrite a good cache (the
-        // error path also reports [] — a network blip must not wipe it).
-        const CACHE_KEY = `ddmau:myhours:${staffName}`;
+        // else's hours. 2026-07-27 (audit): key also includes sinceStr so a
+        // range change doesn't flash out-of-range cached rows.
+        const CACHE_KEY = `ddmau:myhours:${staffName}:${sinceStr}`;
         try {
             const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
             if (Array.isArray(cached) && cached.length > 0) setCards(cached);
         } catch { /* corrupt/absent cache — spinner until snapshot */ }
         return subscribeMyTimecards(staffName, sinceStr, (list) => {
+            // 2026-07-27 (audit) — the error path reports null (NOT []).
+            // Ignore it so a network blip keeps the cached cards on screen
+            // instead of swapping them for "No timecards yet".
+            if (!Array.isArray(list)) return;
             setCards(list);
-            if (Array.isArray(list) && list.length > 0) {
+            if (list.length > 0) {
                 try { localStorage.setItem(CACHE_KEY, JSON.stringify(list)); } catch { /* quota */ }
             }
         });
@@ -116,9 +120,18 @@ export default function MyHoursPage({ staffName, language }) {
         }
         // Prefer Toast's own running week total when the feed has one for
         // today (it's break-adjusted upstream and matches the POS screen).
+        // 2026-07-27 (audit) — hoursThisWeek is ONE store's running total,
+        // so for cross-location staff it UNDERSTATES the summed week (and
+        // hid real overtime). Only let it override when every card in the
+        // current week is from a single location.
+        const weekLocs = new Set();
+        for (const r of days) {
+            if (weekKey(r.date) !== thisWeek) continue;
+            for (const c of r.cards) weekLocs.add(c.location || '');
+        }
         const todayCard = days.find((r) => r.date === toDateStrLocal(now));
         const toastWeek = todayCard?.cards.map((c) => c.hoursThisWeek).find((v) => v != null);
-        if (toastWeek != null && Number(toastWeek) > 0) week = Number(toastWeek);
+        if (toastWeek != null && Number(toastWeek) > 0 && weekLocs.size <= 1) week = Number(toastWeek);
         return { week, month, overtime: Math.max(0, week - 40) };
     }, [days]);
 

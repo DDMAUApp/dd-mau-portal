@@ -507,6 +507,15 @@ export async function applyNativeOtaRefresh() {
             await CapacitorUpdater.set(b);   // activates the queued bundle + reloads
             return true;
         }
+        // 2026-07-27 audit R12: when Capgo's autoUpdate already queued the new
+        // bundle as "next" (updateAvailable fired → _otaPending true) there is
+        // nothing in _otaBundlePending, and the download() below threw 'bundle
+        // already exists'. reload() applies the queued next bundle directly —
+        // same fallthrough applyPendingOtaNow uses.
+        if (_otaPending) {
+            await CapacitorUpdater.reload();
+            return true;
+        }
         // Nothing queued — ask Capgo directly, download, and apply right now.
         const cur = (await CapacitorUpdater.current().catch(() => null))?.bundle?.version || '';
         const latest = await CapacitorUpdater.getLatest().catch(() => null);

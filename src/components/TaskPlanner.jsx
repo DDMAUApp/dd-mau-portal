@@ -87,9 +87,14 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
     }, [monthAnchor, isEs]);
 
     const shiftMonth = (delta) => {
+        // 2026-07-27 audit R3: new Date(y, m-1+delta, 1) is DEVICE-local but
+        // toDateStr re-formats in America/Chicago — on a device ahead of
+        // Chicago (Andrew's phone in HKT) local "Aug 1 00:00" is still Jul 31
+        // in Chicago, so › re-derived the SAME month and ‹ skipped one.
+        // Pure UTC math (noon-anchored) never crosses a timezone.
         const [y, m] = monthAnchor.split('-').map(Number);
-        const d = new Date(y, m - 1 + delta, 1);
-        setMonthAnchor(toDateStr(d).slice(0, 8) + '01');
+        const d = new Date(Date.UTC(y, m - 1 + delta, 1, 12));
+        setMonthAnchor(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`);
     };
 
     const onDayTap = async (dateStr) => {
@@ -115,6 +120,14 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
                 ensureMaterializedForToday('FOH', staffName),
                 ensureMaterializedForToday('BOH', staffName),
             ]);
+            // 2026-07-27 audit R9: ensureMaterializedForToday swallows its own
+            // failures into { created: 0, error } — this toast claimed success
+            // even when nothing materialized (offline, rules blocked, …).
+            const err = a?.error || b?.error;
+            if (err) {
+                toast(tx('Generate failed: ', 'Error al generar: ') + err, { kind: 'error' });
+                return;
+            }
             const n = (a.created || 0) + (b.created || 0);
             toast(n > 0
                 ? tx(`✓ Created ${n} task(s) for today`, `✓ ${n} tarea(s) creadas para hoy`)
@@ -597,9 +610,19 @@ function RuleEditor({ rule, date, isEs, tx, staffList, onArmMove, onClose }) {
                 <button disabled={busy || !task.trim()}
                     onClick={() => run(() => {
                         const who = sideStaff.find(s => s.name === assignee) || null;
+                        // 2026-07-27 audit R2: when the select still shows the
+                        // ORIGINAL assignee but that person dropped out of the
+                        // sideStaff pool (side change / rename / deactivated),
+                        // `who` resolved null and a plain text edit silently
+                        // un-assigned the task. Keep the existing assignTo in
+                        // that case — only the explicit 📥 '' option clears it.
+                        const keepExisting = !who && assignee
+                            && assignee === (rule.assignTo?.staffName || '');
                         return updateTaskPlanRule(rule.id, {
                             task: task.trim(),
-                            assignTo: who ? { staffId: who.id ?? null, staffName: who.name } : null,
+                            assignTo: who
+                                ? { staffId: who.id ?? null, staffName: who.name }
+                                : (keepExisting ? rule.assignTo : null),
                         });
                     }, tx('✓ Saved', '✓ Guardado'))}
                     className="w-full py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm disabled:opacity-40">

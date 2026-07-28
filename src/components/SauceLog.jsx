@@ -75,7 +75,11 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
     const [requestModal, setRequestModal] = useState(null); // { sauce } when picking
     const [editList, setEditList] = useState(false);        // admin edit panel toggle
 
-    const docRef = useMemo(() => doc(db, "ops", "sauceLog_" + storeLocation), [storeLocation]);
+    // 2026-07-27 (audit) — normalize both → webster, same idiom as
+    // Eighty6Dashboard's docKey. Admins viewing "Both" used to read/write a
+    // phantom ops/sauceLog_both doc that no store iPad ever sees.
+    const sauceLoc = storeLocation === 'both' ? 'webster' : storeLocation;
+    const docRef = useMemo(() => doc(db, "ops", "sauceLog_" + sauceLoc), [sauceLoc]);
 
     // Subscribe to the live doc.
     useEffect(() => {
@@ -115,7 +119,8 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
         if (doc_data.date && doc_data.date !== todayKey) {
             // Archive yesterday's snapshot.
             try {
-                await setDoc(doc(db, "sauceLogHistory_" + storeLocation, doc_data.date), {
+                // (sauceLoc, not storeLocation — keep archive keyed like the live doc.)
+                await setDoc(doc(db, "sauceLogHistory_" + sauceLoc, doc_data.date), {
                     requests: doc_data.requests || {},
                     sauces: doc_data.sauces || [],
                     date: doc_data.date,
@@ -123,9 +128,18 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
                     version: SAUCELOG_VERSION,
                 });
             } catch (e) { console.warn('SauceLog archive failed:', e); }
-            // Clear today's requests (keep sauce list).
+            // 2026-07-27 (audit, data loss) — rollover used to write
+            // requests:{} and WIPE still-pending requests, including
+            // urgency-'tomorrow' ones that are due TODAY. Keep every
+            // pending entry (drop only 'made'), and promote 'tomorrow'
+            // → 'today' since their due day has arrived.
+            const carried = {};
+            for (const [id, r] of Object.entries(doc_data.requests || {})) {
+                if (!r || r.status !== 'pending') continue;
+                carried[id] = r.urgency === 'tomorrow' ? { ...r, urgency: 'today' } : r;
+            }
             try {
-                await updateDoc(docRef, { requests: {}, date: todayKey, updatedAt: new Date().toISOString() });
+                await updateDoc(docRef, { requests: carried, date: todayKey, updatedAt: new Date().toISOString() });
             } catch (e) { console.warn('SauceLog rollover failed:', e); }
         }
     };
@@ -245,13 +259,15 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
         if (!cur) return;
         const now = new Date();
         try {
+            // 2026-07-27 (audit, clobber) — dotted-path field updates on the
+            // specific request instead of writing the whole object from local
+            // state (a stale read-modify-write could revert a concurrent
+            // batch-count bump). Safe as template dot-paths: sauce ids are
+            // slugified [a-z0-9-] + random suffix (see addSauce) — never dots.
             await updateDoc(docRef, {
-                [`requests.${sauceId}`]: {
-                    ...cur,
-                    status: 'made',
-                    completedBy: staffName,
-                    completedAt: now.toISOString(),
-                },
+                [`requests.${sauceId}.status`]: 'made',
+                [`requests.${sauceId}.completedBy`]: staffName,
+                [`requests.${sauceId}.completedAt`]: now.toISOString(),
                 updatedAt: now.toISOString(),
             });
         } catch (e) { console.error('Mark made failed:', e); }
@@ -262,14 +278,13 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
         const cur = doc_data.requests?.[sauceId];
         if (!cur) return;
         try {
+            // 2026-07-27 (audit, clobber) — same dotted-path form as markMade:
+            // flip status back and remove the completion stamps without
+            // rewriting the whole request from possibly-stale local state.
             await updateDoc(docRef, {
-                [`requests.${sauceId}`]: {
-                    batches: cur.batches,
-                    urgency: cur.urgency,
-                    requestedBy: cur.requestedBy,
-                    requestedAt: cur.requestedAt,
-                    status: 'pending',
-                },
+                [`requests.${sauceId}.status`]: 'pending',
+                [`requests.${sauceId}.completedBy`]: deleteField(),
+                [`requests.${sauceId}.completedAt`]: deleteField(),
                 updatedAt: new Date().toISOString(),
             });
         } catch (e) { console.error('Unmark made failed:', e); }

@@ -13,7 +13,11 @@ vi.mock('firebase/firestore', () => ({
     serverTimestamp: vi.fn(() => ({})), arrayUnion: vi.fn((...a) => a),
 }));
 
-import { isRuleDueOn, rulesDueOn, addDaysStr, dayDiff, weekdayOf, checklistTasksForDay } from './taskPlan';
+import {
+    isRuleDueOn, rulesDueOn, addDaysStr, dayDiff, weekdayOf,
+    checklistTasksForDay, moveOccurrence,
+} from './taskPlan';
+import { getDoc, updateDoc } from 'firebase/firestore';
 
 const rule = (recurrence, extra = {}) => ({
     id: 'r1', task: 'Clean table bases', side: 'FOH', active: true,
@@ -91,6 +95,29 @@ describe('isRuleDueOn', () => {
         ];
         expect(rulesDueOn(rules, '2026-07-29').map(r => r.id)).toEqual(['a', 'b', 'c']); // Wed
         expect(rulesDueOn(rules, '2026-07-30').map(r => r.id)).toEqual(['a']);
+    });
+});
+
+describe('moveOccurrence (2026-07-27 audit R1)', () => {
+    it('moving back to the original day un-skips it instead of stacking skips', async () => {
+        // A Tuesday-weekly rule already moved 8/11 (Tue) → 8/12 (Wed).
+        // Moving it BACK used to arrayUnion 8/11 into skipDates on top of
+        // the existing entry — skipDates wins over extraDates in
+        // isRuleDueOn, so the occurrence vanished from BOTH days.
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ skipDates: ['2026-08-11'], extraDates: ['2026-08-12'] }),
+        });
+        updateDoc.mockResolvedValue();
+        const r = rule({ type: 'weekly', weekdays: [2], anchor: '2026-07-01' });
+        await moveOccurrence(r, '2026-08-12', '2026-08-11');
+        const patch = updateDoc.mock.calls.at(-1)[1];
+        expect(patch.skipDates).toEqual(['2026-08-12']);   // landing day un-skipped
+        expect(patch.extraDates).toEqual(['2026-08-11']);  // left day no longer extra
+        const moved = rule(r.recurrence,
+            { skipDates: patch.skipDates, extraDates: patch.extraDates });
+        expect(isRuleDueOn(moved, '2026-08-11')).toBe(true);   // back on Tuesday
+        expect(isRuleDueOn(moved, '2026-08-12')).toBe(false);  // gone from Wednesday
     });
 });
 

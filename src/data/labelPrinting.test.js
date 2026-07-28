@@ -53,3 +53,67 @@ describe('brotherFreeTextScale', () => {
         expect(brotherFreeTextScale(undefined)).toBe(1.0);
     });
 });
+
+// ── Translated-name size (title2Scale, Andrew 2026-07-27) ─────────────
+// "the sticker item name in spanish needs a size format too … make sure
+// the sizes changes according to the change." Proves the editor slider
+// value actually reaches the printed label AND the on-screen preview.
+import { buildLabelPayload, buildLabelPreviewModel } from './labelPrinting';
+
+describe('title2Scale (translated-name size slider)', () => {
+    const base = {
+        itemName: 'Pork Bowl',
+        itemNameEs: 'Bowl de Cerdo',
+        prepDate: new Date('2026-07-27T12:00:00'),
+        shelfLifeDays: 5,
+        preppedBy: 'Andrew',
+        location: 'Webster',
+        language: 'en',
+        paperWidthMm: 58, // 34 cols
+    };
+    const payloadWith = (title2Scale) => buildLabelPayload({
+        ...base,
+        format: { showTitleTranslation: true, title2Scale },
+    });
+
+    it('slider value flows through to the print payload', () => {
+        expect(payloadWith(1).title2Scale).toBe(1);
+        expect(payloadWith(4).title2Scale).toBe(4);
+        // longest word "CERDO" = 5 chars; 34 cols fits scale 6 → cfg wins
+        expect(payloadWith(6).title2Scale).toBe(6);
+    });
+
+    it('width auto-fit still caps long words below the slider value', () => {
+        const p = buildLabelPayload({
+            ...base,
+            itemNameEs: 'Descongelacion Extraordinaria', // 15-char word
+            format: { showTitleTranslation: true, title2Scale: 6 },
+            paperWidthMm: 40, // 21 cols → max fit = floor(21/15) = 1
+        });
+        expect(p.title2Scale).toBe(1);
+    });
+
+    it('preview model renders the translated line at the chosen size', () => {
+        // buildLabelPreviewModel returns { cols, segs: [{text, w, h, …}] }.
+        const segAt = (scale) => buildLabelPreviewModel(payloadWith(scale))
+            .segs.find(s => String(s.text).includes('CERDO'));
+        const small = segAt(1);
+        const big = segAt(4);
+        expect(small).toBeTruthy();
+        expect(big).toBeTruthy();
+        expect(small.w).toBe(1);
+        expect(small.h).toBe(1);
+        expect(big.w).toBe(4);
+        expect(big.h).toBe(4);
+    });
+
+    it('no translated line when the toggle is off or names identical', () => {
+        const off = buildLabelPayload({ ...base, format: { showTitleTranslation: false, title2Scale: 4 } });
+        expect(off.titleLines2).toEqual([]);
+        const same = buildLabelPayload({
+            ...base, itemNameEs: 'Pork Bowl',
+            format: { showTitleTranslation: true, title2Scale: 4 },
+        });
+        expect(same.titleLines2).toEqual([]);
+    });
+});

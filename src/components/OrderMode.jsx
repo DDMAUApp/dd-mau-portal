@@ -741,7 +741,17 @@ function OrderItemRowInner({ itemId, item, isEs, currentVendor, onAction }) {
                         inputMode="decimal"
                         value={qtyDraft}
                         onChange={e => setQtyDraft(e.target.value)}
-                        onBlur={() => onAction(itemId, 'editQty', Number(qtyDraft))}
+                        onBlur={() => {
+                            // 2026-07-27 (audit O11) — mirror Operations'
+                            // InventoryCountInput clamp: digits-only integer
+                            // ≥ 0. Blur used to commit Number(qtyDraft) raw —
+                            // an emptied field wrote 0 and negatives wrote
+                            // through. Empty/invalid drafts now REVERT to the
+                            // live qty instead of committing.
+                            const raw = String(qtyDraft).trim();
+                            if (!/^\d+$/.test(raw)) { setQtyDraft(String(item.qty ?? '')); return; }
+                            onAction(itemId, 'editQty', parseInt(raw, 10));
+                        }}
                         onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                         className="w-14 text-center px-1 py-0.5 border border-dd-line rounded text-base font-bold"
                     />
