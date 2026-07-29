@@ -26,7 +26,7 @@ import { validate as validateExtra } from '../../data/payroll/extras.js';
 import { buildPayrollWorkbook, buildComparisonWorkbook } from '../../data/payroll/excelOut.js';
 import {
     loadPayrollMeta, setPayrollPassword, verifyPayrollPassword, nameAliasesFromMeta,
-    loadRoster, saveRoster, saveRun, loadLatestRunSummary,
+    loadRoster, saveRoster, saveRun, loadLatestRunSummary, loadRunHistory,
 } from '../../data/payroll/payrollStore.js';
 import { logError } from '../../data/logger.js';
 
@@ -282,6 +282,41 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     //      browser's "Leave site?" confirm while real work is in flight.
     const hasWorkRef = useRef(false);
     hasWorkRef.current = !!(parsed || pending.length || adjustments.length || generated);
+
+    // ── Run history + resume (Andrew 2026-07-28: "once i create a payroll
+    // doc can the payroll automatically save in a history tab … so i can
+    // exit out and comeback and make changes and recreate docs") ────────
+    // Every Generate already saves the run summary; it now also carries a
+    // `draft` (cash, FOH split, every pay-add line). Resume restores that
+    // draft; the owner re-imports the same Toast files and regenerates —
+    // PH1's same-period import keeps the restored pay adds intact.
+    const [runHistory, setRunHistory] = useState(null); // null = loading
+    useEffect(() => {
+        if (!unlocked) return;
+        let alive = true;
+        loadRunHistory().then((h) => { if (alive) setRunHistory(h); });
+        return () => { alive = false; };
+    }, [unlocked]);
+    const resumeRun = (run) => {
+        setPeriod(run.period || '');
+        const d = run.draft || {};
+        if (d.cash) setCash({ WG: d.cash.WG ?? '', MH: d.cash.MH ?? '' });
+        if (d.foh) setFoh({ WG: d.foh.WG ?? 50, MH: d.foh.MH ?? 50 });
+        const adjs = Array.isArray(d.adjustments) ? d.adjustments : [];
+        // Keep this session's id counter ahead of the restored ids so a new
+        // "+ Add" can never collide with a resumed line.
+        let maxN = adjIdRef.current;
+        for (const a of adjs) {
+            const m = /^adj_(\d+)$/.exec(a.id || '');
+            if (m) maxN = Math.max(maxN, Number(m[1]) + 1);
+        }
+        adjIdRef.current = maxN;
+        setAdjustments(adjs);
+        setAck(false);
+        toast(run.draft
+            ? `Resumed ${run.period} — re-import the same Toast files, then adjust and regenerate.`
+            : `${run.period} restored (older run — no saved inputs; re-enter tips/pay adds).`);
+    };
     useEffect(() => {
         const unlock = lockPullToRefresh();
         const prevOverscroll = document.body.style.overscrollBehaviorY;
@@ -614,9 +649,12 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
             // away the files the accountant needs.
             stage = 'save history';
             try {
-                await saveRun(period, live.results, staffName);
+                await saveRun(period, live.results, staffName, { cash, foh, adjustments });
                 setGenerated({ written, zipName, previous_period: prev ? prev.period : null });
                 toast('Payroll docs created.');
+                // Refresh the Past payrolls list so this run (with its draft)
+                // shows up immediately for a later Resume.
+                loadRunHistory().then(setRunHistory).catch(() => {});
             } catch (e) {
                 console.warn('[payroll] saveRun failed:', e?.message);
                 logError({ error: e, severity: 'warning', feature: 'payroll', meta: { stage, period } }).catch(() => {});
@@ -679,6 +717,7 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                             <input type="file" multiple accept=".csv,.xlsx" onChange={(e) => onPick(e.target.files)}
                                 className="text-xs" />
                         </label>
+                        {/* placeholder — history card renders below the import row */}
                         <button onClick={doImport} disabled={busy || !pending.length}
                             className="px-4 py-2 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50">
                             {busy ? '…' : 'Import'}
@@ -689,6 +728,34 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                             {pending.map((f) => (
                                 <span key={f.name} className="text-[11px] bg-dd-bg border border-dd-line rounded px-2 py-0.5">{f.name}</span>
                             ))}
+                        </div>
+                    )}
+                    {/* 📂 Past payrolls — every Generate auto-saves here (with the
+                        working inputs). Resume restores period + cash tips + FOH
+                        split + every pay add; re-import the same files to continue. */}
+                    {!!(runHistory && runHistory.length) && (
+                        <div className="mt-3 rounded-lg border border-dd-line bg-dd-bg/30 p-2">
+                            <div className="text-[12px] font-bold text-dd-text mb-1">📂 Past payrolls</div>
+                            <div className="space-y-1">
+                                {runHistory.slice(0, 6).map((r) => (
+                                    <div key={r.id} className="flex items-center gap-2 text-[12px] flex-wrap">
+                                        <span className="font-bold">{r.period}</span>
+                                        <span className="text-dd-text-2">
+                                            {r.ranBy || ''}{r.ranAt?.toDate ? ` · ${r.ranAt.toDate().toLocaleDateString()}` : ''}
+                                            {Array.isArray(r.draft?.adjustments) && r.draft.adjustments.length > 0
+                                                ? ` · ${r.draft.adjustments.length} pay add(s)` : ''}
+                                        </span>
+                                        <button onClick={() => resumeRun(r)}
+                                            className="ml-auto text-dd-green font-bold border border-dd-green/40 rounded px-2 py-0.5">
+                                            Resume
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="text-[10px] text-dd-text-2 mt-1.5">
+                                Every generate saves here automatically. Resume restores the period, cash tips, FOH split and all pay adds —
+                                then re-import the same Toast files, make your changes, and regenerate (it overwrites that period's history entry).
+                            </p>
                         </div>
                     )}
                     {imported && (

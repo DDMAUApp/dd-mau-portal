@@ -147,9 +147,16 @@ export function buildRunSummary(period, results, ranBy) {
     return { period, ranBy: ranBy || '', locations };
 }
 
-export async function saveRun(period, results, ranBy) {
+export async function saveRun(period, results, ranBy, draft) {
     const summary = buildRunSummary(period, results, ranBy);
     const payload = { ...summary, ranAt: serverTimestamp() };
+    // Working-inputs draft (Andrew 2026-07-28: "so i can exit out and come
+    // back and make changes and recreate docs") — cash tips, FOH split and
+    // every pay-add line ride along with the run so Resume can restore them.
+    // JSON round-trip strips undefined values Firestore would reject.
+    if (draft) {
+        try { payload.draft = JSON.parse(JSON.stringify(draft)); } catch { /* skip */ }
+    }
     // Idempotent per period: regenerating the same period OVERWRITES its run doc
     // instead of piling up duplicates (which would corrupt the next period's
     // auto-comparison and fill the recent-runs window). where('period','==') is a
@@ -161,6 +168,17 @@ export async function saveRun(period, results, ranBy) {
         console.warn('[payroll] saveRun dedupe check failed, appending:', e?.message);
     }
     return addDoc(collection(db, 'payroll_runs'), payload);
+}
+
+/** Recent run history for the panel's "Past payrolls" list (newest first). */
+export async function loadRunHistory(n = 12) {
+    try {
+        const snap = await getDocs(query(collection(db, 'payroll_runs'), orderBy('ranAt', 'desc'), limit(n)));
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    } catch (e) {
+        console.warn('[payroll] loadRunHistory failed:', e?.message);
+        return [];
+    }
 }
 
 /** Most recent saved run whose period differs from `excludePeriod` (for the comparison workbook). */
