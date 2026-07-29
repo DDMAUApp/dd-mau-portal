@@ -96,6 +96,22 @@ export async function forceRefresh() {
 const isCapacitorNative = () =>
     !!(typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.());
 
+// ── Gesture lock (2026-07-28, Andrew: "on the payroll page if i moved the
+// page down too much it reloaded and i lose all my work") ──────────────
+// Long-form work surfaces (payroll wizard) lock the pull gesture while
+// mounted so an over-scroll can never trigger the full reload. Counter,
+// not boolean, so nested/overlapping lockers compose.
+let _p2rLocks = 0;
+export function lockPullToRefresh() {
+    _p2rLocks += 1;
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        _p2rLocks = Math.max(0, _p2rLocks - 1);
+    };
+}
+
 // Stable no-op return for the disabled (capacitor-native) path. Shape
 // must match the live hook's return so PullToRefreshIndicator + any
 // other consumer keeps working without a separate code path.
@@ -153,6 +169,7 @@ export default function usePullToRefresh() {
 
         const onTouchStart = (e) => {
             if (refreshingRef.current) return;
+            if (_p2rLocks > 0) { tracking.current = false; return; }
             // Only enable from the top of the page. Mid-scroll through a
             // long view (Schedule, Operations) — leave it alone.
             if (window.scrollY > 0) { tracking.current = false; return; }

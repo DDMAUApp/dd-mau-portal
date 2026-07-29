@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import ModalPortal from '../ModalPortal';
 import { toast } from '../../toast';
 import { downloadFile } from '../../capacitor-bridge';
+import { lockPullToRefresh } from '../hooks/usePullToRefresh';
 import { isAdmin } from '../../data/staff';
 
 import { loadInputs, compute } from '../../data/payroll/compute.js';
@@ -268,6 +269,35 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     const [rev, setRev] = useState(0);                 // bump to re-render on ref mutation
     const [adjustments, setAdjustments] = useState([]); // pay-adds as discrete line items
     const bump = () => setRev((r) => r + 1);
+
+    // ── Work-loss protection (2026-07-28, Andrew: "if i moved the page
+    // down too much it reloaded the page and i lose all my work") ──────
+    // The whole wizard lives in React state — any reload wipes it. Three
+    // layers while the panel is mounted:
+    //   1. lockPullToRefresh() — the app's own pull gesture is inert.
+    //   2. body overscroll-behavior contain — Chrome/Android's built-in
+    //      pull-to-refresh can't fire either.
+    //   3. beforeunload guard — anything else that would navigate/reload
+    //      (deploy auto-refresh broadcast, ⌘R, closing the tab) pops the
+    //      browser's "Leave site?" confirm while real work is in flight.
+    const hasWorkRef = useRef(false);
+    hasWorkRef.current = !!(parsed || pending.length || adjustments.length || generated);
+    useEffect(() => {
+        const unlock = lockPullToRefresh();
+        const prevOverscroll = document.body.style.overscrollBehaviorY;
+        document.body.style.overscrollBehaviorY = 'contain';
+        const guard = (e) => {
+            if (!hasWorkRef.current) return;
+            e.preventDefault();
+            e.returnValue = '';
+        };
+        window.addEventListener('beforeunload', guard);
+        return () => {
+            unlock();
+            document.body.style.overscrollBehaviorY = prevOverscroll;
+            window.removeEventListener('beforeunload', guard);
+        };
+    }, []);
 
     // STALE-ACK GUARD: the Review "I checked these numbers" acknowledgment unlocks
     // generation past WARN-level checks. If ANY input that feeds the computed
