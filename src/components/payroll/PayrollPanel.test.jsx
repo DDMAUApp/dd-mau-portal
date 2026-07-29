@@ -16,6 +16,7 @@ vi.mock('../../data/payroll/payrollStore.js', () => ({
     saveRoster: vi.fn().mockResolvedValue(undefined),
     saveRun: vi.fn().mockResolvedValue(undefined),
     loadLatestRunSummary: vi.fn().mockResolvedValue(null),
+    loadRunHistory: vi.fn().mockResolvedValue([]),
 }));
 // capacitor-bridge pulls @capacitor/core; stub it so the import graph is clean in jsdom.
 vi.mock('../../capacitor-bridge', () => ({
