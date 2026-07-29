@@ -183,6 +183,42 @@ function AddPersonRow({ onAdd }) {
     );
 }
 
+// Bulk holiday pay (Andrew 2026-07-28: "if i have a holiday pay i want to
+// pay staff … is there a bulk extra pay add?") — one tap seeds a 'holiday'
+// Pay Add line for every hourly person at the location who doesn't already
+// have one. The lines are ORDINARY adjustments after that: individually
+// editable/deletable, validated by the same validateExtra path, and PH1's
+// re-import keeps them. Blank rate = each person's own base rate.
+function BulkHolidayAdd({ people, existingHolidayKeys, onAdd }) {
+    const [hours, setHours] = useState('8');
+    const [rate, setRate] = useState('');
+    const missing = people.filter((p) => !existingHolidayKeys.has(p.key));
+    if (!people.length) return null;
+    return (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-dd-green/40 bg-dd-sage-50/40 px-2 py-1.5 mb-2 text-[12px]">
+            <span className="font-bold text-dd-green">🎉 Bulk holiday:</span>
+            <span className="inline-flex items-center gap-1">
+                <input type="number" step="0.25" min="0" value={hours} onChange={(e) => setHours(e.target.value)}
+                    className="border border-dd-line rounded px-1 py-1 w-16 text-right" />
+                <span className="text-dd-text-2 text-[11px]">hrs</span>
+            </span>
+            <span className="inline-flex items-center gap-0.5">
+                <span className="text-dd-text-2 text-[11px]">@ $</span>
+                <input type="number" step="0.01" min="0" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="base"
+                    className="border border-dd-line rounded px-1 py-1 w-20 text-right" />
+                <span className="text-dd-text-2 text-[11px]">/hr</span>
+            </span>
+            <button onClick={() => onAdd(missing, hours, rate)} disabled={!missing.length || !(Number(hours) > 0)}
+                className="text-dd-green font-bold border border-dd-green/40 rounded px-2 py-0.5 disabled:opacity-40">
+                {missing.length ? `+ Add for all ${missing.length}` : '✓ Everyone added'}
+            </button>
+            <span className="text-[10px] text-dd-text-2 basis-full">
+                One editable holiday line per hourly person — delete anyone who doesn't qualify. Blank rate = their base rate.
+            </span>
+        </div>
+    );
+}
+
 // ───────────────────────────── main wizard ─────────────────────────────
 export default function PayrollPanel({ language, staffName, staffList, onClose }) {
     const owner = isAdmin(staffName, staffList);
@@ -441,6 +477,19 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     };
     const editAdjustment = (id, patch) => {
         setAdjustments((a) => a.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+        setAck(false);
+    };
+    // Bulk holiday (2026-07-28): append one holiday adjustment per person.
+    // Same row shape as addAdjustment so every downstream path (edit,
+    // delete, validateExtra, re-import keep) treats them identically.
+    const bulkHolidayAdd = (loc) => (peopleToAdd, hours, rate) => {
+        setAdjustments((a) => [...a,
+            ...peopleToAdd.map((p) => ({
+                id: `adj_${adjIdRef.current++}`,
+                loc, key: p.key, name: `${p.first} ${p.last}`,
+                type: 'holiday', amount: '', hours: String(hours), perHour: '',
+                rate: rate === '' ? '' : String(rate), note: 'Holiday',
+            }))]);
         setAck(false);
     };
     const removeAdjustment = (id) => {
@@ -736,6 +785,9 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                     <div className="font-bold text-dd-green">{LOC_NAMES[loc]}</div>
                                     <button onClick={() => addAdjustment(loc)} className="text-dd-green text-[12px] font-bold border border-dd-green/40 rounded px-2 py-0.5">+ Add pay adjustment</button>
                                 </div>
+                                <BulkHolidayAdd people={people}
+                                    existingHolidayKeys={new Set(locAdjs.filter((x) => x.type === 'holiday').map((x) => x.key))}
+                                    onAdd={bulkHolidayAdd(loc)} />
                                 {!locAdjs.length && <div className="text-[11px] text-dd-text-2 mb-1">No pay adjustments for this location.</div>}
                                 <div className="space-y-2">
                                     {locAdjs.map((adj) => {
