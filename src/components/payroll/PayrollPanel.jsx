@@ -189,14 +189,42 @@ function AddPersonRow({ onAdd }) {
 // have one. The lines are ORDINARY adjustments after that: individually
 // editable/deletable, validated by the same validateExtra path, and PH1's
 // re-import keeps them. Blank rate = each person's own base rate.
-function BulkHolidayAdd({ people, existingHolidayKeys, onAdd }) {
+function BulkHolidayAdd({ people, existingHolidayKeys, workedHours, onAdd }) {
     const [hours, setHours] = useState('8');
     const [rate, setRate] = useState('');
-    const missing = people.filter((p) => !existingHolidayKeys.has(p.key));
+    // Eligibility rules (Andrew 2026-07-28: "lets give it rules we can
+    // click, like how many hours they work. only to people on the current
+    // payroll with hours worked") — the base rule is ALWAYS "worked this
+    // period" (hours > 0 in the imported Toast files); the chips add a
+    // minimum-hours threshold on top.
+    const [minWorked, setMinWorked] = useState(0);
+    const imported = workedHours.size > 0;
+    const eligible = people.filter((p) => {
+        const h = workedHours.get(p.key) || 0;
+        return h > 0 && h >= minWorked;
+    });
+    const missing = eligible.filter((p) => !existingHolidayKeys.has(p.key));
     if (!people.length) return null;
+    if (!imported) {
+        return (
+            <div className="rounded-lg border border-dashed border-dd-line bg-dd-bg/40 px-2 py-1.5 mb-2 text-[11px] text-dd-text-2">
+                🎉 Bulk holiday unlocks after the Toast import — it only pays people with hours this period.
+            </div>
+        );
+    }
     return (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-dd-green/40 bg-dd-sage-50/40 px-2 py-1.5 mb-2 text-[12px]">
             <span className="font-bold text-dd-green">🎉 Bulk holiday:</span>
+            <span className="inline-flex items-center gap-1">
+                {[[0, 'Worked any'], [10, '10+ hrs'], [20, '20+ hrs'], [30, '30+ hrs']].map(([min, label]) => (
+                    <button key={min} onClick={() => setMinWorked(min)}
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-bold border ${minWorked === min
+                            ? 'bg-dd-green text-white border-dd-green'
+                            : 'bg-white text-dd-text-2 border-dd-line'}`}>
+                        {label}
+                    </button>
+                ))}
+            </span>
             <span className="inline-flex items-center gap-1">
                 <input type="number" step="0.25" min="0" value={hours} onChange={(e) => setHours(e.target.value)}
                     className="border border-dd-line rounded px-1 py-1 w-16 text-right" />
@@ -213,7 +241,8 @@ function BulkHolidayAdd({ people, existingHolidayKeys, onAdd }) {
                 {missing.length ? `+ Add for all ${missing.length}` : '✓ Everyone added'}
             </button>
             <span className="text-[10px] text-dd-text-2 basis-full">
-                One editable holiday line per hourly person — delete anyone who doesn't qualify. Blank rate = their base rate.
+                {eligible.length} of {people.length} on the roster worked this period{minWorked > 0 ? ` and hit ${minWorked}+ hrs` : ''}.
+                One editable holiday line each — delete anyone who doesn't qualify. Blank rate = their base rate.
             </span>
         </div>
     );
@@ -787,6 +816,16 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                 </div>
                                 <BulkHolidayAdd people={people}
                                     existingHolidayKeys={new Set(locAdjs.filter((x) => x.type === 'holiday').map((x) => x.key))}
+                                    workedHours={(() => {
+                                        // Worked hours this period from the imported Toast
+                                        // files (reg + OT), keyed like the roster.
+                                        const m = new Map();
+                                        const emps = (live && live.inputs && live.inputs.exports.employees && live.inputs.exports.employees[loc]) || {};
+                                        for (const [k, e] of Object.entries(emps)) {
+                                            m.set(k, (Number(e.reg_hours) || 0) + (Number(e.ot_hours) || 0));
+                                        }
+                                        return m;
+                                    })()}
                                     onAdd={bulkHolidayAdd(loc)} />
                                 {!locAdjs.length && <div className="text-[11px] text-dd-text-2 mb-1">No pay adjustments for this location.</div>}
                                 <div className="space-y-2">
