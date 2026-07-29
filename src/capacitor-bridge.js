@@ -611,13 +611,20 @@ export async function downloadFile({ data, fileName, mimeType = 'application/oct
         });
         try {
             const { Share } = await import('@capacitor/share');
-            await Share.share({
+            // 2026-07-28 (Andrew: "the run payroll doc is frozen") — do NOT
+            // await the share sheet. Share.share() resolves only when the
+            // sheet is dismissed, and on the iOS-app-on-Mac the sheet can
+            // fail to present entirely → the promise never settles and the
+            // caller (payroll Generate) hangs on its spinner forever. The
+            // file is already written to Documents above; the sheet is a
+            // convenience. Fire it and move on.
+            Share.share({
                 title: fileName,
                 url: res.uri,
                 dialogTitle: 'Save or share',
-            });
+            }).catch(() => { /* refused/unavailable — file is still saved */ });
         } catch {
-            // Share refused or unavailable — file is still saved.
+            // Share plugin unavailable — file is still saved.
         }
         return { ok: true, path: res.uri };
     } catch (e) {
