@@ -40,12 +40,15 @@ const DEEP_LINKS = [
     { id: 'insurance',   en: 'Insurance',      es: 'Seguro' },
 ];
 
-export default function StaffTodosAdmin({ language = 'en', staffName, staffList = [] }) {
+export default function StaffTodosAdmin({ language = 'en', staffName, staffList = [], startExpanded = false }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
     const [todos, setTodos] = useState([]);
-    const [expanded, setExpanded] = useState(false);
+    // 2026-07-29 — admin hub reorg: AdminPanel now opens each tool full-screen
+    // from a tile grid; startExpanded lets the tool view mount pre-expanded
+    // (default false keeps the old collapsed-header behavior everywhere else).
+    const [expanded, setExpanded] = useState(startExpanded);
     const [editing, setEditing] = useState(null); // null | 'new' | todoObj
     const [busy, setBusy] = useState(false);
 

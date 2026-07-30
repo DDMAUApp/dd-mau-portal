@@ -32,10 +32,13 @@ function fmtValue(v) {
     return String(v);
 }
 
-export default function DeletedStaffSection({ language, onRestore }) {
+export default function DeletedStaffSection({ language, onRestore, startExpanded = false }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
-    const [expanded, setExpanded] = useState(false);
+    // 2026-07-29 — admin hub reorg: AdminPanel now opens each tool full-screen
+    // from a tile grid; startExpanded lets the tool view mount pre-expanded
+    // (default false keeps the old collapsed-header behavior everywhere else).
+    const [expanded, setExpanded] = useState(startExpanded);
     const [rows, setRows] = useState(null); // null = loading
     const [detailId, setDetailId] = useState(null);
     const [confirmId, setConfirmId] = useState(null);

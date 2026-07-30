@@ -69,10 +69,13 @@ export function parsePastedRows(text, staffList) {
     return { matched, unmatched };
 }
 
-export default function HealthBulkEditor({ staffList = [], language = 'en', byName = '' }) {
+export default function HealthBulkEditor({ staffList = [], language = 'en', byName = '', startExpanded = false }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
-    const [open, setOpen] = useState(false);
+    // 2026-07-29 — admin hub reorg: AdminPanel now opens each tool full-screen
+    // from a tile grid; startExpanded lets the tool view mount pre-expanded
+    // (default false keeps the old collapsed-header behavior everywhere else).
+    const [open, setOpen] = useState(startExpanded);
     const [records, setRecords] = useState({});
     const [edits, setEdits] = useState({});      // staffId → {hiredDate?, shot1Date?, shot2Date?, exempt?}
     const [pasteText, setPasteText] = useState('');

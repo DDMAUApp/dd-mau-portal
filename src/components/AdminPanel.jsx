@@ -31,6 +31,11 @@ import ModalPortal from './ModalPortal';
 import OffsiteClockSection from './OffsiteClockSection';
 import StaffTodosAdmin from './StaffTodosAdmin';
 import TaskPlanner from './TaskPlanner';
+// 2026-07-29 — Andrew: "lets make each tab more of a button so we can fit
+// 3-4 buttons per row. organize the buttons into categories so make
+// navigating easier." Presentational tile-grid hub + the sticky
+// [← back | tool name] header used when a single tool is open.
+import AdminHub, { AdminToolHeader } from './AdminHub';
 // 2026-05-27 — Andrew: "i also want to add another audit to the admin
 // page. i want to know which staff has used the app?" Self-contained
 // read-only card; reads staffList in-place, no new Firestore writes.
@@ -102,8 +107,11 @@ const SECTION_TINTS = {
     orange: 'tint-orange', amber: 'tint-amber', indigo: 'tint-indigo',
     cyan: 'tint-cyan',
 };
-function CollapsibleAdminSection({ emoji, title, subtitle, tone = 'gray', children }) {
-    const [open, setOpen] = useState(false);
+function CollapsibleAdminSection({ emoji, title, subtitle, tone = 'gray', defaultOpen = false, children }) {
+    // 2026-07-29 — admin hub reorg: sections now mount only when their hub
+    // tile is opened, so the tool view passes defaultOpen to skip the
+    // second "tap the header" step. Default false preserves old behavior.
+    const [open, setOpen] = useState(defaultOpen);
     return (
         <div className="mb-3">
             <button onClick={() => setOpen(v => !v)} aria-expanded={open}
@@ -2387,6 +2395,124 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
             const roleOptions = ["FOH", "BOH", "Shift Lead", "Kitchen Manager", "Asst Kitchen Manager", "Manager", "Owner", "Prep", "Grill", "Fryer", "Fried Rice", "Dish", "Bao/Tacos/Banh Mi", "Spring Rolls/Prep", "Pho Station"];
 
+            // ── ADMIN HUB (2026-07-29) ─────────────────────────────────
+            // Andrew: "lets make each tab more of a button so we can fit
+            // 3-4 buttons per row. organize the buttons into categories so
+            // make navigating easier." activeTool = null shows the tile
+            // hub; a tool id shows ONLY that section full-width with a
+            // sticky back header. The section JSX below is untouched —
+            // each block just renders conditionally (show(id)), so every
+            // tool keeps exactly the props + lazy mount-on-open behavior
+            // it had in the long-stack layout.
+            const [activeTool, setActiveTool] = useState(null);
+            const show = (id) => activeTool === id;
+            const openTool = (id) => {
+                setActiveTool(id);
+                // Pre-expand tools whose collapse state lives in THIS
+                // component, so the opened view shows content instead of
+                // a second collapsed header. (Child components with their
+                // own internal state get `startExpanded` instead.)
+                const expanders = {
+                    staff: setStaffExpanded,
+                    maintenance: setMaintenanceExpanded,
+                    checklisthistory: setChecklistHistoryExpanded,
+                    inventoryhistory: setInventoryHistoryExpanded,
+                    recipeaudit: setRecipeAuditExpanded,
+                    inventoryaudit: setInventoryAuditExpanded,
+                    orderlog: setOrderLogExpanded,
+                    chathistory: setChatHistoryExpanded,
+                    payroll: setPayrollExpanded,
+                };
+                expanders[id]?.(true);
+                try { window.scrollTo({ top: 0 }); } catch {}
+            };
+            const closeTool = () => {
+                setActiveTool(null);
+                // Re-collapse the in-file expand flags openTool turned on.
+                // Matters for recipe/inventory/order audits + chat history:
+                // their Firestore subscriptions are effects in THIS
+                // component gated on these flags, so leaving them true
+                // would keep the reads live while the hub is showing.
+                // (payrollExpanded reset also re-locks the payroll gate.)
+                [
+                    setChecklistHistoryExpanded, setInventoryHistoryExpanded,
+                    setRecipeAuditExpanded, setInventoryAuditExpanded,
+                    setOrderLogExpanded, setChatHistoryExpanded, setPayrollExpanded,
+                ].forEach(set => set(false));
+                try { window.scrollTo({ top: 0 }); } catch {}
+            };
+            const hubTx = (en, es) => (language === 'es' ? es : en);
+            // Badges reuse counts this component ALREADY holds in state —
+            // no new subscriptions were added just for tile badges.
+            const maintOpenCount = maintenanceRequests.filter(r => r.status === 'open').length;
+            // Tile identity (emoji + tint mirror each section's own header
+            // where one exists) + 1-2 word labels sized for a 3-across grid.
+            const TOOL_META = {
+                staff:            { emoji: '👥', tint: 'tint-green',  label: hubTx('Staff list', 'Personal') },
+                usage:            { emoji: '📊', tint: 'tint-teal',   label: hubTx('App usage', 'Uso app') },
+                offsite:          { emoji: '🚐', tint: 'tint-purple', label: hubTx('Off-site', 'Fuera') },
+                deleted:          { emoji: '🗂️', tint: 'tint-slate',  label: hubTx('Deleted', 'Eliminados') },
+                taskplanner:      { emoji: '🗓', tint: 'tint-green',  label: hubTx('Planner', 'Planificador') },
+                todos:            { emoji: '✅', tint: 'tint-amber',  label: hubTx('Staff todos', 'Pendientes') },
+                timecards:        { emoji: '⏱', tint: 'tint-amber',  label: hubTx('Timecards', 'Horarios') },
+                maintenance:      { emoji: '🔧', tint: 'tint-orange', label: hubTx('Maintenance', 'Mantenim.'), badge: maintOpenCount },
+                payroll:          { emoji: '💵', tint: 'tint-green',  label: hubTx('Payroll', 'Nómina') },
+                laborhistory:     { emoji: '📈', tint: 'tint-indigo', label: hubTx('Labor %', 'Labor %') },
+                labelformat:      { emoji: '🖨', tint: 'tint-purple', label: hubTx('Label format', 'Formato') },
+                printers:         { emoji: '🏷', tint: 'tint-purple', label: hubTx('Printers', 'Impresoras') },
+                menueditor:       { emoji: '🍜', tint: 'tint-green',  label: hubTx('Menu editor', 'Editor menú') },
+                menuscreens:      { emoji: '📺', tint: 'tint-sky',    label: hubTx('TV screens', 'Pantallas') },
+                push:             { emoji: '🔔', tint: 'tint-blue',   label: hubTx('Push', 'Push') },
+                chathistory:      { emoji: '💬', tint: 'tint-cyan',   label: hubTx('Chat log', 'Chats') },
+                onboarding:       { emoji: '🪪', tint: 'tint-rose',   label: hubTx('Onboarding', 'Onboarding'), badge: onboardingPendingApps },
+                health:           { emoji: '🏥', tint: 'tint-red',    label: hubTx('Health', 'Salud') },
+                attendance:       { emoji: '🕐', tint: 'tint-cyan',   label: hubTx('Attendance', 'Asistencia') },
+                scheduleaudit:    { emoji: '📜', tint: 'tint-indigo', label: hubTx('Schedule log', 'Log horario') },
+                checklisthistory: { emoji: '📋', tint: 'tint-green',  label: hubTx('Checklists', 'Listas') },
+                inventoryhistory: { emoji: '📦', tint: 'tint-amber',  label: hubTx('Inventory', 'Inventario') },
+                inventoryaudit:   { emoji: '🧮', tint: 'tint-teal',   label: hubTx('Count audit', 'Conteos') },
+                orderlog:         { emoji: '📞', tint: 'tint-sky',    label: hubTx('Order log', 'Pedidos') },
+                recipeaudit:      { emoji: '🔍', tint: 'tint-purple', label: hubTx('Recipe views', 'Recetas') },
+                inventorylists:   { emoji: '🗒️', tint: 'tint-orange', label: hubTx('Inv. lists', 'Listas inv.') },
+                danger:           { emoji: '⚠️', tint: 'tint-red',    label: hubTx('Danger zone', 'Zona peligrosa') },
+            };
+            // Category taxonomy. Three tiles don't open an in-page tool:
+            // onboarding + menuscreens navigate to their own tabs (same
+            // onNavigate calls the old launcher cards made), inventorylists
+            // opens its existing modal. Gated tiles (payroll, onboarding)
+            // keep the exact same gates their sections had.
+            const hubGroups = [
+                { id: 'g-staff',    emoji: '👥', title: hubTx('Staff', 'Personal'),
+                    tools: ['staff', 'usage', 'offsite', 'deleted'] },
+                { id: 'g-tasks',    emoji: '📋', title: hubTx('Tasks', 'Tareas'),
+                    tools: ['taskplanner', 'todos', 'timecards', 'maintenance'] },
+                { id: 'g-money',    emoji: '💰', title: hubTx('Money', 'Dinero'),
+                    tools: [...(isAdmin(staffName, staffList) ? ['payroll'] : []), 'laborhistory'] },
+                { id: 'g-stickers', emoji: '🏷', title: hubTx('Stickers & Menu', 'Etiquetas y Menú'),
+                    tools: ['labelformat', 'printers', 'menueditor', 'menuscreens'] },
+                { id: 'g-comms',    emoji: '📣', title: hubTx('Communication', 'Comunicación'),
+                    tools: ['push', 'chathistory'] },
+                { id: 'g-hiring',   emoji: '🧾', title: hubTx('Hiring & Compliance', 'Contratación y Cumplimiento'),
+                    tools: [...(hasOnboardingAccess && onNavigate ? ['onboarding'] : []), 'health'] },
+                // Logs & History is the one category added beyond Andrew's
+                // list — the admin page carries 7 read-only audit/history
+                // views that genuinely fit none of the other buckets.
+                { id: 'g-logs',     emoji: '🔎', title: hubTx('Logs & History', 'Registros e Historial'),
+                    tools: ['attendance', 'scheduleaudit', 'checklisthistory', 'inventoryhistory', 'inventoryaudit', 'orderlog', 'recipeaudit'] },
+                { id: 'g-system',   emoji: '⚙️', title: hubTx('System', 'Sistema'),
+                    tools: ['inventorylists', 'danger'] },
+            ].map(g => ({
+                ...g,
+                tools: g.tools.map(id => ({
+                    id,
+                    ...TOOL_META[id],
+                    onOpen: id === 'onboarding' ? () => onNavigate('onboarding')
+                        : id === 'menuscreens' ? () => onNavigate?.('menuscreens')
+                        : id === 'inventorylists' ? () => setShowInventoryLists(true)
+                        : () => openTool(id),
+                })),
+            }));
+
             return (
                 <div className="p-4 pb-bottom-nav">
                     <PageHeader
@@ -2404,8 +2530,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         scrolled into view), without having to scroll
                         past Onboarding / Maintenance / Todos first.
                         Same state as the inner staff-list search; typing
-                        in either keeps both in sync. */}
-                    <div className="relative mb-4">
+                        in either keeps both in sync.
+                        2026-07-29 hub reorg: shown on the hub and inside the
+                        Staff tool only — typing on the hub opens the Staff
+                        tool (openTool also pre-expands the list). */}
+                    {(!activeTool || activeTool === 'staff') && (<div className="relative mb-4">
                         <input
                             type="search"
                             inputMode="search"
@@ -2416,7 +2545,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 if (e.target.value.trim()) {
                                     // Open the staff list so results show
                                     // immediately, and bring it onscreen.
-                                    setStaffExpanded(true);
+                                    // (openTool switches the hub to the Staff
+                                    // tool AND sets staffExpanded — the old
+                                    // auto-expand deep-link, hub edition.)
+                                    openTool('staff');
                                     requestAnimationFrame(() => {
                                         try {
                                             staffSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2445,12 +2577,26 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 {language === "es" ? '— ver abajo ↓' : '— see below ↓'}
                             </p>
                         )}
-                    </div>
+                    </div>)}
 
                     {savedMsg && (
                         <div className="mb-3 p-2 bg-green-100 border border-green-300 rounded-lg text-center text-green-700 font-bold text-sm">
                             ✅ {t("saved", language)}
                         </div>
+                    )}
+
+                    {/* ── HUB / TOOL HEADER (2026-07-29) ── the tile grid IS
+                        the page when no tool is open; otherwise a sticky
+                        back-header sits above the single opened section. */}
+                    {!activeTool && <AdminHub groups={hubGroups} />}
+                    {activeTool && TOOL_META[activeTool] && (
+                        <AdminToolHeader
+                            emoji={TOOL_META[activeTool].emoji}
+                            tint={TOOL_META[activeTool].tint}
+                            label={TOOL_META[activeTool].label}
+                            backLabel={hubTx('Back', 'Atrás')}
+                            onBack={closeTool}
+                        />
                     )}
 
                     {/* ── STAFF USAGE AUDIT ──
@@ -2462,41 +2608,42 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         (fcmTokens, pwaInstalled, fcmTokens[].lastSeen)
                         — no new Firestore writes were added to surface
                         this audit. Collapsed by default. */}
-                    <StaffUsageAudit
+                    {show('usage') && <StaffUsageAudit
                         staffList={staffList}
                         language={language}
                         currentManagerName={staffName}
                         currentManagerId={(staffList || []).find(s => s.name === staffName)?.id ?? null}
                         onSetPhone={setPhoneForStaff}
-                    />
+                        startExpanded
+                    />}
 
                     {/* ── TIMECARD FIX REQUESTS ── Andrew 2026-07-24: staff
                         dispute a day's Toast timecard from the My Hours tab
                         ("clocked in late, breaks wrong, clock out wrong" +
                         what it should be); every request lands here. Admin
                         corrects the punch in Toast, then marks it Fixed. */}
-                    <TimecardDisputesPanel language={language} staffName={staffName} />
+                    {show('timecards') && <TimecardDisputesPanel language={language} staffName={staffName} startExpanded />}
 
                     {/* ── HEALTH RECORDS BULK IMPORT & EDIT ── Andrew 2026-07-12:
                         spreadsheet-style grid + paste-import for hire dates and
                         Hep A shots across the whole roster. Writes the same
                         /health_records docs the Health Department tab uses. */}
-                    <HealthBulkEditor staffList={staffList} language={language} byName={staffName} />
+                    {show('health') && <HealthBulkEditor staffList={staffList} language={language} byName={staffName} startExpanded />}
 
                     {/* ── SCHEDULE AUDIT LOG ── Andrew 2026-06-25: "every shift
                         move, every time-off request, everything in the schedule
                         page so we can see what's happening." Reads the
                         append-only /audit collection (schedule features). */}
-                    <div>
-                        <ScheduleAuditLog language={language} />
-                    </div>
+                    {show('scheduleaudit') && (<div>
+                        <ScheduleAuditLog language={language} startExpanded />
+                    </div>)}
 
                     {/* ── ATTENDANCE LOG ── Andrew 2026-06-25: who's clocked in —
                         on-time/late/no-show + shifts worked per staff (4 weeks),
                         click for a month/week drill-down. Reads /attendance. */}
-                    <div>
-                        <AttendanceLog language={language} staffList={staffList} />
-                    </div>
+                    {show('attendance') && (<div>
+                        <AttendanceLog language={language} staffList={staffList} startExpanded />
+                    </div>)}
 
                     {/* ── ONBOARDING LAUNCHER ──
                         Onboarding lives behind the admin page (not in the main
@@ -2504,34 +2651,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         the card switches the active tab to the full-screen
                         Onboarding view. Badge count surfaces new applications
                         + active hires so admins notice attention-worthy state. */}
-                    {hasOnboardingAccess && onNavigate && (
-                        <button
-                            onClick={() => onNavigate('onboarding')}
-                            className="glass-section-head tint-rose group mb-3">
-                            <div className="flex items-center gap-3 min-w-0">
-                                <span className="glass-icon-tile" aria-hidden="true">🪪</span>
-                                <div className="text-left min-w-0">
-                                    <h3 className="font-bold text-[15px] text-dd-text flex items-center gap-2 flex-wrap">
-                                        {language === "es" ? "Onboarding" : "Onboarding"}
-                                        {onboardingPendingApps > 0 && (
-                                            <span className="text-[10px] font-bold bg-amber-200 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded-full">
-                                                {onboardingPendingApps} {language === "es" ? "nueva" : "new"}{onboardingPendingApps !== 1 ? 's' : ''}
-                                            </span>
-                                        )}
-                                    </h3>
-                                    <p className="text-[11px] text-dd-text-2 truncate">
-                                        {language === "es"
-                                            ? `${onboardingActiveHires} contrataciones activas · papeleo W-4/I-9/DL · PII solo dueños`
-                                            : `${onboardingActiveHires} active hires · W-4/I-9/DL paperwork · owners-only PII`}
-                                    </p>
-                                </div>
-                            </div>
-                            <span className="text-rose-600 text-2xl flex-shrink-0 group-hover:translate-x-0.5 transition-transform">→</span>
-                        </button>
-                    )}
+                    {/* 2026-07-29 hub reorg: the old full-width Onboarding
+                        launcher card was replaced by the 🪪 tile in the
+                        "Hiring & Compliance" hub group — same gate
+                        (hasOnboardingAccess && onNavigate), same
+                        onNavigate('onboarding') tap, same pending-apps
+                        badge (onboardingPendingApps). onboardingActiveHires
+                        still feeds the count subscription for the badge
+                        effect above. */}
 
                     {/* ── MAINTENANCE REQUESTS ── */}
-                    <div className="mb-3">
+                    {show('maintenance') && (<div className="mb-3">
                         <button onClick={() => setMaintenanceExpanded(!maintenanceExpanded)}
                             aria-expanded={maintenanceExpanded}
                             className="glass-section-head tint-orange">
@@ -2656,7 +2786,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 })}</div>}
                             </div>
                         )}
-                    </div>
+                    </div>)}
 
                     {/* ── OFF-SITE CLOCK-IN ──
                         Rare-occurrence labor tracking for staff working
@@ -2665,12 +2795,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         staff app prompts the staff member to clock in /
                         out on next login. See src/data/offsiteClock.js
                         for the state machine + schema. */}
-                    <OffsiteClockSection
+                    {show('offsite') && <OffsiteClockSection
                         language={language}
                         staffName={staffName}
                         staffList={staffList}
                         viewer={(staffList || []).find(s => s.name === staffName)}
-                    />
+                        startExpanded
+                    />}
 
                     {/* ── STAFF TODOS ──
                         Admin section for managing the custom todos that
@@ -2679,11 +2810,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         are computed client-side from each staff record and
                         not managed here — they disappear when the field
                         is filled. */}
-                    <StaffTodosAdmin
+                    {show('todos') && <StaffTodosAdmin
                         language={language}
                         staffName={staffName}
                         staffList={staffList}
-                    />
+                        startExpanded
+                    />}
 
                     {/* ── TASK PLANNER (Andrew 2026-07-27) ──
                         Calendar for planning repeating manager tasks
@@ -2692,15 +2824,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         /assigned_tasks docs, so the Tasks page and the
                         check-off flow are unchanged; unchecked non-daily
                         tasks carry over until done. */}
-                    <TaskPlanner
+                    {show('taskplanner') && <TaskPlanner
                         language={language}
                         staffName={staffName}
                         staffList={staffList}
                         storeLocation={storeLocation}
-                    />
+                        startExpanded
+                    />}
 
                     {/* ── STAFF LIST (collapsible) ── */}
-                    <div className="mb-3" ref={staffSectionRef}>
+                    {show('staff') && (<div className="mb-3" ref={staffSectionRef}>
                         <button onClick={() => setStaffExpanded(!staffExpanded)}
                             aria-expanded={staffExpanded}
                             className="glass-section-head tint-green">
@@ -3413,10 +3546,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 )}
                             </div>
                         )}
-                    </div>
+                    </div>)}
 
                     {/* ── DELETED STAFF (collapsible) ── */}
-                    <DeletedStaffSection language={language} onRestore={handleRestoreArchived} />
+                    {show('deleted') && <DeletedStaffSection language={language} onRestore={handleRestoreArchived} startExpanded />}
 
                     {/* Checklist History Section — collapsed by default. The
                         rendered list is hundreds of rows long; mounting it on
@@ -3424,7 +3557,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         below the fold. Now: header bar opens / closes; the
                         component itself is unmounted while collapsed so its
                         Firestore subscription doesn't run when nobody's looking. */}
-                    <div className="mb-3">
+                    {show('checklisthistory') && (<div className="mb-3">
                         <button onClick={() => setChecklistHistoryExpanded(v => !v)}
                             aria-expanded={checklistHistoryExpanded}
                             className="glass-section-head tint-green">
@@ -3442,11 +3575,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         {checklistHistoryExpanded && (
                             <div className="mt-3"><ChecklistHistory language={language} storeLocation={storeLocation} /></div>
                         )}
-                    </div>
+                    </div>)}
 
                     {/* Inventory History Section — collapsed by default for the
                         same reason as Checklist History. */}
-                    <div className="mb-3">
+                    {show('inventoryhistory') && (<div className="mb-3">
                         <button onClick={() => setInventoryHistoryExpanded(v => !v)}
                             aria-expanded={inventoryHistoryExpanded}
                             className="glass-section-head tint-amber">
@@ -3464,30 +3597,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         {inventoryHistoryExpanded && (
                             <div className="mt-3"><InventoryHistory language={language} customInventory={null} storeLocation={storeLocation} /></div>
                         )}
-                    </div>
+                    </div>)}
 
                     {/* Inventory list variations — admin can create/name/
                         activate alternate inventory lists ("Produce day",
                         "Quick prep", etc.) that swap what staff sees in
-                        the Inventory tab. */}
-                    <div className="mb-3">
-                        <button onClick={() => setShowInventoryLists(true)}
-                            className="glass-section-head tint-orange">
-                            <div className="flex items-center gap-3 min-w-0">
-                                <span className="glass-icon-tile" aria-hidden="true">🗒️</span>
-                                <div className="text-left min-w-0">
-                                    <h3 className="font-bold text-[15px] text-dd-text">
-                                        {language === "es" ? "Listas de inventario" : "Inventory lists"}
-                                    </h3>
-                                    <p className="text-[11px] text-dd-text-2 truncate">{language === "es"
-                                        ? "Crea variaciones (\"Día de verduras\", \"Prep rápida\") · activa la que se muestra"
-                                        : 'Build named variations ("Produce day", "Quick prep") · activate the one shown'}</p>
-                                </div>
-                            </div>
-                            <span className="text-orange-600 text-2xl shrink-0">→</span>
-                        </button>
-                    </div>
-
+                        the Inventory tab.
+                        2026-07-29 hub reorg: the launcher card was replaced
+                        by the 🗒️ tile in the "System" hub group — same
+                        setShowInventoryLists(true) tap; the modal below is
+                        unchanged and still renders over whatever view is
+                        active. */}
                     {showInventoryLists && (
                         <ReactSuspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
                             <InventoryListsAdmin
@@ -4326,7 +4446,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         view" disclaimer in Recipes.jsx. Each accordion expand writes
                         to /recipe_views {staffName, recipeTitle, viewedAt, geoStatus,
                         userAgent}. If a recipe ever leaks, we have a starting point. */}
-                    {(() => {
+                    {show('recipeaudit') && (() => {
                         const shown = showAllViews ? recipeViews : recipeViews.slice(0, 25);
                         const fmtTime = (ts) => {
                             if (!ts) return '—';
@@ -4445,7 +4565,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     })()}
 
                     {/* ── LABOR HISTORY — past days' labor %, by hour (Andrew 2026-06-13) ── */}
-                    <LaborHistoryPanel language={language} storeLocation={storeLocation} />
+                    {show('laborhistory') && <LaborHistoryPanel language={language} storeLocation={storeLocation} startExpanded />}
 
                     {/* ── INVENTORY AUDIT — who added/subtracted what, when ──────────
                         Parallel to the recipe-view audit. Every count change in
@@ -4455,7 +4575,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         adds vs subtracts, who did it, what item, when, on which
                         side (webster/maryland), with date + staff + item + dir
                         filters. Use case: "why did the egg count drop by 6 yesterday?" */}
-                    {(() => {
+                    {show('inventoryaudit') && (() => {
                         // ── filters ──
                         // 2026-05-24 audit fix: was using toISOString().slice(0,10)
                         // which returns UTC. dateKey on each audit row is written
@@ -4665,7 +4785,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         references with the Inventory audit panel above so admins
                         can answer "we counted X at 10am, when did it actually
                         get ordered and from whom?" */}
-                    {(() => {
+                    {show('orderlog') && (() => {
                         const now = Date.now();
                         const todayMs = now - (now % 86400_000);
                         const weekAgoMs = now - 7 * 86400_000;
@@ -4866,7 +4986,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         is technically already readable to any client (catch-all
                         Firestore rule allows reads) but the UI didn't surface it
                         previously. */}
-                    <div className="mb-3">
+                    {show('chathistory') && (<div className="mb-3">
                         <button onClick={() => setChatHistoryExpanded(s => !s)}
                             aria-expanded={chatHistoryExpanded}
                             className="glass-section-head tint-cyan">
@@ -4887,15 +5007,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 <ChatHistoryAdmin language={language} staffName={staffName} />
                             </ReactSuspense>
                         )}
-                    </div>
+                    </div>)}
 
                     {/* ── PAYROLL (owner-only, password-gated) ───────────────────────
                         Runs the full payroll engine in-browser (no server) — see
                         src/data/payroll/. Gated behind a second password inside the
                         already owner-only admin tab. Lazy-loaded: the engine +
                         exceljs only download when this section is expanded + unlocked,
-                        so it costs admins who never run payroll nothing. */}
-                    {isAdmin(staffName, staffList) && (
+                        so it costs admins who never run payroll nothing.
+                        2026-07-29 hub reorg: the 💵 tile carries the same
+                        isAdmin gate (it's hidden from the Money group for
+                        non-admins), and show('payroll') keeps the section
+                        itself double-gated. */}
+                    {show('payroll') && isAdmin(staffName, staffList) && (
                         <div className="mb-3">
                             <button onClick={() => setPayrollExpanded(s => !s)}
                                 aria-expanded={payrollExpanded}
@@ -4929,7 +5053,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         isn't deployed (`firebase deploy --only functions`) or
                         background SW isn't registering (check console for
                         "FCM service worker register failed"). */}
-                    <CollapsibleAdminSection emoji="🔔" tone="blue"
+                    {show('push') && (<CollapsibleAdminSection emoji="🔔" tone="blue" defaultOpen
                         title={language === 'es' ? 'Notificaciones push — diagnóstico' : 'Push notifications — diagnostic'}
                         subtitle={language === 'es' ? 'Estado de permisos/tokens + botón de prueba' : 'Permission/token state + test-push button'}>
                     {(() => {
@@ -5111,7 +5235,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         );
                     })()}
-                    </CollapsibleAdminSection>
+                    </CollapsibleAdminSection>)}
 
                     {/* ── LABEL PRINTERS — per-location Epson TM-L100 config ────────
                         Andrew 2026-05-20 — Vietnamese equivalent of Jolt's
@@ -5120,15 +5244,15 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         printer's local IP + lets admin send a test print. The
                         DD Mau app (browser) sends labels directly to the
                         printer's HTTP server — no middleware, no driver. */}
-                    <CollapsibleAdminSection emoji="🏷" tone="purple"
+                    {show('printers') && (<CollapsibleAdminSection emoji="🏷" tone="purple" defaultOpen
                         title={language === 'es' ? 'Impresoras de etiquetas' : 'Label printers'}
                         subtitle={language === 'es' ? 'Config Epson/Brother por ubicación + impresión de prueba' : 'Per-location Epson/Brother config + test print'}>
                         <PrintersConfigSection language={language} byName={staffName} />
-                    </CollapsibleAdminSection>
+                    </CollapsibleAdminSection>)}
 
-                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading label format editor…</div>}>
-                        <LabelFormatEditor language={language} byName={staffName} />
-                    </ReactSuspense>
+                    {show('labelformat') && (<ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading label format editor…</div>}>
+                        <LabelFormatEditor language={language} byName={staffName} startExpanded />
+                    </ReactSuspense>)}
 
                     {/* ── SaaS-ready menu/brand/buildsheet editor ──────────────
                         Andrew 2026-05-30, Phase 1.B-1.D. The old MenuEditor
@@ -5137,45 +5261,29 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         + /config/brand + /config/build_sheet. Designed for
                         SaaS resale — every part of the menu is editable
                         from this single screen, no code push required. */}
-                    <CollapsibleAdminSection emoji="🍜" tone="green"
+                    {show('menueditor') && (<CollapsibleAdminSection emoji="🍜" tone="green" defaultOpen
                         title={language === 'es' ? 'Editor de menú y marca' : 'Menu & brand editor'}
                         subtitle={language === 'es' ? 'Platos, precios, categorías, build sheet — sin código' : 'Items, prices, categories, build sheet — no code push'}>
                         <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3 mt-6">Loading menu editor…</div>}>
                             <MenuConfigEditor language={language} byName={staffName} />
                         </ReactSuspense>
-                    </CollapsibleAdminSection>
+                    </CollapsibleAdminSection>)}
 
                     {/* ── TV displays — moved to its own page ────────────────────
                         Andrew 2026-05-23 promoted the TvConfigsEditor block out
                         of this long-scroll admin sheet into a dedicated "Menu
                         Screens" page (sidebar entry · tab='menuscreens'). This
                         card is the breadcrumb so anyone still hunting the old
-                        location knows where it went. */}
-                    <button
-                        type="button"
-                        onClick={() => onNavigate?.('menuscreens')}
-                        className="glass-section-head tint-sky mb-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                            <span className="glass-icon-tile" aria-hidden="true">📺</span>
-                            <div className="text-left min-w-0">
-                                <h3 className="font-bold text-[15px] text-dd-text">
-                                    {language === 'es' ? 'Pantallas de menú' : 'Menu TV displays'}
-                                </h3>
-                                <p className="text-[11px] text-dd-text-2 truncate">
-                                    {language === 'es'
-                                        ? 'Ahora tiene su propia página con un panel de control. Toca para abrir.'
-                                        : 'Status pills, live previews, per-screen actions. Tap to open.'}
-                                </p>
-                            </div>
-                        </div>
-                        <span className="text-sky-700 text-lg shrink-0">→</span>
-                    </button>
+                        location knows where it went.
+                        2026-07-29 hub reorg: the breadcrumb card became the
+                        📺 tile in "Stickers & Menu" — same
+                        onNavigate?.('menuscreens') tap. */}
                     {/* ── DANGER ZONE — System Refresh broadcast ────────────────────
                         Writes a timestamp to /config/forceRefresh. Every active
                         client subscribes to that doc in App.jsx and force-refreshes
                         on change. Use SPARINGLY — interrupts every staff member
                         mid-action. Reserved for production breakage / critical fixes. */}
-                    <CollapsibleAdminSection emoji="⚠️" tone="red"
+                    {show('danger') && (<CollapsibleAdminSection emoji="⚠️" tone="red" defaultOpen
                         title={language === 'es' ? 'Zona Peligrosa' : 'Danger Zone'}
                         subtitle={language === 'es' ? 'Refresco forzado de todos los dispositivos' : 'Force-refresh every active device'}>
                     <div className="mb-4 border-2 border-red-300 rounded-xl bg-red-50 p-4">
@@ -5218,7 +5326,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         )}
                     </div>
-                    </CollapsibleAdminSection>
+                    </CollapsibleAdminSection>)}
                 </div>
             );
         }

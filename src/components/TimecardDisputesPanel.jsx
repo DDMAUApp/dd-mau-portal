@@ -22,10 +22,13 @@ function fmtWhen(ts, isEs) {
     return d.toLocaleDateString(isEs ? 'es' : 'en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function TimecardDisputesPanel({ language = 'en', staffName = '' }) {
+export default function TimecardDisputesPanel({ language = 'en', staffName = '', startExpanded = false }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
-    const [expanded, setExpanded] = useState(false);
+    // 2026-07-29 — admin hub reorg: AdminPanel now opens each tool full-screen
+    // from a tile grid; startExpanded lets the tool view mount pre-expanded
+    // (default false keeps the old collapsed-header behavior everywhere else).
+    const [expanded, setExpanded] = useState(startExpanded);
     const [rows, setRows] = useState(null);   // null = never loaded (collapsed since mount)
     const [showResolved, setShowResolved] = useState(false);
     const [busyId, setBusyId] = useState(null);

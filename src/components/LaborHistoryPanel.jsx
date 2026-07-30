@@ -67,11 +67,14 @@ function barColor(pct) {
     return '#ef4444';                            // red
 }
 
-export default function LaborHistoryPanel({ language = 'en', storeLocation = 'webster' }) {
+export default function LaborHistoryPanel({ language = 'en', storeLocation = 'webster', startExpanded = false }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
-    const [expanded, setExpanded] = useState(false);
+    // 2026-07-29 — admin hub reorg: AdminPanel now opens each tool full-screen
+    // from a tile grid; startExpanded lets the tool view mount pre-expanded
+    // (default false keeps the old collapsed-header behavior everywhere else).
+    const [expanded, setExpanded] = useState(startExpanded);
     // Location: labor history is per-store; 'both' has no collection, so
     // default to webster when the admin is on 'both'.
     const [loc, setLoc] = useState(storeLocation === 'maryland' ? 'maryland' : 'webster');

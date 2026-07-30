@@ -49,11 +49,14 @@ function recurrenceLabel(rule, isEs) {
     }
 }
 
-export default function TaskPlanner({ language = 'en', staffName, staffList = [], storeLocation }) {
+export default function TaskPlanner({ language = 'en', staffName, staffList = [], storeLocation, startExpanded = false }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
-    const [expanded, setExpanded] = useState(false);
+    // 2026-07-29 — admin hub reorg: AdminPanel now opens each tool full-screen
+    // from a tile grid; startExpanded lets the tool view mount pre-expanded
+    // (default false keeps the old collapsed-header behavior everywhere else).
+    const [expanded, setExpanded] = useState(startExpanded);
     const [rules, setRules] = useState([]);
     // First day of the displayed month, as a date string.
     const [monthAnchor, setMonthAnchor] = useState(() => toDateStr().slice(0, 8) + '01');

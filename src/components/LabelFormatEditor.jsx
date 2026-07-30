@@ -37,14 +37,17 @@ const KIND_FORMAT_TARGETS = [
     ['other',    '📦 Other', '📦 Otros'],
 ];
 
-export default function LabelFormatEditor({ language = 'en', byName }) {
+export default function LabelFormatEditor({ language = 'en', byName, startExpanded = false }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
     const [format, setFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
     const [draft, setDraft] = useState({ ...DEFAULT_LABEL_FORMAT });
     const [saving, setSaving] = useState(false);
-    const [expanded, setExpanded] = useState(false);
+    // 2026-07-29 — admin hub reorg: AdminPanel now opens each tool full-screen
+    // from a tile grid; startExpanded lets the tool view mount pre-expanded
+    // (default false keeps the old collapsed-header behavior everywhere else).
+    const [expanded, setExpanded] = useState(startExpanded);
     // Per-category overrides (Andrew 2026-07-26): which kind is being
     // edited in the "Per-category" card below.
     const [kindSel, setKindSel] = useState('chemical');
