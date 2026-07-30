@@ -204,7 +204,15 @@ async function postIpp(ip, ippBytes, timeoutMs = 15000) {
 // offscreen canvas at the imageable width, returns the RGBA + dimensions. Fits
 // within the page width by shrinking any line that would overflow. `rightShift`
 // nudges all content right (Andrew: "center it to the right a little bit").
-export function renderLabelCanvas(lines, { width = BROTHER_IMAGEABLE_W, rightShift = 16, footer = 'DD Mau' } = {}) {
+// `footerScale` / `footerBold` come from the Label Format editor (2026-07-30).
+// They default to the values this renderer has ALWAYS hardcoded (1× and
+// regular weight) so any caller that doesn't pass them — e.g. the free-text
+// path, whose footer is user-typed and has no format doc — prints exactly as
+// before.
+export function renderLabelCanvas(lines, {
+    width = BROTHER_IMAGEABLE_W, rightShift = 16, footer = 'DD Mau',
+    footerScale = 1, footerBold = false,
+} = {}) {
     const PAD = 22;
     const GAP = 14;
     // Base font px (scale=1). 62mm tape (664px imageable) is wide — go big so
@@ -247,9 +255,13 @@ export function renderLabelCanvas(lines, { width = BROTHER_IMAGEABLE_W, rightShi
         }
         if (cur) items.push({ text: cur, px, weight, h });
     }
+    // Footer metrics up front — the height reservation and the draw below MUST
+    // use the same px, or a scaled-up footer gets clipped off the label.
+    const footerPx = Math.max(14, Math.round(BASE * 0.7 * Math.max(1, Math.min(3, Number(footerScale) || 1))));
+    const footerWeight = footerBold ? '800' : '600';
     let height = PAD;
     for (const it of items) height += it.h + GAP;
-    if (footer) height += Math.round(BASE * 0.7) + GAP;
+    if (footer) height += footerPx + GAP;
     height += PAD;
     height = Math.max(height, 90);
 
@@ -264,7 +276,7 @@ export function renderLabelCanvas(lines, { width = BROTHER_IMAGEABLE_W, rightShi
         y += it.h + GAP;
     }
     if (footer) {
-        ctx.font = `600 ${Math.round(BASE * 0.7)}px Arial, sans-serif`;
+        ctx.font = `${footerWeight} ${footerPx}px Arial, sans-serif`;
         ctx.fillText(String(footer), cx, y);
     }
     const img = ctx.getImageData(0, 0, width, height);
@@ -329,10 +341,10 @@ export async function warmBrotherDirect(ip) {
 
 // ── Top-level: render + send one label (copies = repeat the job; the
 // QL-820NWB does NOT support the IPP `copies` attribute, so we loop). ──
-export async function printBrotherDirect({ ip, lines, footer, copies = 1, rightShift, jobName, shouldAbort }) {
+export async function printBrotherDirect({ ip, lines, footer, footerScale, footerBold, copies = 1, rightShift, jobName, shouldAbort }) {
     if (!ip) return { ok: false, error: 'no_brother_ip' };
     if (!Capacitor.isNativePlatform()) return { ok: false, error: 'web_unsupported' };
-    const { rgba, width, height } = renderLabelCanvas(lines, { footer, rightShift });
+    const { rgba, width, height } = renderLabelCanvas(lines, { footer, footerScale, footerBold, rightShift });
     const urf = imageDataToUrf(rgba, width, height);
     const n = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
     // The QL-820NWB DROPS a second job that lands while it's still printing the

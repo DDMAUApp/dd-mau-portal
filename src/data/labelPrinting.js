@@ -2799,6 +2799,8 @@ async function _printPrepLabelImpl({
                 ip: printer.brotherIp,
                 lines: bf.lines,
                 footer: bf.footer,
+                footerScale: bf.footerScale,
+                footerBold: bf.footerBold,
                 copies: c,
                 rightShift: printer.brotherRightShift,
                 jobName: recipe?.titleEn || 'DD Mau Label',

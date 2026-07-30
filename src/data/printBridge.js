@@ -324,13 +324,24 @@ export async function sendFreeTextToBridge(config, { text, sizeMm, copies = 1 })
 // pre-batch) format reproduces the old numbers EXACTLY:
 //     timeScale 2→0.9 · metaScale 1→0.7 · useByBandScale 4→1.6 ·
 //     allergensScale 1→0.7 · ingredientsScale 1→0.6 · notesScale 1→0.6
-// Three payload flags are deliberately NOT threaded because their default
-// CONTRADICTS what the bridge has always printed, and the golden rule
-// (default format ⇒ byte-identical Brother output) wins: `titleBold`
-// (default false, bridge title has always been bold), `dateBold` on the
-// small PREPPED caption only (default true, that caption has always been
-// plain — the date NUMBER does honor it), and `footerBold` (default true,
-// the bridge footer has always been regular-weight gray).
+// 2026-07-30 (second pass) — the last three flags are now threaded too:
+// `titleBold`, `footerBold`, and `dateBold` on the small PREPPED caption.
+// They had been left hardcoded to preserve byte-identical output for a
+// DEFAULT format, but that traded the wrong thing away: an admin toggling
+// "Bold item name" in the Label Format editor saw the Epson change and the
+// Brother ignore them, so the editor was lying about half the fleet
+// (Andrew: "the format label need to reflect whats the current format for
+// the stickers"). Editor truthfulness beats default-output stability, and
+// both printers now read the SAME flags. Consequence to know: a never-
+// touched (all-default) format now prints a NON-bold title and a BOLD
+// footer on the Brother, matching what the Epson has always done and what
+// the editor preview shows. The live saved format is unaffected — it has
+// titleBold=true / footerBold=false / showPreppedLabel=false, which is
+// byte-identical to the old hardcoding.
+//
+// `footerScale`+`footerBold` reach the canvas only because renderLabelCanvas
+// now accepts them; it used to hardcode `600 ${BASE*0.7}px`, which silently
+// ate footerScale as well.
 //
 // Scale factors above are tuned so a 62×40mm label fills nicely. If a
 // future label preset comes in much larger / smaller, the bridge's
@@ -340,13 +351,12 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
     const lines = [];
     const clamp = (v, lo, hi, dflt) => Math.max(lo, Math.min(hi, Number(v) || dflt));
 
-    // 1. Title (already word-wrapped by buildLabelPayload). Bold stays ON
-    //    unconditionally — see the header note on titleBold.
+    // 1. Title (already word-wrapped by buildLabelPayload).
     const titleScale = Math.max(Number(payload.titleScale) || 2, 1);
     for (const tl of payload.titleLines || []) {
         const t = String(tl || '').trim();
         if (!t) continue;
-        lines.push({ text: t, scale: titleScale * 0.6, bold: true });
+        lines.push({ text: t, scale: titleScale * 0.6, bold: !!payload.titleBold });
     }
     // 1b. Translated item name (showTitleTranslation). Was never emitted at
     //     all, so the toggle did nothing on Brother. Empty by default ⇒ no
@@ -360,7 +370,9 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
 
     // 2. Prep date label + huge date number
     if (payload.prepDateLabel) {
-        lines.push({ text: String(payload.prepDateLabel), scale: 0.7, bold: false });
+        // Same dateBold flag the Epson applies to this caption (labelPrinting
+        // line ~1339) — the two printers now agree.
+        lines.push({ text: String(payload.prepDateLabel), scale: 0.7, bold: payload.dateBold !== false });
     }
     if (payload.prepDateNumber) {
         const dateScale = Math.max(Number(payload.dateNumberScale) || 5, 1);
@@ -441,6 +453,7 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
         // Multiplier on the bridge's fixed footer size (height/14). Default
         // 1 = today's exact size; older bridges simply ignore the field.
         footerScale: clamp(payload.footerScale, 1, 3, 1),
+        footerBold: payload.footerBold !== false,
     };
 }
 
