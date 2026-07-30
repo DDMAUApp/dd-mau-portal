@@ -167,21 +167,34 @@ export function cleanKindFormats(raw) {
 // Live subscription. Callback gets the merged format (defaults +
 // any saved overrides). Renderers + preview use this to update
 // in real time when admin saves.
+//
+// The callback is invoked as cb(format, error): `error` is null on every
+// normal delivery and carries the Firestore error ONLY on the one
+// defaults-fallback delivery described below. Consumers that must not
+// render defaults (getLabelFormatFast) just ignore any delivery with an
+// error; the editor uses it to show a "showing defaults" warning.
 export function subscribeLabelFormat(cb) {
+    // 2026-07-30: the error handler used to report NOTHING at all, which is
+    // right once a value has landed (a transient blip must not repaint the
+    // editor with all-on defaults) but leaves a FIRST-snapshot failure
+    // (offline open / rules hiccup) with no value ever delivered — the
+    // editor's seededRef never flips and it sits on defaults pretending
+    // they're the saved layout. Deliver defaults exactly once in that case,
+    // flagged, so the UI can say so instead of lying.
+    let delivered = false;
     return onSnapshot(doc(db, DOC_PATH), (snap) => {
+        delivered = true;
         if (!snap.exists()) {
-            cb({ ...DEFAULT_LABEL_FORMAT });
+            cb({ ...DEFAULT_LABEL_FORMAT }, null);
             return;
         }
         const data = snap.data() || {};
-        cb({ ...DEFAULT_LABEL_FORMAT, ...data });
+        cb({ ...DEFAULT_LABEL_FORMAT, ...data }, null);
     }, (err) => {
-        // 2026-07-29 (Andrew: "when i enter the label format page it always
-        // has all the options picked") — a transient error here used to feed
-        // pure DEFAULTS into the editor, which read as "my saved layout is
-        // gone / everything is on". Report nothing on error; the editor keeps
-        // whatever it last had and the snapshot self-recovers.
         console.warn('label_format subscription failed:', err);
+        if (delivered) return;   // steady state: keep whatever the UI has
+        delivered = true;
+        cb({ ...DEFAULT_LABEL_FORMAT }, err || new Error('label_format unavailable'));
     });
 }
 
@@ -196,7 +209,14 @@ export function getLabelFormatFast() {
     if (!_fmtCache.started) {
         _fmtCache.started = true;
         try {
-            subscribeLabelFormat((fmt) => { _fmtCache.value = fmt; _fmtCache.ready = true; });
+            // 2026-07-30: ignore the flagged defaults-fallback delivery —
+            // the print hot path must never cache defaults over the real
+            // saved format; without a real snapshot it keeps falling back
+            // to the one-shot read below, exactly as before.
+            subscribeLabelFormat((fmt, err) => {
+                if (err) return;
+                _fmtCache.value = fmt; _fmtCache.ready = true;
+            });
         } catch { /* fall through to one-shot below */ }
     }
     if (_fmtCache.ready) return Promise.resolve(_fmtCache.value);

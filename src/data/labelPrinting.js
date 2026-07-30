@@ -1741,6 +1741,21 @@ function renderPrepLabelOnPdfPage(page, payload, fonts, widthMm, heightMm, compa
             drawLeft(String(line), fontReg, size);
         }
     }
+    // Giant use-by band — weekday ("SAT") for day clocks, discard time for
+    // hour clocks. 2026-07-30: this block was missing entirely, so a label
+    // printed through the PDF path (Brother / share sheet) came out with NO
+    // discard band while the Epson + bridge paths both had one. Sits between
+    // the meta lines and allergens, same slot as every other renderer;
+    // shrink-to-fit so a long discard time can't run off the label.
+    if (payload.useByBig) {
+        const band = String(payload.useByBig);
+        let size = compact ? mmToPt(heightMm * 0.18) : mmToPt(widthMm * 0.15);
+        const maxW = pageW - padding * 2;
+        while (size > 6 && fontBold.widthOfTextAtSize(band, size) > maxW) size -= 1;
+        y -= mmToPt(0.6);
+        drawCentered(band, fontBold, size);
+        y -= mmToPt(0.6);
+    }
     // Allergens — bold callout.
     if (Array.isArray(payload.allergens) && payload.allergens.length > 0) {
         const size = mmToPt(widthMm * 0.055);

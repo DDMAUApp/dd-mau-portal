@@ -9,7 +9,7 @@
 // (dynamically imported) exceljs never cost anything for admins who don't run
 // payroll.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ModalPortal from '../ModalPortal';
 import { toast } from '../../toast';
 import { downloadFile } from '../../capacitor-bridge';
@@ -346,6 +346,38 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     useEffect(() => {
         if (ackSigRef.current !== ackSig) { ackSigRef.current = ackSig; setAck(false); }
     }, [ackSig]);
+
+    // 2026-07-30 perf: BulkHolidayAdd's two derived inputs used to be built
+    // INLINE in the step-2 JSX (a fresh `new Set(...)` plus an IIFE that
+    // rebuilt a Map) — new objects on every render, and every keystroke in
+    // the wizard re-renders it, so the roster got re-filtered twice per
+    // location per character. Memoized here, above every use (house TDZ
+    // rule). `live.inputs.exports` IS `parsed.exports` — loadInputs passes
+    // it straight through — so `parsed` is the honest dependency.
+    const holidayKeysByLoc = useMemo(() => {
+        const out = {};
+        for (const loc of LOCS) {
+            out[loc] = new Set(adjustments
+                .filter((x) => x.loc === loc && x.type === 'holiday')
+                .map((x) => x.key));
+        }
+        return out;
+    }, [adjustments]);
+    const workedHoursByLoc = useMemo(() => {
+        const out = {};
+        for (const loc of LOCS) {
+            // Worked hours this period from the imported Toast files
+            // (reg + OT), keyed like the roster.
+            const m = new Map();
+            const emps = (parsed && parsed.exports && parsed.exports.employees
+                && parsed.exports.employees[loc]) || {};
+            for (const [k, e] of Object.entries(emps)) {
+                m.set(k, (Number(e.reg_hours) || 0) + (Number(e.ot_hours) || 0));
+            }
+            out[loc] = m;
+        }
+        return out;
+    }, [parsed]);
 
     const rosterRef = useRef(null);                    // cloud roster (mutated in place)
     const adjIdRef = useRef(0);                         // monotonic id for pay-add line items
@@ -912,17 +944,8 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                     <button onClick={() => addAdjustment(loc)} className="text-dd-green text-[12px] font-bold border border-dd-green/40 rounded px-2 py-0.5">+ Add pay adjustment</button>
                                 </div>
                                 <BulkHolidayAdd people={people}
-                                    existingHolidayKeys={new Set(locAdjs.filter((x) => x.type === 'holiday').map((x) => x.key))}
-                                    workedHours={(() => {
-                                        // Worked hours this period from the imported Toast
-                                        // files (reg + OT), keyed like the roster.
-                                        const m = new Map();
-                                        const emps = (live && live.inputs && live.inputs.exports.employees && live.inputs.exports.employees[loc]) || {};
-                                        for (const [k, e] of Object.entries(emps)) {
-                                            m.set(k, (Number(e.reg_hours) || 0) + (Number(e.ot_hours) || 0));
-                                        }
-                                        return m;
-                                    })()}
+                                    existingHolidayKeys={holidayKeysByLoc[loc]}
+                                    workedHours={workedHoursByLoc[loc]}
                                     onAdd={bulkHolidayAdd(loc)} />
                                 {!locAdjs.length && <div className="text-[11px] text-dd-text-2 mb-1">No pay adjustments for this location.</div>}
                                 <div className="space-y-2">

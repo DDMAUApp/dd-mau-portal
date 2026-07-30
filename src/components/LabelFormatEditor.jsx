@@ -57,6 +57,12 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
     // so its override card previewed the default format). Previews the
     // DRAFT (unsaved edits included) so the admin iterates without printing.
     const [printPreview, setPrintPreview] = useState(null);
+    // 2026-07-30: set when the FIRST label_format snapshot failed (offline
+    // open / rules blip) and the subscription handed us defaults as a
+    // fallback — without this the editor showed all-on defaults and
+    // silently pretended they were the saved layout. Clears the moment a
+    // real snapshot lands.
+    const [loadError, setLoadError] = useState(false);
 
     // Latest SERVER format, readable inside the once-mounted subscription
     // below. 2026-07-27 audit finding #2: the old callback compared the
@@ -72,7 +78,8 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
     // defaults. Later snapshots only re-sync when there are no local edits.
     const seededRef = useRef(false);
     useEffect(() => {
-        const unsub = subscribeLabelFormat((f) => {
+        const unsub = subscribeLabelFormat((f, err) => {
+            setLoadError(!!err);
             setFormat(f);
             if (!seededRef.current) {
                 seededRef.current = true;
@@ -152,6 +159,17 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
                     'Un solo lugar para controlar cada etiqueta. Apaga secciones, cambia tamaños, edita el texto "HECHO", formatos de fecha/hora.',
                 )}
             </p>
+
+            {/* 2026-07-30: the first snapshot failed and the subscription
+                handed us defaults — say so instead of showing all-on
+                defaults as if they were the saved layout. Saving from here
+                would overwrite the real config. */}
+            {expanded && loadError && (
+                <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold leading-snug">
+                    ⚠️ {tx('Couldn\'t load the saved format — showing defaults. Don\'t save until this clears.',
+                        'No se pudo cargar el formato guardado — mostrando valores por defecto. No guardes hasta que esto desaparezca.')}
+                </div>
+            )}
 
             {!expanded ? (
                 <p className="text-[10px] text-violet-700/70 italic px-2">

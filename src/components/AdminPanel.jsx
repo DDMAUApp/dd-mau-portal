@@ -2542,7 +2542,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             value={staffSearch}
                             onChange={(e) => {
                                 setStaffSearch(e.target.value);
-                                if (e.target.value.trim()) {
+                                // 2026-07-30: only on the FIRST keystroke.
+                                // openTool ends with window.scrollTo({top:0})
+                                // and the rAF below smooth-scrolls the staff
+                                // section — running both per character put two
+                                // competing scrolls on every letter and made
+                                // the page shudder while typing on the iPad.
+                                if (activeTool !== 'staff' && e.target.value.trim()) {
                                     // Open the staff list so results show
                                     // immediately, and bring it onscreen.
                                     // (openTool switches the hub to the Staff

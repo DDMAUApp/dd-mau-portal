@@ -228,11 +228,18 @@ export async function moveOccurrence(rule, fromDate, toDate) {
 //     checked off) is skipped → a later run can't resurrect a done task
 // Runs from the kanban + planner mounts; several devices racing is safe
 // (same deterministic ids). Throttled to once per (day, side) per session.
+// `force: true` bypasses that throttle (2026-07-30): the planner's "⚡
+// Generate today now" button EXISTS to run the materializer on demand, but
+// AssignTasksPanel's Tasks-page mount had already claimed today's keys, so
+// the button short-circuited to { created: 0, skipped: true } and the UI
+// cheerfully reported "Today is already up to date" while the task the
+// admin had just planned never materialized. A forced run still records the
+// key, so passive mount calls stay throttled.
 const _materializedFor = new Set();
-export async function ensureMaterializedForToday(side, byName) {
+export async function ensureMaterializedForToday(side, byName, { force = false } = {}) {
     const dateStr = toDateStr();
     const throttleKey = `${dateStr}|${side || 'ALL'}`;
-    if (_materializedFor.has(throttleKey)) return { created: 0, skipped: true };
+    if (!force && _materializedFor.has(throttleKey)) return { created: 0, skipped: true };
     _materializedFor.add(throttleKey);
     try {
         const rulesSnap = await getDocs(query(collection(db, 'task_plan'), limit(300)));

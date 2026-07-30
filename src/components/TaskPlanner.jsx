@@ -121,9 +121,13 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
         if (generating) return;
         setGenerating(true);
         try {
+            // force:true — this button is an explicit "run it NOW", and the
+            // Tasks page's mount call has usually already burned today's
+            // throttle key (2026-07-30: without force both calls returned
+            // { skipped:true } and the toast lied "already up to date").
             const [a, b] = await Promise.all([
-                ensureMaterializedForToday('FOH', staffName),
-                ensureMaterializedForToday('BOH', staffName),
+                ensureMaterializedForToday('FOH', staffName, { force: true }),
+                ensureMaterializedForToday('BOH', staffName, { force: true }),
             ]);
             // 2026-07-27 audit R9: ensureMaterializedForToday swallows its own
             // failures into { created: 0, error } — this toast claimed success
@@ -131,6 +135,12 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
             const err = a?.error || b?.error;
             if (err) {
                 toast(tx('Generate failed: ', 'Error al generar: ') + err, { kind: 'error' });
+                return;
+            }
+            // Defensive: a throttled (skipped) run proves nothing about
+            // today's state, so it must never be reported as "up to date".
+            if (a?.skipped || b?.skipped) {
+                toast(tx('Nothing ran — try again in a moment', 'No se ejecutó — intenta de nuevo'), { kind: 'error' });
                 return;
             }
             const n = (a.created || 0) + (b.created || 0);
@@ -263,13 +273,29 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
     const [listRefresh, setListRefresh] = useState(0); // bumped after an edit/delete
     const [recurEdit, setRecurEdit] = useState(null);  // task whose ✏️ which-days popover is open
     const [opsDirty, setOpsDirty] = useState(0);       // unsaved inline row edits (the ← must warn)
+    const [refetching, setRefetching] = useState(false); // refresh in flight, list stays mounted
+    const listCtxRef = useRef(null);                   // last (store|day) actually fetched
     const todayStr = toDateStr();
     useEffect(() => {
         let alive = true;
-        setDayList(null);
+        // 2026-07-30 DATA LOSS: this used to setDayList(null) on EVERY dep
+        // change — including a listRefresh bump from saveAll / drag commit /
+        // delete / recurrence save. null renders the "Loading…" branch, which
+        // UNMOUNTS <OpsEditableList> and destroys its buffered `drafts`, so a
+        // single drag wiped every typed-but-unsaved row (and saveAll's
+        // deliberate keep-failed-rows-dirty retry set) while the toast said
+        // it saved. Only a REAL context switch (day / store) may blank the
+        // list now; a refresh keeps the current list mounted mid-refetch.
+        const ctx = `${listLoc}|${dateStr}`;
+        if (listCtxRef.current !== ctx) {
+            listCtxRef.current = ctx;
+            setDayList(null);
+        }
+        setRefetching(true);
         fetchOpsChecklistDay(listLoc, dateStr)
             .then(d => { if (alive) setDayList(d); })
-            .catch(() => { if (alive) setDayList({ missing: true }); });
+            .catch(() => { if (alive) setDayList({ missing: true }); })
+            .finally(() => { if (alive) setRefetching(false); });
         return () => { alive = false; };
     }, [dateStr, listLoc, listRefresh]);
     const listTasks = (dayList && !dayList.missing)
@@ -300,6 +326,14 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
             .map(s => s.name)
             .sort((a, b) => a.localeCompare(b))
     ), [staffList, listSide]);
+
+    // 2026-07-30: switching FOH/BOH or store re-keys <OpsEditableList>, which
+    // DROPS its buffered row drafts by design (they'd otherwise be written to
+    // the wrong side/store). That drop used to be completely silent — warn
+    // first, same contract as the ← back guard.
+    const confirmDropDrafts = () => opsDirty <= 0 || window.confirm(tx(
+        'You have unsaved list changes — switching will discard them. Continue?',
+        'Tienes cambios sin guardar en la lista — cambiar los descartará. ¿Continuar?'));
 
     const add = async () => {
         const text = task.trim();
@@ -361,17 +395,18 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
                         <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
                             <div className="text-[11px] font-bold uppercase tracking-widest text-dd-text-2">
                                 📋 {tx('Daily Ops list', 'Lista de Ops diaria')}{dayList && !dayList.missing ? ` · ${listTasks.filter(t => t.done).length}/${listTasks.length}` : ''}
+                                {refetching && dayList !== null && <span className="ml-1 font-normal normal-case">↻</span>}
                             </div>
                             <div className="flex items-center gap-1">
                                 {['FOH', 'BOH'].map(s => (
-                                    <button key={s} onClick={() => setListSide(s)}
+                                    <button key={s} onClick={() => { if (s !== listSide && confirmDropDrafts()) setListSide(s); }}
                                         className={`px-2 py-1 rounded-md text-[11px] font-bold border ${listSide === s
                                             ? (s === 'BOH' ? 'bg-blue-600 text-white border-blue-600' : 'bg-emerald-600 text-white border-emerald-600')
                                             : 'bg-white text-dd-text-2 border-dd-line'}`}>
                                         {s}
                                     </button>
                                 ))}
-                                <button onClick={() => setListLoc(l => l === 'webster' ? 'maryland' : 'webster')}
+                                <button onClick={() => { if (confirmDropDrafts()) setListLoc(l => l === 'webster' ? 'maryland' : 'webster'); }}
                                     className="px-2 py-1 rounded-md text-[11px] font-bold border bg-white text-dd-text-2 border-dd-line"
                                     title={tx('Switch store', 'Cambiar tienda')}>
                                     {listLoc === 'webster' ? '📍 Webster' : '📍 Maryland'}
@@ -583,9 +618,19 @@ function OpsEditableList({ tasks, listLoc, sideStaff, isEs, tx, onChanged, onEdi
         setSaving(true);
         const failed = {};
         let firstErr = null;
+        let blankName = false;
         for (const [id, d] of Object.entries(drafts)) {
             const patch = {};
-            if ('task' in d && d.task.trim()) patch.task = d.task;
+            if ('task' in d) {
+                // 2026-07-30: an EMPTIED name used to yield an empty patch —
+                // the write was skipped, the draft cleared, and the toast said
+                // "✓ Saved" while the old text reappeared on the next fetch.
+                // Blank is a validation failure: keep the row dirty so the
+                // manager can see + fix it (trim before writing, too).
+                const text = d.task.trim();
+                if (!text) { failed[id] = d; blankName = true; continue; }
+                patch.task = text;
+            }
             // One name (or [] = unassign) — multi-assign collapses to the
             // chosen name by design when edited from this compact select.
             if ('assignTo' in d) patch.assignTo = d.assignTo ? [d.assignTo] : [];
@@ -598,7 +643,12 @@ function OpsEditableList({ tasks, listLoc, sideStaff, isEs, tx, onChanged, onEdi
         setSaving(false);
         if (firstErr) {
             toast(tx('Some changes did not save: ', 'Algunos cambios no se guardaron: ') + (firstErr?.message || ''), { kind: 'error' });
-        } else {
+        }
+        if (blankName) {
+            toast(tx('Task name can\'t be empty — that row was not saved',
+                'El nombre no puede estar vacío — esa fila no se guardó'), { kind: 'error' });
+        }
+        if (!firstErr && !blankName) {
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
         }
         onChanged();

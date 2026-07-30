@@ -305,13 +305,32 @@ export async function sendFreeTextToBridge(config, { text, sizeMm, copies = 1 })
 //
 // Layout decisions baked in here:
 //   • Title → big bold lines at top (uses titleScale × 0.6)
+//   • Translated title → second, smaller name line (title2Scale × 0.6)
 //   • Prep date label → small caption above the date number
 //   • Prep date number → HUGE (dateNumberScale × 0.45)
-//   • Prep time → medium
-//   • Meta lines (Use by, By, Loc) → small
-//   • Allergens → small + bold, prefixed with ⚠
-//   • Ingredients → smallest
+//   • Prep time → medium (timeScale × 0.45)
+//   • Meta lines (Use by, By, Loc) → small (metaScale × 0.7)
+//   • Use-by band → big (useByBandScale × 0.4)
+//   • Allergens → small + bold, prefixed with ⚠ (allergensScale × 0.7)
+//   • Ingredients → smallest (ingredientsScale × 0.6)
+//   • Notes → smallest (notesScale × 0.6)
 //   • Footer → handled by the bridge's separate footer field
+//
+// 2026-07-30 — the whole "every text editable" Label Format batch never
+// reached the Brother: this converter used to hardcode every scale and
+// bold flag, so per-block sizes/bolds and the translated name line were
+// silently inert on the Pi. Every multiplier below is now
+// `<hardcoded value> ÷ <that field's DEFAULT>`, so a default (or legacy,
+// pre-batch) format reproduces the old numbers EXACTLY:
+//     timeScale 2→0.9 · metaScale 1→0.7 · useByBandScale 4→1.6 ·
+//     allergensScale 1→0.7 · ingredientsScale 1→0.6 · notesScale 1→0.6
+// Three payload flags are deliberately NOT threaded because their default
+// CONTRADICTS what the bridge has always printed, and the golden rule
+// (default format ⇒ byte-identical Brother output) wins: `titleBold`
+// (default false, bridge title has always been bold), `dateBold` on the
+// small PREPPED caption only (default true, that caption has always been
+// plain — the date NUMBER does honor it), and `footerBold` (default true,
+// the bridge footer has always been regular-weight gray).
 //
 // Scale factors above are tuned so a 62×40mm label fills nicely. If a
 // future label preset comes in much larger / smaller, the bridge's
@@ -319,13 +338,24 @@ export async function sendFreeTextToBridge(config, { text, sizeMm, copies = 1 })
 // these relative multipliers stay sane across sizes.
 export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
     const lines = [];
+    const clamp = (v, lo, hi, dflt) => Math.max(lo, Math.min(hi, Number(v) || dflt));
 
-    // 1. Title (already word-wrapped by buildLabelPayload)
+    // 1. Title (already word-wrapped by buildLabelPayload). Bold stays ON
+    //    unconditionally — see the header note on titleBold.
     const titleScale = Math.max(Number(payload.titleScale) || 2, 1);
     for (const tl of payload.titleLines || []) {
         const t = String(tl || '').trim();
         if (!t) continue;
         lines.push({ text: t, scale: titleScale * 0.6, bold: true });
+    }
+    // 1b. Translated item name (showTitleTranslation). Was never emitted at
+    //     all, so the toggle did nothing on Brother. Empty by default ⇒ no
+    //     change to a default label.
+    const title2Scale = clamp(payload.title2Scale, 1, 6, 1);
+    for (const tl of payload.titleLines2 || []) {
+        const t = String(tl || '').trim();
+        if (!t) continue;
+        lines.push({ text: t, scale: title2Scale * 0.6, bold: !!payload.title2Bold });
     }
 
     // 2. Prep date label + huge date number
@@ -334,40 +364,65 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
     }
     if (payload.prepDateNumber) {
         const dateScale = Math.max(Number(payload.dateNumberScale) || 5, 1);
-        lines.push({ text: String(payload.prepDateNumber), scale: dateScale * 0.45, bold: true });
+        lines.push({
+            text: String(payload.prepDateNumber),
+            scale: dateScale * 0.45,
+            bold: payload.dateBold !== false,
+        });
     }
     if (payload.prepTimeBig) {
-        lines.push({ text: String(payload.prepTimeBig), scale: 0.9, bold: false });
+        lines.push({
+            text: String(payload.prepTimeBig),
+            scale: clamp(payload.timeScale, 1, 4, 2) * 0.45,
+            bold: !!payload.timeBold,
+        });
     }
 
     // 3. Meta lines
+    const metaScale = clamp(payload.metaScale, 1, 3, 1);
     for (const ml of payload.metaLines || []) {
         const t = String(ml || '').trim();
         if (!t) continue;
-        lines.push({ text: t, scale: 0.7, bold: false });
+        lines.push({ text: t, scale: metaScale * 0.7, bold: !!payload.metaBold });
     }
 
     // 3b. Giant use-by band (2026-07-26 feature #3) — weekday for day
     // clocks, discard time for hour clocks. Mirrors the Epson renderer.
     if (payload.useByBig) {
-        lines.push({ text: String(payload.useByBig), scale: 1.6, bold: true });
+        lines.push({
+            text: String(payload.useByBig),
+            scale: clamp(payload.useByBandScale, 2, 8, 4) * 0.4,
+            bold: payload.bandBold !== false,
+        });
     }
 
     // 4. Allergens — small + bold + warning prefix
     if (Array.isArray(payload.allergens) && payload.allergens.length > 0) {
         const txt = '⚠ ' + payload.allergens.join(', ');
-        lines.push({ text: txt, scale: 0.7, bold: true });
+        lines.push({
+            text: txt,
+            scale: clamp(payload.allergensScale, 1, 3, 1) * 0.7,
+            bold: payload.allergensBold !== false,
+        });
     }
 
     // 5. Ingredients — smallest, dot-separated for compactness
     if (Array.isArray(payload.ingredients) && payload.ingredients.length > 0) {
         const txt = payload.ingredients.join(' • ');
-        lines.push({ text: txt, scale: 0.6, bold: false });
+        lines.push({
+            text: txt,
+            scale: clamp(payload.ingredientsScale, 1, 3, 1) * 0.6,
+            bold: !!payload.ingredientsBold,
+        });
     }
 
     // 6. Notes — only if present, smallest
     if (payload.notes) {
-        lines.push({ text: String(payload.notes), scale: 0.6, bold: false });
+        lines.push({
+            text: String(payload.notes),
+            scale: clamp(payload.notesScale, 1, 3, 1) * 0.6,
+            bold: !!payload.notesBold,
+        });
     }
 
     return {
@@ -378,7 +433,14 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
             heightMm: Number(payload._presetHeightMm) || 40,
         },
         copies: Math.max(1, Math.min(20, Math.floor(Number(copies) || 1))),
-        footer: payload.footer ? String(payload.footer) : 'DD Mau',
+        // No 'DD Mau' fallback (2026-07-30): buildLabelPayload already omits
+        // the footer when showFooter is OFF, and re-introducing a default
+        // here printed "DD Mau" on every label the admin had turned it off
+        // for — the exact bug the Epson path fixed.
+        footer: payload.footer ? String(payload.footer) : '',
+        // Multiplier on the bridge's fixed footer size (height/14). Default
+        // 1 = today's exact size; older bridges simply ignore the field.
+        footerScale: clamp(payload.footerScale, 1, 3, 1),
     };
 }
 

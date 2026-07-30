@@ -378,7 +378,14 @@ def render_label(payload):
     # Optional footer — small text at the bottom edge.
     footer = payload.get("footer")
     if footer:
-        footer_font = get_font(max(int(height_px / 14), 14))
+        # 2026-07-30: the app's Label Format editor has a footer size control
+        # (footerScale 1..3). Multiplier on the long-standing height/14 size,
+        # so an absent field or a default 1.0 renders EXACTLY as before.
+        try:
+            footer_scale = max(0.5, min(3.0, float(payload.get("footerScale", 1.0))))
+        except (TypeError, ValueError):
+            footer_scale = 1.0
+        footer_font = get_font(max(int(height_px / 14 * footer_scale), 14))
         bbox = draw.textbbox((0, 0), footer, font=footer_font)
         fw = bbox[2] - bbox[0]
         fh = bbox[3] - bbox[1]
