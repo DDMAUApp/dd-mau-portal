@@ -949,6 +949,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // in." Inline expansion below the write-in input lets the
             // user override both before pressing Add.
             const [writeInDest, setWriteInDest] = useState({});
+            // Andrew 2026-07-30: "in the operations page the inventory list by
+            // location make it so under each section you can add items and
+            // that stays on forever." The By-Location view had NO add control
+            // at all — its empty state literally told managers to go to Master
+            // List — so a shift lead who spotted a missing item mid-count had
+            // to switch views and re-pick the location by hand. These drive an
+            // add row under each location section; the location is implied by
+            // the section, so only a name (and optionally a category) is
+            // needed. Adds go through mutateInventory ⇒ they land in the
+            // permanent customInventory catalog, not just this count.
+            const [locWriteIn, setLocWriteIn] = useState({});      // { [location]: text }
+            const [locWriteInCat, setLocWriteInCat] = useState({}); // { [location]: catIdx }
             // 2026-05-31 - Andrew: "lets let the locations tab be the default
             // page to load instead of the master list. we will use that more."
             // Was "category" (master list grouped by category). Now defaults
@@ -4514,6 +4526,64 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     };
                     return working.map((cat, i) => i === idx ? { ...cat, items: [...cat.items, newItem] } : cat);
                 });
+            };
+
+            // By-Location quick add (Andrew 2026-07-30). Same durable write as
+            // quickAddItem — the item is appended to the permanent
+            // customInventory catalog — but the LOCATION comes from the
+            // section the manager is standing in, so there's nothing to pick
+            // but the name. Category defaults to whatever that location
+            // already mostly holds, overridable inline.
+            const quickAddItemAtLocation = async (loc, defaultCatIdx) => {
+                const input = (locWriteIn[loc] || '').trim();
+                if (!input) return;
+                const catIdx = Number.isFinite(locWriteInCat[loc]) ? locWriteInCat[loc] : defaultCatIdx;
+                const targetName = customInventory[catIdx]?.name;
+                if (!targetName) {
+                    toast(language === 'es' ? 'Elige una categoría' : 'Pick a category', { kind: 'error' });
+                    return;
+                }
+                // Don't let the same item pile up in one location — this list
+                // is permanent, so a duplicate is forever until someone hunts
+                // it down in Master List.
+                const norm = (s) => String(s || '').trim().toLowerCase();
+                const dupe = customInventory.some(c => (c.items || []).some(
+                    it => norm(it.location) === norm(loc) && (norm(it.name) === norm(input) || norm(it.nameEs) === norm(input))));
+                if (dupe) {
+                    toast(language === 'es'
+                        ? `"${input}" ya está en esta ubicación`
+                        : `"${input}" is already in this location`, { kind: 'error' });
+                    return;
+                }
+                const translated = autoTranslateItem(input);
+                setLocWriteIn(prev => ({ ...prev, [loc]: '' }));
+                const result = await mutateInventory((live) => {
+                    // Locate the category in the LIVE doc by NAME, never by
+                    // index — same reasoning as quickAddItem: the saved array
+                    // can be a different length/order than the rendered one.
+                    let idx = live.findIndex(c => c && c.name === targetName);
+                    let working = live;
+                    if (idx === -1) {
+                        working = [...live, { name: targetName, items: [] }];
+                        idx = working.length - 1;
+                    }
+                    const liveCat = working[idx];
+                    const newItem = {
+                        id: nextItemId(liveCat, idx),
+                        name: translated.name, nameEs: translated.nameEs,
+                        vendor: '', supplier: '', orderDay: '', pack: '', price: null,
+                        location: loc,
+                    };
+                    return working.map((c, i) => i === idx ? { ...c, items: [...c.items, newItem] } : c);
+                });
+                if (result) {
+                    // Confirm explicitly: an active search/filter can hide the
+                    // row that was just created, which otherwise reads as "the
+                    // Add button did nothing".
+                    toast(language === 'es'
+                        ? `✓ ${translated.name} agregado a ${locationLabel(loc, true)}`
+                        : `✓ ${translated.name} added to ${locationLabel(loc, false)}`, { kind: 'success' });
+                }
             };
 
             const addInvItem = async (catIdx) => {
@@ -9232,6 +9302,64 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                     />
                                                 ))}
                                             </div>
+                                            {/* Add-an-item row (Andrew 2026-07-30). Skipped for
+                                                the "no location" bucket — adding there would
+                                                create exactly the un-located item that bucket
+                                                exists to flag. */}
+                                            {!isUnassigned && !invEditMode && (() => {
+                                                const txt = locWriteIn[loc] || '';
+                                                const expanded = txt.trim().length > 0;
+                                                // Default the category to whatever this location
+                                                // already holds most of, so the common case is
+                                                // type-name → Add with nothing else to choose.
+                                                const tally = new Map();
+                                                for (const { catName } of rows) tally.set(catName, (tally.get(catName) || 0) + 1);
+                                                let topCat = null, topN = 0;
+                                                for (const [n, c] of tally) if (c > topN) { topCat = n; topN = c; }
+                                                const foundIdx = customInventory.findIndex(c => c.name === topCat);
+                                                const defaultCatIdx = foundIdx >= 0 ? foundIdx : 0;
+                                                const catIdx = Number.isFinite(locWriteInCat[loc]) ? locWriteInCat[loc] : defaultCatIdx;
+                                                return (
+                                                    <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 space-y-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <input type="text"
+                                                                value={txt}
+                                                                onChange={e => setLocWriteIn(prev => ({ ...prev, [loc]: e.target.value }))}
+                                                                onKeyDown={e => { if (e.key === 'Enter') quickAddItemAtLocation(loc, defaultCatIdx); }}
+                                                                placeholder={language === 'es'
+                                                                    ? `\u{270D}\u{FE0F} Agregar a ${locationLabel(loc, true)}...`
+                                                                    : `\u{270D}\u{FE0F} Add item to ${locationLabel(loc, false)}...`}
+                                                                className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-base sm:text-sm bg-white focus:outline-none focus:border-mint-500" />
+                                                            {expanded && (
+                                                                <button onClick={() => quickAddItemAtLocation(loc, defaultCatIdx)}
+                                                                    className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition">
+                                                                    {language === 'es' ? 'Agregar' : 'Add'}
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                        {expanded && (
+                                                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                                                                <label className="flex items-center gap-1.5">
+                                                                    <span className="text-gray-500 font-bold">📂 {language === 'es' ? 'Categoría' : 'Category'}:</span>
+                                                                    <select
+                                                                        value={catIdx}
+                                                                        onChange={e => setLocWriteInCat(prev => ({ ...prev, [loc]: Number(e.target.value) }))}
+                                                                        className="px-2 py-1 border border-gray-200 rounded-md bg-white text-xs focus:outline-none focus:border-mint-500">
+                                                                        {customInventory.map((c, i) => (
+                                                                            <option key={i} value={i}>{language === 'es' ? (c.nameEs || c.name) : c.name}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </label>
+                                                                <span className="text-gray-400 italic">
+                                                                    {language === 'es'
+                                                                        ? 'Se queda en la lista permanentemente'
+                                                                        : 'Stays on the list permanently'}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                     );
                                 });
