@@ -65,12 +65,21 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
     // re-synced — another admin's save spontaneously lit "Unsaved" here,
     // and tapping Save then clobbered their change with this stale draft.
     const serverFmtRef = useRef(format);
+    // 2026-07-29 (Andrew: "make it so i have the current layout showing so
+    // when we edit its the current version of the label") — the FIRST value
+    // from the server ALWAYS seeds the draft, unconditionally, so opening
+    // the editor shows the label's current saved layout, never the all-on
+    // defaults. Later snapshots only re-sync when there are no local edits.
+    const seededRef = useRef(false);
     useEffect(() => {
         const unsub = subscribeLabelFormat((f) => {
             setFormat(f);
-            // Only refresh draft from server if admin hasn't made
-            // local edits since the LAST server value (dirty === false).
-            setDraft(prev => isDirty(prev, serverFmtRef.current) ? prev : f);
+            if (!seededRef.current) {
+                seededRef.current = true;
+                setDraft(f);
+            } else {
+                setDraft(prev => isDirty(prev, serverFmtRef.current) ? prev : f);
+            }
             serverFmtRef.current = f;
         });
         return unsub;

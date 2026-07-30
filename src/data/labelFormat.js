@@ -176,8 +176,12 @@ export function subscribeLabelFormat(cb) {
         const data = snap.data() || {};
         cb({ ...DEFAULT_LABEL_FORMAT, ...data });
     }, (err) => {
+        // 2026-07-29 (Andrew: "when i enter the label format page it always
+        // has all the options picked") — a transient error here used to feed
+        // pure DEFAULTS into the editor, which read as "my saved layout is
+        // gone / everything is on". Report nothing on error; the editor keeps
+        // whatever it last had and the snapshot self-recovers.
         console.warn('label_format subscription failed:', err);
-        cb({ ...DEFAULT_LABEL_FORMAT });
     });
 }
 
