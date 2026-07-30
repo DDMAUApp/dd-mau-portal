@@ -484,7 +484,10 @@ export function prefetchPdfLib() {
 // seconds picking size/copies anyway). Safe to call repeatedly.
 export function warmPrintConfigs(location, slot = DEFAULT_PRINTER_SLOT) {
     try {
-        getLabelFormatFast().catch(() => {});
+        // Warm BOTH formats — the Brother toggle is a per-print decision, so
+        // either doc can be the one needed when Print is tapped.
+        getLabelFormatFast('epson').catch(() => {});
+        getLabelFormatFast('brother').catch(() => {});
         warmPrinterConnection(location, slot);
         // 2026-07-23 — Pi bridge warming REMOVED (Andrew: "the Pis are just
         // for the TVs now, not the printer"). Both stores print direct to
@@ -2733,9 +2736,14 @@ async function _printPrepLabelImpl({
 }) {
     try {
         // Cached + parallel (was 2 sequential network reads per print).
-        const [printer, baseFormat] = await Promise.all([
+        // Both formats are fetched in parallel with the printer because which
+        // one applies isn't known until `printer.brotherIp` is in hand, and
+        // serialising that would undo the "printing is kinda sticky" fix.
+        // Each is a cached live mirror, so the second is free after warm-up.
+        const [printer, epsonFormat, brotherFormat] = await Promise.all([
             getPrinterConfigFast(location, slot),
-            getLabelFormatFast(),
+            getLabelFormatFast('epson'),
+            getLabelFormatFast('brother'),
         ]);
         if (!printer) return { ok: false, error: 'no_printer_configured' };
         const type = printer.type || DEFAULT_PRINTER_TYPE;
@@ -2756,6 +2764,14 @@ async function _printPrepLabelImpl({
         // Per-kind overrides (sanitizers etc.) — the sticker's kind rides
         // on the recipe object; matching /config/label_format.kindFormats
         // entries shallow-merge over the base format.
+        // Andrew 2026-07-30: "2 different formats one for the epson printer
+        // and one for the brother printer". Pick by where this label is
+        // ACTUALLY going — the per-print Brother toggle only counts when a
+        // Brother IP exists (otherwise the Epson branch below prints it), and
+        // a legacy brother_ql slot is Brother output too.
+        const useBrotherDirect = useBrother && !!printer.brotherIp;
+        const brotherOutput = useBrotherDirect || type === PRINTER_TYPES.BROTHER_QL;
+        const baseFormat = brotherOutput ? brotherFormat : epsonFormat;
         const format = resolveLabelFormatForKind(baseFormat, recipe?.kind);
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
@@ -2793,7 +2809,7 @@ async function _printPrepLabelImpl({
         // the Brother over Wi-Fi (IPP + Apple-Raster), independent of the slot's
         // configured type, so Epson stays the default and is never disabled. The
         // Epson + legacy-Brother branches below are untouched.
-        if (useBrother && printer.brotherIp) {
+        if (useBrotherDirect) {
             const bf = payloadToBridgeFormat(payload, { copies: c });
             const r = await printBrotherDirect({
                 ip: printer.brotherIp,

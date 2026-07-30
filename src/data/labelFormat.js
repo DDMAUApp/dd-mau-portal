@@ -24,7 +24,27 @@ import { db } from '../firebase';
 import { doc, getDoc, setDoc, onSnapshot, serverTimestamp, deleteField } from 'firebase/firestore';
 import { recordAudit } from './audit';
 
+// 2026-07-30 (Andrew: "lets make 2 different formats one for the epson
+// printer and one for the brother printer"). The two printers produce very
+// different labels — the Epson TM-L100 is a continuous linerless receipt
+// roll, the Brother QL-820NWB is a fixed 62×40mm die-cut sticker — so one
+// shared layout always compromised both. Each now has its OWN doc.
+//
+// MIGRATION / FALLBACK: the Epson keeps the original `config/label_format`
+// doc untouched, so nothing about the Epson changes. The Brother doc starts
+// ABSENT, and while absent the Brother FOLLOWS the Epson doc — so shipping
+// the split is a no-op on real labels. The first Brother save creates the
+// doc and the two become independent forever after. Callers that need to
+// know which state they're in get it from the subscribe callback's third
+// `meta.following` argument.
 const DOC_PATH = 'config/label_format';
+const DOC_PATH_BROTHER = 'config/label_format_brother';
+
+// The two printers a format can belong to. Anything not 'brother' means the
+// Epson doc — every legacy call site omits the argument and keeps working.
+export const LABEL_PRINTERS = Object.freeze(['epson', 'brother']);
+const isBrother = (printer) => printer === 'brother';
+const pathFor = (printer) => (isBrother(printer) ? DOC_PATH_BROTHER : DOC_PATH);
 
 // All default values. Used as the baseline that admin overrides.
 // Any field NOT in the saved Firestore doc falls back here.
@@ -173,7 +193,9 @@ export function cleanKindFormats(raw) {
 // defaults-fallback delivery described below. Consumers that must not
 // render defaults (getLabelFormatFast) just ignore any delivery with an
 // error; the editor uses it to show a "showing defaults" warning.
-export function subscribeLabelFormat(cb) {
+// The third callback argument is `meta`: { following } is true only for the
+// Brother while it has no doc of its own and is mirroring the Epson format.
+export function subscribeLabelFormat(cb, printer = 'epson') {
     // 2026-07-30: the error handler used to report NOTHING at all, which is
     // right once a value has landed (a transient blip must not repaint the
     // editor with all-on defaults) but leaves a FIRST-snapshot failure
@@ -182,20 +204,55 @@ export function subscribeLabelFormat(cb) {
     // they're the saved layout. Deliver defaults exactly once in that case,
     // flagged, so the UI can say so instead of lying.
     let delivered = false;
-    return onSnapshot(doc(db, DOC_PATH), (snap) => {
-        delivered = true;
-        if (!snap.exists()) {
-            cb({ ...DEFAULT_LABEL_FORMAT }, null);
-            return;
-        }
-        const data = snap.data() || {};
-        cb({ ...DEFAULT_LABEL_FORMAT, ...data }, null);
-    }, (err) => {
-        console.warn('label_format subscription failed:', err);
+    const failOnce = (err) => {
         if (delivered) return;   // steady state: keep whatever the UI has
         delivered = true;
-        cb({ ...DEFAULT_LABEL_FORMAT }, err || new Error('label_format unavailable'));
+        cb({ ...DEFAULT_LABEL_FORMAT }, err || new Error('label_format unavailable'), { following: false });
+    };
+
+    if (!isBrother(printer)) {
+        return onSnapshot(doc(db, DOC_PATH), (snap) => {
+            delivered = true;
+            const data = snap.exists() ? (snap.data() || {}) : {};
+            cb({ ...DEFAULT_LABEL_FORMAT, ...data }, null, { following: false });
+        }, (err) => {
+            console.warn('label_format subscription failed:', err);
+            failOnce(err);
+        });
+    }
+
+    // Brother: watch BOTH docs. Its own doc wins whenever it exists; until
+    // then it mirrors the Epson doc live.
+    let bro;                 // undefined = no snapshot yet, null = doc absent
+    let eps = null;
+    let epsSeen = false;
+    const emit = () => {
+        if (bro === undefined) return;
+        // While following we must NOT emit before the Epson doc has landed,
+        // or the first delivery would be all-defaults and any consumer that
+        // seeds once (the editor) would latch onto them as "the saved
+        // layout" — the exact bug the seededRef fix was written to kill.
+        if (!bro && !epsSeen) return;
+        delivered = true;
+        cb({ ...DEFAULT_LABEL_FORMAT, ...(bro || eps || {}) }, null, { following: !bro });
+    };
+    const unsubBrother = onSnapshot(doc(db, DOC_PATH_BROTHER), (snap) => {
+        bro = snap.exists() ? (snap.data() || {}) : null;
+        emit();
+    }, (err) => {
+        console.warn('label_format_brother subscription failed:', err);
+        failOnce(err);
     });
+    const unsubEpson = onSnapshot(doc(db, DOC_PATH), (snap) => {
+        eps = snap.exists() ? (snap.data() || {}) : null;
+        epsSeen = true;
+        emit();
+    }, (err) => {
+        console.warn('label_format (brother fallback) subscription failed:', err);
+        // Only fatal while we're actually depending on it.
+        if (bro === null || bro === undefined) failOnce(err);
+    });
+    return () => { unsubBrother(); unsubEpson(); };
 }
 
 // Hot-path cached read — Andrew 2026-06-11: "the print for the
@@ -204,10 +261,17 @@ export function subscribeLabelFormat(cb) {
 // subscription; every later call resolves instantly from the cached
 // (always-current) value. Falls back to the one-shot read while the
 // first snapshot is still in flight.
-let _fmtCache = { value: undefined, ready: false, started: false };
-export function getLabelFormatFast() {
-    if (!_fmtCache.started) {
-        _fmtCache.started = true;
+// One cache PER PRINTER — they're independent docs now, and sharing a single
+// cache would serve whichever printed first to both.
+const _fmtCaches = {
+    epson:   { value: undefined, ready: false, started: false },
+    brother: { value: undefined, ready: false, started: false },
+};
+export function getLabelFormatFast(printer = 'epson') {
+    const key = isBrother(printer) ? 'brother' : 'epson';
+    const cache = _fmtCaches[key];
+    if (!cache.started) {
+        cache.started = true;
         try {
             // 2026-07-30: ignore the flagged defaults-fallback delivery —
             // the print hot path must never cache defaults over the real
@@ -215,22 +279,27 @@ export function getLabelFormatFast() {
             // to the one-shot read below, exactly as before.
             subscribeLabelFormat((fmt, err) => {
                 if (err) return;
-                _fmtCache.value = fmt; _fmtCache.ready = true;
-            });
+                cache.value = fmt; cache.ready = true;
+            }, key);
         } catch { /* fall through to one-shot below */ }
     }
-    if (_fmtCache.ready) return Promise.resolve(_fmtCache.value);
-    return getLabelFormat().then((f) => {
+    if (cache.ready) return Promise.resolve(cache.value);
+    return getLabelFormat(key).then((f) => {
         // Don't clobber a fresher snapshot that landed mid-flight.
-        if (!_fmtCache.ready) { _fmtCache.value = f; _fmtCache.ready = true; }
-        return _fmtCache.value;
+        if (!cache.ready) { cache.value = f; cache.ready = true; }
+        return cache.value;
     });
 }
 
 // One-shot read. Used by Cloud Function paths or anywhere we
 // don't want a live subscription.
-export async function getLabelFormat() {
+export async function getLabelFormat(printer = 'epson') {
     try {
+        if (isBrother(printer)) {
+            const bro = await getDoc(doc(db, DOC_PATH_BROTHER));
+            if (bro.exists()) return { ...DEFAULT_LABEL_FORMAT, ...(bro.data() || {}) };
+            // No Brother doc yet ⇒ follow the Epson one (see the header note).
+        }
         const snap = await getDoc(doc(db, DOC_PATH));
         if (!snap.exists()) return { ...DEFAULT_LABEL_FORMAT };
         return { ...DEFAULT_LABEL_FORMAT, ...(snap.data() || {}) };
@@ -240,7 +309,7 @@ export async function getLabelFormat() {
     }
 }
 
-export async function saveLabelFormat({ format, byName }) {
+export async function saveLabelFormat({ format, byName, printer = 'epson' }) {
     if (!format || typeof format !== 'object') throw new Error('format required');
     // Whitelist + sanitize each field so a malformed payload can't
     // corrupt the doc.
@@ -293,13 +362,17 @@ export async function saveLabelFormat({ format, byName }) {
     safe.updatedAt = serverTimestamp();
     safe.updatedBy = byName || null;
 
-    await setDoc(doc(db, DOC_PATH), safe, { merge: true });
+    const targetId = isBrother(printer) ? 'label_format_brother' : 'label_format';
+    await setDoc(doc(db, pathFor(printer)), safe, { merge: true });
     recordAudit({
         action: 'label_format.save',
         actorName: byName || 'admin',
         targetType: 'config',
-        targetId: 'label_format',
-        details: { changedKeys: Object.keys(safe).filter(k => k !== 'updatedAt' && k !== 'updatedBy') },
+        targetId,
+        details: {
+            printer: isBrother(printer) ? 'brother' : 'epson',
+            changedKeys: Object.keys(safe).filter(k => k !== 'updatedAt' && k !== 'updatedBy'),
+        },
     });
 }
 

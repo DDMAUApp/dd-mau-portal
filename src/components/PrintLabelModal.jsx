@@ -209,8 +209,14 @@ export default function PrintLabelModal({
     // admin's saved choices (section toggles, sizes, text overrides).
     // Andrew 2026-05-20 — "make a label edit button so i can go in
     // and edit all the labels format at once".
-    const [labelFormat, setLabelFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
-    useEffect(() => subscribeLabelFormat(setLabelFormat), []);
+    // 2026-07-30: each printer has its OWN saved format, so the preview has to
+    // follow the "Permanent sticker (Brother)" toggle — otherwise flipping it
+    // previewed the Epson layout for a label that prints from the Brother doc.
+    const [epsonFormat, setEpsonFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
+    const [brotherFormat, setBrotherFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
+    useEffect(() => subscribeLabelFormat((f) => setEpsonFormat(f), 'epson'), []);
+    useEffect(() => subscribeLabelFormat((f) => setBrotherFormat(f), 'brother'), []);
+    const labelFormat = (printOnBrother && printer?.brotherIp) ? brotherFormat : epsonFormat;
 
     // Printer type drives which preset list staff sees:
     //   • epson_linerless → 80mm-wide ("3-inch") presets

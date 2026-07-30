@@ -63,6 +63,12 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
     // silently pretended they were the saved layout. Clears the moment a
     // real snapshot lands.
     const [loadError, setLoadError] = useState(false);
+    // Andrew 2026-07-30: "lets make 2 different formats one for the epson
+    // printer and one for the brother printer." Which doc this editor is
+    // pointed at. `following` is true while the Brother has no doc of its own
+    // and is still mirroring the Epson format (see labelFormat.js header).
+    const [printerTab, setPrinterTab] = useState('epson');
+    const [following, setFollowing] = useState(false);
 
     // Latest SERVER format, readable inside the once-mounted subscription
     // below. 2026-07-27 audit finding #2: the old callback compared the
@@ -78,8 +84,13 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
     // defaults. Later snapshots only re-sync when there are no local edits.
     const seededRef = useRef(false);
     useEffect(() => {
-        const unsub = subscribeLabelFormat((f, err) => {
+        // Switching printers points at a different doc, so the seed must run
+        // again — otherwise the Brother tab would open showing the Epson
+        // draft that was already latched.
+        seededRef.current = false;
+        const unsub = subscribeLabelFormat((f, err, meta) => {
             setLoadError(!!err);
+            setFollowing(!!meta?.following);
             setFormat(f);
             if (!seededRef.current) {
                 seededRef.current = true;
@@ -88,9 +99,9 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
                 setDraft(prev => isDirty(prev, serverFmtRef.current) ? prev : f);
             }
             serverFmtRef.current = f;
-        });
+        }, printerTab);
         return unsub;
-    }, []);
+    }, [printerTab]);
 
     const dirty = isDirty(draft, format);
 
@@ -100,14 +111,27 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
         if (saving) return;
         setSaving(true);
         try {
-            await saveLabelFormat({ format: clampLabelFormat(draft), byName });
-            toast(tx('✓ Saved · every label uses the new format', '✓ Guardado'), { kind: 'success' });
+            await saveLabelFormat({ format: clampLabelFormat(draft), byName, printer: printerTab });
+            toast(printerTab === 'brother'
+                ? tx('✓ Saved · Brother stickers use this format', '✓ Guardado · formato Brother')
+                : tx('✓ Saved · Epson stickers use this format', '✓ Guardado · formato Epson'),
+            { kind: 'success' });
         } catch (e) {
             console.warn('saveLabelFormat failed:', e);
             toast(tx('Save failed: ', 'Error: ') + (e?.message || ''), { kind: 'error' });
         } finally {
             setSaving(false);
         }
+    };
+
+    // Switching tabs swaps the whole draft, so unsaved edits would vanish.
+    const switchPrinter = (next) => {
+        if (next === printerTab) return;
+        if (dirty && !window.confirm(tx(
+            'You have unsaved changes on this format. Switch anyway and lose them?',
+            'Tienes cambios sin guardar. ¿Cambiar de todos modos y perderlos?',
+        ))) return;
+        setPrinterTab(next);
     };
 
     const resetToDefaults = () => {
@@ -129,8 +153,10 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
         language: isEs ? 'es' : 'en',
         notes: '',
         format: clampLabelFormat(draft),
-        paperWidthMm: 58,
-    }), [draft, isEs, byName]);
+        // Epson linerless roll is 58mm; the Brother die-cut label is 62mm.
+        // Feeding the real width makes the preview wrap where the printer will.
+        paperWidthMm: printerTab === 'brother' ? 62 : 58,
+    }), [draft, isEs, byName, printerTab]);
     // Render via the SAME segment model the printer uses (2026-07-27
     // audit #3: the old hand-rolled PreviewBox ignored most knobs — the
     // new sliders visibly did nothing in the live preview).
@@ -155,10 +181,40 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
             </button>
             <p className="text-[11px] text-violet-700 mb-3 leading-snug">
                 {tx(
-                    'One place to control how every date sticker looks. Toggle sections on/off, resize the date number + title, change the "PREPPED" label text, switch date / time formats. Changes apply to every print (Epson + Brother + Print Center preview).',
-                    'Un solo lugar para controlar cada etiqueta. Apaga secciones, cambia tamaños, edita el texto "HECHO", formatos de fecha/hora.',
+                    'Control how every date sticker looks — toggle sections on/off, resize the date number + title, change the "PREPPED" label text, switch date / time formats. Each printer has its OWN format, so pick a printer below before editing.',
+                    'Controla cómo se ve cada etiqueta. Cada impresora tiene su PROPIO formato — elige una abajo antes de editar.',
                 )}
             </p>
+
+            {/* Printer picker — the Epson roll and the Brother die-cut sticker
+                are different shapes, so each keeps its own saved format. */}
+            {expanded && (
+                <div className="mb-3">
+                    <div className="flex gap-2">
+                        {[
+                            ['epson',   '🧾', tx('Epson (roll)', 'Epson (rollo)'),      tx('Everyday date stickers', 'Etiquetas diarias')],
+                            ['brother', '🏷', tx('Brother (permanent)', 'Brother (permanente)'), tx('The "Permanent sticker" toggle', 'Opción "etiqueta permanente"')],
+                        ].map(([key, icon, label, sub]) => (
+                            <button key={key} onClick={() => switchPrinter(key)}
+                                className={`flex-1 text-left px-3 py-2 rounded-lg border-2 transition ${
+                                    printerTab === key
+                                        ? 'bg-violet-600 border-violet-700 text-white shadow'
+                                        : 'bg-white border-violet-200 text-violet-900 hover:border-violet-400'
+                                }`}>
+                                <div className="text-[13px] font-bold leading-tight">{icon} {label}</div>
+                                <div className={`text-[10px] leading-tight ${printerTab === key ? 'text-violet-100' : 'text-violet-500'}`}>{sub}</div>
+                            </button>
+                        ))}
+                    </div>
+                    {printerTab === 'brother' && following && (
+                        <div className="mt-2 px-3 py-2 rounded-lg bg-sky-50 border border-sky-300 text-sky-900 text-[11px] leading-snug">
+                            🔗 <b>{tx('Following the Epson format.', 'Siguiendo el formato Epson.')}</b>{' '}
+                            {tx('Brother stickers currently print with the Epson layout. Save here once to give the Brother its own format — after that the two are independent.',
+                                'Guarda aquí una vez para darle a la Brother su propio formato; después serán independientes.')}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* 2026-07-30: the first snapshot failed and the subscription
                 handed us defaults — say so instead of showing all-on
@@ -482,10 +538,22 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
                     <div>
                         <div className="text-[10px] font-bold uppercase tracking-wider text-violet-800 mb-1.5">
                             {tx('Live preview', 'Vista previa')}
+                            {' · '}
+                            {printerTab === 'brother' ? tx('Brother', 'Brother') : tx('Epson', 'Epson')}
                         </div>
                         <div className="bg-stone-200/70 border-2 border-dashed border-dd-line rounded-lg p-3 flex justify-center">
                             <LabelMock model={previewModel} pxPerCol={8} />
                         </div>
+                        {/* Honesty note: the mock is built from the Epson's
+                            segment model. Every toggle / size / bold shown is
+                            real for both printers, but the Brother's canvas
+                            wraps and spaces lines slightly differently. */}
+                        {printerTab === 'brother' && (
+                            <p className="mt-1.5 text-[10px] text-violet-500 leading-snug">
+                                {tx('Sections, sizes and bold are exact; the Brother\'s real spacing and line wrapping differ slightly. Print one to confirm.',
+                                    'Las secciones, tamaños y negritas son exactos; el espaciado real de la Brother varía un poco.')}
+                            </p>
+                        )}
                     </div>
                 </div>
             )}
