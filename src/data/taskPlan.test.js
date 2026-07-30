@@ -15,7 +15,7 @@ vi.mock('firebase/firestore', () => ({
 
 import {
     isRuleDueOn, rulesDueOn, addDaysStr, dayDiff, weekdayOf,
-    checklistTasksForDay, moveOccurrence,
+    checklistTasksForDay, moveOccurrence, moveInArray,
 } from './taskPlan';
 import { getDoc, updateDoc } from 'firebase/firestore';
 
@@ -121,13 +121,42 @@ describe('moveOccurrence (2026-07-27 audit R1)', () => {
     });
 });
 
+describe('moveInArray (Daily Ops drag-reorder math, 2026-07-29)', () => {
+    // The DaySheet list is DAY-FILTERED, so the on-screen next row may not
+    // be the array-adjacent one — insert-before-anchor handles that.
+    const arr = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+
+    it('inserts the moved task before the anchor', () => {
+        expect(moveInArray(arr, 'd', 'b').map(t => t.id)).toEqual(['a', 'd', 'b', 'c']);
+        expect(moveInArray(arr, 'a', 'd').map(t => t.id)).toEqual(['b', 'c', 'a', 'd']);
+    });
+
+    it('null or unknown anchor pushes to the end', () => {
+        expect(moveInArray(arr, 'a', null).map(t => t.id)).toEqual(['b', 'c', 'd', 'a']);
+        expect(moveInArray(arr, 'a', 'zzz').map(t => t.id)).toEqual(['b', 'c', 'd', 'a']);
+    });
+
+    it('anchor right after the task = same order (pure no-op reorder)', () => {
+        expect(moveInArray(arr, 'b', 'c').map(t => t.id)).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    it('returns null when the task is absent, and never mutates the input', () => {
+        expect(moveInArray(arr, 'x', 'b')).toBeNull();
+        expect(moveInArray([], 'a', null)).toBeNull();
+        moveInArray(arr, 'd', 'a');
+        expect(arr.map(t => t.id)).toEqual(['a', 'b', 'c', 'd']);
+    });
+});
+
 describe('checklistTasksForDay (day-sheet Daily Ops list)', () => {
     // 2026-07-27 is a Monday; 2026-07-26 is a Sunday.
     const ct = (tasks) => ({ FOH: { all: tasks }, BOH: { all: [] } });
 
     it('filters by per-task recurrence for the tapped day', () => {
         const tasks = [
-            { id: 'a', task: 'Every day' },                          // no recurrence = daily
+            // 2026-07-29: assignTo/completeBy must pass through for the
+            // DaySheet's inline row editors (and default to []/'').
+            { id: 'a', task: 'Every day', assignTo: ['Ana', 'Bo'], completeBy: '15:30' },
             { id: 'b', task: 'Mondays only', recurrence: 'monday' },
             { id: 'c', task: 'Weekends', recurrence: 'weekend' },
             { id: 'd', task: 'Weekdays', recurrence: 'weekday' },
@@ -136,6 +165,10 @@ describe('checklistTasksForDay (day-sheet Daily Ops list)', () => {
         expect(mon.map(t => t.id)).toEqual(['a', 'b', 'd']);
         const sun = checklistTasksForDay(ct(tasks), {}, 'FOH', '2026-07-26');
         expect(sun.map(t => t.id)).toEqual(['a', 'c']);
+        expect(mon.find(t => t.id === 'a').assignTo).toEqual(['Ana', 'Bo']);
+        expect(mon.find(t => t.id === 'a').completeBy).toBe('15:30');
+        expect(mon.find(t => t.id === 'b').assignTo).toEqual([]);
+        expect(mon.find(t => t.id === 'b').completeBy).toBe('');
     });
 
     it('done = bare check, or ALL subtasks checked, and photo when required', () => {

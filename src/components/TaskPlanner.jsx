@@ -11,17 +11,19 @@
 //
 // Interactions:
 //   • ‹ month › nav; tap a DAY → day sheet (tasks due + add form)
-//   • tap a task chip in the day sheet → edit series, skip this day,
-//     move this occurrence (arms move mode → tap the target day), end
-//     or delete the series
+//   • Daily Ops rows edit INLINE (Andrew 2026-07-29): drag ≡ to reorder,
+//     type the text right there, pick assignee + complete-by time; ✏️
+//     opens a tiny which-days popover; 🗑 deletes
+//   • tap a planned chip → edit series, skip this day, move this
+//     occurrence (arms move mode → tap the target day), end or delete
 //   • ⚡ Generate today now — runs the materializer immediately
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     subscribeTaskPlan, createTaskPlanRule, updateTaskPlanRule,
     archiveTaskPlanRule, deleteTaskPlanRule, skipOccurrence, moveOccurrence,
     rulesDueOn, ensureMaterializedForToday, toDateStr, addDaysStr, weekdayOf,
     fetchOpsChecklistDay, checklistTasksForDay,
-    updateOpsChecklistTask, deleteOpsChecklistTask,
+    updateOpsChecklistTask, deleteOpsChecklistTask, moveOpsChecklistTask,
 } from '../data/taskPlan';
 import { inferStaffSide } from '../data/assignedTasks';
 import { toast } from '../toast';
@@ -256,7 +258,8 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
     const [listLoc, setListLoc] = useState(storeLocation === 'maryland' ? 'maryland' : 'webster');
     const [dayList, setDayList] = useState(null); // null = loading; {missing} | {customTasks, checks}
     const [listRefresh, setListRefresh] = useState(0); // bumped after an edit/delete
-    const [opsEdit, setOpsEdit] = useState(null);      // checklist task being edited
+    const [recurEdit, setRecurEdit] = useState(null);  // task whose ✏️ which-days popover is open
+    const [opsDirty, setOpsDirty] = useState(0);       // unsaved inline row edits (the ← must warn)
     const todayStr = toDateStr();
     useEffect(() => {
         let alive = true;
@@ -285,6 +288,15 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
             .map(s => ({ id: s.id, name: s.name }))
             .sort((a, b) => a.name.localeCompare(b.name))
     ), [staffList, side]);
+
+    // Assignee options for the Daily Ops inline rows — follows the LIST's
+    // side toggle (not the add form's side).
+    const listStaff = useMemo(() => (
+        (staffList || [])
+            .filter(s => s?.name && s.active !== false && (inferStaffSide(s) === listSide || !inferStaffSide(s)))
+            .map(s => s.name)
+            .sort((a, b) => a.localeCompare(b))
+    ), [staffList, listSide]);
 
     const add = async () => {
         const text = task.trim();
@@ -318,10 +330,15 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
     // The ← is the ONLY way out (no backdrop-tap), and it warns when the
     // add form holds a typed-but-unplanned task.
     const handleBack = () => {
-        if (task.trim()) {
-            const ok = window.confirm(tx(
-                'You typed a task but haven\'t planned it yet — leave anyway?',
-                'Escribiste una tarea pero no la has planificado — ¿salir de todos modos?'));
+        // 2026-07-29: also guards the Daily Ops list's buffered inline
+        // edits ("make sure there is a save at the bottom") — leaving
+        // without tapping 💾 would silently drop them.
+        if (task.trim() || opsDirty > 0) {
+            const ok = window.confirm(opsDirty > 0
+                ? tx('You have unsaved list changes — leave anyway?',
+                    'Tienes cambios sin guardar en la lista — ¿salir de todos modos?')
+                : tx('You typed a task but haven\'t planned it yet — leave anyway?',
+                    'Escribiste una tarea pero no la has planificado — ¿salir de todos modos?'));
             if (!ok) return;
         }
         onClose();
@@ -364,26 +381,31 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
                             <p className="text-xs text-dd-text-2 italic">{tx('No saved list for this day.', 'No hay lista guardada de este día.')}</p>
                         ) : listTasks.length === 0 ? (
                             <p className="text-xs text-dd-text-2 italic">{tx('No tasks on this list for this day.', 'Sin tareas en esta lista para este día.')}</p>
+                        ) : dateStr >= todayStr ? (
+                            // Inline editors (Andrew 2026-07-29) — today/future only.
+                            // Key on (store, side, day) so switching context drops
+                            // any buffered drafts instead of writing them elsewhere.
+                            <OpsEditableList key={`${listLoc}|${listSide}|${dateStr}`}
+                                tasks={listTasks} listLoc={listLoc} sideStaff={listStaff}
+                                isEs={isEs} tx={tx}
+                                onChanged={() => setListRefresh(n => n + 1)}
+                                onEditRecur={setRecurEdit}
+                                onDirtyChange={setOpsDirty} />
                         ) : (
                             <div className="space-y-1">
-                                {listTasks.map(t => {
-                                    // Tap-to-edit (today/future only — past days are archive).
-                                    const editable = dateStr >= todayStr;
-                                    const Row = editable ? 'button' : 'div';
-                                    return (
-                                        <Row key={t.id} {...(editable ? { onClick: () => setOpsEdit(t) } : {})}
-                                            className={`w-full text-left px-2.5 py-1.5 rounded-lg border border-dd-line ${t.done ? 'bg-emerald-50/60' : 'bg-white'} ${editable ? 'hover:bg-dd-bg active:scale-[0.99]' : ''}`}>
-                                            <div className="flex items-center gap-1.5">
-                                                <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
-                                                <span className={`text-sm flex-1 ${t.done ? 'text-dd-text-2 line-through' : 'text-dd-text font-medium'}`}>{t.task}</span>
-                                                {t.subCount > 0 && (
-                                                    <span className="text-[10px] text-dd-text-2">{t.subsDone}/{t.subCount}</span>
-                                                )}
-                                                {editable && <span className="text-[10px] text-dd-text-2">✏️</span>}
-                                            </div>
-                                        </Row>
-                                    );
-                                })}
+                                {listTasks.map(t => (
+                                    // Past days are archive — read-only ✓/○ rows.
+                                    <div key={t.id}
+                                        className={`w-full text-left px-2.5 py-1.5 rounded-lg border border-dd-line ${t.done ? 'bg-emerald-50/60' : 'bg-white'}`}>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
+                                            <span className={`text-sm flex-1 ${t.done ? 'text-dd-text-2 line-through' : 'text-dd-text font-medium'}`}>{t.task}</span>
+                                            {t.subCount > 0 && (
+                                                <span className="text-[10px] text-dd-text-2">{t.subsDone}/{t.subCount}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>
@@ -477,21 +499,29 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
                 </div>
             </div>
         </div>
-        {opsEdit && (
-            <OpsTaskEditor
-                task={opsEdit} location={listLoc} isEs={isEs} tx={tx}
-                onSaved={() => { setOpsEdit(null); setListRefresh(n => n + 1); }}
-                onClose={() => setOpsEdit(null)}
+        {recurEdit && (
+            <OpsRecurrenceEditor
+                task={recurEdit} location={listLoc} isEs={isEs} tx={tx}
+                onSaved={() => { setRecurEdit(null); setListRefresh(n => n + 1); }}
+                onClose={() => setRecurEdit(null)}
             />
         )}
         </ModalPortal>
     );
 }
 
-// ── Edit one Daily Ops checklist task from the planner ─────────────────
-// (Andrew 2026-07-27.) Rename, change which days it appears, or delete —
-// writes via updateOpsChecklistTask/deleteOpsChecklistTask (transaction
-// on the one period array; the Operations page live-updates on its own).
+// ── Inline-edit the Daily Ops checklist from the planner ───────────────
+// (Andrew 2026-07-29: "make each task have the text editable right there
+// … add who to assign to, what time … make the whole task list moveable"
+// + "keep the pencil … just to give the task rules" + "make sure there
+// is a save at the bottom".) All writes still go through the transaction
+// helpers in taskPlan.js (one period array via dot-path — never the whole
+// doc); the Operations page live-updates on its own.
+//
+// SAVE MODEL: structural ops (drag reorder, 🗑 delete, ✏️ which-days)
+// commit IMMEDIATELY; the three field edits (text / assignee / time)
+// BUFFER into per-row drafts until the 💾 button at the bottom — Andrew
+// wants an explicit save for typing.
 const OPS_RECUR_OPTS = [
     ['daily',     'Every day',  'Cada día'],
     ['weekday',   'Weekdays',   'Lunes-Viernes'],
@@ -505,57 +535,289 @@ const OPS_RECUR_OPTS = [
     ['sunday',    'Sundays',    'Domingos'],
 ];
 
-function OpsTaskEditor({ task, location, isEs, tx, onSaved, onClose }) {
-    const [text, setText] = useState(task.task || '');
+// Drafts: { [taskId]: { task?, assignTo?, completeBy? } } — only the
+// fields the user touched (assignTo buffered as the ONE selected name; ''
+// = unassigned). A field snaps OUT of its draft when edited back to the
+// saved value, so the dirty ring / Save button stay honest.
+function OpsEditableList({ tasks, listLoc, sideStaff, isEs, tx, onChanged, onEditRecur, onDirtyChange }) {
+    const ids = useMemo(() => tasks.map(t => t.id), [tasks]);
+    const idsKey = ids.join('|');
+    const byId = useMemo(() => Object.fromEntries(tasks.map(t => [t.id, t])), [tasks]);
+
+    // Local display order (drag reorders it live); reset whenever the
+    // fetched row set — or its saved order — changes.
+    const [order, setOrder] = useState(ids);
+    const orderRef = useRef(ids);
+    const applyOrder = (next) => { orderRef.current = next; setOrder(next); };
+    useEffect(() => { applyOrder(ids); }, [idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const [drafts, setDrafts] = useState({});
+    const [saving, setSaving] = useState(false);
+    const fieldBase = (t, field) =>
+        field === 'task' ? (t.task || '')
+            : field === 'assignTo' ? ((t.assignTo && t.assignTo[0]) || '')
+                : (t.completeBy || '');
+    const setField = (id, field, value) => {
+        setDrafts(prev => {
+            const t = byId[id];
+            const row = { ...(prev[id] || {}) };
+            const base = t ? fieldBase(t, field) : '';
+            const same = field === 'task' ? value.trim() === base.trim() : value === base;
+            if (same) delete row[field]; else row[field] = value;
+            const next = { ...prev };
+            if (Object.keys(row).length === 0) delete next[id]; else next[id] = row;
+            return next;
+        });
+    };
+    const dirtyCount = Object.keys(drafts).length;
+    useEffect(() => { onDirtyChange?.(dirtyCount); }, [dirtyCount]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => () => onDirtyChange?.(0), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // 💾 commit every dirty row (Andrew 2026-07-29: explicit save for
+    // typing). Rows that fail STAY dirty for a retry.
+    const saveAll = async () => {
+        if (saving || dirtyCount === 0) return;
+        setSaving(true);
+        const failed = {};
+        let firstErr = null;
+        for (const [id, d] of Object.entries(drafts)) {
+            const patch = {};
+            if ('task' in d && d.task.trim()) patch.task = d.task;
+            // One name (or [] = unassign) — multi-assign collapses to the
+            // chosen name by design when edited from this compact select.
+            if ('assignTo' in d) patch.assignTo = d.assignTo ? [d.assignTo] : [];
+            if ('completeBy' in d) patch.completeBy = d.completeBy; // '' = remove
+            try {
+                if (Object.keys(patch).length) await updateOpsChecklistTask(listLoc, id, patch);
+            } catch (e) { failed[id] = d; firstErr = firstErr || e; }
+        }
+        setDrafts(failed);
+        setSaving(false);
+        if (firstErr) {
+            toast(tx('Some changes did not save: ', 'Algunos cambios no se guardaron: ') + (firstErr?.message || ''), { kind: 'error' });
+        } else {
+            toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
+        }
+        onChanged();
+    };
+
+    // ── Drag-to-reorder (pointer events — HTML5 DnD is broken on iPad
+    // Safari). Heights are measured ONCE at drag start; the neighbor whose
+    // vertical midpoint the pointer crosses swaps live in `order`.
+    const rowEls = useRef({});
+    const dragRef = useRef(null);
+    const [drag, setDrag] = useState(null); // { id, dy } while a row is held
+    const GAP = 4; // space-y-1
+
+    const onHandleDown = (e, id) => {
+        if (dragRef.current) return;
+        e.preventDefault();
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* older Safari */ }
+        const heights = {};
+        for (const tid of orderRef.current) {
+            const el = rowEls.current[tid];
+            heights[tid] = (el ? el.getBoundingClientRect().height : 40) + GAP;
+        }
+        dragRef.current = { id, startY: e.clientY, startOrder: [...orderRef.current], heights };
+        setDrag({ id, dy: 0 });
+    };
+
+    useEffect(() => {
+        if (!drag) return undefined;
+        // Window-level listeners: pointer capture alone can drop when the
+        // captured node is re-parented by the live reorder.
+        const newOrderFor = (dy) => {
+            const d = dragRef.current;
+            const others = d.startOrder.filter(x => x !== d.id);
+            let top = 0;
+            for (const tid of d.startOrder) { if (tid === d.id) break; top += d.heights[tid]; }
+            const center = top + dy + d.heights[d.id] / 2;
+            let idx = 0, y = 0;
+            for (const oid of others) {
+                if (center > y + d.heights[oid] / 2) idx++;
+                y += d.heights[oid];
+            }
+            const next = [...others];
+            next.splice(idx, 0, d.id);
+            return next;
+        };
+        const onMove = (e) => {
+            const d = dragRef.current;
+            if (!d) return;
+            const dy = e.clientY - d.startY;
+            const next = newOrderFor(dy);
+            if (next.join('|') !== orderRef.current.join('|')) applyOrder(next);
+            setDrag({ id: d.id, dy });
+        };
+        const finish = async (commit) => {
+            const d = dragRef.current;
+            if (!d) return;
+            dragRef.current = null;
+            setDrag(null);
+            if (!commit) { applyOrder(d.startOrder); return; }
+            const final = orderRef.current;
+            if (final.join('|') === d.startOrder.join('|')) return;
+            // ORDER SEMANTICS: this list is DAY-FILTERED by recurrence, so
+            // the on-screen next row may not be array-adjacent in Firestore.
+            // Insert-BEFORE-that-row's-id (end = push) is correct either way.
+            const beforeId = final[final.indexOf(d.id) + 1] ?? null;
+            try {
+                await moveOpsChecklistTask(listLoc, d.id, beforeId);
+                onChanged();
+            } catch (err) {
+                applyOrder(d.startOrder);
+                toast(tx('Reorder failed: ', 'Error al reordenar: ') + (err?.message || ''), { kind: 'error' });
+            }
+        };
+        const onUp = () => { finish(true); };
+        const onCancel = () => { finish(false); };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
+        return () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onCancel);
+        };
+    }, [drag ? drag.id : null]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Keep the held row under the finger: raw dy minus however far the
+    // live reorder already moved it within the layout.
+    let dragOffset = 0;
+    if (drag && dragRef.current) {
+        const d = dragRef.current;
+        const topIn = (ord) => { let y = 0; for (const tid of ord) { if (tid === d.id) break; y += d.heights[tid]; } return y; };
+        dragOffset = drag.dy - (topIn(order) - topIn(d.startOrder));
+    }
+
+    const remove = async (t) => {
+        if (!window.confirm(tx(`Delete "${t.task}" from the list?`, `¿Eliminar "${t.task}" de la lista?`))) return;
+        try {
+            await deleteOpsChecklistTask(listLoc, t.id);
+            setDrafts(prev => { const next = { ...prev }; delete next[t.id]; return next; });
+            toast(tx('✓ Deleted', '✓ Eliminada'), { kind: 'success' });
+            onChanged();
+        } catch (e) {
+            toast(tx('Failed: ', 'Error: ') + (e?.message || ''), { kind: 'error' });
+        }
+    };
+
+    return (
+        <div>
+            <div className="space-y-1">
+                {order.map(id => byId[id]).filter(Boolean).map(t => (
+                    <OpsEditableRow key={t.id} t={t} draft={drafts[t.id]} sideStaff={sideStaff}
+                        isEs={isEs} tx={tx}
+                        onField={setField} onEditRecur={onEditRecur} onDelete={remove}
+                        dragging={drag?.id === t.id}
+                        dragOffset={drag?.id === t.id ? dragOffset : 0}
+                        onHandleDown={onHandleDown}
+                        rowRef={(el) => { rowEls.current[t.id] = el; }} />
+                ))}
+            </div>
+            <button onClick={saveAll} disabled={saving || dirtyCount === 0}
+                className="sticky bottom-2 z-20 w-full mt-2 py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm shadow disabled:opacity-40 active:scale-95">
+                {saving ? tx('Saving…', 'Guardando…') : tx('💾 Save changes', '💾 Guardar cambios')}
+            </button>
+        </div>
+    );
+}
+
+// One inline row: ≡ drag · ✓/○ · text · 👤 assignee · 🕐 time · ✏️ · 🗑.
+// Controls wrap under the text on narrow screens (flex-wrap — the sheet
+// is a full-screen takeover so there's room).
+function OpsEditableRow({ t, draft, sideStaff, isEs, tx, onField, onEditRecur, onDelete, dragging, dragOffset, onHandleDown, rowRef }) {
+    const dirty = !!draft;
+    const text = draft && 'task' in draft ? draft.task : (t.task || '');
+    const who = draft && 'assignTo' in draft ? draft.assignTo : ((t.assignTo && t.assignTo[0]) || '');
+    const time = draft && 'completeBy' in draft ? draft.completeBy : (t.completeBy || '');
+    // Extra assignees survive untouched unless the select is changed —
+    // the +N chip disappears once a draft collapses them to one name.
+    const extras = (draft && 'assignTo' in draft) ? 0 : Math.max(0, (t.assignTo?.length || 0) - 1);
+    // Keep an off-side / renamed current assignee visible instead of
+    // showing a blank select (a stray change would then look like a clear).
+    const options = who && !sideStaff.includes(who) ? [who, ...sideStaff] : sideStaff;
+    return (
+        <div ref={rowRef}
+            className={`px-2 py-1.5 rounded-lg border ${dirty ? 'border-amber-300 ring-1 ring-amber-300' : 'border-dd-line'} ${
+                t.done ? 'bg-emerald-50/60' : 'bg-white'} ${dragging ? 'relative z-10 shadow-lg' : ''}`}
+            style={dragging ? { transform: `translateY(${dragOffset}px)` } : undefined}>
+            {/* pointer-events-none while dragged so the inputs can't swallow
+                the gesture; the handle re-enables itself to keep capture. */}
+            <div className={`flex items-center gap-1.5 flex-wrap ${dragging ? 'pointer-events-none' : ''}`}>
+                <span onPointerDown={(e) => onHandleDown(e, t.id)}
+                    aria-label={tx('Drag to reorder', 'Arrastra para reordenar')}
+                    className="cursor-grab select-none text-dd-text-2 text-lg leading-none px-1 -ml-0.5"
+                    style={{ touchAction: 'none', pointerEvents: 'auto' }}>≡</span>
+                <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
+                <input type="text" value={text}
+                    onChange={(e) => onField(t.id, 'task', e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    aria-label={tx('Task text', 'Texto de la tarea')}
+                    className={`flex-1 min-w-[10rem] text-sm px-1.5 py-1 rounded-md border border-transparent focus:border-dd-line focus:bg-white bg-transparent ${
+                        t.done ? 'text-dd-text-2 line-through' : 'text-dd-text font-medium'}`} />
+                {t.subCount > 0 && <span className="text-[10px] text-dd-text-2">{t.subsDone}/{t.subCount}</span>}
+                <div className="flex items-center gap-1 ml-auto">
+                    <select value={who} onChange={(e) => onField(t.id, 'assignTo', e.target.value)}
+                        title={tx('Assign to', 'Asignar a')}
+                        className="max-w-[7.5rem] px-1.5 py-1 rounded-md border border-dd-line bg-white text-[11px]">
+                        <option value="">👤 —</option>
+                        {options.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    {extras > 0 && (
+                        <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-dd-bg text-dd-text-2">+{extras}</span>
+                    )}
+                    <input type="time" value={time}
+                        onChange={(e) => onField(t.id, 'completeBy', e.target.value)}
+                        title={tx('Complete by', 'Completar antes de')}
+                        className="px-1.5 py-1 rounded-md border border-dd-line bg-white text-[11px]" />
+                    <button onClick={() => onEditRecur(t)} title={tx('Which days', 'Qué días')}
+                        className="w-7 h-7 rounded-md border border-dd-line bg-white text-[12px] active:scale-95">✏️</button>
+                    <button onClick={() => onDelete(t)} title={tx('Delete', 'Eliminar')}
+                        className="w-7 h-7 rounded-md border border-red-200 bg-white text-[12px] active:scale-95">🗑</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ✏️ popover — ONLY the which-days rule lives here now (Andrew
+// 2026-07-29: "keep the pencil to click just to give the task rules";
+// text / assignee / time / delete are inline). Saves immediately on 💾.
+function OpsRecurrenceEditor({ task, location, isEs, tx, onSaved, onClose }) {
     const [recur, setRecur] = useState(task.recurrence || 'daily');
     const [busy, setBusy] = useState(false);
-
-    const run = async (fn, okMsg) => {
+    const save = async () => {
         if (busy) return;
+        if (recur === (task.recurrence || 'daily')) { onClose(); return; }
         setBusy(true);
         try {
-            await fn();
-            toast(okMsg, { kind: 'success' });
+            await updateOpsChecklistTask(location, task.id, { recurrence: recur });
+            toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
             onSaved();
         } catch (e) {
             toast(tx('Failed: ', 'Error: ') + (e?.message || ''), { kind: 'error' });
             setBusy(false);
         }
     };
-
     return (
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3" onClick={onClose}>
             <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-4 space-y-3"
                 onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between">
-                    <h3 className="text-base font-black text-dd-text">📋 {tx('Edit list task', 'Editar tarea de lista')}</h3>
+                    <h3 className="text-base font-black text-dd-text">📅 {tx('Which days', 'Qué días')}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
                 </div>
-                <div className="text-[11px] text-dd-text-2 -mt-2">
-                    {tx('Daily Ops list', 'Lista de Ops diaria')} · 📍 {location === 'webster' ? 'Webster' : 'Maryland'}
-                </div>
-                <input type="text" value={text} onChange={e => setText(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-dd-line text-base" />
+                <div className="text-[11px] text-dd-text-2 -mt-2 truncate">{task.task}</div>
                 <select value={recur} onChange={e => setRecur(e.target.value)}
                     className="w-full px-2 py-2 rounded-lg border border-dd-line bg-white text-sm">
                     {OPS_RECUR_OPTS.map(([id, en, es]) => (
                         <option key={id} value={id}>{isEs ? es : en}</option>
                     ))}
                 </select>
-                <button disabled={busy || !text.trim()}
-                    onClick={() => run(
-                        () => updateOpsChecklistTask(location, task.id, { task: text, recurrence: recur }),
-                        tx('✓ Saved', '✓ Guardado'))}
+                <button disabled={busy} onClick={save}
                     className="w-full py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm disabled:opacity-40">
-                    {busy ? tx('Saving…', 'Guardando…') : tx('💾 Save changes', '💾 Guardar cambios')}
-                </button>
-                <button disabled={busy}
-                    onClick={() => {
-                        if (!window.confirm(tx(`Delete "${task.task}" from the list?`, `¿Eliminar "${task.task}" de la lista?`))) return;
-                        run(() => deleteOpsChecklistTask(location, task.id), tx('✓ Deleted', '✓ Eliminada'));
-                    }}
-                    className="w-full py-2 rounded-xl bg-white border-2 border-red-200 text-red-700 text-xs font-bold disabled:opacity-40">
-                    🗑 {tx('Delete from list', 'Eliminar de la lista')}
+                    {busy ? tx('Saving…', 'Guardando…') : tx('💾 Done', '💾 Listo')}
                 </button>
             </div>
         </div>

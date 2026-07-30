@@ -326,6 +326,11 @@ export function checklistTasksForDay(customTasks, checks, side, dateStr) {
             return {
                 id: t.id, task: t.task, category: t.category || 'other',
                 recurrence: t.recurrence || 'daily',
+                // 2026-07-29: pass through so the DaySheet's inline row
+                // editors can show/edit who + by-when (Operations already
+                // renders + alarms on both fields).
+                assignTo: Array.isArray(t.assignTo) ? t.assignTo : [],
+                completeBy: typeof t.completeBy === 'string' ? t.completeBy : '',
                 done, subCount: subs.length, subsDone,
             };
         });
@@ -403,8 +408,68 @@ export async function updateOpsChecklistTask(location, taskId, patch) {
     const clean = {};
     if (typeof patch?.task === 'string' && patch.task.trim()) clean.task = patch.task.trim().slice(0, 300);
     if (typeof patch?.recurrence === 'string') clean.recurrence = patch.recurrence;
-    if (Object.keys(clean).length === 0) return;
-    await _editOpsChecklistTask(location, taskId, t => ({ ...t, ...clean }));
+    // 2026-07-29: inline row editors also write who + by-when. Empty/null
+    // means REMOVE the field — the mutate spread can't delete keys, so
+    // removals are tracked separately and dropped from the next object.
+    let dropAssign = false, dropTime = false;
+    if (patch && 'assignTo' in patch) {
+        const names = Array.isArray(patch.assignTo)
+            ? patch.assignTo.map(x => String(x || '').trim()).filter(Boolean).slice(0, 6).map(s => s.slice(0, 40))
+            : [];
+        if (names.length) clean.assignTo = names; else dropAssign = true;
+    }
+    if (patch && 'completeBy' in patch) {
+        const v = typeof patch.completeBy === 'string' ? patch.completeBy.trim() : '';
+        if (/^\d{2}:\d{2}$/.test(v)) clean.completeBy = v; else dropTime = true;
+    }
+    if (Object.keys(clean).length === 0 && !dropAssign && !dropTime) return;
+    await _editOpsChecklistTask(location, taskId, t => {
+        const next = { ...t, ...clean };
+        if (dropAssign) delete next.assignTo;
+        if (dropTime) delete next.completeBy;
+        return next;
+    });
+}
+
+// Pure (unit-tested) array math for drag-reorder: pull `id` out and put it
+// back in front of `beforeId` (null / absent anchor = push to the END).
+// Returns a NEW array, or null when `id` isn't in the array.
+export function moveInArray(arr, id, beforeId) {
+    const list = Array.isArray(arr) ? arr : [];
+    const from = list.findIndex(t => t?.id === id);
+    if (from === -1) return null;
+    const moved = list[from];
+    const rest = list.filter((_, i) => i !== from);
+    const at = beforeId == null ? -1 : rest.findIndex(t => t?.id === beforeId);
+    if (at === -1) rest.push(moved); else rest.splice(at, 0, moved);
+    return rest;
+}
+
+// 2026-07-29: drag-to-reorder from the planner DaySheet. Same transaction
+// discipline as _editOpsChecklistTask — find the ONE period array holding
+// taskId and rewrite only that dot-path. Array order is meaningful (the
+// Operations edit mode has ▲▼ reorder), and the before-anchor semantics
+// stay correct even when the caller's visible list is day-filtered.
+export async function moveOpsChecklistTask(location, taskId, beforeTaskId = null) {
+    if (!location || !taskId) throw new Error('missing location/taskId');
+    const ref = doc(db, 'ops', 'checklists2_' + location);
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('checklist not found');
+        const customTasks = snap.data()?.customTasks || {};
+        for (const side of ['FOH', 'BOH']) {
+            for (const period of ['all', 'morning', 'afternoon']) {
+                const next = moveInArray(customTasks?.[side]?.[period], taskId, beforeTaskId);
+                if (!next) continue;
+                tx.update(ref, {
+                    [`customTasks.${side}.${period}`]: next,
+                    updatedAt: new Date().toISOString(),
+                });
+                return;
+            }
+        }
+        throw new Error('task not found');
+    });
 }
 
 export async function deleteOpsChecklistTask(location, taskId) {
