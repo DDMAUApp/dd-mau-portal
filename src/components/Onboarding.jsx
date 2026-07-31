@@ -1960,6 +1960,15 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                     hireDate,
                     offerAmount: offerAmount.trim(),
                     subsetDocs: selectedDocs,
+                    // 2026-07-30 — the language picker was wired into the
+                    // CREATE branch only, so editing an existing hire showed
+                    // the control but silently discarded it on save. That's
+                    // the ONLY way to fix a hire invited before the picker
+                    // existed (their record has no language at all), so the
+                    // omission defeated the whole feature for exactly the
+                    // people who needed it. Editing does NOT re-issue the
+                    // invite token, so their original link keeps working.
+                    preferredLanguage: hireLang,
                     updatedAt: new Date().toISOString(),
                     updatedBy: staffName || 'admin',
                 });
