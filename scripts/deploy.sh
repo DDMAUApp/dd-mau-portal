@@ -83,7 +83,16 @@ if [ -z "${CAPGO_TOKEN:-}" ]; then
   echo "      npx @capgo/cli@latest bundle upload --apikey <key> --channel '$CHANNEL' --bundle '$VERSION'" >&2
   exit 1
 fi
-npx @capgo/cli@latest bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION"
+# PINNED (2026-07-30). This was `@capgo/cli@latest` and it silently
+# auto-updated 8.31.1 → 8.31.3 mid-session: v1.0.371/372/373 shipped fine on
+# 8.31.1, then v1.0.374 died with `app_not_found` on 8.31.3. Re-running the
+# exact same upload on 8.31.1 succeeded, so the regression is the CLI, not the
+# token or the app. `@latest` in a deploy script means an upstream release can
+# break shipping at any moment with no code change on our side — same class of
+# problem as the unpinned-dep chunking outage. Bump this deliberately after
+# testing, never implicitly.
+CAPGO_CLI_VERSION="8.31.1"
+npx "@capgo/cli@${CAPGO_CLI_VERSION}" bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION"
 echo "  ✓ OTA v$VERSION uploaded to channel '$CHANNEL' — open phones apply it via the broadcast below."
 
 # 5) Post-deploy verification (Debug/QA automation). Calls the read-only
