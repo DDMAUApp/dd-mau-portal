@@ -18,6 +18,7 @@ import { db, storage } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL, getBytes, listAll, deleteObject } from 'firebase/storage';
 import { LOCATION_INFO, pickSigStampBox } from '../data/onboarding';
+import { displayFieldLabel } from '../data/pdfFieldLabels';
 
 // Lazy loaders — keep pdfjs + pdf-lib out of the main bundle.
 async function loadPdfJs() {
@@ -971,7 +972,12 @@ function FieldInput({ field, value, onChange, onOpenSig, signerName, signedAtMs,
                 // at submit time, so the printed document is unchanged.
                 fontSize: Math.max(16, field.fontSize || 11) + 'px',
             }}
-            placeholder={field.label || ''} />
+            // 2026-07-30 — was `field.label`, which on government forms is the
+            // stored AcroForm machine name ("topmostSubform[0]…"), so every box
+            // read "top something". displayFieldLabel humanizes it AT RENDER
+            // TIME and translates it when the hire is in Spanish — so templates
+            // detected before this fix are repaired with no re-detection.
+            placeholder={displayFieldLabel(field, isEs ? 'es' : 'en')} />
     );
 }
 

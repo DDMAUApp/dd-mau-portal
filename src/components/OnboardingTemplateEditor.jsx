@@ -21,6 +21,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
 import { doc, setDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
+import { humanizeFieldLabel, guessAutofill } from '../data/pdfFieldLabels';
 import { ref as sref, uploadBytes, getDownloadURL, getBytes, deleteObject } from 'firebase/storage';
 import { TEMPLATE_FIELD_TYPES, TEMPLATE_AUTOFILLS, ONBOARDING_DOCS } from '../data/onboarding';
 
@@ -218,25 +219,6 @@ export default function OnboardingTemplateEditor({
     const [detecting, setDetecting] = useState(false);
     const [detectMsg, setDetectMsg] = useState('');
 
-    const guessAutofill = (rawName, altText) => {
-        const candidates = [rawName, altText].filter(Boolean).join(' ').toLowerCase();
-        if (!candidates) return '';
-        const n = candidates.replace(/[\s_\-\.\[\]\(\)0-9]/g, '');
-        if (/(legalname|fullname)/.test(n)) return 'legalName';
-        if (/firstname|givenname/.test(n)) return 'firstName';
-        if (/lastname|familyname|surname/.test(n)) return 'lastName';
-        if (/^name$|employeename|workername|applicantname/.test(n)) return 'legalName';
-        if (/street|addressline|address1|homeaddress|mailingaddress|address(?!.*city)/.test(n)) return 'addressLine';
-        if (/^city|cityname|cityof/.test(n)) return 'city';
-        if (/^state(?!.*tax|wages)|statename|stateof/.test(n)) return 'state';
-        if (/zip|postalcode|postal/.test(n)) return 'zip';
-        if (/dob|birthdate|dateofbirth|birthday/.test(n)) return 'dob';
-        if (/phone|telephone|cellphone|mobile/.test(n)) return 'phone';
-        if (/email|emailaddress/.test(n)) return 'email';
-        if (/ssn|socialsecurity|socialsecuritynumber|tin/.test(n)) return 'ssn';
-        if (/todaysdate|signdate|datesigned|currentdate|^date$/.test(n)) return 'today';
-        return '';
-    };
 
     const detectFields = async () => {
         if (!pdfBytes) {
@@ -289,7 +271,13 @@ export default function OnboardingTemplateEditor({
                         w: Math.max(0.005, Math.min(1, w / pw)),
                         h: Math.max(0.005, Math.min(1, h / ph)),
                         type,
-                        label: ann.fieldName || ann.alternativeText || '',
+                        // 2026-07-30 — was `ann.fieldName || ann.alternativeText`,
+                        // which PREFERRED the machine name. Government PDFs are
+                        // XFA-derived, so that name is always
+                        // "topmostSubform[0].Page1[0].f1_01[0]" and the hire saw
+                        // "top something" on every box (Andrew). The tooltip is
+                        // the agency's own human wording — it now wins.
+                        label: humanizeFieldLabel(ann.fieldName, ann.alternativeText),
                         autofill: type === 'text' || type === 'date'
                             ? guessAutofill(ann.fieldName, ann.alternativeText)
                             : '',
