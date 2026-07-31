@@ -401,7 +401,15 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     // Labels are deliberately NOT translated: "English" reads as English and
     // "Español" reads as Spanish to the person who needs each one. Someone
     // stuck in the wrong language must be able to recognize their way out.
-    const LangSwitch = () => (
+    // An ELEMENT, not a component defined in render. Declaring
+    // `const LangSwitch = () => …` here gives React a brand-new component
+    // TYPE on every render, so it unmounts and remounts the whole button row
+    // each time a Firestore snapshot lands — and a tap that arrives during a
+    // remount is simply dropped. That's an intermittent failure for exactly
+    // the person this control exists for: someone stuck in the wrong language
+    // trying to tap their way out. As a plain element React reconciles it as
+    // the same <div> and it never remounts.
+    const langSwitch = (
         <div
             className="fixed right-2 z-50 flex gap-0.5 rounded-full bg-white/95 backdrop-blur border border-gray-300 shadow-md p-0.5"
             style={{ top: 'max(0.5rem, env(safe-area-inset-top))' }}
@@ -427,14 +435,14 @@ export default function OnboardingPortal({ token, language = 'en' }) {
 
     if (status === 'loading') {
         return <CenterCard>
-            <LangSwitch />
+            {langSwitch}
             <p className="text-lg font-bold mb-1">{tx('Loading your onboarding…', 'Cargando tu onboarding…')}</p>
             <p className="text-xs text-gray-500">{tx('One sec.', 'Un segundo.')}</p>
         </CenterCard>;
     }
     if (status === 'error') {
         return <CenterCard>
-            <LangSwitch />
+            {langSwitch}
             <p className="text-4xl mb-2">⚠️</p>
             <p className="text-lg font-bold text-red-700 mb-1">{tx('Link not valid', 'Enlace no válido')}</p>
             {/* errorMsg is the server's HttpsError text and only exists in
@@ -456,7 +464,7 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     if (!unlocked) {
         return (
             <>
-                <LangSwitch />
+                {langSwitch}
                 <OnboardingPasswordGate
                     hire={hire}
                     hireId={hireId}
@@ -497,7 +505,7 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     if (allDone && hire?.finalCertification?.signedAt) {
         return (
             <>
-                <LangSwitch />
+                {langSwitch}
                 <CompletedExitCard
                     isEs={isEs}
                     hireName={hire.name?.split(' ')[0] || ''}
@@ -510,7 +518,7 @@ export default function OnboardingPortal({ token, language = 'en' }) {
 
     return (
         <div className="min-h-screen bg-dd-sage">
-            <LangSwitch />
+            {langSwitch}
             {/* Mobile-first column (max-w-lg = 512px) is right for the
                 phones most hires use. On desktop (Andrew reviewing a
                 hire's invite link from his laptop, or anyone opening

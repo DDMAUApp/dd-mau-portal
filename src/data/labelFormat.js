@@ -40,9 +40,8 @@ import { recordAudit } from './audit';
 const DOC_PATH = 'config/label_format';
 const DOC_PATH_BROTHER = 'config/label_format_brother';
 
-// The two printers a format can belong to. Anything not 'brother' means the
-// Epson doc — every legacy call site omits the argument and keeps working.
-export const LABEL_PRINTERS = Object.freeze(['epson', 'brother']);
+// Anything not 'brother' means the Epson doc — every legacy call site omits
+// the argument and keeps working.
 const isBrother = (printer) => printer === 'brother';
 const pathFor = (printer) => (isBrother(printer) ? DOC_PATH_BROTHER : DOC_PATH);
 

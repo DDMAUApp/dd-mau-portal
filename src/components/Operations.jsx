@@ -5,7 +5,7 @@ import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
-import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel } from '../data/inventory';
+import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel, isDuplicateInventoryName } from '../data/inventory';
 import { reconcileCounts } from '../data/inventoryReconcile';
 import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot } from '../data/inventoryStability';
 import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
@@ -4545,11 +4545,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 // Don't let the same item pile up in one location — this list
                 // is permanent, so a duplicate is forever until someone hunts
-                // it down in Master List.
-                const norm = (s) => String(s || '').trim().toLowerCase();
-                const dupe = customInventory.some(c => (c.items || []).some(
-                    it => norm(it.location) === norm(loc) && (norm(it.name) === norm(input) || norm(it.nameEs) === norm(input))));
-                if (dupe) {
+                // it down in Master List. Shared + unit-tested helper: the
+                // empty-Spanish-name case is subtle enough that an inline
+                // version of this check shipped a bug (see inventory.js).
+                if (isDuplicateInventoryName(customInventory, { location: loc, name: input })) {
                     toast(language === 'es'
                         ? `"${input}" ya está en esta ubicación`
                         : `"${input}" is already in this location`, { kind: 'error' });
@@ -4557,7 +4556,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 const translated = autoTranslateItem(input);
                 setLocWriteIn(prev => ({ ...prev, [loc]: '' }));
+                // The check above reads LOCAL state, which two managers adding
+                // the same item at the same moment would both pass — and this
+                // list is permanent, so the duplicate sticks. Re-check inside
+                // the transaction against the LIVE doc, where only one writer
+                // can win.
+                let raceDupe = false;
                 const result = await mutateInventory((live) => {
+                    raceDupe = isDuplicateInventoryName(live, {
+                        location: loc, name: translated.name, nameEs: translated.nameEs,
+                    });
+                    if (raceDupe) return live;   // no-op — someone else just added it
                     // Locate the category in the LIVE doc by NAME, never by
                     // index — same reasoning as quickAddItem: the saved array
                     // can be a different length/order than the rendered one.
@@ -4576,6 +4585,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     };
                     return working.map((c, i) => i === idx ? { ...c, items: [...c.items, newItem] } : c);
                 });
+                if (raceDupe) {
+                    // Lost the race. Put their text back so the typing isn't
+                    // thrown away, and say what actually happened rather than
+                    // claiming a success that didn't occur.
+                    setLocWriteIn(prev => ({ ...prev, [loc]: input }));
+                    toast(language === 'es'
+                        ? `"${input}" ya está en esta ubicación`
+                        : `"${input}" is already in this location`, { kind: 'error' });
+                    return;
+                }
                 if (result) {
                     // Confirm explicitly: an active search/filter can hide the
                     // row that was just created, which otherwise reads as "the
@@ -4583,6 +4602,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     toast(language === 'es'
                         ? `✓ ${translated.name} agregado a ${locationLabel(loc, true)}`
                         : `✓ ${translated.name} added to ${locationLabel(loc, false)}`, { kind: 'success' });
+                } else {
+                    // mutateInventory already toasted the failure; restore the
+                    // text so a transient save error doesn't eat their input.
+                    setLocWriteIn(prev => ({ ...prev, [loc]: input }));
                 }
             };
 

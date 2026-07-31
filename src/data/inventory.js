@@ -410,3 +410,29 @@ export const INVENTORY_CATEGORIES = [
         ]
     },
 ];
+
+// ── Duplicate detection for the By-Location quick add ──────────────────
+//
+// Andrew 2026-07-30: managers/shift leads can add items straight from the
+// By-Location view, and those adds land in the PERMANENT catalog — so a
+// duplicate sticks around until someone hunts it down in Master List.
+//
+// ⚠ THE TRAP (a real bug caught in the 2026-07-30 audit): most items have no
+// Spanish name, so a naive
+//     norm(existing.nameEs) === norm(candidate.nameEs)
+// is `'' === ''` for the common case and flags EVERY add as a duplicate,
+// silently blocking the feature. Only non-empty names may be compared, and
+// each candidate name is checked against BOTH stored names (an item added in
+// English can legitimately collide with a later Spanish spelling).
+const normName = (s) => String(s || '').trim().toLowerCase();
+
+export function isDuplicateInventoryName(categories, { location, name, nameEs }) {
+    const loc = normName(location);
+    const candidates = [normName(name), normName(nameEs)].filter(Boolean);
+    if (!candidates.length) return false;
+    return (categories || []).some(cat => (cat?.items || []).some((it) => {
+        if (normName(it?.location) !== loc) return false;
+        const stored = [normName(it?.name), normName(it?.nameEs)].filter(Boolean);
+        return candidates.some(c => stored.includes(c));
+    }));
+}
