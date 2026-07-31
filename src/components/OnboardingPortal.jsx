@@ -47,8 +47,39 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     // their app in Spanish. We resolve it AFTER the hire record loads
     // (default is English on first paint; flips to ES once we see
     // preferredLanguage === 'es' on the hire doc).
+    //
+    // 2026-07-30 (Andrew: "i have alot of spanish speaking staff that try to
+    // do the onboarding but since its in english its hard for them"). Until
+    // now that hire-record value was the ONLY thing that could ever set the
+    // language — this component renders BARE from App.jsx (no shell, no
+    // header, auth bypassed), so there was no toggle anywhere on screen. A
+    // hire who landed in English was stuck in English permanently.
+    //
+    // The measured damage: 19 of 20 real hire records had no
+    // preferredLanguage at all and exactly zero had 'es', because only the
+    // application→hire conversion ever wrote it and only one hire was ever
+    // created that way. The entire Spanish translation of this portal — the
+    // handbook, the wage/tip notice, the minor work rules — had effectively
+    // never been displayed to anyone.
+    //
+    // `manualLang` is the hire's own choice and OUTRANKS the hire record, so
+    // an admin who picks the wrong language at invite time can't trap them.
+    // Persisted per-token so it survives the reloads this flow does after
+    // each document submit.
+    const langKey = `ddmau:onboardLang:${token || 'anon'}`;
+    const [manualLang, setManualLang] = useState(() => {
+        try {
+            const v = localStorage.getItem(langKey);
+            return v === 'es' || v === 'en' ? v : null;
+        } catch { return null; }
+    });
     const [resolvedLang, setResolvedLang] = useState(language);
-    const isEs = resolvedLang === 'es';
+    const chooseLang = (next) => {
+        setManualLang(next);
+        try { localStorage.setItem(langKey, next); } catch { /* private mode */ }
+    };
+    const activeLang = manualLang || resolvedLang;
+    const isEs = activeLang === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
     const [status, setStatus] = useState('loading');  // loading | ready | error | submitted
@@ -362,17 +393,60 @@ export default function OnboardingPortal({ token, language = 'en' }) {
         // for the full reasoning.
     };
 
+    // Fixed-position so it rides above every screen this component can
+    // render — including the password gate, which is the FIRST thing a hire
+    // sees. A switch that only appeared after unlock would still leave a
+    // Spanish speaker staring at an English wall.
+    //
+    // Labels are deliberately NOT translated: "English" reads as English and
+    // "Español" reads as Spanish to the person who needs each one. Someone
+    // stuck in the wrong language must be able to recognize their way out.
+    const LangSwitch = () => (
+        <div
+            className="fixed right-2 z-50 flex gap-0.5 rounded-full bg-white/95 backdrop-blur border border-gray-300 shadow-md p-0.5"
+            style={{ top: 'max(0.5rem, env(safe-area-inset-top))' }}
+        >
+            {[['en', '🇺🇸 English'], ['es', '🇲🇽 Español']].map(([code, label]) => (
+                <button
+                    key={code}
+                    type="button"
+                    onClick={() => chooseLang(code)}
+                    aria-pressed={activeLang === code}
+                    lang={code}
+                    className={`px-2.5 py-1.5 rounded-full text-[11px] font-bold transition ${
+                        activeLang === code
+                            ? 'bg-dd-text text-white'
+                            : 'text-gray-600 hover:bg-gray-100 active:scale-95'
+                    }`}
+                >
+                    {label}
+                </button>
+            ))}
+        </div>
+    );
+
     if (status === 'loading') {
         return <CenterCard>
+            <LangSwitch />
             <p className="text-lg font-bold mb-1">{tx('Loading your onboarding…', 'Cargando tu onboarding…')}</p>
             <p className="text-xs text-gray-500">{tx('One sec.', 'Un segundo.')}</p>
         </CenterCard>;
     }
     if (status === 'error') {
         return <CenterCard>
+            <LangSwitch />
             <p className="text-4xl mb-2">⚠️</p>
             <p className="text-lg font-bold text-red-700 mb-1">{tx('Link not valid', 'Enlace no válido')}</p>
+            {/* errorMsg is the server's HttpsError text and only exists in
+                English, so a Spanish speaker got an untranslated dead end here
+                (caught while browser-testing the language switch). We can't
+                translate arbitrary server text client-side — but the ACTION is
+                always the same, so state that in their language underneath. */}
             <p className="text-sm text-gray-600">{errorMsg}</p>
+            <p className="text-sm font-bold text-gray-700 mt-3">
+                {tx('Ask your manager to send you a new link.',
+                    'Pídele a tu gerente que te envíe un enlace nuevo.')}
+            </p>
         </CenterCard>;
     }
     if (!hire) return null;
@@ -381,15 +455,18 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     // this prompt instead of someone's tax forms.
     if (!unlocked) {
         return (
-            <OnboardingPasswordGate
-                hire={hire}
-                hireId={hireId}
-                isEs={isEs}
-                onUnlock={() => {
-                    try { sessionStorage.setItem(portalUnlockKey(hireId), '1'); } catch { /* ignore */ }
-                    setUnlocked(true);
-                }}
-            />
+            <>
+                <LangSwitch />
+                <OnboardingPasswordGate
+                    hire={hire}
+                    hireId={hireId}
+                    isEs={isEs}
+                    onUnlock={() => {
+                        try { sessionStorage.setItem(portalUnlockKey(hireId), '1'); } catch { /* ignore */ }
+                        setUnlocked(true);
+                    }}
+                />
+            </>
         );
     }
     const docs = docsForHire(hire);
@@ -419,17 +496,21 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     // screen and clears any cached state.
     if (allDone && hire?.finalCertification?.signedAt) {
         return (
-            <CompletedExitCard
-                isEs={isEs}
-                hireName={hire.name?.split(' ')[0] || ''}
-                signedAt={hire.finalCertification.signedAt}
-                typedSignature={hire.finalCertification.typedSignature}
-            />
+            <>
+                <LangSwitch />
+                <CompletedExitCard
+                    isEs={isEs}
+                    hireName={hire.name?.split(' ')[0] || ''}
+                    signedAt={hire.finalCertification.signedAt}
+                    typedSignature={hire.finalCertification.typedSignature}
+                />
+            </>
         );
     }
 
     return (
         <div className="min-h-screen bg-dd-sage">
+            <LangSwitch />
             {/* Mobile-first column (max-w-lg = 512px) is right for the
                 phones most hires use. On desktop (Andrew reviewing a
                 hire's invite link from his laptop, or anyone opening
@@ -769,18 +850,45 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, 
                 where('forDocId', '==', doc.id),
             ),
             (snap) => {
-                // Pick the most-recently-updated template per mode.
+                // Pick the best template per mode. "Best" = language match
+                // first, then most-recently-updated.
+                //
+                // 2026-07-30 — templates gained a `language` field so an
+                // official Spanish edition of a form (e.g. IRS Formulario
+                // W-4(SP)) can be served only to Spanish-language hires.
+                // Ranking, highest first:
+                //   2  language exactly matches this hire
+                //   1  'any' / missing — a universal template. EVERY template
+                //      uploaded before this field existed lands here, so
+                //      nothing about the current setup changes.
+                //   0  tagged for the OTHER language — never served. Handing
+                //      an English hire a Spanish tax form is worse than
+                //      falling through to the built-in handler, so these are
+                //      dropped rather than used as a last resort.
+                const wantLang = isEs ? 'es' : 'en';
+                const rank = (t) => {
+                    const l = t.language || 'any';
+                    if (l === wantLang) return 2;
+                    if (l === 'any') return 1;
+                    return 0;
+                };
+                const beats = (cand, cur) => {
+                    if (!cur) return true;
+                    const rc = rank(cand), rr = rank(cur);
+                    if (rc !== rr) return rc > rr;
+                    return (cur.updatedAt || '') < (cand.updatedAt || '');
+                };
                 let bestRef = null;
                 let bestFill = null;
                 snap.forEach(d => {
                     const data = { id: d.id, ...d.data() };
-                    const ts = data.updatedAt || '';
+                    if (rank(data) === 0) return;   // wrong language — skip
                     if (data.mode === 'reference') {
-                        if (!bestRef || (bestRef.updatedAt || '') < ts) bestRef = data;
+                        if (beats(data, bestRef)) bestRef = data;
                     } else if (data.mode === 'fillable' || !data.mode) {
                         // Default to 'fillable' if mode is missing — templates
                         // created before the mode field existed.
-                        if (!bestFill || (bestFill.updatedAt || '') < ts) bestFill = data;
+                        if (beats(data, bestFill)) bestFill = data;
                     }
                 });
                 // No URL fetch for fillable — OnboardingFillablePdf opens the
@@ -797,7 +905,10 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, 
             () => { /* permission/transient — same silent behavior as before */ },
         );
         return () => { alive = false; unsub(); };
-    }, [doc.id]);
+        // isEs is a real dependency now — flipping the language switch has to
+        // re-pick the template, or a hire who switches to Spanish would keep
+        // whatever edition was chosen on first render.
+    }, [doc.id, isEs]);
 
     return (
         <div className={`bg-white rounded-2xl border ${

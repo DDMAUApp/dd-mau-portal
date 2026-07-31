@@ -1857,6 +1857,12 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
     // and auto-filled into any template field bound to `offerAmount`
     // (typically an offer letter blank).
     const [offerAmount, setOfferAmount] = useState(prefill?.offerAmount || '');
+    // Andrew 2026-07-30 — the language the hire's portal opens in. Until now
+    // this could ONLY be set by converting a Spanish job application, and a
+    // survey of the live data found 19 of 20 hires had no language at all
+    // and none had Spanish: every manually-invited hire silently got English.
+    // Defaults to English, which is what those hires were already getting.
+    const [hireLang, setHireLang] = useState(prefill?.preferredLanguage === 'es' ? 'es' : 'en');
     const [saving, setSaving] = useState(false);
     // Doc selection. Default 'full' = entire required-doc list. Picking
     // a preset auto-sets the customDocs list; 'custom' lets admin
@@ -1996,7 +2002,10 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                 // present when prefill came from convertApplication().
                 ...(prefill?.sourceApplicationId ? { sourceApplicationId: prefill.sourceApplicationId } : {}),
                 ...(prefill?.isMinor === true ? { isMinor: true } : {}),
-                ...(prefill?.preferredLanguage ? { preferredLanguage: prefill.preferredLanguage } : {}),
+                // Always written now (was: only when converting a Spanish
+                // application). The admin picks it on the invite form; the
+                // hire can still override it from the portal itself.
+                preferredLanguage: hireLang,
                 createdAt: new Date().toISOString(),
                 createdBy: staffName || 'admin',
             };
@@ -2083,6 +2092,29 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                                 className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm" />
                         </Field>
                     </div>
+
+                    {/* Portal language (Andrew 2026-07-30). Every hire's whole
+                        onboarding — handbook, wage/tip notice, minor rules —
+                        already exists in Spanish; this is what turns it on. */}
+                    <Field label={tx('Portal language', 'Idioma del portal')}>
+                        <div className="flex gap-2">
+                            {[['en', '🇺🇸 English'], ['es', '🇲🇽 Español']].map(([code, label]) => (
+                                <button key={code} type="button" onClick={() => setHireLang(code)}
+                                    aria-pressed={hireLang === code}
+                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-bold border-2 transition ${
+                                        hireLang === code
+                                            ? 'bg-dd-text text-white border-dd-text'
+                                            : 'bg-white text-dd-text-2 border-dd-line hover:border-dd-text/40'
+                                    }`}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-dd-text-2 mt-0.5 italic">
+                            {tx('What language their onboarding opens in. They can still switch it themselves from the portal.',
+                                'El idioma en que abre su onboarding. Ellos también pueden cambiarlo desde el portal.')}
+                        </p>
+                    </Field>
 
                     {/* Offer amount — free-form text so it works for hourly,
                         salaried, tipped, etc. Auto-fills the {offerAmount}

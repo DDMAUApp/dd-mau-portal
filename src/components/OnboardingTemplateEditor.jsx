@@ -49,6 +49,10 @@ export default function OnboardingTemplateEditor({
     //       'reference' = admin uploads a PDF for the hire to download/print/fill
     //                     offline; no fields, no signature pad
     const [mode, setMode] = useState(initialTemplate?.mode || 'fillable');
+    // 'any' | 'en' | 'es' — which hires see this template. Legacy templates
+    // have no language field and read back as 'any', so they keep serving
+    // everyone exactly as before.
+    const [templateLang, setTemplateLang] = useState(initialTemplate?.language || 'any');
     // pdfDirty: true once admin uploads a fresh PDF in EDIT mode. Drives
     // whether Save uploads to Storage (replacing the old PDF) or reuses
     // the existing storagePath. Without this flag, "Replace PDF" on an
@@ -407,6 +411,13 @@ export default function OnboardingTemplateEditor({
                 name: name.trim(),
                 forDocId,
                 mode,
+                // Andrew 2026-07-30 — which language's hires get this template.
+                // 'any' (the default, and what every pre-existing template has
+                // by omission) means it serves everyone, so nothing changes for
+                // templates uploaded before this field existed. Set 'es' to
+                // serve a Spanish edition of a form — e.g. the IRS's official
+                // Formulario W-4(SP) — only to Spanish-language hires.
+                language: templateLang,
                 storagePath,
                 fields: mode === 'reference' ? [] : fields,
                 pageDims,
@@ -514,6 +525,26 @@ export default function OnboardingTemplateEditor({
                                 }`}>
                                 📎 {tx('Reference', 'Referencia')}
                             </button>
+                        </div>
+                        {/* Language targeting — lets an official Spanish
+                            edition of a form (e.g. IRS Formulario W-4(SP))
+                            serve only Spanish hires. */}
+                        <label className="text-[10px] font-bold text-gray-500 uppercase ml-2">{tx('For:', 'Para:')}</label>
+                        <div className="flex gap-1">
+                            {[
+                                ['any', tx('Everyone', 'Todos')],
+                                ['en', '🇺🇸 EN'],
+                                ['es', '🇲🇽 ES'],
+                            ].map(([code, label]) => (
+                                <button key={code} type="button" onClick={() => setTemplateLang(code)}
+                                    className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                                        templateLang === code
+                                            ? 'bg-dd-text text-white border-dd-text'
+                                            : 'bg-white text-gray-700 border-gray-300'
+                                    }`}>
+                                    {label}
+                                </button>
+                            ))}
                         </div>
                     </div>
                 </div>
