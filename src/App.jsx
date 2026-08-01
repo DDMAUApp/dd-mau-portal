@@ -150,24 +150,40 @@ const TaskDisplay = lazy(() => import('./components/TaskDisplay'));
 // dedupe so the lazy() promise hits the same cached chunk. The
 // .catch() swallows transient network errors; the lazy() call will
 // retry on real render with normal error handling.
+// 2026-07-31 (Andrew: "the schedule is loading a little slow"). These used
+// to all fire at once. Measured gzip: Schedule 95 kB, Operations 87 kB,
+// ChatThread 29 kB, Recipes 11 kB, ChatCenter 10 kB, Eighty6 7 kB,
+// MyHours 4 kB, MenuReference 2 kB — ~246 kB competing for one phone's
+// bandwidth the moment a PIN lands. The two heavyweights are 74% of that
+// and throttled each other, so the page most likely to be tapped first
+// finished LAST.
+//
+// Now: Schedule alone first (biggest chunk, and a manager's daily
+// destination), then everything else once it's cached. Still pure
+// prefetch — no eager execution, no behavior change, just ordering.
+// `.finally` releases the second wave whether the first succeeds or
+// fails, so a dead network can't strand the rest.
 const prewarmChunks = () => {
-    import('./components/Schedule').catch(() => {});
-    import('./components/Operations').catch(() => {});
-    import('./components/Recipes').catch(() => {});
-    import('./components/MenuReference').catch(() => {});
-    import('./components/Eighty6Dashboard').catch(() => {});
-    // Chat is a primary tile on MobileHome and a daily destination for
-    // every staff member — pre-warming it removes the brief spinner the
-    // first time someone taps the chat tile after sign-in.
-    import('./components/ChatCenter').catch(() => {});
-    // Pull in the ChatThread + commonly-mounted lazy children of
-    // ChatCenter at the same time so a tap into a specific chat
-    // doesn't restart the chunk-fetch dance.
-    import('./components/ChatThread').catch(() => {});
-    // My Hours — staff check their timecards daily (Andrew 2026-07-27:
-    // "the my hours loads slow"); without prewarm the first tap paid a
-    // chunk fetch before the page could even start its query.
-    import('./components/MyHoursPage').catch(() => {});
+    import('./components/Schedule')
+        .catch(() => {})
+        .finally(() => {
+            import('./components/Operations').catch(() => {});
+            import('./components/Recipes').catch(() => {});
+            import('./components/MenuReference').catch(() => {});
+            import('./components/Eighty6Dashboard').catch(() => {});
+            // Chat is a primary tile on MobileHome and a daily destination for
+            // every staff member — pre-warming it removes the brief spinner the
+            // first time someone taps the chat tile after sign-in.
+            import('./components/ChatCenter').catch(() => {});
+            // Pull in the ChatThread + commonly-mounted lazy children of
+            // ChatCenter at the same time so a tap into a specific chat
+            // doesn't restart the chunk-fetch dance.
+            import('./components/ChatThread').catch(() => {});
+            // My Hours — staff check their timecards daily (Andrew 2026-07-27:
+            // "the my hours loads slow"); without prewarm the first tap paid a
+            // chunk fetch before the page could even start its query.
+            import('./components/MyHoursPage').catch(() => {});
+        });
 };
 
 // 2026-06-13 perf (login speed) — the home path is gated behind TWO lazy

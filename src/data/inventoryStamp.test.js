@@ -269,3 +269,27 @@ describe("a migrated counter keeps THEIR time, not the current one", () => {
         expect(seed.iso).toBe('2026-07-30T21:10:00.000Z');
     });
 });
+
+describe('a decrement must REDUCE the tapper, never raise it', () => {
+    it('yields a negative delta when an already-tracked person subtracts', () => {
+        // The shipped bug lived in the CALLER: prevCount came from a setState
+        // updater that hadn't run, so it passed prev=0/next=1 on a 2→1 tap and
+        // this returned +1 — the tapper's tally CLIMBED on every subtraction.
+        // Called with honest numbers the maths is unambiguous.
+        const prior = { by: 'Andrew', atISO: ISO, who: {
+            leidy: { n: 'Leidy', q: 1, t: ISO },
+            andrew: { n: 'Andrew', q: 1, t: ISO },
+        } };
+        expect(contributionWrites(prior, {
+            staffName: 'Andrew', prevCount: 2, nextCount: 1, nowIso: ISO,
+        })).toEqual([{ key: 'andrew', name: 'Andrew', iso: ISO, delta: -1 }]);
+    });
+
+    it('takes a tapper back to zero after add-then-subtract', () => {
+        const afterAdd = { who: { andrew: { n: 'Andrew', q: 1, t: ISO } } };
+        const [w] = contributionWrites(afterAdd, {
+            staffName: 'Andrew', prevCount: 2, nextCount: 1, nowIso: ISO,
+        });
+        expect(1 + w.delta).toBe(0);
+    });
+});

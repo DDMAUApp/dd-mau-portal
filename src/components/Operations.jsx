@@ -3979,6 +3979,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     mode: (isDelta && delta > 0) ? 'inc' : 'abs',
                 };
 
+                // ── Contribution accounting inputs ────────────────────────
+                // These deliberately do NOT reuse prevCount/nextCount above.
+                // Those are populated by a functional setState updater, and
+                // when that updater hadn't run yet, prevCount was still 0 — so
+                // a "−1" tap computed nextCount − prevCount = +1 and
+                // INCREMENTED the tapper's tally instead of decrementing it.
+                // Andrew 2026-08-01: crab meat sat at a count of 1 while his
+                // personal tally had climbed to 4, one per tap in either
+                // direction. The item COUNT stayed correct the whole time
+                // (decrements write a clamped absolute), which is why this hid.
+                //
+                // For the +/- buttons the contribution is simply `delta` — no
+                // state timing involved. inventoryRef.current is the last
+                // committed count, so the seed amount is trustworthy too.
+                const contribPrev = Number(inventoryRef.current?.[itemId]) || 0;
+                const contribNext = isDelta ? contribPrev + delta : count;
+
                 setInvCountMeta(prev => {
                     if (nextCount === 0) {
                         const next = { ...prev };
@@ -3997,7 +4014,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const priorWho = priorMeta.who || {};
                     const nextWho = { ...priorWho };
                     for (const w of contributionWrites(priorMeta, {
-                        staffName, prevCount, nextCount, nowIso,
+                        staffName, prevCount: contribPrev, nextCount: contribNext, nowIso,
                     })) {
                         const priorQty = Number(priorWho[w.key]?.q) || 0;
                         nextWho[w.key] = {
@@ -4092,7 +4109,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // land); `absolute` entries are the one-time seed, where
                     // there is no prior value to increment.
                     for (const w of contributionWrites(invCountMeta[itemId], {
-                        staffName, prevCount, nextCount, nowIso,
+                        staffName, prevCount: contribPrev, nextCount: contribNext, nowIso,
                     })) {
                         update[`countMeta.${itemId}.who.${w.key}.n`] = w.name;
                         update[`countMeta.${itemId}.who.${w.key}.q`] =
