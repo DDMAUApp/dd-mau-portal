@@ -6,7 +6,7 @@ import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel, isDuplicateInventoryName } from '../data/inventory';
-import { formatCountStamp } from '../data/inventoryStamp';
+import { formatCountStampLines, staffKey } from '../data/inventoryStamp';
 import { reconcileCounts } from '../data/inventoryReconcile';
 import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot } from '../data/inventoryStability';
 import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
@@ -491,7 +491,7 @@ const LocationItemRow = memo(function LocationItemRow({
                     className="w-11 h-11 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
             </div>
                 {stamp && count > 0 && (
-                    <p className="text-[10px] text-mint-700 leading-tight text-right">
+                    <p className="text-[10px] text-mint-700 leading-tight text-right whitespace-pre-line">
                         {"\u{2713}"} {stamp}
                     </p>
                 )}
@@ -3986,10 +3986,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         return next;
                     }
                     // atISO (2026-07-31) rides alongside the human `at` string so
-                    // the UI can tell a count made TODAY from one made two days
-                    // ago — carts build across days, and a bare "3:45 PM" on a
-                    // stale row reads as today. See src/data/inventoryStamp.js.
-                    return { ...prev, [itemId]: { by: staffName, at: timeStr, atISO: nowIso } };
+                    // the stamp can carry a real date rather than a bare time —
+                    // carts build across days. See src/data/inventoryStamp.js.
+                    //
+                    // Mirror the SAME per-person accumulation the Firestore
+                    // write does below, so the row updates on the spot instead
+                    // of waiting a round-trip. The snapshot overwrites this
+                    // with the server's authoritative tally moments later.
+                    const contribDelta = nextCount - prevCount;
+                    const priorWho = (prev[itemId] && prev[itemId].who) || {};
+                    let nextWho = priorWho;
+                    if (contribDelta !== 0 && staffName) {
+                        const k = staffKey(staffName);
+                        const priorQty = Number(priorWho[k]?.q) || 0;
+                        nextWho = {
+                            ...priorWho,
+                            [k]: { n: staffName, q: priorQty + contribDelta, t: nowIso },
+                        };
+                    }
+                    return {
+                        ...prev,
+                        [itemId]: { by: staffName, at: timeStr, atISO: nowIso, who: nextWho },
+                    };
                 });
 
                 // ── Audit trail (best-effort, fire-and-forget) ──────
@@ -4043,9 +4061,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     [`counts.${itemId}`]: !isDelta ? count
                         : delta > 0 ? increment(delta)
                             : Math.max(0, nextCount),
-                    [`countMeta.${itemId}`]: nextCount === 0 ? deleteField() : { by: staffName, at: timeStr, atISO: nowIso },
                     date: new Date().toISOString(),
                 };
+                // Count meta. Zeroing an item clears the whole record —
+                // Firestore forbids deleting a field AND writing its children
+                // in one update, so these two shapes are mutually exclusive.
+                if (nextCount === 0) {
+                    update[`countMeta.${itemId}`] = deleteField();
+                } else {
+                    // by/at/atISO are the LAST writer (kept for back-compat and
+                    // for items only one person touched).
+                    update[`countMeta.${itemId}.by`] = staffName;
+                    update[`countMeta.${itemId}.at`] = timeStr;
+                    update[`countMeta.${itemId}.atISO`] = nowIso;
+                    // Per-person tally (Andrew 2026-07-31: "if multiple people
+                    // add items make sure to also add that person too"). Keyed
+                    // by a SLUG, never the raw name — a name containing a dot
+                    // ("Andres Portillo Mo.") would otherwise be parsed as a
+                    // nested path and shatter the map. The display name rides
+                    // along in `n`. increment() keeps two devices counting the
+                    // same item at once from clobbering each other's tallies.
+                    const contribDelta = nextCount - prevCount;
+                    if (contribDelta !== 0 && staffName) {
+                        const who = staffKey(staffName);
+                        update[`countMeta.${itemId}.who.${who}.n`] = staffName;
+                        update[`countMeta.${itemId}.who.${who}.q`] = increment(contribDelta);
+                        update[`countMeta.${itemId}.who.${who}.t`] = nowIso;
+                    }
+                }
                 try {
                     await updateDoc(ref, update);
                     // Flip to "saved" and schedule a clear so the grid
@@ -5216,7 +5259,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // stamp on the printed sheet too, not just on screen, so
                         // whoever places the order can see who to ask about a
                         // line. Vendor-only rows below have no countMeta.
-                        stamp: formatCountStamp(invCountMeta[item.id]),
+                        stamp: formatCountStampLines(invCountMeta[item.id]),
                     });
                 });
                 Object.entries(vendorCounts).forEach(([key, qty]) => {
@@ -5345,7 +5388,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // it survives the column squeeze when several vendors are
                     // priced, and prints in gray so it reads as provenance
                     // rather than part of the order.
-                    if (r.stamp) html += `<span class="stamp">${"✓"} ${esc(r.stamp)}</span>`;
+                    if (r.stamp) {
+                        // One line per person — the stamp is newline-separated.
+                        for (const line of String(r.stamp).split("\n")) {
+                            if (line) html += `<span class="stamp">${"✓"} ${esc(line)}</span>`;
+                        }
+                    }
                     html += `</td><td class="qty">${r.qty}</td>`;
                     vendorList.forEach(v => {
                         const p = r.vendorPrices.find(vp => vp.vendor === v);
@@ -8953,8 +9001,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                     </>
                                                                                 )}
                                                                             </div>
-                                                                            {count > 0 && formatCountStamp(invCountMeta[item.id]) && (
-                                                                                <p className="text-xs text-mint-700 mt-0.5">{"\u{2713}"} {formatCountStamp(invCountMeta[item.id])}</p>
+                                                                            {count > 0 && formatCountStampLines(invCountMeta[item.id]) && (
+                                                                                <p className="text-xs text-mint-700 mt-0.5 whitespace-pre-line">{"\u{2713}"} {formatCountStampLines(invCountMeta[item.id])}</p>
                                                                             )}
                                                                             {/* Low-stock indicator. Renders when:
                                                                                   • item has a `min` threshold set
@@ -9352,7 +9400,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         count={inventory[item.id] || 0}
                                                         language={language}
                                                         onUpdate={stableUpdateInventoryCount}
-                                                        stamp={formatCountStamp(invCountMeta[item.id])}
+                                                        stamp={formatCountStampLines(invCountMeta[item.id])}
                                                     />
                                                 ))}
                                             </div>
@@ -9525,9 +9573,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                 className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                         </div>
-                                                                        {count > 0 && formatCountStamp(invCountMeta[item.id]) && (
-                                                                            <p className="text-[10px] text-mint-700 leading-tight text-right">
-                                                                                {"\u{2713}"} {formatCountStamp(invCountMeta[item.id])}
+                                                                        {count > 0 && formatCountStampLines(invCountMeta[item.id]) && (
+                                                                            <p className="text-[10px] text-mint-700 leading-tight text-right whitespace-pre-line">
+                                                                                {"\u{2713}"} {formatCountStampLines(invCountMeta[item.id])}
                                                                             </p>
                                                                         )}
                                                                     </div>
