@@ -55,6 +55,7 @@ import {
 } from 'lucide-react';
 import ModalPortal from './ModalPortal';
 import { printViaNative, downloadFile } from '../capacitor-bridge';
+import { showLocalNotification } from '../data/localNotification';
 import ConfirmModal from './ConfirmModal';
 import OfferShiftModal from './OfferShiftModal';
 import TakeShiftModal from './TakeShiftModal';
@@ -1237,14 +1238,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             if (seenNotifIds.has(n.id)) continue;
             const ts = n.createdAt?.toMillis ? n.createdAt.toMillis() : 0;
             if (ts < cutoff) { seenNotifIds.add(n.id); continue; }
-            try {
-                new Notification(n.title || 'DD Mau', {
-                    body: n.body || '',
-                    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
-                    tag: n.id,
-                });
-                seenNotifIds.add(n.id);
-            } catch {}
+            // showLocalNotification, not a bare `new Notification()` in a
+            // silent catch: on Android the page-context constructor throws and
+            // the old catch swallowed it, so these popups never appeared there
+            // at all (2026-08-01 bug run). It falls back to the service worker.
+            showLocalNotification(n.title || 'DD Mau', {
+                body: n.body || '',
+                icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
+                tag: n.id,
+            });
+            seenNotifIds.add(n.id);
         }
     // seenNotifIds is a useRef whose .current Set is mutated in place;
     // intentionally not in the deps. Re-runs only when context flips
@@ -1301,8 +1304,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             if (delay <= 0) continue; // already past or within 1h — would've already fired
             if (delay > horizon - now) continue; // beyond 24h, defer to a later re-render
             const timerId = setTimeout(() => {
-                try {
-                    new Notification(tx('DD Mau — Shift in 1 hour', 'DD Mau — Turno en 1 hora'), {
+                    // Android silently dropped this reminder entirely — see
+                    // the note on the notification popup above.
+                    showLocalNotification(tx('DD Mau — Shift in 1 hour', 'DD Mau — Turno en 1 hora'), {
                         body: tx(
                             `Your shift starts at ${formatTime12h(sh.startTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`,
                             `Tu turno empieza a las ${formatTime12h(sh.startTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`,
@@ -1311,7 +1315,6 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         tag: `shift-reminder-${sh.id}`, // OS dedupes by tag
                         requireInteraction: false,
                     });
-                } catch {}
             }, delay);
             timers.push(timerId);
         }

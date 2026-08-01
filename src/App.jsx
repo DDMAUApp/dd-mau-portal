@@ -12,6 +12,7 @@ import { playKitchenBell } from './data/bell';
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
+import { showLocalNotification } from './data/localNotification';
 // AppToast is mounted at root in main.jsx (not here) so it renders
 // across every code path including the lock screen and the public
 // onboarding/apply routes that bypass App's main shell.
@@ -163,6 +164,7 @@ const TaskDisplay = lazy(() => import('./components/TaskDisplay'));
 // prefetch — no eager execution, no behavior change, just ordering.
 // `.finally` releases the second wave whether the first succeeds or
 // fails, so a dead network can't strand the rest.
+
 const prewarmChunks = () => {
     import('./components/Schedule')
         .catch(() => {})
@@ -1330,9 +1332,13 @@ export default function App() {
                         // while the app is open. Closed-app pushes use the
                         // OS default sound (SW can't play audio).
                         playKitchenBell();
-                        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-                            try {
-                                new Notification(title, {
+                        {
+                            // showLocalNotification handles the permission gate
+                            // AND falls back to the service worker: on Android
+                            // the page-context constructor throws, and the old
+                            // bare catch meant foreground pushes silently never
+                            // appeared there (2026-08-01 bug run).
+                            showLocalNotification(title, {
                                     body,
                                     // 2026-05-24 audit fix: /icon-192.png
                                     // doesnt exist in public/. Was rendering
@@ -1345,7 +1351,6 @@ export default function App() {
                                     renotify: false,
                                     silent: true,
                                 });
-                            } catch {}
                         }
                     });
                 }

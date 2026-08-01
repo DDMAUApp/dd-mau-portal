@@ -121,7 +121,7 @@ export function legacyMenuToV2(legacyData = MENU_DATA) {
             customizable: Array.isArray(cat.customizable) ? [...cat.customizable] : [],
             order:        ci,
             archived:     false,
-            items: (cat.items || []).map((it, ii) => ({
+            items: (Array.isArray(cat.items) ? cat.items : []).map((it, ii) => ({
                 id:         makeItemSlug(catSlug, it.nameEn),
                 nameEn:     it.nameEn || '',
                 nameEs:     it.nameEs || '',

@@ -690,7 +690,11 @@ export default function CateringOrder({ language, staffName }) {
             };
             const loadOrderForEdit = (o) => {
                 setCustomer(o.customer || {});
-                setCart((o.items || []).map((item, i) => ({ ...item, id: Date.now() + i })));
+                // Array.isArray, not `|| []`: a truthy-but-not-array `items` (a Firestore
+                // map, a legacy string) sails past `||` and then throws
+                // "(n||[]).map is not a function" — a real production crash on
+                // opening a saved order for edit (2026-08-01 error_logs).
+                setCart((Array.isArray(o.items) ? o.items : []).map((item, i) => ({ ...item, id: Date.now() + i })));
                 setSpecialNotes(o.specialNotes || "");
                 setDeliveryFee(String(o.deliveryFee || 15));
                 if (o.utensils?.plates) { setWantPlates(true); setPlateCount(o.utensils.plates); } else { setWantPlates(false); setPlateCount(0); }

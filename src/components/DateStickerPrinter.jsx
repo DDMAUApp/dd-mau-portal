@@ -450,7 +450,7 @@ export default function DateStickerPrinter({
             // Synthesize a build-shaped result. Notes go as 'note'
             // components so the renderer's existing note styling
             // works without modification.
-            const noteComps = (ci.notes || []).map((n, i) => ({
+            const noteComps = (Array.isArray(ci.notes) ? ci.notes : []).map((n, i) => ({
                 id: `note-${i}`,
                 kind: 'note',
                 nameEn: n.en,
@@ -1739,7 +1739,7 @@ function AddItemCell({ isEs, tx, existing, sectionKey, onAdd }) {
 // finding 1; this predates v317 and likely caused "most of them were
 // wrong"). Generates an id if the source row lacks one.
 function normalizeForEdit(items) {
-    return (items || []).map((row, i) => ({
+    return (Array.isArray(items) ? items : []).map((row, i) => ({
         ...row,
         id:     row.id || `tmp-${i}-${row.nameEn || ''}`,
         nameEn: row.nameEn || '',
