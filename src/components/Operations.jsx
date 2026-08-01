@@ -6,6 +6,7 @@ import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel, isDuplicateInventoryName } from '../data/inventory';
+import { formatCountStamp } from '../data/inventoryStamp';
 import { reconcileCounts } from '../data/inventoryReconcile';
 import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot } from '../data/inventoryStability';
 import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
@@ -445,8 +446,11 @@ const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden
 //   count    — number; changes when this specific row's count changes
 //   language — string
 //   onUpdate — function ref (parent's updateInventoryCount)
+// `stamp` is a pre-formatted STRING, not the countMeta object: this row is
+// memo'd, and an object prop would be a fresh identity on every parent render,
+// defeating the memo across the whole (long) location list.
 const LocationItemRow = memo(function LocationItemRow({
-    id, name, catName, subcat, pack, count, language, onUpdate,
+    id, name, catName, subcat, pack, count, language, onUpdate, stamp,
 }) {
     return (
         <div className={`ddmau-inv-cv flex items-center justify-between gap-2 px-3 py-2 ${count > 0 ? 'bg-green-50/50' : ''}`}>
@@ -464,7 +468,11 @@ const LocationItemRow = memo(function LocationItemRow({
                 to 44px (w-11 h-11) to hit Apple HIG minimum tap target, and
                 widened the gap so an oily-finger rush count doesn't mis-tap
                 +/-. Input grew proportionally (w-14 h-11). */}
-            <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Column, not a row: the who/when stamp sits UNDER the −/count/+
+                cluster (Andrew 2026-07-31). items-end keeps it right-aligned
+                with the + button. */}
+            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+            <div className="flex items-center gap-2">
                 <button onClick={() => onUpdate(id, Math.max(0, count - 1), -1)}
                     className={`w-11 h-11 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
                 {/* 2026-06-13 perf — was a raw onChange input that wrote to
@@ -481,6 +489,12 @@ const LocationItemRow = memo(function LocationItemRow({
                     className="w-14 h-11 text-center text-base font-bold rounded-lg border-2 border-gray-200 bg-white text-gray-800 focus:border-mint-500 focus:outline-none tabular-nums" />
                 <button onClick={() => onUpdate(id, count + 1, 1)}
                     className="w-11 h-11 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
+            </div>
+                {stamp && count > 0 && (
+                    <p className="text-[10px] text-mint-700 leading-tight text-right">
+                        {"\u{2713}"} {stamp}
+                    </p>
+                )}
             </div>
         </div>
     );
@@ -3911,6 +3925,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const isDelta = delta === 1 || delta === -1;
                 const now = new Date();
                 const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                const nowIso = now.toISOString();
 
                 // Per-item sync indicator — Andrew 2026-05-23 audit
                 // follow-up. Counts were optimistic-updated locally but
@@ -3970,7 +3985,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         delete next[itemId];
                         return next;
                     }
-                    return { ...prev, [itemId]: { by: staffName, at: timeStr } };
+                    // atISO (2026-07-31) rides alongside the human `at` string so
+                    // the UI can tell a count made TODAY from one made two days
+                    // ago — carts build across days, and a bare "3:45 PM" on a
+                    // stale row reads as today. See src/data/inventoryStamp.js.
+                    return { ...prev, [itemId]: { by: staffName, at: timeStr, atISO: nowIso } };
                 });
 
                 // ── Audit trail (best-effort, fire-and-forget) ──────
@@ -4024,7 +4043,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     [`counts.${itemId}`]: !isDelta ? count
                         : delta > 0 ? increment(delta)
                             : Math.max(0, nextCount),
-                    [`countMeta.${itemId}`]: nextCount === 0 ? deleteField() : { by: staffName, at: timeStr },
+                    [`countMeta.${itemId}`]: nextCount === 0 ? deleteField() : { by: staffName, at: timeStr, atISO: nowIso },
                     date: new Date().toISOString(),
                 };
                 try {
@@ -5193,6 +5212,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         qty,
                         vendorPrices: invToVendorPrices[item.id] || [],
                         pack: item.pack,
+                        // Who counted it and when — Andrew 2026-07-31 wanted the
+                        // stamp on the printed sheet too, not just on screen, so
+                        // whoever places the order can see who to ask about a
+                        // line. Vendor-only rows below have no countMeta.
+                        stamp: formatCountStamp(invCountMeta[item.id]),
                     });
                 });
                 Object.entries(vendorCounts).forEach(([key, qty]) => {
@@ -5282,6 +5306,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     .badge.sysco{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}
                     .badge.usfoods{background:#fed7aa;color:#9a3412;border-color:#fdba74}
                     .cat{font-size:9px;color:#888;display:block}
+                    .stamp{font-size:9px;color:#15803d;display:block;margin-top:1px}
                     .totals-block{border:2px solid #2F5496;border-radius:6px;padding:12px;margin-top:16px;page-break-inside:avoid}
                     .totals-title{font-size:11px;font-weight:bold;text-transform:uppercase;color:#666;margin-bottom:6px;letter-spacing:0.5px}
                     .totals-row{display:flex;justify-content:space-between;padding:3px 0;font-size:13px}
@@ -5316,6 +5341,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                     html += esc(r.name);
                     html += `<span class="cat">${esc(r.category)}${r.pack ? " · " + esc(r.pack) : ""}</span>`;
+                    // Who counted it + when (Andrew 2026-07-31). Its own line so
+                    // it survives the column squeeze when several vendors are
+                    // priced, and prints in gray so it reads as provenance
+                    // rather than part of the order.
+                    if (r.stamp) html += `<span class="stamp">${"✓"} ${esc(r.stamp)}</span>`;
                     html += `</td><td class="qty">${r.qty}</td>`;
                     vendorList.forEach(v => {
                         const p = r.vendorPrices.find(vp => vp.vendor === v);
@@ -8923,8 +8953,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                     </>
                                                                                 )}
                                                                             </div>
-                                                                            {invCountMeta[item.id] && count > 0 && (
-                                                                                <p className="text-xs text-mint-600 mt-0.5">{"\u{2713}"} {invCountMeta[item.id].by} {"\u{2014}"} {invCountMeta[item.id].at}</p>
+                                                                            {count > 0 && formatCountStamp(invCountMeta[item.id]) && (
+                                                                                <p className="text-xs text-mint-700 mt-0.5">{"\u{2713}"} {formatCountStamp(invCountMeta[item.id])}</p>
                                                                             )}
                                                                             {/* Low-stock indicator. Renders when:
                                                                                   • item has a `min` threshold set
@@ -9322,6 +9352,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         count={inventory[item.id] || 0}
                                                         language={language}
                                                         onUpdate={stableUpdateInventoryCount}
+                                                        stamp={formatCountStamp(invCountMeta[item.id])}
                                                     />
                                                 ))}
                                             </div>
@@ -9485,12 +9516,20 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                         </div>
                                                                     </div>
-                                                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                                                        <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
-                                                                            className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
-                                                                        <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
-                                                                        <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
-                                                                            className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
+                                                                    {/* Column so the who/when stamp sits under −/count/+ */}
+                                                                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                                                        <div className="flex items-center gap-1">
+                                                                            <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
+                                                                                className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                            <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
+                                                                            <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
+                                                                                className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
+                                                                        </div>
+                                                                        {count > 0 && formatCountStamp(invCountMeta[item.id]) && (
+                                                                            <p className="text-[10px] text-mint-700 leading-tight text-right">
+                                                                                {"\u{2713}"} {formatCountStamp(invCountMeta[item.id])}
+                                                                            </p>
+                                                                        )}
                                                                     </div>
                                                                 </div>
                                                                 )}
