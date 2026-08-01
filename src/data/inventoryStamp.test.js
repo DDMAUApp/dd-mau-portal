@@ -168,7 +168,7 @@ describe("contributionWrites — don't erase the person already on the count", (
             staffName: 'Andrew', prevCount: 3, nextCount: 4, nowIso: ISO,
         });
         expect(out).toEqual([
-            { key: 'blanca', name: 'Blanca', iso: '2026-07-30T21:10:00.000Z', absolute: 3 },
+            { key: 'blanca', name: 'Blanca', iso: '2026-07-30T21:10:00.000Z', atText: '4:10 PM', absolute: 3 },
             { key: 'andrew', name: 'Andrew', iso: ISO, delta: 1 },
         ]);
     });
@@ -225,7 +225,7 @@ describe("contributionWrites — don't erase the person already on the count", (
             staffName: 'Andrew', prevCount: 3, nextCount: 2, nowIso: ISO,
         });
         expect(out).toEqual([
-            { key: 'blanca', name: 'Blanca', iso: ISO, absolute: 3 },
+            { key: 'blanca', name: 'Blanca', iso: ISO, atText: '', absolute: 3 },
             { key: 'andrew', name: 'Andrew', iso: ISO, delta: -1 },
         ]);
     });
@@ -235,5 +235,37 @@ describe("contributionWrites — don't erase the person already on the count", (
         expect(contributionWrites(prior, {
             staffName: 'Andrew', prevCount: 3, nextCount: 3, nowIso: ISO,
         })).toEqual([]);
+    });
+});
+
+describe("a migrated counter keeps THEIR time, not the current one", () => {
+    it('never stamps the previous counter with "now" when they predate atISO', () => {
+        // Blanca counted 3 before atISO existed — only "4:10 PM" was stored.
+        // The bug: this fell back to nowIso, so her line showed the time
+        // Andrew pressed +, making it look like she counted just now.
+        const prior = { by: 'Blanca', at: '4:10 PM' };   // no atISO
+        const [seed] = contributionWrites(prior, {
+            staffName: 'Andrew', prevCount: 3, nextCount: 4, nowIso: ISO,
+        });
+        expect(seed.iso).toBeNull();
+        expect(seed.atText).toBe('4:10 PM');
+    });
+
+    it('renders that carried-over time instead of the current one', () => {
+        const meta = { who: {
+            blanca: { n: 'Blanca', q: 3, at: '4:10 PM' },          // migrated, no ISO
+            andrew: { n: 'Andrew', q: 1, t: '2026-07-31T20:45:00.000Z' },
+        } };
+        expect(formatCountStampLines(meta, NOW)).toBe(
+            'Blanca 3 — 4:10 PM\nAndrew 1 — Jul 31, 3:45 PM',
+        );
+    });
+
+    it('still prefers a real ISO when the migrated row has one', () => {
+        const prior = { by: 'Blanca', at: '4:10 PM', atISO: '2026-07-30T21:10:00.000Z' };
+        const [seed] = contributionWrites(prior, {
+            staffName: 'Andrew', prevCount: 3, nextCount: 4, nowIso: ISO,
+        });
+        expect(seed.iso).toBe('2026-07-30T21:10:00.000Z');
     });
 });

@@ -3262,25 +3262,39 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 before: { staffName: oldOwner }, after: { staffName: newOwner, split: !!leftoverDetail } }).catch(() => {});
             // Notifications outside the transaction — they hit a different
             // collection and shouldn't roll back the swap if push fails.
-            if (leftoverDetail) {
-                await notify(oldOwner, 'swap_approved',
-                    { en: 'Shift split approved', es: 'División de turno aprobada' },
-                    { en: `Your ${detail} portion is now ${newOwner}'s. You still cover: ${leftoverDetail}.`,
-                      es: `Tu porción ${detail} ahora es de ${newOwner}. Aún cubres: ${leftoverDetail}.` });
-                await notify(newOwner, 'swap_approved',
-                    { en: 'Partial shift assigned', es: 'Turno parcial asignado' },
-                    { en: `You're now on for ${detail}.`,
-                      es: `Ahora estás en ${detail}.` });
-            } else {
-                await notify(oldOwner, 'swap_approved',
-                    { en: 'Swap approved', es: 'Cambio aprobado' },
-                    { en: `Your shift on ${detail} is now ${newOwner}'s.`,
-                      es: `Tu turno del ${detail} ahora es de ${newOwner}.` });
-                await notify(newOwner, 'swap_approved',
-                    { en: 'Shift assigned', es: 'Turno asignado' },
-                    { en: `The shift on ${detail} is now yours.`,
-                      es: `El turno del ${detail} ahora es tuyo.` });
-            }
+            //
+            // 2026-07-31 (Andrew: "i am trying to approve a shift swap and its
+            // taking a long time"). These used to be `await`ed ONE AFTER THE
+            // OTHER, so tapping Approve blocked the confirm dialog on the
+            // transaction PLUS two serial Firestore round-trips — and nothing
+            // confirmed success at the end, which made it feel worse than it
+            // was. notify() already swallows its own errors and nothing below
+            // depends on the result, so: fire both in parallel, don't wait,
+            // and toast the moment the swap itself is durable. Matches what
+            // handleApproveSwapRequest (the other swap path) already did.
+            const pending = leftoverDetail
+                ? [
+                    notify(oldOwner, 'swap_approved',
+                        { en: 'Shift split approved', es: 'División de turno aprobada' },
+                        { en: `Your ${detail} portion is now ${newOwner}'s. You still cover: ${leftoverDetail}.`,
+                          es: `Tu porción ${detail} ahora es de ${newOwner}. Aún cubres: ${leftoverDetail}.` }),
+                    notify(newOwner, 'swap_approved',
+                        { en: 'Partial shift assigned', es: 'Turno parcial asignado' },
+                        { en: `You're now on for ${detail}.`,
+                          es: `Ahora estás en ${detail}.` }),
+                ]
+                : [
+                    notify(oldOwner, 'swap_approved',
+                        { en: 'Swap approved', es: 'Cambio aprobado' },
+                        { en: `Your shift on ${detail} is now ${newOwner}'s.`,
+                          es: `Tu turno del ${detail} ahora es de ${newOwner}.` }),
+                    notify(newOwner, 'swap_approved',
+                        { en: 'Shift assigned', es: 'Turno asignado' },
+                        { en: `The shift on ${detail} is now yours.`,
+                          es: `El turno del ${detail} ahora es tuyo.` }),
+                ];
+            Promise.allSettled(pending);
+            toast(tx('✓ Swap approved', '✓ Cambio aprobado'), { kind: 'success', duration: 3000 });
         } catch (e) {
             console.error('Approve failed:', e);
             toast((tx('Could not approve: ', 'No se pudo aprobar: ')) + (e.message || e), { kind: 'error' });
@@ -3300,7 +3314,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'claim_denied',
                 after: { claimBy: shift.pendingClaimBy, offerStatus: 'open' } }).catch(() => {});
             const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
-            await notify(shift.pendingClaimBy, 'swap_denied',
+            // Not awaited — same reasoning as Approve: the shift update above
+            // is the durable part, notify() swallows its own errors, and
+            // nothing here depends on the result.
+            notify(shift.pendingClaimBy, 'swap_denied',
                 { en: 'Swap denied', es: 'Cambio negado' },
                 { en: `Manager denied your takeover of the ${detail} shift.`,
                   es: `Gerente negó tu toma del turno ${detail}.` });
@@ -3376,25 +3393,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // pruner deletes every recipient's tokens. Likely cause of
             // "push isn't working for some staff" reports. Route through
             // notify() instead — it calls resolveText() per recipient.
-            for (const t of targets) {
-                await notify(t.name, 'shift_open',
-                    {
-                        en: `🙋 ${sideName} shift up for grabs · ${dayLabel} ${range}`,
-                        es: `🙋 Turno ${sideName} disponible · ${dayLabel} ${range}`,
-                    },
-                    {
-                        en: `Open in Schedule and tap "I want this" to add yourself to the pickup queue.`,
-                        es: `Abre Horario y toca "Lo quiero" para apuntarte.`,
-                    },
-                    null,
-                    // allowSelf: targets[] is already filtered to exclude
-                    // the actor; setting allowSelf=true skips the redundant
-                    // self-skip inside notify(). tagSuffix=need.id collapses
-                    // OS notifications for the same up-for-grabs broadcast
-                    // (retries land as one bell, not many).
-                    { allowSelf: true, tagSuffix: need.id },
-                );
-            }
+            // 2026-07-31 — was `for (…) await notify(…)`, i.e. ONE SEQUENTIAL
+            // Firestore round-trip PER STAFF MEMBER. On a 20-person roster
+            // that's 20 serial writes before the UI moves — the same defect
+            // that made Approve feel slow, just at roster scale. Fire them
+            // together instead; notify() already catches per-recipient, so
+            // one failure still can't block the rest.
+            await Promise.allSettled(targets.map(t => notify(t.name, 'shift_open',
+                {
+                    en: `🙋 ${sideName} shift up for grabs · ${dayLabel} ${range}`,
+                    es: `🙋 Turno ${sideName} disponible · ${dayLabel} ${range}`,
+                },
+                {
+                    en: `Open in Schedule and tap "I want this" to add yourself to the pickup queue.`,
+                    es: `Abre Horario y toca "Lo quiero" para apuntarte.`,
+                },
+                null,
+                // allowSelf: targets[] is already filtered to exclude
+                // the actor; setting allowSelf=true skips the redundant
+                // self-skip inside notify(). tagSuffix=need.id collapses
+                // OS notifications for the same up-for-grabs broadcast
+                // (retries land as one bell, not many).
+                { allowSelf: true, tagSuffix: need.id },
+            )));
         } catch (e) {
             console.warn('broadcastUpForGrabs failed:', e);
         }
@@ -3729,20 +3750,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     // rejects + Cloud Function prunes the recipient's
                     // tokens). Route through notify() so each manager
                     // gets text resolved to their preferredLanguage.
-                    for (const t of targets) {
-                        await notify(t.name, 'shift_grabbed',
-                            {
-                                en: `🙋 ${staffName} wants ${dayLabel} ${range}`,
-                                es: `🙋 ${staffName} quiere ${dayLabel} ${range}`,
-                            },
-                            {
-                                en: `Open ${(need.side || 'foh').toUpperCase()} slot — review pickup queue in Schedule.`,
-                                es: `Espacio ${(need.side || 'foh').toUpperCase()} abierto — revisa la lista en Horario.`,
-                            },
-                            null,
-                            { allowSelf: true, tagSuffix: needId },
-                        );
-                    }
+                    // Parallel, not serial — see broadcastUpForGrabs above.
+                    // This one fans out to every manager, so a staffer tapping
+                    // "I want this" was waiting on one write per manager.
+                    await Promise.allSettled(targets.map(t => notify(t.name, 'shift_grabbed',
+                        {
+                            en: `🙋 ${staffName} wants ${dayLabel} ${range}`,
+                            es: `🙋 ${staffName} quiere ${dayLabel} ${range}`,
+                        },
+                        {
+                            en: `Open ${(need.side || 'foh').toUpperCase()} slot — review pickup queue in Schedule.`,
+                            es: `Espacio ${(need.side || 'foh').toUpperCase()} abierto — revisa la lista en Horario.`,
+                        },
+                        null,
+                        { allowSelf: true, tagSuffix: needId },
+                    )));
                 } catch (e) {
                     console.warn('claim notify failed (non-fatal):', e);
                 }

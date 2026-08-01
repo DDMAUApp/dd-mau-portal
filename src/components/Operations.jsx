@@ -4003,7 +4003,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         nextWho[w.key] = {
                             n: w.name,
                             q: w.delta != null ? priorQty + w.delta : w.absolute,
-                            t: w.iso,
+                            ...(w.iso ? { t: w.iso } : {}),
+                            ...(w.atText ? { at: w.atText } : {}),
                         };
                     }
                     return {
@@ -4094,9 +4095,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         staffName, prevCount, nextCount, nowIso,
                     })) {
                         update[`countMeta.${itemId}.who.${w.key}.n`] = w.name;
-                        update[`countMeta.${itemId}.who.${w.key}.t`] = w.iso;
                         update[`countMeta.${itemId}.who.${w.key}.q`] =
                             w.delta != null ? increment(w.delta) : w.absolute;
+                        // A migrated counter may have no real timestamp — only
+                        // the old display string. Persist whichever we have and
+                        // never fabricate one.
+                        if (w.iso) update[`countMeta.${itemId}.who.${w.key}.t`] = w.iso;
+                        if (w.atText) update[`countMeta.${itemId}.who.${w.key}.at`] = w.atText;
                     }
                 }
                 try {

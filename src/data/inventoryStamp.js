@@ -132,7 +132,20 @@ export function contributionWrites(priorMeta, { staffName, prevCount, nextCount,
         return name ? [{ key: myKey, name, iso: nowIso, absolute: Number(nextCount) }] : [];
     }
     return [
-        { key: legacyKey, name: legacyName, iso: meta.atISO || nowIso, absolute: Number(prevCount) },
+        {
+            key: legacyKey,
+            name: legacyName,
+            // ⚠ NOT `|| nowIso`. Counts recorded before atISO existed have ONLY
+            // the human time string, so falling back to "now" stamped the
+            // previous counter with the CURRENT time — Andrew 2026-07-31: "the
+            // first add's time stamp changes to current time not when that
+            // person added". We know their clock time, just not the date, so
+            // carry the original string through and show that instead of
+            // inventing a timestamp.
+            iso: meta.atISO || null,
+            atText: String(meta.at || '').trim(),
+            absolute: Number(prevCount),
+        },
         ...mine,
     ];
 }
@@ -161,13 +174,16 @@ export function listContributors(meta, now = new Date()) {
                 name: String(v.n || '').trim(),
                 qty: Number(v.q),
                 iso: v.t,
+                // Fallback display time for a counter migrated from the
+                // pre-atISO format — see contributionWrites.
+                atText: v.at,
             }))
             .filter(r => r.name && Number.isFinite(r.qty) && r.qty !== 0)
             .sort((a, b) => String(a.iso || '').localeCompare(String(b.iso || '')))
             .map(r => ({
                 name: r.name,
                 qty: r.qty,
-                when: formatCountTime({ atISO: r.iso }, now),
+                when: formatCountTime({ atISO: r.iso, at: r.atText }, now),
             }));
         if (rows.length) return rows;
     }
