@@ -153,3 +153,87 @@ describe('staffKey — names are not safe as raw Firestore map keys', () => {
         expect(staffKey(null)).toBe('unknown');
     });
 });
+
+// ── The migration bug: an existing counter's name vanished ─────────────
+import { contributionWrites } from './inventoryStamp';
+
+const ISO = '2026-07-31T22:00:00.000Z';
+
+describe("contributionWrites — don't erase the person already on the count", () => {
+    it('credits the PRIOR counter when a legacy item first gains per-person tracking', () => {
+        // Blanca counted 3 before per-person tracking existed. Andrew adds 1.
+        // Blanca must survive with her 3 — the reported bug was her vanishing.
+        const prior = { by: 'Blanca', at: '4:10 PM', atISO: '2026-07-30T21:10:00.000Z' };
+        const out = contributionWrites(prior, {
+            staffName: 'Andrew', prevCount: 3, nextCount: 4, nowIso: ISO,
+        });
+        expect(out).toEqual([
+            { key: 'blanca', name: 'Blanca', iso: '2026-07-30T21:10:00.000Z', absolute: 3 },
+            { key: 'andrew', name: 'Andrew', iso: ISO, delta: 1 },
+        ]);
+    });
+
+    it('rolls the same person forward as a total, not a double-count', () => {
+        // Andrew counted 3 legacy, adds 1 → 4 total. Seeding 3 AND
+        // incrementing 1 on the same field is impossible in one write, so
+        // this must resolve to a single absolute 4.
+        const prior = { by: 'Andrew', at: '4:10 PM', atISO: '2026-07-30T21:10:00.000Z' };
+        const out = contributionWrites(prior, {
+            staffName: 'Andrew', prevCount: 3, nextCount: 4, nowIso: ISO,
+        });
+        expect(out).toEqual([{ key: 'andrew', name: 'Andrew', iso: ISO, absolute: 4 }]);
+    });
+
+    it('matches the prior counter case-insensitively', () => {
+        const prior = { by: 'andrew shih', atISO: ISO };
+        const out = contributionWrites(prior, {
+            staffName: 'Andrew Shih', prevCount: 2, nextCount: 3, nowIso: ISO,
+        });
+        expect(out).toHaveLength(1);
+        expect(out[0].absolute).toBe(3);
+    });
+
+    it('uses a plain delta once the item already has per-person data', () => {
+        const prior = {
+            by: 'Blanca', atISO: ISO,
+            who: { blanca: { n: 'Blanca', q: 3, t: ISO } },
+        };
+        const out = contributionWrites(prior, {
+            staffName: 'Andrew', prevCount: 3, nextCount: 4, nowIso: ISO,
+        });
+        expect(out).toEqual([{ key: 'andrew', name: 'Andrew', iso: ISO, delta: 1 }]);
+    });
+
+    it('seeds nothing when the item had no prior count', () => {
+        const out = contributionWrites({ by: 'Blanca', atISO: ISO }, {
+            staffName: 'Andrew', prevCount: 0, nextCount: 1, nowIso: ISO,
+        });
+        expect(out).toEqual([{ key: 'andrew', name: 'Andrew', iso: ISO, delta: 1 }]);
+    });
+
+    it('handles a brand-new item with no prior meta at all', () => {
+        const out = contributionWrites(null, {
+            staffName: 'Andrew', prevCount: 0, nextCount: 2, nowIso: ISO,
+        });
+        expect(out).toEqual([{ key: 'andrew', name: 'Andrew', iso: ISO, delta: 2 }]);
+    });
+
+    it('still credits the prior counter when the new person only DECREMENTS', () => {
+        // Andrew takes Blanca's 3 down to 2. Blanca keeps 3, Andrew shows −1.
+        const prior = { by: 'Blanca', atISO: ISO };
+        const out = contributionWrites(prior, {
+            staffName: 'Andrew', prevCount: 3, nextCount: 2, nowIso: ISO,
+        });
+        expect(out).toEqual([
+            { key: 'blanca', name: 'Blanca', iso: ISO, absolute: 3 },
+            { key: 'andrew', name: 'Andrew', iso: ISO, delta: -1 },
+        ]);
+    });
+
+    it('writes nothing for a no-op change', () => {
+        const prior = { by: 'Blanca', atISO: ISO, who: { blanca: { n: 'Blanca', q: 3, t: ISO } } };
+        expect(contributionWrites(prior, {
+            staffName: 'Andrew', prevCount: 3, nextCount: 3, nowIso: ISO,
+        })).toEqual([]);
+    });
+});

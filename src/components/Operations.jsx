@@ -6,7 +6,7 @@ import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel, isDuplicateInventoryName } from '../data/inventory';
-import { formatCountStampLines, staffKey } from '../data/inventoryStamp';
+import { formatCountStampLines, contributionWrites } from '../data/inventoryStamp';
 import { reconcileCounts } from '../data/inventoryReconcile';
 import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot } from '../data/inventoryStability';
 import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
@@ -3993,15 +3993,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // write does below, so the row updates on the spot instead
                     // of waiting a round-trip. The snapshot overwrites this
                     // with the server's authoritative tally moments later.
-                    const contribDelta = nextCount - prevCount;
-                    const priorWho = (prev[itemId] && prev[itemId].who) || {};
-                    let nextWho = priorWho;
-                    if (contribDelta !== 0 && staffName) {
-                        const k = staffKey(staffName);
-                        const priorQty = Number(priorWho[k]?.q) || 0;
-                        nextWho = {
-                            ...priorWho,
-                            [k]: { n: staffName, q: priorQty + contribDelta, t: nowIso },
+                    const priorMeta = prev[itemId] || {};
+                    const priorWho = priorMeta.who || {};
+                    const nextWho = { ...priorWho };
+                    for (const w of contributionWrites(priorMeta, {
+                        staffName, prevCount, nextCount, nowIso,
+                    })) {
+                        const priorQty = Number(priorWho[w.key]?.q) || 0;
+                        nextWho[w.key] = {
+                            n: w.name,
+                            q: w.delta != null ? priorQty + w.delta : w.absolute,
+                            t: w.iso,
                         };
                     }
                     return {
@@ -4078,15 +4080,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // add items make sure to also add that person too"). Keyed
                     // by a SLUG, never the raw name — a name containing a dot
                     // ("Andres Portillo Mo.") would otherwise be parsed as a
-                    // nested path and shatter the map. The display name rides
-                    // along in `n`. increment() keeps two devices counting the
-                    // same item at once from clobbering each other's tallies.
-                    const contribDelta = nextCount - prevCount;
-                    if (contribDelta !== 0 && staffName) {
-                        const who = staffKey(staffName);
-                        update[`countMeta.${itemId}.who.${who}.n`] = staffName;
-                        update[`countMeta.${itemId}.who.${who}.q`] = increment(contribDelta);
-                        update[`countMeta.${itemId}.who.${who}.t`] = nowIso;
+                    // nested path and shatter the map; the display name rides
+                    // along in `n`.
+                    //
+                    // contributionWrites also handles the migration case that
+                    // erased people: an item counted before this feature has
+                    // its counter only in the legacy `by` field, so it credits
+                    // them with the count already on the item. `delta` entries
+                    // use atomic increment (two devices counting at once both
+                    // land); `absolute` entries are the one-time seed, where
+                    // there is no prior value to increment.
+                    for (const w of contributionWrites(invCountMeta[itemId], {
+                        staffName, prevCount, nextCount, nowIso,
+                    })) {
+                        update[`countMeta.${itemId}.who.${w.key}.n`] = w.name;
+                        update[`countMeta.${itemId}.who.${w.key}.t`] = w.iso;
+                        update[`countMeta.${itemId}.who.${w.key}.q`] =
+                            w.delta != null ? increment(w.delta) : w.absolute;
                     }
                 }
                 try {

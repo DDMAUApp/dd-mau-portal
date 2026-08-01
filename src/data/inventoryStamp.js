@@ -88,6 +88,55 @@ export function formatCountStamp(meta, now = new Date()) {
 // eggs ordered but it was on the list before". Only an exact zero is dropped,
 // since a person who added and then removed the same amount says nothing.
 
+/**
+ * What to write to `who` for one count change.
+ *
+ * ⚠ THE MIGRATION BUG THIS EXISTS TO FIX (Andrew 2026-07-31: "if someone's
+ * name is on the count already and i add to it it only says my name"):
+ * an item counted BEFORE per-person tracking has its counter recorded only in
+ * the legacy `by` field. The first person to touch it afterwards created a
+ * `who` map containing nobody but themselves — and since a non-empty `who`
+ * wins over the legacy stamp, the original counter's name silently vanished
+ * along with their quantity.
+ *
+ * So the first time an item gains a `who` map we CREDIT the previous counter
+ * with the count that was already there. After that everything is a plain
+ * delta.
+ *
+ * Returns entries of `{ key, name, iso }` plus exactly one of:
+ *   • `delta`    — apply as an atomic increment (safe under concurrent taps)
+ *   • `absolute` — a one-time seed; there is no prior value to increment
+ */
+export function contributionWrites(priorMeta, { staffName, prevCount, nextCount, nowIso }) {
+    const name = String(staffName || '').trim();
+    const myKey = staffKey(name);
+    const delta = Number(nextCount) - Number(prevCount);
+    const meta = priorMeta || {};
+    const who = meta.who;
+    const hasWho = who && typeof who === 'object' && Object.keys(who).length > 0;
+
+    const mine = (name && delta !== 0)
+        ? [{ key: myKey, name, iso: nowIso, delta }]
+        : [];
+
+    if (hasWho) return mine;              // already migrated — normal path
+
+    const legacyName = String(meta.by || '').trim();
+    if (!(Number(prevCount) > 0) || !legacyName) return mine;
+
+    const legacyKey = staffKey(legacyName);
+    if (legacyKey === myKey) {
+        // Same person counted before and is counting again: their tally is
+        // simply the new total. Absolute, because incrementing a field that
+        // doesn't exist yet would lose the count already on the item.
+        return name ? [{ key: myKey, name, iso: nowIso, absolute: Number(nextCount) }] : [];
+    }
+    return [
+        { key: legacyKey, name: legacyName, iso: meta.atISO || nowIso, absolute: Number(prevCount) },
+        ...mine,
+    ];
+}
+
 /** Firestore map keys can't carry dots (they'd nest); names can. */
 export function staffKey(name) {
     return String(name || '')
