@@ -2104,6 +2104,130 @@ exports.scheduledFirestoreBackup = onSchedule(
     }
 );
 
+/**
+ * Close the loop on the nightly backup.
+ *
+ * scheduledFirestoreBackup only proves the export was ACCEPTED — the
+ * actual work happens asynchronously and can fail minutes later, at
+ * which point nothing updated the row and nothing alerted. Every
+ * backup_history doc we have ever written is stuck at 'started'.
+ *
+ * Runs at 05:00 Central, two hours after the 03:00 backup (a ~95 MB
+ * export finishes in minutes, so 2h is generous). For each unresolved
+ * row it asks the operations API what happened; if the operation has
+ * already been garbage-collected it falls back to the artifact itself,
+ * since Firestore only writes overall_export_metadata on a COMPLETED
+ * export. Decision table + rationale live in backupVerify.js.
+ */
+exports.verifyFirestoreBackup = onSchedule(
+    {
+        schedule: "0 5 * * *",            // 2h after the 03:00 backup
+        timeZone: "America/Chicago",
+        retryCount: 1,
+        memory: "256MiB",
+    },
+    async () => {
+        // Single-field filter — no composite index needed. Rows resolve
+        // to a terminal status here, so this stays small day to day.
+        const pending = await db.collection("backup_history")
+            .where("status", "==", "started")
+            .limit(50)
+            .get();
+
+        if (pending.empty) {
+            logger.info("verifyFirestoreBackup: nothing pending");
+            return;
+        }
+
+        const auth = new GoogleAuth({
+            scopes: ["https://www.googleapis.com/auth/datastore"],
+        });
+        const accessToken = (await (await auth.getClient()).getAccessToken()).token;
+        const { getStorage } = require("firebase-admin/storage");
+        const { classifyBackup } = require("./backupVerify");
+        const bucket = getStorage().bucket(BACKUP_BUCKET);
+
+        let resolved = 0;
+        let alerted = 0;
+
+        for (const snap of pending.docs) {
+            const row = snap.data();
+            const startedAt = row.triggeredAt?.toDate?.()?.getTime() || 0;
+            const ageMs = startedAt ? Date.now() - startedAt : 0;
+
+            // 1. Ask the operations API.
+            let found = false;
+            let done = false;
+            let opError = "";
+            if (row.operationName) {
+                try {
+                    const res = await fetch(
+                        `https://firestore.googleapis.com/v1/${row.operationName}`,
+                        { headers: { "Authorization": `Bearer ${accessToken}` } },
+                    );
+                    if (res.ok) {
+                        const op = await res.json();
+                        found = true;
+                        done = op.done === true;
+                        if (op.error) opError = op.error.message || JSON.stringify(op.error);
+                    }
+                } catch (err) {
+                    logger.warn(`operation lookup threw for ${snap.id}: ${err.message}`);
+                }
+            }
+
+            // 2. If the operation is gone, look for the completion marker
+            //    the export writes into the bucket. Only bother when we
+            //    actually need it — this is a listing call per row.
+            let hasMarker = null;
+            if (!found && row.date) {
+                try {
+                    const [files] = await bucket.getFiles({
+                        prefix: `${row.date}/`,
+                        maxResults: 1000,
+                    });
+                    hasMarker = files.some((f) => f.name.includes("overall_export_metadata"));
+                } catch (err) {
+                    // Leave it null — classifyBackup stays quiet rather than
+                    // calling a backup failed on the strength of a listing error.
+                    logger.warn(`bucket check failed for ${row.date}: ${err.message}`);
+                }
+            }
+
+            const verdict = classifyBackup({ found, done, error: opError, ageMs, hasMarker });
+
+            // Still legitimately in flight — leave the row untouched.
+            if (verdict.status === "started") continue;
+
+            await snap.ref.update({
+                status: verdict.status,
+                verifiedAt: FieldValue.serverTimestamp(),
+                verifyReason: verdict.reason,
+            });
+            resolved++;
+
+            if (verdict.alert) {
+                alerted++;
+                try {
+                    await db.collection("error_logs").add({
+                        severity: "critical",
+                        source: "backend",
+                        feature: "backup",
+                        errorName: "BackupUnverified",
+                        errorMessage: `Nightly Firestore backup ${verdict.status.toUpperCase()} (${row.date}): ${verdict.reason}`.slice(0, 300),
+                        env: "prod",
+                        ts: new Date().toISOString(),
+                        occurredAt: Date.now(),
+                        createdAt: FieldValue.serverTimestamp(),
+                    });
+                } catch {}
+            }
+        }
+
+        logger.info(`verifyFirestoreBackup: resolved ${resolved}/${pending.size}, alerted ${alerted}`);
+    },
+);
+
 // ── 5. Application lifecycle — expire stale + purge ───────────────────────
 //
 // Two-stage cleanup on the public applications collection.

@@ -23,7 +23,10 @@ export default defineConfig({
         // Co-locate test files with the source they test. The pattern
         // matches both `foo.test.js` next to `foo.js` AND `__tests__/`
         // dirs if we adopt that convention later.
-        include: ['src/**/*.{test,spec}.{js,jsx}'],
+        // NOTE the single `*` in the functions/ glob — it matches only the
+        // top level of functions/, NOT functions/node_modules/**, which
+        // ships thousands of vendored *.test.js files.
+        include: ['src/**/*.{test,spec}.{js,jsx}', 'functions/*.{test,spec}.js'],
         // Coverage isn't wired yet — first goal is to get green tests
         // running in CI, then add coverage tracking once we have a
         // baseline.
