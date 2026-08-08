@@ -13,6 +13,7 @@ import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
+import { installFirestoreRevive } from './data/firestoreRevive';
 // AppToast is mounted at root in main.jsx (not here) so it renders
 // across every code path including the lock screen and the public
 // onboarding/apply routes that bypass App's main shell.
@@ -348,6 +349,14 @@ if (typeof window !== "undefined") {
 // idempotent (self-guards via window.__ddmau_loggerInstalled) so HMR
 // double-mounting in dev won't double-bind.
 try { installGlobalHandlers(); } catch {}
+
+// Firestore connection watchdog (2026-08-08) — after a long background
+// suspend the SDK's transport can stay dead while it thinks it's online:
+// writes queue forever (shift add/delete "times out", money counter
+// hangs) and listeners freeze until an app refresh. This cycles
+// disableNetwork→enableNetwork on stale resume so the app recovers
+// itself. See src/data/firestoreRevive.js for the full story.
+try { installFirestoreRevive(); } catch {}
 
 // Loading spinner for lazy-loaded components.
 //

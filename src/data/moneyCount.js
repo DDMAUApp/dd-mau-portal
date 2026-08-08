@@ -7,8 +7,23 @@
 // and when. The catch-all Firestore rule already covers the new collection —
 // no rules/index deploy (history uses a single-field orderBy, no composite).
 
-import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, setDoc, doc, where, getDocs, getDoc, arrayUnion, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit, serverTimestamp, doc, where, arrayUnion,
+    addDoc as _addDoc, setDoc as _setDoc, getDocs as _getDocs, getDoc as _getDoc, deleteDoc as _deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { watchdogWrite } from './firestoreRevive';
+
+// Wedged-connection watchdog (2026-08-08, Andrew: "the money counter keeps
+// timing out"). After a background suspend the Firestore transport can die
+// silently — then getDoc/getDocs hang forever and addDoc/setDoc queue with
+// no ack, so Save spins until an app refresh. Routing every read/write in
+// this module through watchdogWrite cycles the network if a call hasn't
+// settled in 8s; the queued op then completes and the original await
+// resolves. Same shadow-the-primitives pattern as Schedule.jsx.
+const addDoc = (...a) => watchdogWrite(_addDoc(...a));
+const setDoc = (...a) => watchdogWrite(_setDoc(...a));
+const getDocs = (...a) => watchdogWrite(_getDocs(...a));
+const getDoc = (...a) => watchdogWrite(_getDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_deleteDoc(...a));
 
 // The ONLY real stores. Cash is NEVER merged across locations: every count /
 // tip is stamped with exactly one of these, and a tip's doc id embeds it, so a

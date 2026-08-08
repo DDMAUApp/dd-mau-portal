@@ -28,10 +28,29 @@ import { createPortal } from 'react-dom';
 import { db } from '../firebase';
 import { toast, undoToast } from '../toast';
 import {
-    collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
-    setDoc, serverTimestamp, writeBatch, runTransaction, arrayUnion,
-    orderBy, limit, getDocs, deleteField,
+    collection, doc, onSnapshot, query, where, serverTimestamp, writeBatch,
+    arrayUnion, orderBy, limit, deleteField,
+    addDoc as _fsAddDoc, deleteDoc as _fsDeleteDoc, updateDoc as _fsUpdateDoc,
+    setDoc as _fsSetDoc, runTransaction as _fsRunTransaction, getDocs as _fsGetDocs,
 } from 'firebase/firestore';
+import { watchdogWrite } from '../data/firestoreRevive';
+
+// ── Wedged-connection watchdog (2026-08-08, Andrew: "delete a shift
+// times out… add a shift doesnt respond until i refresh") ──────────────
+// After a background suspend the Firestore transport can die while the
+// SDK still thinks it's online — every write below then queues forever
+// and the UI hangs on "Saving…". Shadowing the write primitives ONCE
+// here routes every call site in this file through watchdogWrite: if a
+// write hasn't acked in 8s the transport is cycled and the queued write
+// flushes, so the original await resolves without a refresh. Identical
+// signatures + the ORIGINAL promise is returned, so all existing
+// error handling is untouched.
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
+const getDocs = (...a) => watchdogWrite(_fsGetDocs(...a));
 import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { patchStaffRecordByName } from '../data/staffDoc';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';

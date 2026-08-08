@@ -44,6 +44,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { onSnapshot } from 'firebase/firestore';
 import { logError } from './logger';
+import { reviveFirestore } from './firestoreRevive';
 
 // Default snapshot timeout — 6 seconds. Tuned for restaurant Wi-Fi
 // on a packed Friday night. Callers can override per-subscription
@@ -142,6 +143,11 @@ export function useFirestoreList(queryFactory, deps, opts = {}) {
                     meta: { kind: 'firestore-timeout', timeoutMs },
                 });
             } catch {}
+            // 2026-08-08 — a stalled first snapshot usually means the
+            // transport died during a background suspend. Cycle it (throttled
+            // internally); the listener then delivers on its own and the
+            // retry button becomes unnecessary.
+            try { reviveFirestore('list-timeout'); } catch {}
         }, timeoutMs);
 
         const unsub = onSnapshot(
@@ -260,6 +266,8 @@ export function useFirestoreDoc(docRefFactory, deps, opts = {}) {
                     meta: { kind: 'firestore-doc-timeout', timeoutMs },
                 });
             } catch {}
+            // Same wedged-transport recovery as the list hook above.
+            try { reviveFirestore('doc-timeout'); } catch {}
         }, timeoutMs);
 
         const unsub = onSnapshot(
