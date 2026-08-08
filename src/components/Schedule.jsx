@@ -1013,7 +1013,48 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             console.error('Schedule snapshot error:', err);
             setLoading(false);
         });
-        return unsub;
+
+        // ── Adjacent-week prefetch (2026-08-08, Andrew: "im trying to look
+        // at next weeks schedule and its taking along time to load") ──────
+        // The instant-paint cache above is per week, so a week you haven't
+        // visited has NO cache and the ‹ › arrows still sit on the skeleton
+        // for a full server round-trip. After the current week settles, pull
+        // next + previous week in the background and seed their cache slots.
+        // Double win: getDocs also lands the docs in the SDK's persistent
+        // cache, so the live listener resolves fast when you navigate there.
+        // Skips weeks whose cache is already fresh; failures are silent
+        // (it's an optimization, never load-bearing).
+        const prefetchTimer = setTimeout(() => {
+            for (const delta of [7, -7]) {
+                const pStart = addDays(weekStart, delta);
+                const pStartStr = toDateStr(pStart);
+                const pEndStr = toDateStr(addDays(pStart, 7));
+                const pKey = `ddmau:shifts:${pStartStr}`;
+                try {
+                    const raw = localStorage.getItem(pKey);
+                    if (raw) {
+                        const c = JSON.parse(raw);
+                        if (c?.savedAt && (Date.now() - c.savedAt) < CACHE_TTL_MS) continue;
+                    }
+                } catch { /* unreadable slot — just re-prefetch it */ }
+                getDocs(query(
+                    collection(db, 'shifts'),
+                    where('date', '>=', pStartStr),
+                    where('date', '<', pEndStr),
+                )).then((snap) => {
+                    const items = [];
+                    snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+                    try {
+                        localStorage.setItem(pKey, JSON.stringify({
+                            items: items.map(stripShiftTimestamps),
+                            savedAt: Date.now(),
+                        }));
+                    } catch { /* storage full — non-fatal */ }
+                }).catch(() => { /* offline / rules — prefetch is best-effort */ });
+            }
+        }, 2500);   // after the visible week has had time to settle
+
+        return () => { clearTimeout(prefetchTimer); unsub(); };
     }, [weekStart]);
 
     // FIX (review 2026-05-14, perf): bound the collection listeners by a
