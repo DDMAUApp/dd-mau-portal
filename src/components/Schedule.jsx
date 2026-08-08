@@ -918,15 +918,25 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Firestore answers (200-800ms each time). Now we hydrate from a
     // localStorage cache keyed by week BEFORE firing the live query, so
     // the grid renders immediately on navigation/return and only shows
-    // the skeleton on a true cold cache. 5-min TTL is short enough that
-    // the cached view is rarely meaningfully stale, and onSnapshot
-    // overwrites within ~500ms either way.
+    // the skeleton on a true cold cache.
+    //
+    // 2026-08-07 — Andrew: "the schedule takes like 5 secs to load
+    // everytime." Root cause of the EVERYTIME part: the TTL here was 5
+    // MINUTES, so unless you reopened the tab within 5 minutes the fast
+    // path never fired and every open sat on the skeleton until the live
+    // snapshot answered (slow on store Wi-Fi / older iPads). The fast
+    // path was designed for exactly this; the TTL just defeated it.
+    // Now 24h: the grid paints instantly from the last-known week, the
+    // amber "Cached" pill shows until the live snapshot lands (usually
+    // 1-2s), and the snapshot ALWAYS overwrites — staleness is bounded
+    // by snapshot latency, not by the TTL. The TTL only bounds how old a
+    // never-refreshed view can be when Firestore is unreachable.
     useEffect(() => {
         const weekEnd = addDays(weekStart, 7);
         const weekStartStr = toDateStr(weekStart);
         const weekEndStr = toDateStr(weekEnd);
         const CACHE_KEY = `ddmau:shifts:${weekStartStr}`;
-        const CACHE_TTL_MS = 5 * 60 * 1000;
+        const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
         let hadCache = false;
         try {
             const raw = localStorage.getItem(CACHE_KEY);
@@ -10257,7 +10267,12 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
     // Pending PTO requests — managers/admin only see queue. Staff see their own status.
     const pendingPto = (timeOff || []).filter(t => t.status === 'pending');
-    const myPto = (timeOff || []).filter(t => t.staffName === staffName && (t.endDate || t.startDate) >= today);
+    // `|| t.date` (2026-08-07 line-by-line sweep): time_off has a mixed
+    // schema — legacy docs carry only `date`. Without the fallback the
+    // comparison was `undefined >= '2026-…'` (false), so a staffer's own
+    // legacy entry silently never appeared in "My time-off requests".
+    // Same fallback the QA-audit-S1 subscription fix used.
+    const myPto = (timeOff || []).filter(t => t.staffName === staffName && (t.endDate || t.startDate || t.date || '') >= today);
 
     // 2026-05-16 — direct shift-swap requests. Manager queue + own
     // request status, parallel to the PTO pattern above.
@@ -10301,8 +10316,11 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
     const renderShiftLine = (sh) => `${sh.date} · ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`;
     const renderPtoLine = (t) => {
         const w = ptoWindowLabel(t);
-        return t.startDate
-            + (t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : '')
+        // startDate || date — legacy docs (see myPto above) would have
+        // rendered the literal text "undefined" as the range start.
+        const start = t.startDate || t.date || '';
+        return start
+            + (t.endDate && t.endDate !== start ? ` → ${t.endDate}` : '')
             + (w ? ` · ⛔ ${w} ${isEn ? 'off' : 'libre'}` : '')
             + (t.reason ? ` · ${t.reason}` : '');
     };
