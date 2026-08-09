@@ -267,6 +267,22 @@ const addDays = (date, n) => {
     return d;
 };
 
+// Drop the instant-paint localStorage slot for the week containing dateStr.
+// 2026-08-09 (Andrew: "changed a shift from 11 to 11:30 … then reverted
+// back to 11") — the server had 11:30 the whole time (audit-verified); the
+// "revert" was a STALE CACHE SLOT out-painting the edit after a week
+// navigation/remount. Every successful shift mutation now invalidates the
+// affected week's slot, so a remount can only paint fresh data (or the
+// skeleton — honest either way). The currently-viewed week's slot is
+// rewritten by the next live snapshot tick, so removing it costs nothing.
+const invalidateWeekCache = (dateStr) => {
+    try {
+        const d = parseLocalDate(dateStr);
+        if (!d) return;
+        localStorage.removeItem(`ddmau:shifts:${toDateStr(startOfWeek(d))}`);
+    } catch { /* storage broken — nothing cached to go stale */ }
+};
+
 // blockedDatesInRange — every day in [startStr, endStr] that lands on a
 // no-time-off / closed blackout, as [{date, reason}]. Single source of truth
 // for BOTH the staff self-serve guard (hard stop) AND the manager add-entry
@@ -1037,11 +1053,25 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         if (c?.savedAt && (Date.now() - c.savedAt) < CACHE_TTL_MS) continue;
                     }
                 } catch { /* unreadable slot — just re-prefetch it */ }
+                const prefetchStartedAt = Date.now();
                 getDocs(query(
                     collection(db, 'shifts'),
                     where('date', '>=', pStartStr),
                     where('date', '<', pEndStr),
                 )).then((snap) => {
+                    // 2026-08-09 (Andrew: "changed a shift … then reverted") —
+                    // two stale-poisoning guards. (1) A getDocs that fell back
+                    // to the SDK's LOCAL cache (offline/wedged transport) can
+                    // return pre-edit data; stamping that with a fresh savedAt
+                    // would let old times out-paint a just-saved edit. Skip it.
+                    if (snap.metadata?.fromCache) return;
+                    // (2) If something fresher wrote this slot while our read
+                    // was in flight (an edit's live-echo, another prefetch),
+                    // never clobber it with our older read.
+                    try {
+                        const cur = JSON.parse(localStorage.getItem(pKey) || 'null');
+                        if (cur?.savedAt && cur.savedAt > prefetchStartedAt) return;
+                    } catch { /* unreadable — safe to overwrite */ }
                     const items = [];
                     snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
                     try {
@@ -1489,7 +1519,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         try {
             const batch = writeBatch(db);
             for (const n of unread) batch.update(doc(db, 'notifications', n.id), { read: true });
-            await batch.commit();
+            await watchdogWrite(batch.commit());
         } catch (e) {
             console.warn('mark all read failed:', e);
         }
@@ -2077,6 +2107,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // Audit log — Andrew 2026-06-25. Best-effort, never blocks the write.
             auditShiftChange({ shiftId: docRef.id, staffName: shiftData.staffName, action: 'created',
                 after: { date: shiftData.date, startTime: shiftData.startTime, endTime: shiftData.endTime, side: shiftData.side || null } }).catch(() => {});
+            invalidateWeekCache(shiftData.date);
             setShowAddModal(false);
             setAddPrefill(null);
             // Partial off-window overlap warning — they're schedulable, but
@@ -2245,6 +2276,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 await pruneNeedAfterShiftDelete(sh);
                 auditShiftChange({ shiftId, staffName: sh.staffName, action: 'deleted',
                     before: { date: sh.date, startTime: sh.startTime, endTime: sh.endTime, side: sh.side || null }, surface: 'admin-dashboard' });
+                invalidateWeekCache(sh.date);
                 if (wasPublished && sh.staffName) {
                     notify(sh.staffName, 'shift_deleted',
                         { en: `🗑 Shift removed: ${detail}`, es: `🗑 Turno eliminado: ${detail}` },
@@ -2275,6 +2307,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     await pruneNeedAfterShiftDelete(sh);
                     auditShiftChange({ shiftId, staffName: sh.staffName, action: 'deleted',
                         before: { date: sh.date, startTime: sh.startTime, endTime: sh.endTime, side: sh.side || null }, surface: 'admin-dashboard' });
+                    invalidateWeekCache(sh.date);
                     if (wasPublished && sh.staffName) {
                         await notify(sh.staffName, 'shift_deleted',
                             { en: 'Shift removed', es: 'Turno eliminado' },
@@ -2327,6 +2360,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             auditShiftChange({ shiftId, staffName: sh.staffName, action: 'edited',
                 before: { startTime: sh.startTime, endTime: sh.endTime }, after: { startTime, endTime }, surface: 'admin-dashboard' });
+            invalidateWeekCache(sh.date);
             // Availability acknowledgment modal on conflict (replaces the
             // toast — toast was easy to miss while the manager kept
             // dragging). See setAvailabilityWarn comment.
@@ -2450,6 +2484,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             auditShiftChange({ shiftId, staffName: newStaffName, action: 'moved',
                 before: { staffName: oldStaff, date: oldDate }, after: { staffName: newStaffName, date: newDate }, surface: 'admin-dashboard' });
+            invalidateWeekCache(oldDate);
+            invalidateWeekCache(newDate);
             // Availability acknowledgment modal — same pattern as add and
             // drag-resize, surfaces if the move lands the shift outside
             // the (new) staff's window for the (new) day-of-week.
@@ -2969,7 +3005,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         for (const sh of snapshot.slice(i, i + BATCH_LIMIT)) {
                             batch.delete(doc(db, 'shifts', sh.id));
                         }
-                        await batch.commit();
+                        await watchdogWrite(batch.commit());
                     }
                     // Best-effort need-prune post-commit.
                     await Promise.all(snapshot.map(sh =>
@@ -3065,7 +3101,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     updatedAt: serverTimestamp(),
                 });
             }
-            await batch.commit();
+            await watchdogWrite(batch.commit());
             okCount = candidates.length;
             // Audit log (roll-up) — Andrew 2026-06-25.
             auditShiftChange({ action: 'bulk_offered', staffName: null,
@@ -3333,6 +3369,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // Audit log — Andrew 2026-06-25.
             auditShiftChange({ shiftId: shift.id, staffName: newOwner, action: 'approved',
                 before: { staffName: oldOwner }, after: { staffName: newOwner, split: !!leftoverDetail } }).catch(() => {});
+            invalidateWeekCache(shift.date);
             // Notifications outside the transaction — they hit a different
             // collection and shouldn't roll back the swap if push fails.
             //
@@ -3974,7 +4011,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         for (const n of toCreate) {
                             batch.set(doc(collection(db, 'staffing_needs')), n);
                         }
-                        await batch.commit();
+                        await watchdogWrite(batch.commit());
                     }
                     successes.push(dateStr);
                 } catch (perDateErr) {
@@ -4144,7 +4181,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 for (const sh of recurringBatchShifts.slice(i, i + BATCH_LIMIT)) {
                     batch.set(doc(collection(db, 'shifts')), sh);
                 }
-                await batch.commit();
+                await watchdogWrite(batch.commit());
             }
         } catch (e) { console.error('Recurring shift batch failed:', e); }
         // Audit log (roll-up) — Andrew 2026-06-25.
@@ -5451,7 +5488,7 @@ ${dayBlocks}
                         batch.update(doc(db, 'shifts', s.id), stamp());
                     }
                     // eslint-disable-next-line no-await-in-loop
-                    await batch.commit();
+                    await watchdogWrite(batch.commit());
                 }
             } catch (batchErr) {
                 console.warn('publish batch failed — per-doc fallback:', batchErr);
@@ -5505,7 +5542,15 @@ ${dayBlocks}
                 byStaff.set(s.staffName, list);
             }
             void (async () => {
-            for (const [name, list] of byStaff) {
+            // 2026-08-09 (Andrew: "publishes 65 shifts takes a little longer")
+            // — this loop was `for…await`, ONE Firestore round-trip per
+            // staffer in series (~20 sequential writes after a full-week
+            // publish). Fired together the whole fan-out lands in roughly one
+            // round-trip's time, staff get their pushes sooner, and the
+            // notifications listener re-renders the page in 1-2 ticks instead
+            // of ~20 dribbled ones. notify() catches per-recipient, so one
+            // failure can't block the rest — same pattern as broadcastUpForGrabs.
+            await Promise.allSettled(Array.from(byStaff, ([name, list]) => {
                 // Build a date+time summary so the staff push tells them WHAT
                 // shifts were just released, not just "you have N shifts."
                 // Two parallel summaries (EN+ES) so the recipient sees their
@@ -5520,7 +5565,7 @@ ${dayBlocks}
                     if (sorted.length > 3) lines.push(lng === 'es' ? `+${sorted.length - 3} más` : `+${sorted.length - 3} more`);
                     return lines.join('\n');
                 };
-                await notify(name, 'week_published',
+                return notify(name, 'week_published',
                     {
                         en: `📢 Schedule published: ${list.length} shift${list.length === 1 ? '' : 's'}`,
                         es: `📢 Horario publicado: ${list.length} turno${list.length === 1 ? '' : 's'}`,
@@ -5532,7 +5577,7 @@ ${dayBlocks}
                     // notification replaces instead of stacking on the
                     // recipient's device.
                     { allowSelf: true, tagSuffix: `week:${toDateStr(weekStart)}` });
-            }
+            }));
             // Management summary — every owner + manager gets one roll-up
             // bell entry so the publish is visible to the whole leadership
             // team. INCLUDES the publisher (no excludeStaff) — Andrew
@@ -5668,7 +5713,7 @@ ${dayBlocks}
                 for (const sh of toCreate.slice(i, i + BATCH_LIMIT)) {
                     batch.set(doc(collection(db, 'shifts')), sh);
                 }
-                await batch.commit();
+                await watchdogWrite(batch.commit());
             }
             // Audit log (roll-up) — Andrew 2026-06-25.
             auditScheduleConfig({ action: 'copied_week', targetType: 'shift', targetName: 'copy last week',
@@ -5818,7 +5863,7 @@ ${dayBlocks}
                 for (const sh of slice) {
                     batch.set(doc(collection(db, 'shifts')), sh);
                 }
-                await batch.commit();
+                await watchdogWrite(batch.commit());
             }
             // Audit log (roll-up) — Andrew 2026-06-25.
             auditScheduleConfig({ action: 'auto_filled', targetType: 'shift', targetName: 'auto-fill engine',
@@ -12996,6 +13041,16 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
 function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfirm, onRemoveDraft }) {
     const tx = (en, es) => (isEn ? en : es);
     const { drafts, underFilled, overFilled } = preview;
+    // 2026-08-09 — the confirm button gave ZERO feedback while the batch
+    // committed (~1-3s for a 65-shift week), which read as "publish is
+    // slow/stuck". Show a busy label + disable so the wait is visibly
+    // intentional; parent's publishBusyRef still guards re-entry.
+    const [publishBusy, setPublishBusy] = useState(false);
+    const handleConfirmClick = async () => {
+        if (publishBusy || drafts.length === 0) return;
+        setPublishBusy(true);
+        try { await onConfirm(); } finally { setPublishBusy(false); }
+    };
     // Group drafts by day so the manager can scan day-by-day. Sun→Sat order
     // matches the rest of the UI.
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
@@ -13116,10 +13171,12 @@ function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfi
                         className="flex-1 sm:flex-initial px-4 py-2 rounded-lg glass-button-apple text-dd-text-2 text-sm font-bold hover:bg-gray-300">
                         {tx('Cancel', 'Cancelar')}
                     </button>
-                    <button onClick={onConfirm}
-                        disabled={drafts.length === 0}
-                        className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold text-white ${drafts.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-dd-green hover:bg-dd-green-700'}`}>
-                        ✓ {tx(`Publish ${drafts.length} draft${drafts.length === 1 ? '' : 's'}`, `Publicar ${drafts.length} borrador${drafts.length === 1 ? '' : 'es'}`)}
+                    <button onClick={handleConfirmClick}
+                        disabled={drafts.length === 0 || publishBusy}
+                        className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold text-white ${(drafts.length === 0 || publishBusy) ? 'bg-gray-300 cursor-not-allowed' : 'bg-dd-green hover:bg-dd-green-700'}`}>
+                        {publishBusy
+                            ? tx('⏳ Publishing…', '⏳ Publicando…')
+                            : `✓ ${tx(`Publish ${drafts.length} draft${drafts.length === 1 ? '' : 's'}`, `Publicar ${drafts.length} borrador${drafts.length === 1 ? '' : 'es'}`)}`}
                     </button>
                 </div>
             </div>
