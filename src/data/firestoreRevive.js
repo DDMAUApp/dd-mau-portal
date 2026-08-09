@@ -36,6 +36,37 @@ import { db } from '../firebase';
 // Backgrounded longer than this ⇒ assume the socket died (iOS suspends
 // sockets after ~30s; 45s adds margin so quick app-switches skip the cycle).
 export const RESUME_STALE_MS = 45 * 1000;
+// After a revive, give the flush this long. Still unsettled ⇒ the wedge is
+// BELOW the network layer (iOS kills the IndexedDB connection during
+// suspend — writes then can't even enter the local queue, and cycling the
+// network can't fix that; only a reload can, which is why Andrew's manual
+// refresh "works"). Escalate to the reload FOR him.
+export const WRITE_ESCALATE_MS = 10 * 1000;
+// At most one automatic reload per window — a persistent backend outage
+// must degrade to error toasts, never a reload loop.
+export const RELOAD_GUARD_MS = 2 * 60 * 1000;
+const RELOAD_GUARD_KEY = 'ddmau:reviveReloadAt';
+
+// Reload seam — swapped out by tests; jsdom's location.reload is not
+// stubbable.
+let _reloadImpl = () => { try { window.location.reload(); } catch { /* ignore */ } };
+export function __setReloadImplForTests(fn) { _reloadImpl = fn; }
+
+/**
+ * Last-resort self-heal: the same thing the user does by hand when a
+ * button spins forever. sessionStorage-guarded so it can never loop.
+ * Returns true if a reload was actually triggered.
+ */
+export function escalateReload(reason = 'write-stuck') {
+    try {
+        const last = Number(sessionStorage.getItem(RELOAD_GUARD_KEY)) || 0;
+        if (Date.now() - last < RELOAD_GUARD_MS) return false;
+        sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
+    } catch { /* storage broken — still reload; worst case iOS re-suspends */ }
+    console.warn(`[firestoreRevive] write still stuck after revive (${reason}) — reloading app to rebuild the SDK`);
+    _reloadImpl();
+    return true;
+}
 // A healthy Firestore write acks in <2s even on store Wi-Fi. 8s without
 // settling means the transport is gone, not slow.
 export const WRITE_HANG_MS = 8 * 1000;
@@ -79,14 +110,23 @@ export async function reviveFirestore(reason = 'manual') {
  */
 export function watchdogWrite(promise, hangMs = WRITE_HANG_MS) {
     let settled = false;
+    let escalateTimer = null;
     const timer = setTimeout(() => {
-        if (!settled) reviveFirestore('slow-write');
+        if (settled) return;
+        reviveFirestore('slow-write');
+        // Escalation (2026-08-08, Andrew: "it just keeps spinning. i refresh
+        // the app and it works"): if the network cycle didn't unstick the
+        // write, the wedge is in the persistence layer and only a reload
+        // rebuilds it. Do the reload for him — guarded to once per 2 min.
+        escalateTimer = setTimeout(() => {
+            if (!settled) escalateReload('write-stuck-after-revive');
+        }, WRITE_ESCALATE_MS);
     }, hangMs);
     // Attach via then() so we neither swallow rejections nor create an
     // unhandled-rejection duplicate (errors still flow to the caller).
     promise.then(
-        () => { settled = true; clearTimeout(timer); },
-        () => { settled = true; clearTimeout(timer); },
+        () => { settled = true; clearTimeout(timer); if (escalateTimer) clearTimeout(escalateTimer); },
+        () => { settled = true; clearTimeout(timer); if (escalateTimer) clearTimeout(escalateTimer); },
     );
     return promise;
 }

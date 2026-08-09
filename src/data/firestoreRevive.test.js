@@ -93,6 +93,46 @@ describe('watchdogWrite', () => {
     });
 });
 
+describe('escalation to reload (persistence-layer wedge)', () => {
+    it('reloads when a write is STILL stuck after the revive', async () => {
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        sessionStorage.clear();
+        mod.watchdogWrite(new Promise(() => {}));   // never settles
+        await vi.advanceTimersByTimeAsync(mod.WRITE_HANG_MS + 100);
+        expect(disableNetwork).toHaveBeenCalledTimes(1);   // revive tried first
+        expect(reload).not.toHaveBeenCalled();             // not yet
+        await vi.advanceTimersByTimeAsync(mod.WRITE_ESCALATE_MS + 100);
+        expect(reload).toHaveBeenCalledTimes(1);           // then the reload
+    });
+
+    it('does NOT reload when the revive unsticks the write in time', async () => {
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        sessionStorage.clear();
+        let resolveLate;
+        const wrapped = mod.watchdogWrite(new Promise(res => { resolveLate = res; }));
+        await vi.advanceTimersByTimeAsync(mod.WRITE_HANG_MS + 100);
+        resolveLate('flushed');                            // revive worked
+        await wrapped;
+        await vi.advanceTimersByTimeAsync(mod.WRITE_ESCALATE_MS + 1000);
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('never reload-loops — guarded to once per window', async () => {
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        sessionStorage.clear();
+        expect(mod.escalateReload('a')).toBe(true);
+        expect(mod.escalateReload('b')).toBe(false);
+        expect(mod.escalateReload('c')).toBe(false);
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('installFirestoreRevive (resume path)', () => {
     it('cycles after a long-backgrounded resume but not a quick app-switch', async () => {
         const { installFirestoreRevive, RESUME_STALE_MS } = await loadFresh();
