@@ -140,7 +140,16 @@ export function installVersionFloor() {
         stuckTimer = setTimeout(() => renderOverlay('stuck', localV, minV, () => attempt(minV)), FLOOR_STUCK_MS);
         try {
             if (window.Capacitor?.isNativePlatform?.() === true) {
-                const { applyNativeOtaWhenReady } = await import('../capacitor-bridge');
+                const { applyNativeOtaWhenReady, setOtaApplyAllowed } = await import('../capacitor-bridge');
+                // 2026-08-09 audit: OTA apply is normally deferred to the
+                // login screen (setOtaApplyAllowed gate) so a broadcast
+                // can't reload someone mid-task. Below the floor that gate
+                // DEADLOCKS the auto path — our overlay blocks all input,
+                // so the user can never reach the login screen. The overlay
+                // makes an immediate apply safe (nothing is mid-task), so
+                // open the gate before driving the update. App.jsx re-syncs
+                // the gate on the next lock/unlock transition.
+                try { setOtaApplyAllowed(true); } catch { /* older bridge — fall through */ }
                 await applyNativeOtaWhenReady(null);   // applies + reloads the WebView when ready
                 return;
             }
