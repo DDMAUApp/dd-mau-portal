@@ -305,7 +305,62 @@ needs tracking, publish/edit race, fill-need atomicity, rename race — in that 
 
 ---
 
-## 13. Stabilization plan (adapted to THIS architecture — no rewrite)
+## 13. Stabilization plan — REVISED 2026-08-09 after adversarial self-review
+
+> A second pass over this plan found **three errors in the original version**; the phases below
+> are the corrected form. The errors, so the reasoning is auditable:
+>
+> **(E1) Original A-ordering could have caused an outage.** Deploying strict shift rules (A1)
+> while stale builds are still writing (R2) would instantly break saves on every un-relaunched
+> device — strict validation + zombie clients = self-inflicted outage. **The version floor (A2)
+> must ship first and fleet convergence must be *verified*** (via error_logs/usage appVersion)
+> before any rule tightens. Additionally, first-wave rules must only assert invariants every
+> currently-supported build already satisfies.
+>
+> **(E2) Original A1 overstated what rules can do.** With no Firebase Auth, rules **cannot
+> enforce permissions** (there is no identity to check) — they can only enforce *shape and
+> invariants*. Authorization enforcement genuinely requires the SAAS-plan auth phase. A1 is
+> re-scoped to shape-only, with emulator rules tests + post-deploy live probe (the 2026-07-12
+> carve-out protocol applies: new strict blocks added to `isCarvedTop()`, never index into `**`).
+>
+> **(E3) Original F (version-stamping shifts) doesn't survive contact with Firestore.** Rules
+> cannot validate `FieldValue.increment` results (transforms resolve after rules evaluation), so
+> a rules-enforced `rev` protocol is unimplementable for these write patterns, and a client-only
+> rev field re-creates the R2 problem. **F is redesigned** to the proven house pattern instead:
+> convert the remaining plain-`updateDoc` mutation sites (inline time edit, offer/cancel/deny)
+> to `runTransaction` with drift checks — same protection, no schema, no fleet dependency — and
+> make fill-need atomic by putting the shift-create + need-`arrayUnion` in ONE `writeBatch`.
+>
+> Two refinements (not errors):
+> **(R-a) Phase E redesign:** surfacing `hasPendingWrites` via snapshot metadata would require
+> `includeMetadataChanges` on the hot listeners (doubling tick rate). Better: the
+> `watchdogWrite` wrapper already sees every tracked write — have it keep an in-flight counter
+> and drive a "⏳ syncing" pill from that. Zero listener changes.
+> **(R-b) Phase D nuance:** Chicago-anchor the *date bucketing* (today/week/grid) but keep the
+> 1-hour-reminder `setTimeout` math device-local — staff are physically at the store, and a
+> device-local timer IS restaurant wall-clock for them; anchoring timers to Chicago would
+> mis-fire for a hypothetical remote device, which is the case that doesn't matter.
+
+**Corrected order (calendar order, not letter order):**
+
+1. **B first (zero prod risk, start immediately):** extract pure logic from Schedule.jsx into
+   modules + golden 20-staff dataset + ~150 unit/fuzz tests wired into the deploy gate.
+2. **A2:** `config/minVersion` + client gate through the existing forceRefresh/OTA path
+   (native-binary-too-old case shows an "update required" screen, never a reload loop).
+   Then **verify convergence** in prod data before proceeding.
+3. **A1 (shape-only rules):** field whitelists + type checks + `endTime > startTime` +
+   status enums for shifts/needs/swaps/recurring/templates/blocks. Emulator tests + live
+   probe after deploy. Explicitly NOT authorization.
+4. **C:** additive backfills anytime (`time_off.date → startDate/endDate` keeping both;
+   shifts get explicit `side/location/published`); **fallback deletion and the
+   staffing_needs parallel-arrays→map migration only after A2 convergence**, with a
+   dual-read transition for the needs map.
+5. **D:** Chicago date bucketing (post-B so it lands with tests), timers stay device-local.
+6. **E:** watchdogWrite in-flight counter → "⏳ syncing" pill.
+7. **F (redesigned):** transactions on the remaining plain-update sites + single-batch
+   fill-need.
+
+### Original plan text (superseded, kept for the record)
 
 The prompt's phase list assumed a server/ORM stack. Mapped to reality, ordered by leverage:
 
