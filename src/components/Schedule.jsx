@@ -3269,7 +3269,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             if (!confirm(msg)) return; // bail before any write
         }
         try {
-            const shiftRef = await addDoc(collection(db, 'shifts'), {
+            // ONE atomic batch (Phase F, 2026-08-09): this used to be
+            // addDoc(shift) THEN updateDoc(need) — a crash/kill between the
+            // two orphaned a shift whose fromNeedId pointed at a slot that
+            // didn't count it (forensics §12). Batched, the shift and the
+            // slot bookkeeping commit or fail together. arrayUnion stays
+            // (audit 2026-05-22): two managers filling the same slot at the
+            // same instant merge server-side instead of last-writer-wins.
+            const shiftRef = doc(collection(db, 'shifts'));
+            const batch = writeBatch(db);
+            batch.set(shiftRef, {
                 staffName: staffMember.name,
                 date: need.date,
                 startTime: need.startTime,
@@ -3287,16 +3296,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 fromNeedId: need.id,
             });
-            // arrayUnion (audit 2026-05-22) — was a read-modify-write
-            // (spread the local need.filledStaff). Two managers
-            // filling the same slot at the same instant both read
-            // ['A'], both wrote ['A','B'] / ['A','C'] — last-writer
-            // wins, one fill silently lost. arrayUnion is atomic
-            // server-side and merges both updates correctly.
-            await updateDoc(doc(db, 'staffing_needs', need.id), {
+            batch.update(doc(db, 'staffing_needs', need.id), {
                 filledStaff: arrayUnion(staffMember.name),
                 filledShiftIds: arrayUnion(shiftRef.id),
             });
+            await watchdogWrite(batch.commit());
             // Audit log — Andrew 2026-06-25 (shift created by filling an open slot).
             auditShiftChange({ shiftId: shiftRef.id, staffName: staffMember.name, action: 'created',
                 after: { date: need.date, side: need.side }, reason: 'filled open slot' }).catch(() => {});
