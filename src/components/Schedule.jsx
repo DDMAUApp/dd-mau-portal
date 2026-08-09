@@ -80,198 +80,32 @@ import OfferShiftModal from './OfferShiftModal';
 import TakeShiftModal from './TakeShiftModal';
 import { useAppData } from '../v2/AppDataContext';
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
-const DAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-// Stable empty array for empty grid cells (identity-stable so memo'd cell
-// consumers don't churn).
-const EMPTY_CELL_SHIFTS = Object.freeze([]);
-const DAYS_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-const DAYS_FULL_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const DAYS_FULL_ES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-// Day-of-week IDs — index-aligned with DAYS_EN (so DAY_IDS[d.getDay()] gives
-// the id). Used by RecurringShiftsModal and (as of 2026-05-11) by
-// TemplateEditorModal's daysOfWeek picker. Single source of truth so the
-// two day pickers stay visually consistent and the apply-template
-// day-of-week guard can read the field without any conversion.
-const DAY_IDS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-const dayIdFromDateStr = (dateStr) => {
-    // parseLocalDate avoids the UTC drift that `new Date('YYYY-MM-DD')`
-    // hits in time zones west of UTC (the date string is interpreted as
-    // UTC midnight, which becomes the previous evening locally).
-    if (!dateStr) return null;
-    const [y, m, d] = dateStr.split('-').map(Number);
-    if (!y || !m || !d) return null;
-    return DAY_IDS[new Date(y, m - 1, d).getDay()];
-};
-
-// FLSA workweek per Andrew's spec: Sunday through Saturday.
-const WEEK_START_DOW = 0; // 0 = Sunday
-
-// OT thresholds for color coding (federal-only, MO follows federal).
-const HOURS_GREEN_MAX = 30;
-const HOURS_YELLOW_MAX = 40;
-
-// Minor labor thresholds (kept conservative — 16-17 yo can technically work
-// any hours under federal law, but DD Mau is being defensive).
-const MINOR_LATE_HOUR = 22; // shifts past 10 PM flagged
-const MINOR_DAILY_HOURS_MAX = 8;
-const MINOR_WEEKLY_HOURS_MAX = 30;
-
-// ── Schedule sides (FOH / BOH) ─────────────────────────────────────────────
-// Two separate schedules. Each staff member belongs to ONE side via the
-// `scheduleSide` field on their staff record (managed in AdminPanel). FOH and
-// BOH have their own managers, shift leads, and crew — they don't share staff.
-//
-// Role-based inference is used when scheduleSide hasn't been set explicitly
-// yet (transition state — every staff record will get an explicit value).
-
-// Roles that obviously belong to BOH (kitchen).
-const BOH_ROLE_HINTS = new Set([
-    'BOH', 'Pho', 'Pho Station', 'Grill', 'Fryer', 'Fried Rice', 'Dish',
-    'Bao/Tacos/Banh Mi', 'Spring Rolls/Prep', 'Prep',
-    'Kitchen Manager', 'Asst Kitchen Manager',
-]);
-
-// ── useStableCallback — "latest ref" / useEvent pattern ──────────────
-// Returns a callback whose IDENTITY never changes (so React.memo'd
-// children that receive it don't re-render when the parent re-renders),
-// but which ALWAYS invokes the most-recent version of `fn`. We refresh
-// the ref on every render, so the wrapper closes over the latest state
-// at call time — there is NO dependency array to forget, hence NO
-// stale-closure risk. Use ONLY for event handlers (fired after commit,
-// from user interaction), never for values read synchronously during
-// render. This lets us memoize WeeklyGrid below WITHOUT touching any of
-// the ~50 mutation handler bodies — their logic stays byte-for-byte
-// identical, we just hand stable wrappers to the children.
-function useStableCallback(fn) {
-    const ref = useRef(fn);
-    ref.current = fn;
-    return useRef((...args) => ref.current(...args)).current;
-}
-
-// Resolve a staff member's side from their explicit scheduleSide field,
-// falling back to role inference. Default = 'foh'.
-const resolveStaffSide = (staff) => {
-    if (!staff) return 'foh';
-    if (staff.scheduleSide === 'foh' || staff.scheduleSide === 'boh') return staff.scheduleSide;
-    if (BOH_ROLE_HINTS.has(staff.role)) return 'boh';
-    return 'foh';
-};
-
-// scheduleSide:'both' is a supported value (managers/floaters who work both
-// sides) — they belong to EVERY side's roster. resolveStaffSide stays
-// single-valued ('both' → foh fallback) for contexts that need one home side
-// (legacy shift-side resolution); membership checks must come through here.
-const isOnSide = (staff, side) => {
-    if (staff?.scheduleSide === 'both') return true;
-    return resolveStaffSide(staff) === side;
-};
-
-// Role groups — used by staffing-need slots and day templates to scope which
-// staff can fill a given slot. "any" = no role filter (legacy / catch-all).
-const SLOT_ROLE_GROUPS = [
-    { id: "any",             labelEn: "Any",              labelEs: "Cualquiera",       emoji: "👥", roles: null },
-    { id: "foh-staff",       labelEn: "FOH",              labelEs: "FOH",              emoji: "🧑‍💼", roles: ["FOH"] },
-    { id: "shift-lead",      labelEn: "Shift Lead",       labelEs: "Líder de Turno",   emoji: "🛡️", roles: ["Shift Lead"] },
-    { id: "manager",         labelEn: "Manager",          labelEs: "Gerente",          emoji: "👔", roles: ["Manager", "Asst Manager", "Owner"] },
-    { id: "kitchen-manager", labelEn: "Kitchen Manager",  labelEs: "Gerente Cocina",   emoji: "🧑‍🍳", roles: ["Kitchen Manager", "Asst Kitchen Manager"] },
-    { id: "boh-staff",       labelEn: "BOH",              labelEs: "BOH",              emoji: "🔥", roles: ["BOH", "Pho", "Pho Station", "Grill", "Fryer", "Fried Rice", "Dish", "Bao/Tacos/Banh Mi", "Spring Rolls/Prep", "Prep"] },
-];
-const SLOT_ROLE_BY_ID = Object.fromEntries(SLOT_ROLE_GROUPS.map(g => [g.id, g]));
-const isRoleEligible = (staffRole, roleGroupId) => {
-    if (!roleGroupId || roleGroupId === "any") return true;
-    const group = SLOT_ROLE_BY_ID[roleGroupId];
-    if (!group || !group.roles) return true;
-    return group.roles.includes(staffRole);
-};
-
-// Common shift presets surfaced as one-tap chips in the empty-cell quick-add
-// flow AND as preset chips inside the full Add Shift modal. Single source of
-// truth so manager edits to either flow stay in sync.
-const SHIFT_PRESETS_FOH = [
-    { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
-    { label: '11–4', start: '11:00', end: '16:00', isDouble: false },
-    { label: '3–8',  start: '15:00', end: '20:00', isDouble: false },
-    { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
-    { label: '12–7', start: '12:00', end: '19:00', isDouble: false },
-    { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
-];
-const SHIFT_PRESETS_BOH = [
-    { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
-    { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
-    { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
-];
-const getShiftPresets = (side) => (side === 'boh' ? SHIFT_PRESETS_BOH : SHIFT_PRESETS_FOH);
-
-// Sanitize a manager-saved preset list (config/schedule_settings.shiftPresets).
-// Drops malformed rows; falls back to the built-in defaults if empty/missing,
-// so a bad/empty config can never leave the quick-add with zero chips.
-const sanitizeShiftPresets = (arr, fallback) => {
-    if (!Array.isArray(arr)) return fallback;
-    const clean = arr.map(p => ({
-        label: String(p?.label || '').slice(0, 24).trim(),
-        start: /^\d{1,2}:\d{2}$/.test(p?.start) ? p.start : '',
-        end: /^\d{1,2}:\d{2}$/.test(p?.end) ? p.end : '',
-        isDouble: !!p?.isDouble,
-    })).filter(p => p.label && p.start && p.end);
-    return clean.length ? clean : fallback;
-};
-
-// Role-tier color tokens. Three tiers:
-//   ORANGE  = manager-tier (Owner, Manager, Asst Manager, Kitchen Manager,
-//             Asst Kitchen Manager). They run the floor.
-//   GREEN   = shift lead (either dedicated "Shift Lead" role OR the
-//             per-staff shiftLead flag set by an admin). Floor captain.
-//   BLUE    = everyone else (regular FOH or BOH).
-// Used by every shift cube AND by the left-column staff name in the
-// weekly grid, so the same person reads the same color everywhere.
-const MANAGER_ROLES = new Set([
-    'Owner', 'Manager', 'Asst Manager',
-    'Kitchen Manager', 'Asst Kitchen Manager',
-]);
-const roleColors = (role, shiftLead) => {
-    if (MANAGER_ROLES.has(role)) {
-        return { bg: 'bg-orange-100', border: 'border-orange-400', text: 'text-orange-900', dot: 'bg-orange-500', tier: 'manager' };
-    }
-    if (shiftLead || role === 'Shift Lead') {
-        return { bg: 'bg-green-100',  border: 'border-green-400',  text: 'text-green-800',  dot: 'bg-green-500',  tier: 'lead' };
-    }
-    return { bg: 'bg-blue-100',  border: 'border-blue-300',  text: 'text-blue-800',  dot: 'bg-blue-500',   tier: 'staff' };
-};
-
-// ── Date helpers ───────────────────────────────────────────────────────────
-
-const pad2 = (n) => String(n).padStart(2, '0');
-const toDateStr = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-
-// Parse YYYY-MM-DD as a LOCAL date (not UTC). new Date('2026-05-08') interprets
-// as UTC midnight, which slides a day in negative-UTC timezones. This matters
-// — schedule data is local-business-day, never UTC.
-const parseLocalDate = (dateStr) => {
-    if (!dateStr) return null;
-    const [y, m, d] = dateStr.split('-').map(Number);
-    return new Date(y, m - 1, d);
-};
-
-const startOfWeek = (date) => {
-    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const offset = (d.getDay() - WEEK_START_DOW + 7) % 7;
-    d.setDate(d.getDate() - offset);
-    return d;
-};
-
-const addDays = (date, n) => {
-    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    d.setDate(d.getDate() + n);
-    return d;
-};
+// ── Extracted scheduling brain (Phase 1, SCHEDULING-FORENSICS.md §13) ─────
+// Constants + pure helpers now live in tested modules. Behavior is
+// byte-identical; this file just imports them back.
+import {
+    DAYS_EN, DAYS_ES, DAYS_FULL_EN, DAYS_FULL_ES, DAY_IDS, dayIdFromDateStr,
+    EMPTY_CELL_SHIFTS, WEEK_START_DOW, HOURS_YELLOW_MAX, MINOR_WEEKLY_HOURS_MAX,
+    BOH_ROLE_HINTS, resolveStaffSide, isOnSide,
+    SLOT_ROLE_GROUPS, SLOT_ROLE_BY_ID, isRoleEligible,
+    SHIFT_PRESETS_FOH, SHIFT_PRESETS_BOH, getShiftPresets, sanitizeShiftPresets,
+    roleColors, toDateStr, parseLocalDate, startOfWeek, addDays, weeksBetween,
+    blockedDatesInRange, stripShiftTimestamps, rehydrateShiftTimestamps,
+    formatTime12h, ptoIsPartial, ptoWindowLabel, timeRangesOverlap,
+    hoursBetween, dayPaidHours, isDoubleDay, formatHours, hoursColor,
+    minorShiftWarnings, SCHEDULE_DAY_KEYS, shortTime12h,
+} from '../data/scheduleCore';
+import {
+    checkAvailabilityConflict, staffOffOn, partialOffWindows,
+    shiftOverlapsPartialOff as shiftOverlapsPartialOffPure,
+    computeScheduleConflicts,
+} from '../data/scheduleConflicts';
 
 // Drop the instant-paint localStorage slot for the week containing dateStr.
 // 2026-08-09 (Andrew: "changed a shift from 11 to 11:30 … then reverted
 // back to 11") — the server had 11:30 the whole time (audit-verified); the
 // "revert" was a STALE CACHE SLOT out-painting the edit after a week
-// navigation/remount. Every successful shift mutation now invalidates the
+// navigation/remount. Every successful shift mutation invalidates the
 // affected week's slot, so a remount can only paint fresh data (or the
 // skeleton — honest either way). The currently-viewed week's slot is
 // rewritten by the next live snapshot tick, so removing it costs nothing.
@@ -283,202 +117,10 @@ const invalidateWeekCache = (dateStr) => {
     } catch { /* storage broken — nothing cached to go stale */ }
 };
 
-// blockedDatesInRange — every day in [startStr, endStr] that lands on a
-// no-time-off / closed blackout, as [{date, reason}]. Single source of truth
-// for BOTH the staff self-serve guard (hard stop) AND the manager add-entry
-// form (surfaced as an overridable warning so a manager can make an exception).
-// `blocksByDate` is the component's Map<'YYYY-MM-DD', block[]>. Iterates by
-// addDays() (DST-safe, unlike Date.setDate mutation) and caps at 120 days.
-function blockedDatesInRange(startStr, endStr, blocksByDate) {
-    const out = [];
-    if (!startStr || !endStr || !blocksByDate) return out;
-    const startD = parseLocalDate(startStr);
-    const endD = parseLocalDate(endStr);
-    if (!startD || !endD) return out;
-    const sStr = toDateStr(startD);
-    const eStr = toDateStr(endD);
-    for (let i = 0; i < 120; i++) {
-        const d = addDays(startD, i);
-        const dStr = toDateStr(d);
-        if (dStr > eStr) break;
-        if (dStr < sStr) continue;
-        const hit = (blocksByDate.get(dStr) || []).find(b => b.type === 'no_timeoff' || b.type === 'closed');
-        if (hit) out.push({ date: dStr, reason: hit.reason || 'blocked' });
-    }
-    return out;
-}
-
-// localStorage round-trip helpers for shifts. JSON.stringify turns a
-// Firestore Timestamp into `{seconds, nanoseconds}` which doesn't
-// have .toMillis() — downstream code that calls .toMillis() crashes.
-// stripShiftTimestamps replaces Timestamp instances with plain
-// `{__ts: millis}` markers; rehydrateShiftTimestamps reverses it on
-// load with a minimal shim exposing .toMillis() + .seconds.
-// Production audit 2026-05-22.
-const stripShiftTimestamps = (sh) => {
-    if (!sh || typeof sh !== 'object') return sh;
-    const out = { ...sh };
-    for (const k of ['createdAt', 'updatedAt', 'publishedAt', 'pendingOfferAt', 'coverRequestedAt']) {
-        const v = sh[k];
-        if (v && typeof v === 'object' && typeof v.toMillis === 'function') {
-            out[k] = { __ts: v.toMillis() };
-        }
-    }
-    return out;
-};
-const rehydrateShiftTimestamps = (sh) => {
-    if (!sh || typeof sh !== 'object') return sh;
-    const out = { ...sh };
-    for (const k of ['createdAt', 'updatedAt', 'publishedAt', 'pendingOfferAt', 'coverRequestedAt']) {
-        const v = sh[k];
-        if (v && typeof v === 'object' && typeof v.__ts === 'number') {
-            const ms = v.__ts;
-            out[k] = { toMillis: () => ms, seconds: Math.floor(ms / 1000) };
-        }
-    }
-    return out;
-};
-
-const formatDateShort = (date, isEn) => {
-    const m = date.getMonth() + 1;
-    const d = date.getDate();
-    return isEn ? `${m}/${d}` : `${d}/${m}`;
-};
-
-const formatTime12h = (time24) => {
-    if (!time24) return '';
-    const [h, m] = time24.split(':').map(Number);
-    const period = h >= 12 ? 'PM' : 'AM';
-    const h12 = h % 12 || 12;
-    return m === 0 ? `${h12}${period}` : `${h12}:${pad2(m)}${period}`;
-};
-
-// Partial time-off helpers (Andrew 2026-06-17: staff can request a specific
-// window off — e.g. 3–8pm — not just a whole day). A whole-day entry has no
-// startTime/endTime; a partial entry has partial:true + startTime/endTime.
-const ptoIsPartial = (t) => !!(t && t.partial && t.startTime && t.endTime);
-const ptoWindowLabel = (t) => (ptoIsPartial(t) ? `${formatTime12h(t.startTime)}–${formatTime12h(t.endTime)}` : '');
-const _hhmmToMin = (hhmm) => {
-    const [h, m] = String(hhmm || '').split(':').map(Number);
-    return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
-};
-// Do two HH:mm ranges overlap? Half-open, so touching edges (10–3 vs 3–8) don't.
-const timeRangesOverlap = (aS, aE, bS, bE) => {
-    if (!aS || !aE || !bS || !bE) return false;
-    return _hhmmToMin(aS) < _hhmmToMin(bE) && _hhmmToMin(bS) < _hhmmToMin(aE);
-};
-
-// Calculate hours between two HH:mm times, handling overnight shifts.
-const hoursBetween = (start, end, isDouble = false) => {
-    if (!start || !end) return 0;
-    const [sH, sM] = start.split(':').map(Number);
-    const [eH, eM] = end.split(':').map(Number);
-    let mins = (eH * 60 + eM) - (sH * 60 + sM);
-    if (mins <= 0) mins += 24 * 60; // overnight wrap
-    let hrs = mins / 60;
-    // Double-shift = 1 hr unpaid break (matches M2 L2 policy).
-    if (isDouble) hrs = Math.max(0, hrs - 1);
-    return hrs;
-};
-
-// Paid hours for ONE day given that day's shifts. If 2+ shifts that day
-// (e.g. morning 10-3 + evening 4-8), it's a double — subtract the unpaid
-// 1-hr break ONCE for the day. Otherwise honor the legacy single-shift
-// isDouble flag (for shifts recorded as a single 10-8 double with built-in
-// break). One source of truth for hours math.
-const dayPaidHours = (dayShifts) => {
-    if (!dayShifts || dayShifts.length === 0) return 0;
-    if (dayShifts.length === 1) {
-        const sh = dayShifts[0];
-        return hoursBetween(sh.startTime, sh.endTime, !!sh.isDouble);
-    }
-    // 2+ shifts on the same day → automatic double, deduct 1h break once.
-    const raw = dayShifts.reduce((sum, sh) => sum + hoursBetween(sh.startTime, sh.endTime, false), 0);
-    return Math.max(0, raw - 1);
-};
-
-// True if a staff has 2+ shifts on the given date OR a single shift flagged
-// isDouble. Used for the visual badge on shift cubes.
-const isDoubleDay = (dayShifts) => {
-    if (!dayShifts || dayShifts.length === 0) return false;
-    if (dayShifts.length >= 2) return true;
-    return !!dayShifts[0].isDouble;
-};
-
-const formatHours = (h) => {
-    if (h === Math.floor(h)) return `${h}h`;
-    return `${h.toFixed(1)}h`;
-};
-
-const hoursColor = (h) => {
-    if (h >= HOURS_YELLOW_MAX) return 'bg-red-100 text-red-800 border-red-300';
-    if (h >= HOURS_GREEN_MAX) return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-    return 'bg-green-100 text-green-800 border-green-300';
-};
-
-// ── Minor-labor warning logic ──────────────────────────────────────────────
-
-const minorShiftWarnings = (shift, isEn) => {
-    const warnings = [];
-    if (!shift.endTime) return warnings;
-    const [eH] = shift.endTime.split(':').map(Number);
-    if (eH >= MINOR_LATE_HOUR || eH === 0) {
-        warnings.push(isEn ? `Past ${MINOR_LATE_HOUR - 12}PM` : `Después de las ${MINOR_LATE_HOUR - 12}PM`);
-    }
-    const hrs = hoursBetween(shift.startTime, shift.endTime, shift.isDouble);
-    if (hrs > MINOR_DAILY_HOURS_MAX) {
-        warnings.push(isEn ? `>${MINOR_DAILY_HOURS_MAX}h/day` : `>${MINOR_DAILY_HOURS_MAX}h/día`);
-    }
-    return warnings;
-};
-
-// ── Availability conflict helper ───────────────────────────────────────────
-// Single source of truth for "does this shift fit the staff's declared
-// availability?" Used by:
-//   • AddShiftModal — banner in the conflict warnings stack
-//   • handleUpdateShiftTimes — toast on inline drag-resize of a cube edge
-//   • handleDropShift — toast on drag-to-different-day move
-// Returns null when fine; otherwise:
-//   { type: 'off' }                        staff marked the day unavailable
-//   { type: 'outside', from, to }          shift extends past the window
-// "Constrained" means the staff narrowed from the modal default 09:00–21:00.
-// Default-wide availability shouldn't fire warnings on every early-open or
-// late-close shift.
-function checkAvailabilityConflict(staff, dateStr, startTime, endTime) {
-    if (!staff || !dateStr || !startTime || !endTime) return null;
-    const d = parseLocalDate(dateStr);
-    if (!d) return null;
-    const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-    const dayKey = dayKeys[d.getDay()];
-    const dayAvail = (staff.availability || {})[dayKey];
-    if (!dayAvail) return null;
-    if (dayAvail.available === false) return { type: 'off' };
-    const from = dayAvail.from || '09:00';
-    const to   = dayAvail.to   || '21:00';
-    const constrained = from > '09:00' || to < '21:00';
-    if (!constrained) return null;
-    if (startTime < from || endTime > to) {
-        return { type: 'outside', from, to };
-    }
-    return null;
-}
-
-// Andrew 2026-05-21: "the schedule app was running a little glitchy".
-// Module-level helpers + a memoized AvailabilityBadge moved out of
-// the grid render. The grid was running shortTime() and a fresh IIFE
-// for every (staff × 7 days) cell on every parent re-render — ~350
-// invocations per render for a 50-staff week. The badge is now
-// memo'd on its 4 PRIMITIVE props (available / from / to / isEn) so
-// React skips the re-render when nothing about that one cell's
-// availability has actually changed.
-const SCHEDULE_DAY_KEYS = Object.freeze(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']);
-
-function shortTime12h(t) {
-    if (!t) return '';
-    const [h, m] = String(t).split(':').map(Number);
-    const period = h >= 12 ? 'p' : 'a';
-    const h12 = ((h + 11) % 12) + 1;
-    return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
+function useStableCallback(fn) {
+    const ref = useRef(fn);
+    ref.current = fn;
+    return useRef((...args) => ref.current(...args)).current;
 }
 
 const AvailabilityBadge = memo(function AvailabilityBadge({ available, from, to, isEn }) {
@@ -1592,36 +1234,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Helper: is a staff member off on a given date (any non-denied time-off
     // covers it)? Reads from viewerTimeOff so non-editors don't see others'
     // pending PTO as a conflict in the grid.
-    const isStaffOffOn = (staffName, dateStr) => {
-        return viewerTimeOff.some(t => {
-            if (t.status === 'denied') return false;
-            if (t.staffName !== staffName) return false;
-            if (ptoIsPartial(t)) return false; // a partial window doesn't take the whole day off — they stay schedulable
-            const start = t.startDate || t.date;
-            const end = t.endDate || t.date;
-            return dateStr >= start && dateStr <= end;
-        });
-    };
+    // Thin binding over the extracted pure engine (scheduleConflicts.js) —
+    // same logic, now unit-tested against the golden dataset.
+    const isStaffOffOn = (staffName, dateStr) => staffOffOn(viewerTimeOff, staffName, dateStr);
 
     // Partial off windows for a staffer on a date — drives the overlap warning
     // when a shift is placed during their requested-off hours, and the window
     // label in the queue / PTO view. Same visibility rules as isStaffOffOn.
-    const partialOffWindowsOn = (staffName, dateStr) => {
-        return viewerTimeOff.filter(t => {
-            if (t.status === 'denied') return false;
-            if (t.staffName !== staffName) return false;
-            if (!ptoIsPartial(t)) return false;
-            const start = t.startDate || t.date;
-            const end = t.endDate || t.date;
-            return dateStr >= start && dateStr <= end;
-        });
-    };
-    // True if a shift (startTime–endTime on dateStr) lands inside any partial
-    // off window the staffer requested — used for the soft overlap warning.
-    const shiftOverlapsPartialOff = (sName, dateStr, startTime, endTime) => {
-        return partialOffWindowsOn(sName, dateStr)
-            .some(t => timeRangesOverlap(startTime, endTime, t.startTime, t.endTime));
-    };
+    const partialOffWindowsOn = (staffName, dateStr) => partialOffWindows(viewerTimeOff, staffName, dateStr);
+    const shiftOverlapsPartialOff = (sName, dateStr, startTime, endTime) =>
+        shiftOverlapsPartialOffPure(viewerTimeOff, sName, dateStr, startTime, endTime);
 
     // ── eventsByDate: calendar_events + auto-derived staff birthdays ──
     // 2026-05-16. Keyed by 'YYYY-MM-DD'. Value is array of event objects:
@@ -1858,53 +1480,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // current side so it doesn't double-count cross-side overlaps
     // (those are legitimate — staff can work FOH morning + BOH
     // afternoon at the same restaurant).
-    const scheduleConflicts = useMemo(() => {
-        // Local time-parser — the existing toMin helper lives inside
-        // a different useMemo and isn't reachable from here. Cheap
-        // to inline; called once per shift per memo recomputation.
-        const parseHM = (t) => {
-            if (!t || typeof t !== 'string') return null;
-            const [h, m] = t.split(':').map(Number);
-            if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
-            return h * 60 + m;
-        };
-        // Group shifts by staffName + date, then check pairs.
-        const byKey = new Map();
-        for (const sh of visibleShifts) {
-            if (!sh.staffName || !sh.date) continue;
-            // Only look at published shifts unless we're in editor
-            // mode — drafts are manager working state and may
-            // intentionally have temporary overlaps.
-            if (!canEdit && sh.published === false) continue;
-            const start = parseHM(sh.startTime);
-            const end   = parseHM(sh.endTime);
-            if (start === null || end === null) continue;
-            const k = `${sh.staffName}__${sh.date}`;
-            if (!byKey.has(k)) byKey.set(k, []);
-            byKey.get(k).push({ id: sh.id, staffName: sh.staffName, date: sh.date, side: sh.side, startMin: start, endMin: end, raw: sh });
-        }
-        const conflicts = [];
-        for (const [, arr] of byKey) {
-            if (arr.length < 2) continue;
-            // Sort by start so we can compare adjacent pairs in O(n).
-            arr.sort((a, b) => a.startMin - b.startMin);
-            for (let i = 0; i < arr.length - 1; i++) {
-                for (let j = i + 1; j < arr.length; j++) {
-                    // Overlap if a.start < b.end AND b.start < a.end.
-                    // Adjacency (a.end === b.start) is NOT a conflict.
-                    if (arr[i].endMin > arr[j].startMin && arr[j].endMin > arr[i].startMin) {
-                        conflicts.push({
-                            staffName: arr[i].staffName,
-                            date: arr[i].date,
-                            shiftIds: [arr[i].id, arr[j].id],
-                            label: `${arr[i].raw.startTime}–${arr[i].raw.endTime} vs ${arr[j].raw.startTime}–${arr[j].raw.endTime}`,
-                        });
-                    }
-                }
-            }
-        }
-        return conflicts;
-    }, [visibleShifts, canEdit]);
+    // Engine extracted to scheduleConflicts.js (Phase 1) — logic unchanged,
+    // now golden-dataset tested.
+    const scheduleConflicts = useMemo(
+        () => computeScheduleConflicts(visibleShifts, canEdit),
+        [visibleShifts, canEdit],
+    );
 
     // ── Derived: per-staff weekly hours summary for the current side view ──
     // Hours are calculated over ALL of this staffer's shifts (both sides) — OT
@@ -4122,17 +3703,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     skipped.push(`${rule.staffName}: bi-weekly rule has no Valid From date — set one to anchor`);
                     continue;
                 }
-                const anchorWeek = startOfWeek(anchorDate);
-                const diffMs = weekStart.getTime() - anchorWeek.getTime();
-                // FIX (review 2026-05-22): Math.floor on raw ms is off by one
-                // across DST. anchorWeek and weekStart are both local-midnight
-                // (startOfWeek) dates, so a DST transition between them makes
-                // diffMs equal N*168h ± 1h; Math.floor((N*168h - 1h)/168h)
-                // returns N-1 and flips the even/odd parity, so a bi-weekly
-                // rule generates on the wrong week. The delta is always within
-                // ±1h of a whole number of weeks, so round() recovers the
-                // correct week count DST-safely.
-                const weeksSince = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
+                // weeksBetween (scheduleCore) IS the 2026-05-22 DST-parity
+                // fix — Math.round over the raw ms delta — now unit-tested
+                // across both DST transitions.
+                const weeksSince = weeksBetween(startOfWeek(anchorDate), weekStart);
                 if (weeksSince < 0 || (weeksSince % 2) !== 0) {
                     skipped.push(`${rule.staffName}: bi-weekly off-week`);
                     continue;
