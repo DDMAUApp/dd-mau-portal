@@ -14,6 +14,7 @@ import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
 import { installFirestoreRevive } from './data/firestoreRevive';
+import { installVersionFloor } from './data/versionFloor';
 // AppToast is mounted at root in main.jsx (not here) so it renders
 // across every code path including the lock screen and the public
 // onboarding/apply routes that bypass App's main shell.
@@ -357,6 +358,13 @@ try { installGlobalHandlers(); } catch {}
 // disableNetwork→enableNetwork on stale resume so the app recovers
 // itself. See src/data/firestoreRevive.js for the full story.
 try { installFirestoreRevive(); } catch {}
+
+// Fleet version floor (Phase 2, SCHEDULING-FORENSICS.md §13 R2) — when
+// /config/minVersion.min is above this build, block input and drive the
+// existing OTA/reload machinery; a device that can't update shows an
+// "update required" screen instead of silently writing with stale logic.
+// Fail-open: no doc / bad value / listener error = gate idle.
+try { installVersionFloor(); } catch {}
 
 // Loading spinner for lazy-loaded components.
 //
