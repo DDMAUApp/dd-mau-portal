@@ -168,6 +168,23 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS) {
 }
 
 /**
+ * Read-flavored watchdog (2026-08-09 audit): revive a hung READ, but never
+ * escalate to a reload and never feed the "Saving…" pill. A slow query on
+ * bad store Wi-Fi is not a wedge — reloading mid-use over a background
+ * prefetch would be worse than the slowness. If the transport truly IS
+ * wedged, the user's next WRITE goes through watchdogWrite and escalates.
+ */
+export function watchdogRead(promise, hangMs = WRITE_HANG_MS) {
+    let settled = false;
+    const timer = setTimeout(() => {
+        if (!settled) reviveFirestore('slow-read');
+    }, hangMs);
+    const onSettle = () => { settled = true; clearTimeout(timer); };
+    promise.then(onSettle, onSettle);
+    return promise;
+}
+
+/**
  * Install the resume-triggered revive. Call ONCE at app startup.
  * Listens on both channels because neither alone covers everything:
  * visibilitychange misses the iOS suspend case (the WebView is frozen,

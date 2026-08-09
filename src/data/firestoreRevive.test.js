@@ -133,6 +133,33 @@ describe('escalation to reload (persistence-layer wedge)', () => {
     });
 });
 
+describe('watchdogRead (2026-08-09 audit — reads must not reload or feed the pill)', () => {
+    it('revives on a hung read but NEVER escalates to a reload', async () => {
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        sessionStorage.clear();
+        mod.watchdogRead(new Promise(() => {}));   // hangs forever
+        await vi.advanceTimersByTimeAsync(mod.WRITE_HANG_MS + mod.WRITE_ESCALATE_MS + 5000);
+        expect(disableNetwork).toHaveBeenCalledTimes(1);  // revive fired
+        expect(reload).not.toHaveBeenCalled();            // no reload, ever
+    });
+
+    it('does not count toward the in-flight write pill', async () => {
+        const { watchdogRead, subscribeInFlightWrites } = await loadFresh();
+        const states = [];
+        subscribeInFlightWrites(s => states.push(s));
+        watchdogRead(new Promise(() => {}));
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0 });
+    });
+
+    it('returns the original promise semantics untouched', async () => {
+        const { watchdogRead } = await loadFresh();
+        await expect(watchdogRead(Promise.resolve('rows'))).resolves.toBe('rows');
+        await expect(watchdogRead(Promise.reject(new Error('idx')))).rejects.toThrow('idx');
+    });
+});
+
 describe('in-flight write tracking (SyncPill feed)', () => {
     it('counts up on start, down on settle, for both resolve and reject', async () => {
         const { watchdogWrite, subscribeInFlightWrites } = await loadFresh();

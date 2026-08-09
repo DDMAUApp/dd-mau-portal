@@ -33,7 +33,7 @@ import {
     addDoc as _fsAddDoc, deleteDoc as _fsDeleteDoc, updateDoc as _fsUpdateDoc,
     setDoc as _fsSetDoc, runTransaction as _fsRunTransaction, getDocs as _fsGetDocs,
 } from 'firebase/firestore';
-import { watchdogWrite, reviveFirestore } from '../data/firestoreRevive';
+import { watchdogWrite, watchdogRead, reviveFirestore } from '../data/firestoreRevive';
 
 // ── Wedged-connection watchdog (2026-08-08, Andrew: "delete a shift
 // times out… add a shift doesnt respond until i refresh") ──────────────
@@ -50,7 +50,10 @@ const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
-const getDocs = (...a) => watchdogWrite(_fsGetDocs(...a));
+// Reads get the read-flavored watchdog (2026-08-09 audit): revive on hang,
+// but no reload escalation and no "Saving…" pill — a slow week prefetch on
+// store Wi-Fi must never reload the app or claim to be saving.
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { patchStaffRecordByName } from '../data/staffDoc';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
@@ -2332,6 +2335,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // it would leave the record lying about what happened.
             let already = null;
             await runTransaction(db, async (txn) => {
+                already = null; // reset per attempt — Firestore retries this callback on contention
                 const ref = doc(db, 'swap_requests', request.id);
                 const snap = await txn.get(ref);
                 if (!snap.exists()) { already = 'gone'; return; }
@@ -2774,6 +2778,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // cancel on a deleted shift no longer throws not-found.
             let alreadyDone = false;
             await runTransaction(db, async (txn) => {
+                alreadyDone = false; // reset per attempt — Firestore retries this callback on contention
                 const ref = doc(db, 'shifts', shift.id);
                 const snap = await txn.get(ref);
                 if (!snap.exists()) { alreadyDone = true; return; }
@@ -3086,6 +3091,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             let outcome = 'denied';
             let deniedClaimant = shift.pendingClaimBy;
             await runTransaction(db, async (txn) => {
+                outcome = 'denied'; // reset per attempt — Firestore retries this callback on contention
                 const ref = doc(db, 'shifts', shift.id);
                 const snap = await txn.get(ref);
                 if (!snap.exists()) { outcome = 'gone'; return; }
