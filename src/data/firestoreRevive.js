@@ -77,6 +77,31 @@ export const REVIVE_COOLDOWN_MS = 15 * 1000;
 let _lastReviveAt = 0;
 let _reviving = false;
 
+// ── In-flight write tracking (stabilization Phase E) ───────────────────
+// Every watchdogged write increments a counter; the SyncPill subscribes
+// and shows "Saving…" once a write has been airborne past a short delay.
+// `stuck` counts writes past WRITE_HANG_MS (revive already fired) — the
+// pill flips amber so a wedged transport LOOKS like reconnecting instead
+// of a dead button. Pure module state; no React dependency.
+let _inFlight = 0;
+let _stuck = 0;
+const _writeSubs = new Set();
+
+function _notifyWriteSubs() {
+    const snapshot = { inFlight: _inFlight, stuck: _stuck };
+    _writeSubs.forEach((cb) => { try { cb(snapshot); } catch { /* subscriber's problem */ } });
+}
+
+/**
+ * Subscribe to {inFlight, stuck} counts of watchdogged writes. Calls back
+ * immediately with the current state; returns an unsubscribe function.
+ */
+export function subscribeInFlightWrites(cb) {
+    _writeSubs.add(cb);
+    try { cb({ inFlight: _inFlight, stuck: _stuck }); } catch { /* ignore */ }
+    return () => _writeSubs.delete(cb);
+}
+
 /**
  * Tear down and re-dial the Firestore transport. Throttled + reentrancy-
  * guarded; safe to call speculatively. Resolves true if a cycle ran.
@@ -111,8 +136,14 @@ export async function reviveFirestore(reason = 'manual') {
 export function watchdogWrite(promise, hangMs = WRITE_HANG_MS) {
     let settled = false;
     let escalateTimer = null;
+    let markedStuck = false;
+    _inFlight += 1;
+    _notifyWriteSubs();
     const timer = setTimeout(() => {
         if (settled) return;
+        markedStuck = true;
+        _stuck += 1;
+        _notifyWriteSubs();
         reviveFirestore('slow-write');
         // Escalation (2026-08-08, Andrew: "it just keeps spinning. i refresh
         // the app and it works"): if the network cycle didn't unstick the
@@ -122,12 +153,17 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS) {
             if (!settled) escalateReload('write-stuck-after-revive');
         }, WRITE_ESCALATE_MS);
     }, hangMs);
+    const onSettle = () => {
+        settled = true;
+        clearTimeout(timer);
+        if (escalateTimer) clearTimeout(escalateTimer);
+        _inFlight = Math.max(0, _inFlight - 1);
+        if (markedStuck) _stuck = Math.max(0, _stuck - 1);
+        _notifyWriteSubs();
+    };
     // Attach via then() so we neither swallow rejections nor create an
     // unhandled-rejection duplicate (errors still flow to the caller).
-    promise.then(
-        () => { settled = true; clearTimeout(timer); if (escalateTimer) clearTimeout(escalateTimer); },
-        () => { settled = true; clearTimeout(timer); if (escalateTimer) clearTimeout(escalateTimer); },
-    );
+    promise.then(onSettle, onSettle);
     return promise;
 }
 

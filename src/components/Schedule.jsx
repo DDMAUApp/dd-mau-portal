@@ -33,7 +33,7 @@ import {
     addDoc as _fsAddDoc, deleteDoc as _fsDeleteDoc, updateDoc as _fsUpdateDoc,
     setDoc as _fsSetDoc, runTransaction as _fsRunTransaction, getDocs as _fsGetDocs,
 } from 'firebase/firestore';
-import { watchdogWrite } from '../data/firestoreRevive';
+import { watchdogWrite, reviveFirestore } from '../data/firestoreRevive';
 
 // ── Wedged-connection watchdog (2026-08-08, Andrew: "delete a shift
 // times out… add a shift doesnt respond until i refresh") ──────────────
@@ -1927,17 +1927,37 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const oldDetail = sh ? `${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}` : '';
         const newDetail = `${formatTime12h(startTime)}–${formatTime12h(endTime)}`;
         try {
-            await updateDoc(doc(db, 'shifts', shiftId), {
-                startTime,
-                endTime,
-                // Re-arm the 1-hour reminder. The server cron stamps
-                // reminderSent:true once it fires and skips flagged shifts,
-                // so a shift moved to a new time would otherwise never
-                // re-remind (sendShiftReminders, functions/index.js).
-                reminderSent: false,
-                reminderSentAt: null,
-                updatedAt: serverTimestamp(),
-                updatedBy: staffName,
+            // Transaction, not updateDoc (stabilization Phase F): if the
+            // manager's listener froze (the wedge disease), the shift they
+            // SEE may have been moved or reassigned by someone else since
+            // render. Editing times on top of that applies the change to a
+            // shift that isn't what they think it is — abort with a clear
+            // message and kick the revive so their view catches up.
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'shifts', shiftId);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) {
+                    throw new Error(tx_msg('Shift no longer exists — it may have been deleted.',
+                        'El turno ya no existe — puede haber sido eliminado.'));
+                }
+                const live = snap.data();
+                if (live.date !== sh.date || live.staffName !== sh.staffName) {
+                    reviveFirestore('stale-view');
+                    throw new Error(tx_msg('This shift changed since you loaded it. Refreshing — try again.',
+                        'Este turno cambió desde que lo cargaste. Actualizando — intenta de nuevo.'));
+                }
+                txn.update(ref, {
+                    startTime,
+                    endTime,
+                    // Re-arm the 1-hour reminder. The server cron stamps
+                    // reminderSent:true once it fires and skips flagged shifts,
+                    // so a shift moved to a new time would otherwise never
+                    // re-remind (sendShiftReminders, functions/index.js).
+                    reminderSent: false,
+                    reminderSentAt: null,
+                    updatedAt: serverTimestamp(),
+                    updatedBy: staffName,
+                });
             });
             auditShiftChange({ shiftId, staffName: sh.staffName, action: 'edited',
                 before: { startTime: sh.startTime, endTime: sh.endTime }, after: { startTime, endTime }, surface: 'admin-dashboard' });
@@ -2306,11 +2326,30 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const handleDenySwapRequest = async (request) => {
         if (!canEdit) return;
         try {
-            await updateDoc(doc(db, 'swap_requests', request.id), {
-                status: 'denied',
-                deniedBy: staffName,
-                deniedAt: serverTimestamp(),
+            // Transaction (Phase F): two managers working the queue can race
+            // — if co-manager approved this request a second ago, the swap
+            // already EXECUTED (shifts reassigned); stamping 'denied' over
+            // it would leave the record lying about what happened.
+            let already = null;
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'swap_requests', request.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) { already = 'gone'; return; }
+                const live = snap.data();
+                if (live.status && live.status !== 'pending') { already = live.status; return; }
+                txn.update(ref, {
+                    status: 'denied',
+                    deniedBy: staffName,
+                    deniedAt: serverTimestamp(),
+                });
             });
+            if (already) {
+                toast(already === 'approved'
+                    ? tx('Another manager already approved this swap — the shifts were exchanged.',
+                         'Otro gerente ya aprobó este cambio — los turnos fueron intercambiados.')
+                    : tx('This request was already handled.', 'Esta solicitud ya fue resuelta.'));
+                return;
+            }
             // Audit log — Andrew 2026-06-25.
             auditShiftChange({ shiftId: request.id, staffName: request.fromStaff, action: 'swap_denied',
                 after: { swapWith: request.toStaff } }).catch(() => {});
@@ -2367,31 +2406,48 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
     const commitOfferShift = async (shift, { note, urgent }) => {
         try {
-            await updateDoc(doc(db, 'shifts', shift.id), {
-                offerStatus: 'open',
-                offeredBy: staffName,
-                offeredAt: serverTimestamp(),
-                offerNote: note || null,
-                offerUrgent: !!urgent,
-                // Urgent = same UX as Find Cover (red card + push fan-out).
-                coverNeeded: !!urgent,
-                coverNeededAt: urgent ? serverTimestamp() : null,
-                pendingClaimBy: null,
-                claimedAt: null,
-                // Start of a NEW offer cycle: clear the previous cycle's
-                // double-approval guard, or approving this offer's claim
-                // fails forever with "Already approved by X".
-                approvedBy: null,
-                // arrayUnion + ISO-string timestamp because Firestore
-                // disallows serverTimestamp() inside an array element.
-                transferHistory: arrayUnion({
-                    action: 'offered',
-                    by: staffName,
-                    at: new Date().toISOString(),
-                    note: note || null,
-                    urgent: !!urgent,
-                }),
-                updatedAt: serverTimestamp(),
+            // Transaction (Phase F): re-offering resets the whole claim
+            // cycle (pendingClaimBy/approvedBy cleared below). If someone
+            // already claimed and a manager is mid-review, a blind reset
+            // would silently vaporize that claim — refuse instead.
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'shifts', shift.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) {
+                    throw new Error(tx_msg('Shift no longer exists.', 'El turno ya no existe.'));
+                }
+                const live = snap.data();
+                if (live.pendingClaimBy) {
+                    throw new Error(tx_msg(
+                        `${live.pendingClaimBy} already claimed this shift — a manager needs to approve or deny that first.`,
+                        `${live.pendingClaimBy} ya tomó este turno — un gerente debe aprobarlo o negarlo primero.`));
+                }
+                txn.update(ref, {
+                    offerStatus: 'open',
+                    offeredBy: staffName,
+                    offeredAt: serverTimestamp(),
+                    offerNote: note || null,
+                    offerUrgent: !!urgent,
+                    // Urgent = same UX as Find Cover (red card + push fan-out).
+                    coverNeeded: !!urgent,
+                    coverNeededAt: urgent ? serverTimestamp() : null,
+                    pendingClaimBy: null,
+                    claimedAt: null,
+                    // Start of a NEW offer cycle: clear the previous cycle's
+                    // double-approval guard, or approving this offer's claim
+                    // fails forever with "Already approved by X".
+                    approvedBy: null,
+                    // arrayUnion + ISO-string timestamp because Firestore
+                    // disallows serverTimestamp() inside an array element.
+                    transferHistory: arrayUnion({
+                        action: 'offered',
+                        by: staffName,
+                        at: new Date().toISOString(),
+                        note: note || null,
+                        urgent: !!urgent,
+                    }),
+                    updatedAt: serverTimestamp(),
+                });
             });
             // Audit log — Andrew 2026-06-25.
             auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'offered',
@@ -2474,15 +2530,30 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         ));
         if (!ok) return;
         try {
-            await updateDoc(doc(db, 'shifts', shift.id), {
-                offerStatus: 'open',
-                coverNeeded: true,
-                coverNeededAt: serverTimestamp(),
-                offeredBy: staffName,
-                offeredAt: serverTimestamp(),
-                pendingClaimBy: null,
-                claimedAt: null,
-                updatedAt: serverTimestamp(),
+            // Transaction (Phase F) — same claim-cycle protection as
+            // commitOfferShift: don't reset a claim a manager is reviewing.
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'shifts', shift.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) {
+                    throw new Error(tx_msg('Shift no longer exists.', 'El turno ya no existe.'));
+                }
+                const live = snap.data();
+                if (live.pendingClaimBy) {
+                    throw new Error(tx_msg(
+                        `${live.pendingClaimBy} already claimed this shift — a manager needs to approve or deny that first.`,
+                        `${live.pendingClaimBy} ya tomó este turno — un gerente debe aprobarlo o negarlo primero.`));
+                }
+                txn.update(ref, {
+                    offerStatus: 'open',
+                    coverNeeded: true,
+                    coverNeededAt: serverTimestamp(),
+                    offeredBy: staffName,
+                    offeredAt: serverTimestamp(),
+                    pendingClaimBy: null,
+                    claimedAt: null,
+                    updatedAt: serverTimestamp(),
+                });
             });
             // Audit log — Andrew 2026-06-25.
             auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'cover_requested',
@@ -2698,26 +2769,39 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const handleCancelOffer = async (shift) => {
         try {
-            await updateDoc(doc(db, 'shifts', shift.id), {
-                offerStatus: null,
-                offeredBy: null,
-                offeredAt: null,
-                // Also clears any cover-request flag — same UX for "cancel
-                // offer" and "cancel cover request" since both come from
-                // the same shift state.
-                coverNeeded: false,
-                coverNeededAt: null,
-                pendingClaimBy: null,
-                claimedAt: null,
-                // Clear the claim-cycle approval guard too (see commitOfferShift).
-                approvedBy: null,
-                updatedAt: serverTimestamp(),
+            // Transaction (Phase F): idempotent — a double-tap or a cancel
+            // racing another device's cancel is a silent no-op, and a
+            // cancel on a deleted shift no longer throws not-found.
+            let alreadyDone = false;
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'shifts', shift.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) { alreadyDone = true; return; }
+                const live = snap.data();
+                if (!live.offerStatus && !live.coverNeeded) { alreadyDone = true; return; }
+                txn.update(ref, {
+                    offerStatus: null,
+                    offeredBy: null,
+                    offeredAt: null,
+                    // Also clears any cover-request flag — same UX for "cancel
+                    // offer" and "cancel cover request" since both come from
+                    // the same shift state.
+                    coverNeeded: false,
+                    coverNeededAt: null,
+                    pendingClaimBy: null,
+                    claimedAt: null,
+                    // Clear the claim-cycle approval guard too (see commitOfferShift).
+                    approvedBy: null,
+                    updatedAt: serverTimestamp(),
+                });
             });
+            if (alreadyDone) return; // nothing changed — skip the audit row
             // Audit log — Andrew 2026-06-25.
             auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'offer_cancelled',
                 before: { offerStatus: shift.offerStatus || 'open' }, after: { offerStatus: null } }).catch(() => {});
         } catch (e) {
             console.error('Cancel offer failed:', e);
+            toast(tx('Could not cancel the offer: ', 'No se pudo cancelar la oferta: ') + (e.message || e), { kind: 'error' });
         }
     };
 
@@ -2995,25 +3079,53 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const handleDenySwap = async (shift) => {
         if (!canEditSide(shift?.side)) return;
         try {
-            await updateDoc(doc(db, 'shifts', shift.id), {
-                offerStatus: 'open', // back to open offer; original owner still on hook
-                pendingClaimBy: null,
-                claimedAt: null,
-                updatedAt: serverTimestamp(),
+            // Transaction (Phase F): deny exactly the claim the manager is
+            // LOOKING at. If their listener froze and the claim was already
+            // resolved — or a different staffer claimed since — a blind
+            // write would deny the wrong person or resurrect a dead offer.
+            let outcome = 'denied';
+            let deniedClaimant = shift.pendingClaimBy;
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'shifts', shift.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) { outcome = 'gone'; return; }
+                const live = snap.data();
+                if (!live.pendingClaimBy) { outcome = 'resolved'; return; }
+                if (shift.pendingClaimBy && live.pendingClaimBy !== shift.pendingClaimBy) {
+                    reviveFirestore('stale-view');
+                    throw new Error(tx_msg(
+                        `The claim changed — it's now ${live.pendingClaimBy}'s. Review it again.`,
+                        `La solicitud cambió — ahora es de ${live.pendingClaimBy}. Revísala de nuevo.`));
+                }
+                // The claimant we actually denied, from the LIVE doc — the
+                // audit row + push below must name the right person even if
+                // the caller's card didn't carry pendingClaimBy.
+                deniedClaimant = live.pendingClaimBy;
+                txn.update(ref, {
+                    offerStatus: 'open', // back to open offer; original owner still on hook
+                    pendingClaimBy: null,
+                    claimedAt: null,
+                    updatedAt: serverTimestamp(),
+                });
             });
+            if (outcome !== 'denied') {
+                toast(tx('This claim was already handled.', 'Esta solicitud ya fue resuelta.'));
+                return;
+            }
             // Audit log — Andrew 2026-06-25.
             auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'claim_denied',
-                after: { claimBy: shift.pendingClaimBy, offerStatus: 'open' } }).catch(() => {});
+                after: { claimBy: deniedClaimant, offerStatus: 'open' } }).catch(() => {});
             const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
             // Not awaited — same reasoning as Approve: the shift update above
             // is the durable part, notify() swallows its own errors, and
             // nothing here depends on the result.
-            notify(shift.pendingClaimBy, 'swap_denied',
+            notify(deniedClaimant, 'swap_denied',
                 { en: 'Swap denied', es: 'Cambio negado' },
                 { en: `Manager denied your takeover of the ${detail} shift.`,
                   es: `Gerente negó tu toma del turno ${detail}.` });
         } catch (e) {
             console.error('Deny failed:', e);
+            toast(tx('Could not deny: ', 'No se pudo negar: ') + (e.message || e), { kind: 'error' });
         }
     };
 

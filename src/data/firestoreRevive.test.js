@@ -133,6 +133,56 @@ describe('escalation to reload (persistence-layer wedge)', () => {
     });
 });
 
+describe('in-flight write tracking (SyncPill feed)', () => {
+    it('counts up on start, down on settle, for both resolve and reject', async () => {
+        const { watchdogWrite, subscribeInFlightWrites } = await loadFresh();
+        const states = [];
+        subscribeInFlightWrites(s => states.push(s));
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0 });
+
+        let resolveA, rejectB;
+        const a = watchdogWrite(new Promise(res => { resolveA = res; }));
+        const b = watchdogWrite(new Promise((_, rej) => { rejectB = rej; }));
+        expect(states.at(-1).inFlight).toBe(2);
+
+        resolveA('ok');
+        await a;
+        expect(states.at(-1).inFlight).toBe(1);
+
+        rejectB(new Error('denied'));
+        await expect(b).rejects.toThrow('denied');
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0 });
+    });
+
+    it('flags stuck once the hang timer fires, clears when the write lands', async () => {
+        const { watchdogWrite, subscribeInFlightWrites, WRITE_HANG_MS } = await loadFresh();
+        const states = [];
+        subscribeInFlightWrites(s => states.push(s));
+
+        let resolveLate;
+        const wrapped = watchdogWrite(new Promise(res => { resolveLate = res; }));
+        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 0 });
+
+        await vi.advanceTimersByTimeAsync(WRITE_HANG_MS + 100);
+        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 1 });
+
+        resolveLate('flushed');
+        await wrapped;
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0 });
+    });
+
+    it('unsubscribe stops callbacks; a throwing subscriber cannot break the write', async () => {
+        const { watchdogWrite, subscribeInFlightWrites } = await loadFresh();
+        const good = [];
+        subscribeInFlightWrites(() => { throw new Error('bad subscriber'); });
+        const unsub = subscribeInFlightWrites(s => good.push(s));
+        const countAtUnsub = good.length;
+        unsub();
+        await watchdogWrite(Promise.resolve('ok'));   // must not throw
+        expect(good.length).toBe(countAtUnsub);        // no callbacks after unsub
+    });
+});
+
 describe('installFirestoreRevive (resume path)', () => {
     it('cycles after a long-backgrounded resume but not a quick app-switch', async () => {
         const { installFirestoreRevive, RESUME_STALE_MS } = await loadFresh();

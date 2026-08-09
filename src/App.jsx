@@ -14,6 +14,7 @@ import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
 import { installFirestoreRevive } from './data/firestoreRevive';
+import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
 // AppToast is mounted at root in main.jsx (not here) so it renders
 // across every code path including the lock screen and the public
@@ -2482,6 +2483,12 @@ export default function App() {
                     hook + indicator now live inside the overlay leaf so
                     the per-frame pull state can't re-render App. */}
                 <PullToRefreshOverlay />
+                {/* Global "Saving… / Reconnecting…" pill for watchdogged
+                    Firestore writes (stabilization Phase E) — renders null
+                    unless a write has been in flight ~1s, so a wedged
+                    transport shows recovery-in-progress instead of a
+                    dead button. */}
+                <SyncPill />
                 <AppShellV2
                     language={language}
                     staffName={staffName}
