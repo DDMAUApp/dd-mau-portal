@@ -28,6 +28,10 @@ import {
     loadPayrollMeta, setPayrollPassword, verifyPayrollPassword, nameAliasesFromMeta,
     loadRoster, saveRoster, saveRun, loadLatestRunSummary, loadRunHistory,
 } from '../../data/payroll/payrollStore.js';
+import {
+    loadQueuedAdds, saveQueuedAdds, activeQueueItems, consumedQueueItems,
+    seedAdjustmentsFromQueue, requeueItem, validateQueueItem,
+} from '../../data/payroll/queuedAdds.js';
 import { logError } from '../../data/logger.js';
 
 const LOCS = ['WG', 'MH'];
@@ -58,6 +62,117 @@ function guessPeriod(names) {
         if (m) return `${+m[2]}.${+m[3]}.${m[1].slice(2)}-${+m[5]}.${+m[6]}.${m[4].slice(2)}`;
     }
     return '';
+}
+
+// ───────────────────── queued pay adds (standing list) ───────────────────
+// (2026-08-10, Andrew: "update as we need before we run payroll so we dont
+// forget".) Editable any time the panel is unlocked; every edit persists
+// immediately. A NEW period import pulls these into the run's Pay Adds
+// step and marks them used — used items keep a Requeue button in case a
+// run gets scrapped. Row layout intentionally mirrors the run's Pay Adds
+// editor so the two feel like the same thing.
+function QueuedPayAdds({ queue, peopleByLoc, staffName, mintId, onChange }) {
+    const [showUsed, setShowUsed] = useState(false);
+    if (queue === null) return <div className="mt-3 text-[11px] text-dd-text-2">Loading queued pay adds…</div>;
+    const items = queue.items || [];
+    const active = activeQueueItems(items);
+    const used = consumedQueueItems(items);
+    const edit = (id, patch) => onChange(items.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+    const remove = (id) => onChange(items.filter((x) => x.id !== id));
+    const add = (loc) => onChange([...items, {
+        id: mintId(), loc, key: '', name: '', type: 'bonus',
+        amount: '', hours: '', perHour: '', rate: '', note: '',
+        addedBy: staffName || 'owner', addedAt: new Date().toISOString(), consumedIn: null,
+    }]);
+    return (
+        <div className="mt-3 rounded-lg border border-dd-green/40 bg-dd-green/5 p-2">
+            <div className="flex items-center justify-between mb-1">
+                <div className="text-[12px] font-bold text-dd-text">📌 Queued pay adds — loaded into the next payroll automatically</div>
+            </div>
+            <p className="text-[11px] text-dd-text-2 mb-2">
+                Write down advances, bonuses, back pay, etc. <b>the moment they happen</b> — they save instantly and
+                pre-fill the Pay adds step when you import the next period, so nothing gets forgotten on payroll day.
+            </p>
+            {LOCS.map((loc) => {
+                const locItems = active.filter((x) => x.loc === loc);
+                const people = peopleByLoc[loc] || [];
+                return (
+                    <div key={loc} className="mb-2">
+                        <div className="flex items-center justify-between mb-1">
+                            <div className="font-bold text-dd-green text-[12px]">{LOC_NAMES[loc]}</div>
+                            <button onClick={() => add(loc)} className="text-dd-green text-[12px] font-bold border border-dd-green/40 rounded px-2 py-0.5">+ Queue pay add</button>
+                        </div>
+                        {!locItems.length && <div className="text-[11px] text-dd-text-2">Nothing queued.</div>}
+                        <div className="space-y-1.5">
+                            {locItems.map((it) => {
+                                const meta = ADJ_BY_TYPE[it.type] || ADJ_BY_TYPE.bonus;
+                                const problem = validateQueueItem(it);
+                                const numInput = (field, ph, w = 'w-20') => (
+                                    <input type="number" step="0.01" min="0" value={it[field]} onChange={(e) => edit(it.id, { [field]: e.target.value })} placeholder={ph} className={`border border-dd-line rounded px-1 py-1 ${w} text-right text-[12px]`} />
+                                );
+                                return (
+                                    <div key={it.id} className="rounded-lg border border-dd-line bg-white p-2 space-y-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <select value={it.key} onChange={(e) => { const k = e.target.value; const p = people.find((x) => x.key === k); edit(it.id, { key: k, name: p ? `${p.first} ${p.last}` : '' }); }}
+                                                className="border border-dd-line rounded px-1 py-1 text-[12px] min-w-[10rem]">
+                                                <option value="">— pick person —</option>
+                                                {people.map((p) => <option key={p.key} value={p.key}>{p.first} {p.last}</option>)}
+                                            </select>
+                                            <select value={it.type} onChange={(e) => edit(it.id, { type: e.target.value })}
+                                                className="border border-dd-line rounded px-1 py-1 text-[12px]">
+                                                {ADJ_TYPES.map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
+                                            </select>
+                                            {meta.field === 'amount' && (
+                                                <span className="inline-flex items-center gap-0.5"><span className="text-dd-text-2">$</span>{numInput('amount', '0.00', 'w-24')}</span>
+                                            )}
+                                            {meta.field === 'hours' && (
+                                                <span className="inline-flex items-center gap-1">{numInput('hours', 'hrs')}<span className="text-dd-text-2 text-[11px]">hrs</span></span>
+                                            )}
+                                            {meta.field === 'hours+rate' && (<>
+                                                <span className="inline-flex items-center gap-1">{numInput('hours', 'hrs')}<span className="text-dd-text-2 text-[11px]">hrs</span></span>
+                                                <span className="inline-flex items-center gap-0.5"><span className="text-dd-text-2 text-[11px]">@ $</span>{numInput('rate', 'base')}<span className="text-dd-text-2 text-[11px]">/hr</span></span>
+                                            </>)}
+                                            {meta.field === 'hours+perhour' && (<>
+                                                <span className="inline-flex items-center gap-1">{numInput('hours', 'hrs')}<span className="text-dd-text-2 text-[11px]">hrs</span></span>
+                                                <span className="inline-flex items-center gap-0.5"><span className="text-dd-text-2 text-[11px]">@ $</span>{numInput('perHour', '0.00')}<span className="text-dd-text-2 text-[11px]">/hr</span></span>
+                                            </>)}
+                                            <input value={it.note} onChange={(e) => edit(it.id, { note: e.target.value })}
+                                                placeholder={it.type === 'advance' ? 'note — check # (required)' : 'note'}
+                                                className={`border rounded px-1 py-1 text-[12px] flex-1 min-w-[8rem] ${it.type === 'advance' && !String(it.note).trim() ? 'border-red-400 bg-red-50' : 'border-dd-line'}`} />
+                                            <button onClick={() => remove(it.id)} className="text-red-600 text-[13px] px-1" title="Remove">✕</button>
+                                        </div>
+                                        <div className="text-[11px] pl-1">
+                                            {problem
+                                                ? <span className="text-amber-700">⚠ {problem} — it will still queue, fix before payroll.</span>
+                                                : <span className="text-dd-text-2">{meta.help}{it.addedAt ? ` · queued ${new Date(it.addedAt).toLocaleDateString()}` : ''}</span>}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            })}
+            {!!used.length && (
+                <div className="mt-1">
+                    <button onClick={() => setShowUsed((v) => !v)} className="text-[11px] text-dd-text-2 underline">
+                        {showUsed ? 'Hide' : 'Show'} used ({used.length})
+                    </button>
+                    {showUsed && (
+                        <div className="mt-1 space-y-1">
+                            {used.map((it) => (
+                                <div key={it.id} className="flex items-center gap-2 text-[11px] text-dd-text-2 flex-wrap">
+                                    <span>{it.name || '?'} · {(ADJ_BY_TYPE[it.type] || {}).label || it.type}{it.amount ? ` · $${it.amount}` : ''}{it.hours ? ` · ${it.hours}h` : ''} → used in <b>{it.consumedIn}</b></span>
+                                    <button onClick={() => onChange(requeueItem(items, it.id))}
+                                        className="text-dd-green font-bold border border-dd-green/40 rounded px-1.5 py-0">Requeue</button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
 }
 
 // ───────────────────────────── password gate ─────────────────────────────
@@ -297,6 +412,35 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
         loadRunHistory().then((h) => { if (alive) setRunHistory(h); });
         return () => { alive = false; };
     }, [unlocked]);
+
+    // ── Queued pay adds (2026-08-10, Andrew: "update as we need before we
+    // run payroll so we dont forget") — a standing list, editable any time
+    // the panel is unlocked, persisted immediately to Firestore. A NEW
+    // period import pulls every queued item into that run's Pay Adds step.
+    const [queue, setQueue] = useState(null);          // null = loading
+    const queueIdRef = useRef(0);
+    useEffect(() => {
+        if (!unlocked) return;
+        let alive = true;
+        loadQueuedAdds().then((q) => {
+            if (!alive) return;
+            // Keep the local id counter ahead of stored ids.
+            for (const it of q.items) {
+                const m = /^q_(\d+)$/.exec(it.id || '');
+                if (m) queueIdRef.current = Math.max(queueIdRef.current, Number(m[1]) + 1);
+            }
+            setQueue(q);
+        });
+        return () => { alive = false; };
+    }, [unlocked]);
+    // Every edit persists right away — the whole point is "written down
+    // now, impossible to forget later". A failed save says so loudly.
+    const persistQueue = (items) => {
+        setQueue({ items });
+        saveQueuedAdds(items, staffName).catch((e) => {
+            toast('Queued pay add did NOT save — try again. ' + (e?.message || ''), { kind: 'error' });
+        });
+    };
     const resumeRun = (run) => {
         setPeriod(run.period || '');
         const d = run.draft || {};
@@ -539,7 +683,18 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                 setPeriod(guessed);
                 setCash({ WG: '', MH: '' });
                 setFoh({ WG: 50, MH: 50 });
-                setAdjustments([]);
+                // Queued pay adds (2026-08-10): a NEW period starts from the
+                // standing queue instead of empty — every reminder written
+                // down mid-period lands in this run's Pay Adds step and is
+                // marked used (visible + requeue-able in the queue history).
+                const seeded = seedAdjustmentsFromQueue(
+                    queue?.items || [], guessed || period,
+                    () => `adj_${adjIdRef.current++}`);
+                setAdjustments(seeded.adjustments);
+                if (seeded.count > 0) {
+                    persistQueue(seeded.items);
+                    toast(`${seeded.count} queued pay add${seeded.count === 1 ? '' : 's'} loaded into this run — review them on the Pay adds step.`, { duration: 5000 });
+                }
             }
             setAck(false);                // a fresh import always needs re-acknowledgment
             setParsed(p);
@@ -790,6 +945,17 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                             </p>
                         </div>
                     )}
+                    <QueuedPayAdds
+                        queue={queue}
+                        staffName={staffName}
+                        mintId={() => `q_${queueIdRef.current++}`}
+                        onChange={(items) => persistQueue(items)}
+                        peopleByLoc={Object.fromEntries(LOCS.map((loc) => [loc,
+                            (rosterView[loc].people || [])
+                                .filter((p) => p.section === 'FOH' || p.section === 'BOH')
+                                .slice()
+                                .sort((a, b) => (`${a.last} ${a.first}`.toLowerCase() < `${b.last} ${b.first}`.toLowerCase() ? -1 : 1)),
+                        ]))} />
                     {imported && (
                         <div className="mt-3 space-y-1.5">
                             {LOCS.map((l) => {
