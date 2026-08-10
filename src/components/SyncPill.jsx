@@ -21,6 +21,12 @@ export const SHOW_DELAY_MS = 900;
 export default function SyncPill() {
     const [visible, setVisible] = useState(false);
     const [stuck, setStuck] = useState(false);
+    // Explicit offline contract (2026-08-10 gap work): when the browser
+    // says we're offline, say so plainly — Firestore quietly queues writes
+    // locally, and "queued on this device" must never read as "saved".
+    const [offline, setOffline] = useState(
+        typeof navigator !== 'undefined' && navigator.onLine === false
+    );
     const showTimer = useRef(null);
 
     useEffect(() => {
@@ -36,13 +42,26 @@ export default function SyncPill() {
                 setVisible(false);
             }
         });
-        return () => { unsub(); clearTimeout(showTimer.current); };
+        const onOnline = () => setOffline(false);
+        const onOffline = () => setOffline(true);
+        window.addEventListener('online', onOnline);
+        window.addEventListener('offline', onOffline);
+        return () => {
+            unsub(); clearTimeout(showTimer.current);
+            window.removeEventListener('online', onOnline);
+            window.removeEventListener('offline', onOffline);
+        };
     }, []);
 
-    if (!visible) return null;
-    const label = stuck
-        ? 'Reconnecting… / Reconectando…'
-        : 'Saving… / Guardando…';
+    // Offline outranks everything and shows immediately — the schedule on
+    // screen may be stale and saves are only queued, not durable.
+    if (!offline && !visible) return null;
+    const label = offline
+        ? 'Offline — changes save when back / Sin conexión'
+        : stuck
+            ? 'Reconnecting… / Reconectando…'
+            : 'Saving… / Guardando…';
+    const bg = offline ? 'rgba(75,85,99,.92)' : stuck ? 'rgba(146,64,14,.92)' : 'rgba(15,36,23,.88)';
     return (
         <div
             aria-live="polite"
@@ -54,18 +73,22 @@ export default function SyncPill() {
                 zIndex: 2147482000, // above page chrome, below the version-floor overlay
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '6px 14px', borderRadius: 999,
-                background: stuck ? 'rgba(146,64,14,.92)' : 'rgba(15,36,23,.88)',
+                background: bg,
                 color: '#fff', fontSize: 12, fontWeight: 700,
                 boxShadow: '0 4px 14px rgba(0,0,0,.25)',
                 pointerEvents: 'none',
                 backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
             }}
         >
-            <span style={{
-                width: 12, height: 12, borderRadius: '50%',
-                border: '2px solid rgba(255,255,255,.35)', borderTopColor: '#fff',
-                animation: 'ddmau-syncpill-spin 1s linear infinite',
-            }} />
+            {offline ? (
+                <span style={{ fontSize: 12 }}>📡</span>
+            ) : (
+                <span style={{
+                    width: 12, height: 12, borderRadius: '50%',
+                    border: '2px solid rgba(255,255,255,.35)', borderTopColor: '#fff',
+                    animation: 'ddmau-syncpill-spin 1s linear infinite',
+                }} />
+            )}
             <style>{'@keyframes ddmau-syncpill-spin{to{transform:rotate(360deg)}}'}</style>
             {label}
         </div>

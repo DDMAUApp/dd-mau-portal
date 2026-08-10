@@ -55,6 +55,7 @@ const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
 // store Wi-Fi must never reload the app or claim to be saving.
 const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
+import { assessOffer, assessCancelOffer, assessDenyClaim, assessDenySwapRequest } from '../data/offerRules';
 import { patchStaffRecordByName } from '../data/staffDoc';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
@@ -1988,7 +1989,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     { en: 'Shift time changed', es: 'Horario de turno cambiado' },
                     { en: `Your ${sh.date} shift moved: ${oldDetail} → ${newDetail}.`,
                       es: `Tu turno del ${sh.date} cambió: ${oldDetail} → ${newDetail}.` },
-                    null, { allowSelf: true });
+                    // Stable per-shift tag (2026-08-10 notification audit):
+                    // a manager nudging times 5× in a minute collapses to
+                    // ONE notification showing the latest, not 5 stacked.
+                    null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
             }
         } catch (e) {
             console.error('Update shift times failed:', e);
@@ -2118,19 +2122,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             { en: 'Shift reassigned', es: 'Turno reasignado' },
                             { en: `Your ${oldDate} ${detail} shift was reassigned to ${newStaffName}.`,
                               es: `Tu turno del ${oldDate} ${detail} fue reasignado a ${newStaffName}.` },
-                            null, { allowSelf: true });
+                            null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
                     }
                     await notify(newStaffName, 'shift_added',
                         { en: 'New shift assigned', es: 'Nuevo turno asignado' },
                         { en: `You picked up the ${newDate} ${detail} shift (was ${oldStaff}'s).`,
                           es: `Tomaste el turno del ${newDate} ${detail} (antes de ${oldStaff}).` },
-                        null, { allowSelf: true });
+                        null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
                 } else if (oldDate !== newDate) {
                     await notify(newStaffName, 'shift_date_changed',
                         { en: 'Shift moved', es: 'Turno movido' },
                         { en: `Your shift moved from ${oldDate} to ${newDate} (${detail}).`,
                           es: `Tu turno se movió del ${oldDate} al ${newDate} (${detail}).` },
-                        null, { allowSelf: true });
+                        // Same stable tag: repeated drags of one shift
+                        // collapse to the final destination notification.
+                        null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
                 }
             }
         } catch (e) {
@@ -2338,9 +2344,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 already = null; // reset per attempt — Firestore retries this callback on contention
                 const ref = doc(db, 'swap_requests', request.id);
                 const snap = await txn.get(ref);
-                if (!snap.exists()) { already = 'gone'; return; }
-                const live = snap.data();
-                if (live.status && live.status !== 'pending') { already = live.status; return; }
+                const verdict = assessDenySwapRequest(snap.exists() ? snap.data() : null);
+                if (!verdict.ok) { already = verdict.reason === 'gone' ? 'gone' : verdict.status; return; }
                 txn.update(ref, {
                     status: 'denied',
                     deniedBy: staffName,
@@ -2417,14 +2422,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await runTransaction(db, async (txn) => {
                 const ref = doc(db, 'shifts', shift.id);
                 const snap = await txn.get(ref);
-                if (!snap.exists()) {
-                    throw new Error(tx_msg('Shift no longer exists.', 'El turno ya no existe.'));
-                }
-                const live = snap.data();
-                if (live.pendingClaimBy) {
-                    throw new Error(tx_msg(
-                        `${live.pendingClaimBy} already claimed this shift — a manager needs to approve or deny that first.`,
-                        `${live.pendingClaimBy} ya tomó este turno — un gerente debe aprobarlo o negarlo primero.`));
+                const verdict = assessOffer(snap.exists() ? snap.data() : null);
+                if (!verdict.ok) {
+                    throw new Error(verdict.reason === 'gone'
+                        ? tx_msg('Shift no longer exists.', 'El turno ya no existe.')
+                        : tx_msg(
+                            `${verdict.claimant} already claimed this shift — a manager needs to approve or deny that first.`,
+                            `${verdict.claimant} ya tomó este turno — un gerente debe aprobarlo o negarlo primero.`));
                 }
                 txn.update(ref, {
                     offerStatus: 'open',
@@ -2539,14 +2543,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await runTransaction(db, async (txn) => {
                 const ref = doc(db, 'shifts', shift.id);
                 const snap = await txn.get(ref);
-                if (!snap.exists()) {
-                    throw new Error(tx_msg('Shift no longer exists.', 'El turno ya no existe.'));
-                }
-                const live = snap.data();
-                if (live.pendingClaimBy) {
-                    throw new Error(tx_msg(
-                        `${live.pendingClaimBy} already claimed this shift — a manager needs to approve or deny that first.`,
-                        `${live.pendingClaimBy} ya tomó este turno — un gerente debe aprobarlo o negarlo primero.`));
+                const verdict = assessOffer(snap.exists() ? snap.data() : null);
+                if (!verdict.ok) {
+                    throw new Error(verdict.reason === 'gone'
+                        ? tx_msg('Shift no longer exists.', 'El turno ya no existe.')
+                        : tx_msg(
+                            `${verdict.claimant} already claimed this shift — a manager needs to approve or deny that first.`,
+                            `${verdict.claimant} ya tomó este turno — un gerente debe aprobarlo o negarlo primero.`));
                 }
                 txn.update(ref, {
                     offerStatus: 'open',
@@ -2781,9 +2784,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 alreadyDone = false; // reset per attempt — Firestore retries this callback on contention
                 const ref = doc(db, 'shifts', shift.id);
                 const snap = await txn.get(ref);
-                if (!snap.exists()) { alreadyDone = true; return; }
-                const live = snap.data();
-                if (!live.offerStatus && !live.coverNeeded) { alreadyDone = true; return; }
+                const verdict = assessCancelOffer(snap.exists() ? snap.data() : null);
+                if (verdict.noop) { alreadyDone = true; return; }
                 txn.update(ref, {
                     offerStatus: null,
                     offeredBy: null,
@@ -3057,21 +3059,25 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     notify(oldOwner, 'swap_approved',
                         { en: 'Shift split approved', es: 'División de turno aprobada' },
                         { en: `Your ${detail} portion is now ${newOwner}'s. You still cover: ${leftoverDetail}.`,
-                          es: `Tu porción ${detail} ahora es de ${newOwner}. Aún cubres: ${leftoverDetail}.` }),
+                          es: `Tu porción ${detail} ahora es de ${newOwner}. Aún cubres: ${leftoverDetail}.` },
+                        null, { tagSuffix: `swap:${shift.id}` }),
                     notify(newOwner, 'swap_approved',
                         { en: 'Partial shift assigned', es: 'Turno parcial asignado' },
                         { en: `You're now on for ${detail}.`,
-                          es: `Ahora estás en ${detail}.` }),
+                          es: `Ahora estás en ${detail}.` },
+                        null, { tagSuffix: `swap:${shift.id}` }),
                 ]
                 : [
                     notify(oldOwner, 'swap_approved',
                         { en: 'Swap approved', es: 'Cambio aprobado' },
                         { en: `Your shift on ${detail} is now ${newOwner}'s.`,
-                          es: `Tu turno del ${detail} ahora es de ${newOwner}.` }),
+                          es: `Tu turno del ${detail} ahora es de ${newOwner}.` },
+                        null, { tagSuffix: `swap:${shift.id}` }),
                     notify(newOwner, 'swap_approved',
                         { en: 'Shift assigned', es: 'Turno asignado' },
                         { en: `The shift on ${detail} is now yours.`,
-                          es: `El turno del ${detail} ahora es tuyo.` }),
+                          es: `El turno del ${detail} ahora es tuyo.` },
+                        null, { tagSuffix: `swap:${shift.id}` }),
                 ];
             Promise.allSettled(pending);
             toast(tx('✓ Swap approved', '✓ Cambio aprobado'), { kind: 'success', duration: 3000 });
@@ -3094,19 +3100,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 outcome = 'denied'; // reset per attempt — Firestore retries this callback on contention
                 const ref = doc(db, 'shifts', shift.id);
                 const snap = await txn.get(ref);
-                if (!snap.exists()) { outcome = 'gone'; return; }
-                const live = snap.data();
-                if (!live.pendingClaimBy) { outcome = 'resolved'; return; }
-                if (shift.pendingClaimBy && live.pendingClaimBy !== shift.pendingClaimBy) {
-                    reviveFirestore('stale-view');
-                    throw new Error(tx_msg(
-                        `The claim changed — it's now ${live.pendingClaimBy}'s. Review it again.`,
-                        `La solicitud cambió — ahora es de ${live.pendingClaimBy}. Revísala de nuevo.`));
+                const verdict = assessDenyClaim(snap.exists() ? snap.data() : null, shift.pendingClaimBy);
+                if (!verdict.ok) {
+                    if (verdict.reason === 'claim_changed') {
+                        reviveFirestore('stale-view');
+                        throw new Error(tx_msg(
+                            `The claim changed — it's now ${verdict.claimant}'s. Review it again.`,
+                            `La solicitud cambió — ahora es de ${verdict.claimant}. Revísala de nuevo.`));
+                    }
+                    outcome = verdict.reason; // 'gone' | 'resolved'
+                    return;
                 }
                 // The claimant we actually denied, from the LIVE doc — the
                 // audit row + push below must name the right person even if
                 // the caller's card didn't carry pendingClaimBy.
-                deniedClaimant = live.pendingClaimBy;
+                deniedClaimant = verdict.claimant;
                 txn.update(ref, {
                     offerStatus: 'open', // back to open offer; original owner still on hook
                     pendingClaimBy: null,
@@ -3128,7 +3136,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             notify(deniedClaimant, 'swap_denied',
                 { en: 'Swap denied', es: 'Cambio negado' },
                 { en: `Manager denied your takeover of the ${detail} shift.`,
-                  es: `Gerente negó tu toma del turno ${detail}.` });
+                  es: `Gerente negó tu toma del turno ${detail}.` },
+                null, { tagSuffix: `swap:${shift.id}` });
         } catch (e) {
             console.error('Deny failed:', e);
             toast(tx('Could not deny: ', 'No se pudo negar: ') + (e.message || e), { kind: 'error' });

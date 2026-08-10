@@ -141,6 +141,11 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS) {
     _notifyWriteSubs();
     const timer = setTimeout(() => {
         if (settled) return;
+        // Honestly OFFLINE (2026-08-10): a queued write hanging is expected,
+        // not a wedge — reviving does nothing and a forced reload could
+        // white-screen a device with no connection. The offline pill tells
+        // the user; the write flushes when the network returns.
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
         markedStuck = true;
         _stuck += 1;
         _notifyWriteSubs();
