@@ -2,7 +2,24 @@ import { useState, useEffect, useRef } from 'react';
 import { Eye, EyeOff, Settings } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
 import { db } from '../firebase';
-import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
+import {
+    doc, collection, onSnapshot, writeBatch, query, orderBy, limit, where, serverTimestamp,
+    setDoc as _fsSetDoc, getDoc as _fsGetDoc, getDocs as _fsGetDocs,
+    addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc, deleteDoc as _fsDeleteDoc,
+} from 'firebase/firestore';
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+
+// Wedged-connection watchdog (2026-08-10, Julie: staff delete on the web
+// app hung with no error). Same shadow-the-primitives pattern as
+// Schedule.jsx: every write below revives a dead transport after 8s and
+// escalates to a reload if the SDK itself is wedged, so an admin action
+// can never spin forever in silence. Reads revive but never reload.
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES, canCountMoney, canViewClockedIn, canManageHealth } from '../data/staff';
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
@@ -1976,7 +1993,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         const chunk = targets.slice(i, i + 450);
                         const batch = writeBatch(db);
                         chunk.forEach(r => batch.delete(doc(db, "maintenanceRequests", r.id)));
-                        await batch.commit();
+                        await watchdogWrite(batch.commit());
                     }
                     toast((language === "es" ? "Eliminadas: " : "Deleted: ") + targets.length);
                     showSaved();
@@ -2286,8 +2303,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
             const handleRemoveStaff = async (id) => {
                 // Block removal by ADMIN_ID (not name) so renaming an admin
-                // doesn't bypass this guard.
-                if (ADMIN_IDS.includes(id)) return;
+                // doesn't bypass this guard. Toast instead of a silent
+                // return (2026-08-10 — a button that does nothing reads
+                // as "the app is broken").
+                if (ADMIN_IDS.includes(id)) {
+                    toast(language === 'es'
+                        ? 'Las cuentas de propietario no se pueden eliminar.'
+                        : "Owner accounts can't be removed.");
+                    setConfirmRemoveId(null);
+                    return;
+                }
                 // Archive + removal happen in ONE transaction — either the
                 // full record lands in /staff_archive and they leave the
                 // roster, or neither happens (Andrew 2026-07-10: "keep a
@@ -2295,7 +2320,14 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // record is the SERVER record, not a client copy.
                 const res = await removeStaffRecord({ id, byName: staffName });
                 if (!res.ok) {
-                    if (res.error !== 'not_found') {
+                    if (res.error === 'not_found') {
+                        // Already gone server-side (another admin beat us, or
+                        // this view is stale). Say so — a silent close left
+                        // the person visible in a stale list with no clue.
+                        toast(language === 'es'
+                            ? 'Ya fue eliminado en otro dispositivo.'
+                            : 'Already removed on another device.');
+                    } else {
                         console.warn('staff removal failed:', res.error);
                         toast(language === 'es'
                             ? 'No se pudo eliminar — no se cambió nada. Inténtalo de nuevo.'
@@ -2340,7 +2372,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     updatedAt: serverTimestamp(),
                                 });
                             });
-                            await batch.commit();
+                            await watchdogWrite(batch.commit());
                         }
                     } catch (e) {
                         console.warn('cascade shift offer failed:', e);

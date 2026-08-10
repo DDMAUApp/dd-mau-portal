@@ -6,9 +6,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const disableNetwork = vi.fn().mockResolvedValue(undefined);
 const enableNetwork = vi.fn().mockResolvedValue(undefined);
+const getDocFromServer = vi.fn().mockResolvedValue({ exists: () => true });
 vi.mock('firebase/firestore', () => ({
     disableNetwork: (...a) => disableNetwork(...a),
     enableNetwork: (...a) => enableNetwork(...a),
+    doc: (...a) => ({ __ref: a.slice(1).join('/') }),
+    getDocFromServer: (...a) => getDocFromServer(...a),
 }));
 vi.mock('../firebase', () => ({ db: { __fake: true } }));
 
@@ -22,6 +25,8 @@ beforeEach(() => {
     vi.useFakeTimers();
     disableNetwork.mockClear();
     enableNetwork.mockClear();
+    getDocFromServer.mockClear();
+    getDocFromServer.mockResolvedValue({ exists: () => true });
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -208,6 +213,47 @@ describe('in-flight write tracking (SyncPill feed)', () => {
         await watchdogWrite(Promise.resolve('ok'));   // must not throw
         expect(good.length).toBe(countAtUnsub);        // no callbacks after unsub
     });
+});
+
+describe('probeFirestoreLiveness (2026-08-10 — wedged desktop tabs)', () => {
+    const setVisibility = (state) => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: state });
+    };
+
+    it('a HUNG probe triggers the revive (the wedge case)', async () => {
+        setVisibility('visible');
+        getDocFromServer.mockReturnValue(new Promise(() => {}));   // hangs
+        const mod = await loadFresh();
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.WRITE_HANG_MS + 100);
+        expect(disableNetwork).toHaveBeenCalledTimes(1);
+    });
+
+    it('a clean rejection (honest offline) does NOT revive', async () => {
+        setVisibility('visible');
+        getDocFromServer.mockRejectedValue(new Error('unavailable'));
+        const mod = await loadFresh();
+        await mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.WRITE_HANG_MS + 100);
+        expect(disableNetwork).not.toHaveBeenCalled();
+    });
+
+    it('skips hidden tabs and never stacks probes', async () => {
+        setVisibility('hidden');
+        const mod = await loadFresh();
+        await mod.probeFirestoreLiveness();
+        expect(getDocFromServer).not.toHaveBeenCalled();
+        setVisibility('visible');
+        getDocFromServer.mockReturnValue(new Promise(() => {}));   // in-flight forever
+        mod.probeFirestoreLiveness();
+        mod.probeFirestoreLiveness();  // second call must be a no-op
+        expect(getDocFromServer).toHaveBeenCalledTimes(1);
+    });
+
+    // NOTE: no install-based interval test — installFirestoreRevive attaches
+    // document listeners that outlive vi.resetModules() (shared jsdom doc)
+    // and would double-fire the resume-path test below. The interval wiring
+    // is a single setInterval line; the probe behaviors above are the pins.
 });
 
 describe('installFirestoreRevive (resume path)', () => {

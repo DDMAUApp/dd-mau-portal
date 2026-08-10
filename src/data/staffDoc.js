@@ -35,6 +35,13 @@
 // onSnapshot — it holds the rev of the roster the UI currently shows.
 // `undefined` = no snapshot yet this session.
 
+// Wedged-transport watchdog (2026-08-10, Julie: staff delete on the web
+// app hung forever with no error — a desktop tab whose socket died gets
+// no resume event, so the roster transaction just never settled). Every
+// transaction below now revives the transport after 8s and escalates to
+// a reload if the SDK itself is wedged — same ladder as Schedule.jsx.
+import { watchdogWrite } from './firestoreRevive';
+
 export const STAFF_DOC = { rev: undefined };
 
 export function noteStaffSnapshot(data) {
@@ -127,7 +134,7 @@ export async function mutateStaffList(mutate) {
         const { doc, runTransaction } = await import('firebase/firestore');
         const { db } = await import('../firebase');
         let out = null;
-        await runTransaction(db, async (tx) => {
+        await watchdogWrite(runTransaction(db, async (tx) => {
             const ref = doc(db, 'config', 'staff');
             const snap = await tx.get(ref);
             if (!snap.exists()) throw rosterError('no_doc');
@@ -139,7 +146,7 @@ export async function mutateStaffList(mutate) {
             }
             tx.set(ref, { list: applied.list, rev: nextStaffRev(data) });
             out = { ok: true, noop: false, list: applied.list, changed: applied.changed, result: applied.result };
-        });
+        }));
         return out;
     } catch (e) {
         return { ok: false, error: e?.code || e?.message || 'write_failed', detail: e?.detail };
@@ -191,7 +198,7 @@ export async function appendStaffRecord({ name, record = {}, preferredPin = null
         const { doc, runTransaction, serverTimestamp } = await import('firebase/firestore');
         const { db } = await import('../firebase');
         let assigned = null;
-        await runTransaction(db, async (tx) => {
+        await watchdogWrite(runTransaction(db, async (tx) => {
             const ref = doc(db, 'config', 'staff');
             const snap = await tx.get(ref);
             if (!snap.exists()) throw rosterError('no_doc');
@@ -215,7 +222,7 @@ export async function appendStaffRecord({ name, record = {}, preferredPin = null
                     restoredBy: restoredBy || 'admin',
                 });
             }
-        });
+        }));
         return { ok: true, ...assigned };
     } catch (e) {
         return { ok: false, error: e?.code || e?.message || 'failed' };
@@ -232,7 +239,7 @@ export async function removeStaffRecord({ id, byName }) {
         const { doc, collection, runTransaction, serverTimestamp } = await import('firebase/firestore');
         const { db } = await import('../firebase');
         let out = null;
-        await runTransaction(db, async (tx) => {
+        await watchdogWrite(runTransaction(db, async (tx) => {
             const ref = doc(db, 'config', 'staff');
             const snap = await tx.get(ref);
             if (!snap.exists()) throw rosterError('no_doc');
@@ -255,7 +262,7 @@ export async function removeStaffRecord({ id, byName }) {
             });
             tx.set(ref, { list: applied.list, rev: nextStaffRev(data) });
             out = { ok: true, removed: person, archiveId: archiveRef.id, list: applied.list };
-        });
+        }));
         return out;
     } catch (e) {
         return { ok: false, error: e?.code || e?.message || 'failed' };

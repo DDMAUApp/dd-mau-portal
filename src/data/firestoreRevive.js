@@ -30,7 +30,7 @@
 // once) collapse into ONE cycle. Everything is fail-soft: a failed cycle
 // only logs — it can never break a page.
 
-import { disableNetwork, enableNetwork } from 'firebase/firestore';
+import { disableNetwork, enableNetwork, doc, getDocFromServer } from 'firebase/firestore';
 import { db } from '../firebase';
 
 // Backgrounded longer than this ⇒ assume the socket died (iOS suspends
@@ -191,6 +191,33 @@ export function watchdogRead(promise, hangMs = WRITE_HANG_MS) {
  * the hidden event may never commit); Capacitor appStateChange only
  * exists on native.
  */
+// ── Liveness probe (2026-08-10, Julie: staff delete on the web app hung;
+// Andrew: "on the web app the schedule is lagging behind") ─────────────
+// The resume-triggered revive only fires when a tab comes back from
+// hidden. A DESKTOP tab that stays visible (or wakes without firing a
+// visibility event) can sit with a dead socket for hours: every
+// onSnapshot listener is frozen — schedule shows stale data, deploy
+// broadcasts and the version floor never arrive — and any write hangs.
+// So: while the tab is visible, ping the server every PROBE_INTERVAL_MS
+// with a tiny forced-server read. A clean rejection means we're honestly
+// offline (Firestore knows — no action); a HANG past WRITE_HANG_MS means
+// the wedge, and the revive tears down the dead transport, which also
+// resurrects every frozen listener. ~20 reads/hour per open tab.
+export const PROBE_INTERVAL_MS = 3 * 60 * 1000;
+let _probeInFlight = false;
+
+export async function probeFirestoreLiveness() {
+    if (_probeInFlight) return;               // never stack probes
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    _probeInFlight = true;
+    try {
+        // config/minVersion: tiny, always present, already hot in cache
+        // server-side. watchdogRead = revive on hang, no reload, no pill.
+        await watchdogRead(getDocFromServer(doc(db, 'config', 'minVersion')));
+    } catch { /* clean offline rejection — Firestore is aware, not wedged */ }
+    finally { _probeInFlight = false; }
+}
+
 export function installFirestoreRevive() {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
     let hiddenAt = null;
@@ -208,6 +235,13 @@ export function installFirestoreRevive() {
         if (document.visibilityState === 'hidden') onHide();
         else onShow();
     });
+
+    // Network came back (Wi-Fi rejoin, cable, VPN) — the SDK usually
+    // redials on its own, but a wedged transport doesn't. Cheap to cycle.
+    window.addEventListener('online', () => { reviveFirestore('online'); });
+
+    // Periodic liveness probe for visible tabs (see probeFirestoreLiveness).
+    setInterval(() => { probeFirestoreLiveness(); }, PROBE_INTERVAL_MS);
 
     // Native suspend/resume — same pattern App.jsx uses for the idle lock.
     (async () => {
