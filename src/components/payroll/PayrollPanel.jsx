@@ -71,7 +71,7 @@ function guessPeriod(names) {
 // step and marks them used — used items keep a Requeue button in case a
 // run gets scrapped. Row layout intentionally mirrors the run's Pay Adds
 // editor so the two feel like the same thing.
-function QueuedPayAdds({ queue, peopleByLoc, staffName, mintId, onChange }) {
+function QueuedPayAdds({ queue, peopleByLoc, staffName, mintId, onChange, saveState = 'idle', onRetry }) {
     const [showUsed, setShowUsed] = useState(false);
     if (queue === null) return <div className="mt-3 text-[11px] text-dd-text-2">Loading queued pay adds…</div>;
     const items = queue.items || [];
@@ -86,8 +86,16 @@ function QueuedPayAdds({ queue, peopleByLoc, staffName, mintId, onChange }) {
     }]);
     return (
         <div className="mt-3 rounded-lg border border-dd-green/40 bg-dd-green/5 p-2">
-            <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center justify-between gap-2 mb-1">
                 <div className="text-[12px] font-bold text-dd-text">📌 Queued pay adds — loaded into the next payroll automatically</div>
+                {/* Autosave status — the "save button" that needs no pressing. */}
+                {saveState === 'saving' && <span className="text-[11px] text-dd-text-2 whitespace-nowrap">Saving…</span>}
+                {saveState === 'saved' && <span className="text-[11px] text-dd-green font-bold whitespace-nowrap">✓ Saved</span>}
+                {saveState === 'error' && (
+                    <button onClick={onRetry} className="text-[11px] text-red-700 font-bold border border-red-300 bg-red-50 rounded px-2 py-0.5 whitespace-nowrap">
+                        ⚠ Not saved — Retry
+                    </button>
+                )}
             </div>
             <p className="text-[11px] text-dd-text-2 mb-2">
                 Write down advances, bonuses, back pay, etc. <b>the moment they happen</b> — they save instantly and
@@ -395,8 +403,15 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     //   3. beforeunload guard — anything else that would navigate/reload
     //      (deploy auto-refresh broadcast, ⌘R, closing the tab) pops the
     //      browser's "Leave site?" confirm while real work is in flight.
+    // Declared ABOVE its first read below (house TDZ rule — see the
+    // Operations 2026-07-01 mount crash). Holds the latest unsaved queue
+    // items; null = clean. The queue autosave block further down owns it.
+    const queueDirtyRef = useRef(null);
     const hasWorkRef = useRef(false);
-    hasWorkRef.current = !!(parsed || pending.length || adjustments.length || generated);
+    hasWorkRef.current = !!(parsed || pending.length || adjustments.length || generated
+        // A queue save still debouncing counts as work — the pagehide flush
+        // usually lands it, but the beforeunload confirm buys it time.
+        || queueDirtyRef.current != null);
 
     // ── Run history + resume (Andrew 2026-07-28: "once i create a payroll
     // doc can the payroll automatically save in a history tab … so i can
@@ -433,14 +448,48 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
         });
         return () => { alive = false; };
     }, [unlocked]);
-    // Every edit persists right away — the whole point is "written down
-    // now, impossible to forget later". A failed save says so loudly.
+    // Autosave, no save button (2026-08-10, Andrew: "do we need a save
+    // button?" — no: a button is one more thing to forget). Every change
+    // shows "Saving…" immediately, writes are DEBOUNCED 600ms so typing a
+    // note is one write instead of one per keystroke, and the pending
+    // write is flushed on tab-hide/close/unmount so nothing typed can be
+    // lost. Failures keep the dirty items and surface a retry chip.
+    const [queueSaveState, setQueueSaveState] = useState('idle'); // idle|saving|saved|error
+    const queueSaveTimer = useRef(null);
+    // (queueDirtyRef is declared above hasWorkRef — TDZ rule.)
+    const flushQueueSaveRef = useRef(() => {});
+    flushQueueSaveRef.current = () => {
+        clearTimeout(queueSaveTimer.current);
+        if (queueDirtyRef.current == null) return;
+        const items = queueDirtyRef.current;
+        queueDirtyRef.current = null;
+        setQueueSaveState('saving');
+        saveQueuedAdds(items, staffName)
+            .then(() => { if (queueDirtyRef.current == null) setQueueSaveState('saved'); })
+            .catch((e) => {
+                // Keep the failed items dirty unless a newer edit superseded them.
+                if (queueDirtyRef.current == null) queueDirtyRef.current = items;
+                setQueueSaveState('error');
+                toast('Queued pay adds did NOT save — tap Retry. ' + (e?.message || ''), { kind: 'error' });
+            });
+    };
     const persistQueue = (items) => {
         setQueue({ items });
-        saveQueuedAdds(items, staffName).catch((e) => {
-            toast('Queued pay add did NOT save — try again. ' + (e?.message || ''), { kind: 'error' });
-        });
+        queueDirtyRef.current = items;
+        setQueueSaveState('saving');
+        clearTimeout(queueSaveTimer.current);
+        queueSaveTimer.current = setTimeout(() => flushQueueSaveRef.current(), 600);
     };
+    useEffect(() => {
+        const onHide = () => { if (document.visibilityState === 'hidden') flushQueueSaveRef.current(); };
+        document.addEventListener('visibilitychange', onHide);
+        window.addEventListener('pagehide', onHide);
+        return () => {
+            document.removeEventListener('visibilitychange', onHide);
+            window.removeEventListener('pagehide', onHide);
+            flushQueueSaveRef.current();   // unmount (closing the panel) flushes too
+        };
+    }, []);
     const resumeRun = (run) => {
         setPeriod(run.period || '');
         const d = run.draft || {};
@@ -955,6 +1004,8 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                         staffName={staffName}
                         mintId={() => `q_${queueIdRef.current++}`}
                         onChange={(items) => persistQueue(items)}
+                        saveState={queueSaveState}
+                        onRetry={() => flushQueueSaveRef.current()}
                         peopleByLoc={Object.fromEntries(LOCS.map((loc) => [loc,
                             (rosterView[loc].people || [])
                                 .filter((p) => p.section === 'FOH' || p.section === 'BOH')
@@ -1112,6 +1163,8 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                         staffName={staffName}
                         mintId={() => `q_${queueIdRef.current++}`}
                         onChange={(items) => persistQueue(items)}
+                        saveState={queueSaveState}
+                        onRetry={() => flushQueueSaveRef.current()}
                         peopleByLoc={Object.fromEntries(LOCS.map((loc) => [loc,
                             (rosterView[loc].people || [])
                                 .filter((p) => p.section === 'FOH' || p.section === 'BOH')
