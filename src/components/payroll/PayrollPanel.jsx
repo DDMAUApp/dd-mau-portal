@@ -869,14 +869,19 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     const tx = (en, es) => (language === 'es' ? es : en);
     // People & DD (step 1) is reachable without an import; everything past it
     // needs this period's Toast files.
-    const canAdvance = step === 1 ? imported : true;
+    const canAdvance = step === 2 ? imported : true;
 
     return (
         <div className="text-sm">
             {/* step chips */}
             <div className="flex flex-wrap gap-1.5 mb-3">
+                {/* Steps 0-2 are always open: Import, the always-live People
+                    & DD editor (v312), and Pay adds (2026-08-10 — without an
+                    import it shows the standing QUEUE, so "Pay adds" is
+                    clickable any day of the period). Tips onward need
+                    imported Toast files. */}
                 {STEPS.map((s, i) => (
-                    <button key={s} onClick={() => { if (i <= 1 || imported) setStep(i); }}
+                    <button key={s} onClick={() => { if (i <= 2 || imported) setStep(i); else toast('Import the 4 files first.'); }}
                         className={`px-2.5 py-1 rounded-full text-xs font-bold border transition ${
                             i === step ? 'bg-dd-green text-white border-dd-green'
                                 : i < step ? 'text-dd-green border-dd-green/40 bg-white'
@@ -1091,6 +1096,30 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                 </div>
             )}
 
+            {/* Pay adds WITHOUT an import = the standing queue (2026-08-10,
+                Andrew: "pay adds is not opening when clicked"). Same editor
+                as the landing-screen card; these seed the next new-period
+                import automatically. */}
+            {step === 2 && !imported && (
+                <div className="rounded-xl border border-dd-line bg-white p-4">
+                    <h4 className="font-bold text-dd-text mb-1">Pay adds</h4>
+                    <p className="text-xs text-dd-text-2">
+                        No period imported yet — anything you add here goes into the <b>standing queue</b> and
+                        loads automatically when you import the next period's Toast files.
+                    </p>
+                    <QueuedPayAdds
+                        queue={queue}
+                        staffName={staffName}
+                        mintId={() => `q_${queueIdRef.current++}`}
+                        onChange={(items) => persistQueue(items)}
+                        peopleByLoc={Object.fromEntries(LOCS.map((loc) => [loc,
+                            (rosterView[loc].people || [])
+                                .filter((p) => p.section === 'FOH' || p.section === 'BOH')
+                                .slice()
+                                .sort((a, b) => (`${a.last} ${a.first}`.toLowerCase() < `${b.last} ${b.first}`.toLowerCase() ? -1 : 1)),
+                        ]))} />
+                </div>
+            )}
             {step === 2 && imported && (
                 <div className="rounded-xl border border-dd-line bg-white p-4 space-y-4">
                     <div>
