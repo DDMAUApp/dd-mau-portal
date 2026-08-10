@@ -57,7 +57,7 @@ export const MODULES = [
                     "Hey — welcome to DD Mau. Whether this is your first restaurant gig or you've been on a line for years, we're glad to have you.",
                     "DD Mau isn't a sit-down place and it isn't a drive-through. We live in the sweet spot where amazing Vietnamese food meets quick, energetic service. Think of us as Vietnamese street food, elevated, with hospitality to match.",
                     "Our name means 'hurry up' in Vietnamese — because great food and great service shouldn't take forever.",
-                    "What we expect from you: bring your real personality. Be warm, be fast, be honest. Read these training modules end to end — they cover everything from greeting a guest to cleaning a sink after raw chicken. ",
+                    "What we expect from you: bring your real personality. Be warm, be fast, be honest. Read these training modules end to end — they cover everything from greeting a guest to cleaning a sink after raw chicken.",
                     "What you can expect from us: a clean kitchen, fair tips, real coaching, and a team that has your back when it gets crazy."
                 ],
                 contentEs: [
@@ -105,25 +105,25 @@ export const MODULES = [
                 titleEn: "Service Frameworks You Will Hear",
                 titleEs: "Marcos de Servicio Que Escucharás",
                 contentEn: [
-                    "We use shared language so every team member is on the same page. You'll hear these phrases in every DD Mau manual and in pre-shift huddles. The deep dive lives in the Customer Service module (M19). For now, just learn the names so you recognize them when a teammate or shift lead uses them on the floor.",
+                    "We use shared language so every team member is on the same page. You'll hear these phrases in every DD Mau manual and in pre-shift huddles. A full Customer Service deep-dive module is coming soon. For now, just learn the names so you recognize them when a teammate or shift lead uses them on the floor.",
                     "🌟 The 10-Second Rule — every guest gets acknowledged within 10 seconds of walking in. Eye contact, smile, 'Welcome to DD Mau.' Even if you can't take their order yet, you make sure they know you saw them.",
                     "✨ The Bright 4 — four phrases that cover what good service looks like:",
                     "• Eyes Up — scan for guests, don't stare at the register.",
                     "• Light Up — smile when they walk in.",
                     "• Speak Up — greet them out loud.",
                     "• Show Up — do the work without being asked: restock, run food, check the line, check the tables.",
-                    "🛟 RESTORE — our service-recovery framework for when something goes wrong. Recognize, Empathize, Solve it now, Tell the Lead, Offer something extra, Re-greet, Examine. The full breakdown is in M19. The short version: when a guest complains, do not argue and do not blame the kitchen. Take ownership. Solve it. Make it right.",
+                    "🛟 RESTORE — our service-recovery framework for when something goes wrong. Recognize, Empathize, Solve it now, Tell the Lead, Offer something extra, Re-greet, Examine. The full breakdown will live in the upcoming Customer Service module. The short version: when a guest complains, do not argue and do not blame the kitchen. Take ownership. Solve it. Make it right.",
                     "These three frameworks together cover ~90% of what 'good service' looks like at DD Mau. Memorize the names now. We'll work the details into your bones over your first 30 days."
                 ],
                 contentEs: [
-                    "Usamos un lenguaje compartido para que todo el equipo esté en la misma página. Escucharás estas frases en cada manual y en cada reunión de pre-turno. El detalle profundo está en el módulo de Servicio al Cliente (M19). Por ahora, solo aprende los nombres para reconocerlos cuando un compañero o líder los use en el piso.",
+                    "Usamos un lenguaje compartido para que todo el equipo esté en la misma página. Escucharás estas frases en cada manual y en cada reunión de pre-turno. Un módulo completo de Servicio al Cliente llegará pronto. Por ahora, solo aprende los nombres para reconocerlos cuando un compañero o líder los use en el piso.",
                     "🌟 La Regla de los 10 Segundos — todo cliente debe ser reconocido en los primeros 10 segundos de entrar. Contacto visual, sonrisa, 'Bienvenido a DD Mau.' Aunque no puedas tomarle la orden todavía, debe saber que lo viste.",
                     "✨ Los Bright 4 — cuatro frases que cubren cómo se ve un buen servicio:",
                     "• Ojos Arriba — escanea el local buscando clientes, no te quedes fijo en la caja.",
                     "• Cara Iluminada — sonríe cuando entren.",
                     "• Habla Alto — salúdalos en voz alta.",
                     "• Aparece — haz el trabajo sin que te lo pidan: reabastecer, llevar comida, revisar la línea, revisar las mesas.",
-                    "🛟 RESTORE — nuestro marco de recuperación de servicio para cuando algo sale mal. Reconocer, Empatizar, Solucionar ahora, Tell al líder, Ofrecer algo extra, Re-saludar, Examinar. El desglose completo está en M19. La versión corta: cuando un cliente se queja, no discutas y no culpes a la cocina. Toma responsabilidad. Soluciónalo. Hazlo bien.",
+                    "🛟 RESTORE — nuestro marco de recuperación de servicio para cuando algo sale mal. Reconocer, Empatizar, Solucionar ahora, Tell al líder, Ofrecer algo extra, Re-saludar, Examinar. El desglose completo estará en el próximo módulo de Servicio al Cliente. La versión corta: cuando un cliente se queja, no discutas y no culpes a la cocina. Toma responsabilidad. Soluciónalo. Hazlo bien.",
                     "Estos tres marcos juntos cubren ~90% de lo que parece 'buen servicio' en DD Mau. Memoriza los nombres ahora. Los detalles se te grabarán en los primeros 30 días."
                 ]
             }
@@ -389,7 +389,7 @@ export const MODULES = [
                     "• 3 lates in any 30-day window = automatic written warning + GM check-in. We catch the 'always 5 minutes late' pattern early.",
                     "Why we run it this way: one bad commute shouldn't end a job. But a pattern of being late steals from the rest of the team — they cover your station, stay later. The strike system gives you a real chance to course-correct after the first miss.",
                     "Pay. Pay periods are bi-weekly. Direct deposit lands on Friday. If your paycheck is wrong — wrong hours, missing tips, anything — talk to your General Manager FIRST. Do not wait. Payroll fixes are fastest within the same pay period.",
-                    "Tip Pool. Tips are pooled and split 50% Front of House / 50% Back of House. Why 50/50? Because most of our tips come from to-go orders ordered online — those orders feed both sides equally, so they're split evenly. Within each side, tips are distributed by hours worked during the pay period. Owners will never participate in the tip pool "
+                    "Tip Pool. Tips are pooled and split 50% Front of House / 50% Back of House. Why 50/50? Because most of our tips come from to-go orders ordered online — those orders feed both sides equally, so they're split evenly. Within each side, tips are distributed by hours worked during the pay period. Owners will never participate in the tip pool."
                 ],
                 contentEs: [
                     "Política de Teléfonos. Los teléfonos se quedan atrás durante tu turno. Punto. Si necesitas revisar algo urgente, pídele al líder y sal del piso. Sin teléfonos en caja, expo, o estación de boba — los clientes notan al instante.",
@@ -407,7 +407,7 @@ export const MODULES = [
                     "• 3 tardanzas en cualquier ventana de 30 días = advertencia escrita automática + reunión con GM. Capturamos el patrón de 'siempre 5 minutos tarde' temprano.",
                     "Por qué lo hacemos así: un mal tráfico no debería terminar tu trabajo. Pero un patrón de llegar tarde le roba al resto del equipo — ellos cubren tu estación, toman tus tickets, se quedan más tarde. El sistema de strikes te da oportunidad real de corregir después del primer fallo.",
                     "Pago. Los periodos de pago son cada dos semanas. El depósito directo cae el viernes. Si tu cheque está mal — horas mal, propinas faltantes, lo que sea — habla con tu Gerente General PRIMERO. No esperes. Los arreglos de nómina son más rápidos dentro del mismo periodo de pago.",
-                    "Pool de Propinas. Las propinas se juntan y se dividen 50% Front of House / 50% Back of House. ¿Por qué 50/50? Porque la mayoría de nuestras propinas vienen de pedidos para llevar ordenados en línea — esos pedidos alimentan a ambos lados por igual, así que se dividen igual. Dentro de cada lado, las propinas se distribuyen por horas trabajadas durante el periodo."
+                    "Pool de Propinas. Las propinas se juntan y se dividen 50% Front of House / 50% Back of House. ¿Por qué 50/50? Porque la mayoría de nuestras propinas vienen de pedidos para llevar ordenados en línea — esos pedidos alimentan a ambos lados por igual, así que se dividen igual. Dentro de cada lado, las propinas se distribuyen por horas trabajadas durante el periodo. Los dueños nunca participan en el fondo de propinas."
                 ]
             }
         ],
@@ -608,8 +608,8 @@ export const MODULES = [
                     "Change gloves between proteins. Chicken to shrimp = new gloves. Pork to beef = new gloves. The only allergen worse than the wrong allergen is the cross-contaminated wrong allergen.",
                     "Change gloves whenever they tear or get dirty.",
                     "Change gloves after touching your face, hair, or phone.",
-                    "Never reuse gloves. Toss and grab a new pair.  ",
-                    "Gloves don't replace good hygiene — they add a layer on top of it. "
+                    "Never reuse gloves. Toss and grab a new pair.",
+                    "Gloves don't replace good hygiene — they add a layer on top of it."
                 ],
                 contentEs: [
                     "Lávate las manos ANTES de ponerte guantes. Los guantes no son atajo del lavado de manos — las bacterias de tus manos pasan por dentro del guante y vuelven a la comida cuando el guante se rompe.",
@@ -651,15 +651,13 @@ export const MODULES = [
                 contentEn: [
                     "Big 9 Allergens — every staff member needs to know these: Milk, Eggs, Fish, Shellfish, Tree Nuts, Peanuts, Wheat, Soy, Sesame.",
                     "If a guest mentions ANY of these, take it seriously. Stop. Get the Shift Lead if you are un sure. Don't guess. The full Allergen Matrix is in M17.",
-                    "",
                     "Cut on your hand. Stop. Wash. Bandage with a blue food-safety bandage (we keep them by the first-aid kit — blue so it shows up if it falls into food). Put on a glove over the bandage. Tell the Shift Lead.",
                     "Burn. Cool with cold water. Tell the Shift Lead. Do NOT apply ice — ice can damage the burned skin further.",
-                    "Anything more serious — bleeding that won't stop, a deep cut, a head injury — stop work, get the Shift Lead, "
+                    "Anything more serious — bleeding that won't stop, a deep cut, a head injury — stop work, get the Shift Lead, and fill out an injury report. Don't 'tough it out'."
                 ],
                 contentEs: [
                     "Los 9 Grandes alérgenos — todo el equipo debe conocerlos: Leche, Huevos, Pescado, Mariscos, Frutos Secos, Cacahuates, Trigo, Soya, Ajonjolí.",
                     "Si un cliente menciona CUALQUIERA de estos, tómalo en serio. Para. Llama al líder. No adivines. La Matriz de Alérgenos completa está en M17.",
-                    "",
                     "Corte en la mano. Para. Lava. Venda con una bandita azul de seguridad alimentaria (las tenemos junto al botiquín — azul para que se vea si cae en la comida). Pon un guante sobre la bandita. Dile al líder.",
                     "Quemadura. Enfría con agua fría. Dile al líder. NO apliques hielo — el hielo puede dañar más la piel quemada.",
                     "Algo más serio — sangrado que no para, corte profundo, golpe en la cabeza — para de trabajar, llama al líder, llena un reporte de lesión. No 'aguantes'."
