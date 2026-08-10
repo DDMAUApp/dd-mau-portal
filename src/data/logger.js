@@ -45,6 +45,22 @@ import { db } from '../firebase';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { redactObject, redactString, redactStack, redactUrl } from './redact';
 import { setSentryIdentity, captureException as sentryCapture } from './sentryClient';
+import { escalateReload } from './firestoreRevive';
+
+// ── Firestore SDK self-corruption → self-heal (2026-08-10) ─────────────
+// Sentry event JAVASCRIPT-REACT-1A: `FIRESTORE INTERNAL ASSERTION FAILED
+// (ID: b815/b7de)` on a native app — a known firebase-js-sdk internal bug
+// where the local write queue reaches an impossible state (usually after
+// iOS suspends the app mid-write). After this fires, THAT SESSION'S SDK
+// is broken — writes misbehave until the app restarts. Nothing our code
+// can fix in place, so do what the owner would: restart the app. Rides
+// escalateReload's existing once-per-2-min guard, so it can never loop;
+// queued writes survive in IndexedDB and replay after the reload.
+function maybeHealFirestoreAssertion(msg) {
+    if (!/FIRESTORE .* INTERNAL ASSERTION FAILED/i.test(String(msg || ''))) return;
+    console.warn('[logger] Firestore internal assertion detected — reloading to rebuild the SDK');
+    try { escalateReload('firestore-internal-assertion'); } catch { /* guard window — next one heals */ }
+}
 
 // App version is set at build time via __APP_VERSION__ in vite.config.js.
 // In dev / Vitest the define is missing — fall back to a sentinel
@@ -343,6 +359,7 @@ export function installGlobalHandlers() {
             severity: 'error',
             feature: 'global',
         });
+        maybeHealFirestoreAssertion(msg);
     });
 
     window.addEventListener('unhandledrejection', (e) => {
@@ -356,6 +373,7 @@ export function installGlobalHandlers() {
             severity: 'error',
             feature: 'unhandled-rejection',
         });
+        maybeHealFirestoreAssertion(msg);
     });
 
     // Auto-breadcrumb route changes via pushState/popstate so we don't
