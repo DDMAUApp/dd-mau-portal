@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
+import { syncHepAFromOnboarding } from '../data/hepAHealthSync';
 import {
     collection, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot,
     serverTimestamp, query, orderBy, limit, getDoc, deleteField,
@@ -844,6 +845,14 @@ function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templ
                 `${name} added to Staff — temporary PIN: ${res.pin}. Set their permissions + PIN in Admin → Staff.`,
                 `${name} agregado al personal — PIN temporal: ${res.pin}. Ajusta permisos y PIN en Admin → Personal.`,
             ), { kind: 'success', duration: 12000 });
+            // Health Dept backfill (2026-08-11): if the Hep A card was already
+            // APPROVED before this hire had a staff record, the approval-time
+            // sync had no id to write to — do it now that one exists.
+            if (hire.checklist?.hep_a_record?.status === 'approved') {
+                syncHepAFromOnboarding({ hire: { ...hire, staffRecordId: res.id }, byName: staffName })
+                    .then((r) => { if (r.ok) toast(tx('Hep A card synced to the Health Dept.', 'Tarjeta de Hep A sincronizada con Salud.'), { duration: 5000 }); })
+                    .catch((e) => console.warn('hepA add-to-staff backfill failed:', e?.message));
+            }
         } finally {
             setAddingStaff(false);
         }
@@ -1492,6 +1501,27 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
             [`checklist.${docDef.id}.note`]: note || state.note || '',
         });
         onWriteAudit(`doc_${next}`, { hireId: hire.id, docId: docDef.id, hireName: hire.name });
+        // Onboarding → Health Dept bridge (2026-08-11, Andrew): approving the
+        // Hep A card also creates/updates the staff member's health record —
+        // AI-reads the shot dates off the card photo and attaches the file.
+        // Fire-and-forget with honest toasts; hand-entered dates never get
+        // overwritten (see hepAHealthSync.js).
+        if (next === DOC_STATUS.APPROVED && docDef.id === 'hep_a_record') {
+            syncHepAFromOnboarding({ hire, byName: staffName })
+                .then((r) => {
+                    if (r.ok) {
+                        toast(r.addedDates > 0
+                            ? `Health Dept updated — ${r.addedDates} shot date${r.addedDates === 1 ? '' : 's'} read from the card + card attached.`
+                            : (r.readOk
+                                ? 'Health Dept updated — card attached (dates already on record or not on card).'
+                                : 'Health Dept updated — card attached. Couldn\'t read the dates automatically; enter them on the Health page.'),
+                        { duration: 6000 });
+                    } else if (r.reason === 'no_staff_record') {
+                        toast('Hep A approved — it will sync to the Health Dept when this hire is added to Staff.', { duration: 6000 });
+                    }
+                })
+                .catch((e) => toast('Hep A approved, but Health Dept sync failed: ' + (e?.message || e), { kind: 'error' }));
+        }
     };
 
     const reject = async () => {
