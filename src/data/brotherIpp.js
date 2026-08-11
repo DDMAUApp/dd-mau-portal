@@ -249,18 +249,20 @@ export function renderLabelCanvas(lines, {
             if (ctx.measureText(cand).width <= innerW) {
                 cur = cand;
             } else {
-                if (cur) items.push({ text: cur, px, weight, h });
+                if (cur) items.push({ text: cur, px, weight, h, band: !!ln.band });
                 cur = w;
             }
         }
-        if (cur) items.push({ text: cur, px, weight, h });
+        if (cur) items.push({ text: cur, px, weight, h, band: !!ln.band });
     }
     // Footer metrics up front — the height reservation and the draw below MUST
     // use the same px, or a scaled-up footer gets clipped off the label.
     const footerPx = Math.max(14, Math.round(BASE * 0.7 * Math.max(1, Math.min(3, Number(footerScale) || 1))));
     const footerWeight = footerBold ? '800' : '600';
     let height = PAD;
-    for (const it of items) height += it.h + GAP;
+    // Band rows reserve one bandPad of extra height (the bar extends past
+    // the glyph box) — must match the draw loop below or the last line clips.
+    for (const it of items) height += it.h + GAP + (it.band ? Math.round(it.px * 0.18) : 0);
     if (footer) height += footerPx + GAP;
     height += PAD;
     height = Math.max(height, 90);
@@ -272,8 +274,21 @@ export function renderLabelCanvas(lines, {
     let y = PAD;
     for (const it of items) {
         ctx.font = `${it.weight} ${it.px}px Arial, sans-serif`;
-        ctx.fillText(it.text, cx, y);
-        y += it.h + GAP;
+        if (it.band) {
+            // Brand band (2026-08-11, catering): full-width black bar with
+            // the text knocked out in white. Bar spans edge to edge so the
+            // label reads like packaging, not a receipt.
+            const bandPad = Math.round(it.px * 0.18);
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, y - bandPad, width, it.h + bandPad * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(it.text, cx, y);
+            ctx.fillStyle = '#000';
+            y += it.h + bandPad + GAP;
+        } else {
+            ctx.fillText(it.text, cx, y);
+            y += it.h + GAP;
+        }
     }
     if (footer) {
         ctx.font = `${footerWeight} ${footerPx}px Arial, sans-serif`;

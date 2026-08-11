@@ -904,6 +904,13 @@ export function buildLabelPayload({
         : (format?.footerText || 'DD MAU');
 
     return {
+        // Brand band (2026-08-11, catering): black bar with white brand text
+        // at the very top of the label. Rendered via <text reverse> on the
+        // Epson, an inverted rect on the Brother canvas, and inverted divs in
+        // both previews. null = no band (every kind except catering today).
+        brandBand: format?.showBrandBand === true
+            ? String(format?.brandBandText || 'DD MAU').slice(0, 24)
+            : null,
         titleLines: format?.showTitle === false ? [] : titleLines,
         titleLines2: format?.showTitle === false ? [] : titleLines2,
         title2Scale,
@@ -1084,6 +1091,23 @@ function renderPrepLabelBody(payload) {
     const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
     // Height can exceed width (tall text) — how long names get BIG.
     const titleH = Math.max(titleScale, Math.min(8, Number(payload.titleHeightScale) || titleScale));
+    // ── Brand band (2026-08-11, catering) ─────────────────────────
+    // Black full-width bar with the brand in white at the very top.
+    // ePOS `reverse` inverts exactly the printed characters, so we pad
+    // the text with spaces to span the whole roll at this width scale.
+    if (payload.brandBand) {
+        const bw = 2;
+        const bandCols = Math.max(4, Math.floor(cols / bw));
+        const label = ` ${payload.brandBand} `.slice(0, bandCols);
+        const pad = Math.max(0, bandCols - label.length);
+        const left = Math.floor(pad / 2);
+        const banded = ' '.repeat(left) + label + ' '.repeat(pad - left);
+        lines.push(`<text align="center"/>`);
+        lines.push(`<text reverse="true"/><text em="true"/>`);
+        lines.push(`<text width="${bw}" height="${bw}"/>`);
+        lines.push(`<text>${escapeXml(banded)}&#10;</text>`);
+        lines.push(`<text reverse="false"/><text em="false"/><text width="1" height="1"/>`);
+    }
     if (payload.layout === 'nameFirst') {
         // ── NAME-FIRST layout (per-kind override) ────────────────
         // Item name HUGE at the top (sanitizer buckets etc. — the name
@@ -1307,8 +1331,8 @@ export function buildLabelPreviewModel(payload) {
     const divEq = '='.repeat(cols);
     const divDash = '-'.repeat(cols);
     const segs = [];
-    const push = (text, { w = 1, h = 1, em = false, center = false } = {}) =>
-        segs.push({ text: String(text), w, h, em, center });
+    const push = (text, { w = 1, h = 1, em = false, center = false, band = false } = {}) =>
+        segs.push({ text: String(text), w, h, em, center, ...(band ? { band: true } : {}) });
     const showDiv = payload.showDividers !== false;
     const pushDiv = (d) => { if (showDiv) push(d); };
     const titleScale = Math.max(1, Math.min(8, Number(payload.titleScale) || 2));
@@ -1322,6 +1346,15 @@ export function buildLabelPreviewModel(payload) {
             push(t, { w: t2, h: t2, em: !!payload.title2Bold, center: true });
         }
     };
+    // Brand band — mirrors the renderer block above (KEEP IN SYNC).
+    if (payload.brandBand) {
+        const bandCols = Math.max(4, Math.floor(cols / 2));
+        const label = ` ${payload.brandBand} `.slice(0, bandCols);
+        const pad = Math.max(0, bandCols - label.length);
+        const left = Math.floor(pad / 2);
+        push(' '.repeat(left) + label + ' '.repeat(pad - left),
+            { w: 2, h: 2, em: true, center: true, band: true });
+    }
     if (payload.layout === 'nameFirst') {
         for (const t of (payload.titleLines || [])) {
             push(t, { w: titleScale, h: titleH, em: true, center: true });

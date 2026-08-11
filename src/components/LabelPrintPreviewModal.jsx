@@ -65,6 +65,9 @@ export function LabelMock({ model, pxPerCol = PX_PER_COL }) {
                             fontSize: `${(pxPerCol / 0.6) * s.h}px`,
                             lineHeight: 1.05,
                             fontWeight: s.em ? 800 : 400,
+                            // Brand band (catering) — printed via ePOS
+                            // `reverse`: white text on a black bar.
+                            ...(s.band ? { background: '#000', color: '#fff' } : {}),
                             ...(s.w !== s.h ? {
                                 transform: `scaleX(${(s.w / s.h).toFixed(3)})`,
                                 transformOrigin: s.center ? 'center' : 'left',

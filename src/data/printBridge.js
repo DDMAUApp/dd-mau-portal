@@ -351,6 +351,13 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
     const lines = [];
     const clamp = (v, lo, hi, dflt) => Math.max(lo, Math.min(hi, Number(v) || dflt));
 
+    // 0. Brand band (2026-08-11, catering) — black bar, white brand text,
+    //    very top of the label. renderLabelCanvas draws lines flagged
+    //    `band: true` inverted; the (dormant) Pi bridge ignores the flag.
+    if (payload.brandBand) {
+        lines.push({ text: String(payload.brandBand), scale: 1.1, bold: true, band: true });
+    }
+
     // 1. Title (already word-wrapped by buildLabelPayload).
     const titleScale = Math.max(Number(payload.titleScale) || 2, 1);
     for (const tl of payload.titleLines || []) {

@@ -864,6 +864,17 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
     // centers overflowing content correctly.
     // Bold only when the print bolds it (name-first is always bold;
     // standard layout only with the titleBold knob) — audit 2026-07-27 #4.
+    // Brand band (catering) — black bar with white brand text at the top,
+    // matching what both printers render.
+    const brandBandBlock = payload.brandBand && (
+        <div style={{
+            background: '#000', color: '#fff', textAlign: 'center',
+            fontWeight: 900, letterSpacing: '2px', fontSize: '13px',
+            padding: '2px 0', margin: '-4px -4px 4px -4px',
+        }}>
+            {payload.brandBand}
+        </div>
+    );
     const titleBlock = payload.titleLines && payload.titleLines.length > 0 && (
         <div className={`${(nameFirst || payload.titleBold) ? 'font-bold ' : ''}text-dd-text leading-tight`}>
             {payload.titleLines.map((t, i) => (
@@ -940,6 +951,7 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
     );
     return (
         <div className="text-center font-sans">
+            {brandBandBlock}
             {nameFirst ? (
                 <>
                     {titleBlock}

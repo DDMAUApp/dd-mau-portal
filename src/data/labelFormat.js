@@ -142,8 +142,13 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
             layout: 'nameFirst',
             titleScale: 4,
             titleBold: true,
-            showTitleTranslation: true,
-            title2Scale: 2,
+            // Andrew 2026-08-11 round 2: English-only on catering labels —
+            // no Spanish second line.
+            showTitleTranslation: false,
+            // Black band with white brand text at the very top of the label
+            // (Andrew: "the black window on the top with the white ddmau").
+            showBrandBand: true,
+            brandBandText: 'DD MAU',
             dateBold: true,
             showUseByBand: false,
             showPreppedLabel: false,
@@ -220,6 +225,9 @@ export function cleanKindFormats(raw) {
             if (typeof v[sk] === 'boolean') entry[sk] = v[sk];
         }
         if (typeof v.footerText === 'string') entry.footerText = v.footerText.slice(0, 60);
+        // Brand band (black bar, white text, top of label) — catering et al.
+        if (typeof v.showBrandBand === 'boolean') entry.showBrandBand = v.showBrandBand;
+        if (typeof v.brandBandText === 'string') entry.brandBandText = v.brandBandText.slice(0, 24);
         // 2026-07-27 "every text editable" — per-kind bold + size for the
         // remaining blocks. Booleans (not only-true) so a per-kind OFF can
         // override a global ON, same as titleBold above.

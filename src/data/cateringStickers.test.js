@@ -3,6 +3,8 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_LABEL_FORMAT, mergeWithDefaults, cleanKindFormats } from './labelFormat';
 import { STICKER_SECTIONS, getStampedDefaults, resolveSections } from './stickerListsOverride';
 import { COMPONENT_KIND_TONE } from './itemBuild';
+import { buildLabelPayload, buildLabelPreviewModel, resolveLabelFormatForKind } from './labelPrinting';
+import { payloadToBridgeFormat } from './printBridge';
 
 describe('catering sticker section', () => {
     const catering = STICKER_SECTIONS.find(s => s.key === 'catering');
@@ -64,5 +66,44 @@ describe('customer-facing catering label format', () => {
         expect(out.catering.showByName).toBe(false);
         expect(out.catering.showTime).toBe(true);
         expect(out.catering.footerText.length).toBe(60);
+    });
+});
+
+describe('brand band (black bar, white DD MAU)', () => {
+    const cateringFormat = resolveLabelFormatForKind(mergeWithDefaults({}), 'catering');
+    const payload = buildLabelPayload({
+        itemName: 'Peanut Sauce',
+        itemNameEs: 'Salsa de Cacahuate',
+        prepDate: new Date('2026-08-11T12:00:00'),
+        shelfLifeDays: 3,
+        format: cateringFormat,
+    });
+    it('rides the payload for catering and only catering', () => {
+        expect(payload.brandBand).toBe('DD MAU');
+        const plain = buildLabelPayload({
+            itemName: 'Sanitizer', prepDate: new Date('2026-08-11T12:00:00'),
+            shelfLifeDays: 3, format: mergeWithDefaults({}),
+        });
+        expect(plain.brandBand).toBe(null);
+    });
+    it('is the FIRST preview segment, flagged band, mirroring the Epson reverse block', () => {
+        const m = buildLabelPreviewModel(payload);
+        expect(m.segs[0].band).toBe(true);
+        expect(m.segs[0].text).toContain('DD MAU');
+        expect(m.segs[0].em).toBe(true);
+    });
+    it('is the FIRST Brother line, flagged band', () => {
+        const bf = payloadToBridgeFormat(payload);
+        expect(bf.lines[0]).toMatchObject({ text: 'DD MAU', bold: true, band: true });
+    });
+    it('catering labels are English-only (no Spanish second line) per Andrew', () => {
+        expect(payload.titleLines2 || []).toHaveLength(0);
+        const bf = payloadToBridgeFormat(payload);
+        expect(bf.lines.some(l => /cacahuate/i.test(l.text))).toBe(false);
+    });
+    it('cleanKindFormats round-trips the band fields', () => {
+        const out = cleanKindFormats({ catering: { showBrandBand: false, brandBandText: 'B'.repeat(50) } });
+        expect(out.catering.showBrandBand).toBe(false);
+        expect(out.catering.brandBandText.length).toBe(24);
     });
 });
