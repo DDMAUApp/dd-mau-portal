@@ -736,8 +736,14 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                 // standing queue instead of empty — every reminder written
                 // down mid-period lands in this run's Pay Adds step and is
                 // marked used (visible + requeue-able in the queue history).
+                // FRESH queue read at import time (2026-08-11 — Andrew's two
+                // backpay adds missed the run). The state copy is null until
+                // the async load finishes, so unlock-then-import-fast seeded
+                // from an EMPTY queue and silently dropped every reminder.
+                // Awaiting the doc here makes the seed authoritative.
+                const liveQueue = queue ?? (await loadQueuedAdds().catch(() => null));
                 const seeded = seedAdjustmentsFromQueue(
-                    queue?.items || [], guessed || period,
+                    liveQueue?.items || [], guessed || period,
                     () => `adj_${adjIdRef.current++}`);
                 setAdjustments(seeded.adjustments);
                 if (seeded.count > 0) {
@@ -1179,6 +1185,43 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                         <h4 className="font-bold text-dd-text mb-1">Pay adds</h4>
                         <p className="text-xs text-dd-text-2">Add one line per adjustment — pick the person, the type, and the amount. You can add one for <b>anyone on the roster</b>, even if they had no hours this period (e.g. a back-pay or advance square-up). <b>Advance</b> is money already paid and is <b>deducted</b> (note required — put the check #). Cash tips go on the next step.</p>
                     </div>
+                    {/* 2026-08-11 — queued adds that are NOT in this run yet.
+                        The old design only pulled the queue at NEW-period
+                        import, so items added after the import (or missed by
+                        the load race fixed above) sat in the queue invisibly
+                        while the run calculated without them. This banner
+                        makes the miss impossible to overlook: any unconsumed
+                        queue item shows here with a one-tap pull-in, at any
+                        point before the docs are created. */}
+                    {activeQueueItems(queue?.items).length > 0 && (
+                        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 flex items-start gap-3">
+                            <span className="text-xl">⚠️</span>
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm font-bold text-amber-900">
+                                    {activeQueueItems(queue?.items).length} queued pay add{activeQueueItems(queue?.items).length === 1 ? ' is' : 's are'} NOT in this run
+                                </div>
+                                <div className="text-xs text-amber-800 truncate">
+                                    {activeQueueItems(queue?.items).map(it =>
+                                        `${it.name || '(no person)'} — ${it.type}${it.hours ? ` ${it.hours}h` : ''}${it.amount ? ` $${it.amount}` : ''}`
+                                    ).join(' · ')}
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const seeded = seedAdjustmentsFromQueue(
+                                        queue?.items || [], period || 'current run',
+                                        () => `adj_${adjIdRef.current++}`);
+                                    if (!seeded.count) return;
+                                    setAdjustments(prev => [...prev, ...seeded.adjustments]);
+                                    persistQueue(seeded.items);
+                                    toast(`${seeded.count} pay add${seeded.count === 1 ? '' : 's'} added to this run.`);
+                                }}
+                                className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 active:scale-95"
+                            >
+                                Add to this run
+                            </button>
+                        </div>
+                    )}
                     {LOCS.map((loc) => {
                         const people = (rosterView[loc].people || [])
                             .filter((p) => p.section === 'FOH' || p.section === 'BOH')
