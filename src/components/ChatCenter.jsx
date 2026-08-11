@@ -629,6 +629,11 @@ export default function ChatCenter({
     useEffect(() => {
         const onOpen = (e) => {
             const id = e?.detail?.chatId;
+            // The live event supersedes the parked copy — clear the park so a
+            // later remount doesn't re-open this conversation a second time
+            // (setPendingChatOpen parks AND dispatches; without this the park
+            // lingered its full 10-min expiry after we already handled it).
+            consumePendingChatOpen();
             if (id) setPendingOpenChatId(String(id));
         };
         window.addEventListener('ddmau:open-chat', onOpen);

@@ -16,9 +16,26 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
 import { syncHepAFromOnboarding } from '../data/hepAHealthSync';
 import {
-    collection, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot,
-    serverTimestamp, query, orderBy, limit, getDoc, deleteField,
+    collection, doc, onSnapshot,
+    serverTimestamp, query, orderBy, limit, deleteField,
+    addDoc as _fsAddDoc,
+    setDoc as _fsSetDoc,
+    updateDoc as _fsUpdateDoc,
+    deleteDoc as _fsDeleteDoc,
+    getDoc as _fsGetDoc,
 } from 'firebase/firestore';
+// 2026-08-11 (full-app audit) — watchdog shadows for the ADMIN side of
+// onboarding. The portal side got them the same day (the Andres wedged-
+// write incident); the admin side has the same disease surface: approve/
+// reject taps, hire edits, and invite writes from a backgrounded admin
+// phone could hang forever on a wedged transport. Same shadow-the-
+// primitives pattern as Schedule/ChatThread — see firestoreRevive.js.
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
 import { appendStaffRecord } from '../data/staffDoc';
 import { getPositionTemplate } from '../data/positionTemplates';

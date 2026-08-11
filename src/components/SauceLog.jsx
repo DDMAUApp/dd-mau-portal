@@ -31,7 +31,16 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { doc, onSnapshot, setDoc, updateDoc, deleteField, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import {
+    doc, onSnapshot, deleteField, collection, serverTimestamp,
+    setDoc as _fsSetDoc, updateDoc as _fsUpdateDoc, addDoc as _fsAddDoc,
+} from 'firebase/firestore';
+// 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
+// see firestoreRevive.js). Same pattern as Schedule/ChatThread.
+import { watchdogWrite } from '../data/firestoreRevive';
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 import { isAdmin } from '../data/staff';
 import { DEFAULT_SAUCES, SAUCE_URGENCY, SAUCE_URGENCY_BY_ID } from '../data/sauces';
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.

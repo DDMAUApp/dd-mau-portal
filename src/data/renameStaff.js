@@ -42,7 +42,7 @@
 import { db } from '../firebase';
 import {
     collection, query, where, getDocs, writeBatch, addDoc, serverTimestamp,
-    doc, getDoc, orderBy, limit, deleteField, FieldPath,
+    doc, getDoc, orderBy, limit, deleteField, FieldPath, updateDoc,
 } from 'firebase/firestore';
 
 // Replace oldName with newName everywhere it appears in a string array.
@@ -315,6 +315,33 @@ export async function removeStaffFromChats(name) {
 //
 // `by` (optional) — the admin performing the rename, recorded in the
 // /staff_rename_log audit row written after the fan-out.
+// /config/insurance_index maps staffName → random insurance doc id
+// (2026-06-02 doc-ID hardening). Without this move, a renamed staffer's
+// insurance record silently de-associates: the load path finds no entry
+// under the NEW name, falls back to the (empty) legacy id, shows a blank
+// form, and a re-submit forks a second record — orphaning the original.
+// (2026-08-11 full-app audit.) The insurance DOC's embedded staffName is
+// deliberately left as-is: Firestore rules pin it immutable (anti-hijack),
+// and identity flows through this index — InsuranceEnrollment preserves
+// the stored name on update for the same reason.
+async function renameInsuranceIndex(oldName, newName) {
+    const ref = doc(db, 'config', 'insurance_index');
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return 0;
+    const entries = snap.data()?.entries || {};
+    const docId = entries[oldName];
+    if (!docId) return 0;
+    // FieldPath (not dotted strings) — names are user data and must never
+    // be parsed as path separators (same rule as the 2026-07-22 split-
+    // FieldPath fixes).
+    await updateDoc(ref,
+        new FieldPath('entries', oldName), deleteField(),
+        new FieldPath('entries', newName), docId,
+        new FieldPath('updatedAt'), new Date().toISOString(),
+    );
+    return 1;
+}
+
 export async function renameStaffEverywhere({ oldName, newName, staffId, by } = {}) {
     const o = String(oldName || '').trim();
     const n = String(newName || '').trim();
@@ -351,6 +378,7 @@ export async function renameStaffEverywhere({ oldName, newName, staffId, by } = 
         ['assigned_tasks',  () => renameAssignedTasks(o, n, staffId)],
         ['announcements',   () => renameAnnouncements(o, n)],
         ['chats',           () => renameChats(o, n)],
+        ['insurance_index', () => renameInsuranceIndex(o, n)],
     ];
 
     for (const [label, run] of tasks) {

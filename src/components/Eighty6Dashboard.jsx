@@ -15,7 +15,16 @@
 // Operations page (Tasks / Inventory tabs).
 
 import { useState, useEffect } from 'react';
-import { onSnapshot, doc, setDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
+import {
+    onSnapshot, doc, collection, serverTimestamp,
+    setDoc as _fsSetDoc, addDoc as _fsAddDoc, getDoc as _fsGetDoc,
+} from 'firebase/firestore';
+// 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
+// see firestoreRevive.js). Same pattern as Schedule/ChatThread.
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 import { db } from '../firebase';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';

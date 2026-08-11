@@ -1,6 +1,15 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "../firebase";
-import { doc, setDoc, collection, getDocs, updateDoc, deleteField, onSnapshot, arrayUnion } from "firebase/firestore";
+import {
+    doc, collection, deleteField, onSnapshot, arrayUnion,
+    setDoc as _fsSetDoc, updateDoc as _fsUpdateDoc, getDocs as _fsGetDocs,
+} from "firebase/firestore";
+// 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
+// see firestoreRevive.js). Same pattern as Schedule/ChatThread.
+import { watchdogWrite, watchdogRead } from "../data/firestoreRevive";
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import { t } from "../data/translations";
 import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";

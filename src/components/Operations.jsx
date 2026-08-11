@@ -1,6 +1,29 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue, lazy, Suspense, memo } from 'react';
 import { db, storage } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, serverTimestamp, deleteField, arrayUnion, runTransaction, increment, FieldPath } from 'firebase/firestore';
+import {
+    doc, onSnapshot, query, collection, orderBy, limit, where, serverTimestamp,
+    deleteField, arrayUnion, runTransaction, increment, FieldPath,
+    setDoc as _fsSetDoc,
+    getDoc as _fsGetDoc,
+    getDocs as _fsGetDocs,
+    updateDoc as _fsUpdateDoc,
+    addDoc as _fsAddDoc,
+} from 'firebase/firestore';
+// 2026-08-11 (full-app audit) — shadow-the-primitives watchdog coverage,
+// same pattern as Schedule.jsx / ChatThread.jsx / AdminPanel.jsx. Operations
+// is the HIGHEST-traffic page (shared line iPads that background-suspend all
+// day — the exact wedged-transport trigger) and had 51 raw write sites with
+// zero revive coverage: a wedged SDK left count bumps / checklist taps /
+// cart saves hanging forever with no pill and no recovery. Module-level
+// shadows give every existing call site watchdog coverage without touching
+// them. Writes → watchdogWrite (revive + SyncPill + escalation), reads →
+// watchdogRead (revive on hang only).
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';

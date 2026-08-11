@@ -3,7 +3,21 @@
 // deploy. Audit ref #21.
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, addDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import {
+    doc, collection, query, orderBy, limit,
+    getDoc as _fsGetDoc,
+    setDoc as _fsSetDoc,
+    addDoc as _fsAddDoc,
+    getDocs as _fsGetDocs,
+} from 'firebase/firestore';
+// 2026-08-11 (full-app audit) — watchdog shadows. A wedged transport left
+// "Submitting…" hung forever on the enrollment form (Firestore queues, it
+// never rejects) with no revive. Same pattern as Schedule/ChatThread.
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin as checkIsAdmin } from '../data/staff';
@@ -247,7 +261,14 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     try {
       const now = new Date();
       const payload = {
-        staffName,
+        // 2026-08-11 (full-app audit, rename safety): on an UPDATE, keep the
+        // staffName already stored on the doc. Firestore rules pin staffName
+        // immutable on /insurance updates (anti-hijack), so a staffer renamed
+        // since their first enrollment would have every resubmit REJECTED if
+        // we stamped their current name here. Identity is resolved through
+        // /config/insurance_index (renameStaff moves that mapping), so the
+        // stored name is just a label.
+        staffName: (resolvedDocId && existingData?.staffName) || staffName,
         formData: form,
         status: "pending_review",
         submittedAt: now.toISOString(),
@@ -286,7 +307,9 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
       }
 
       setSubmitted(true);
-      setExistingData({ status: "pending_review", submittedAt: now.toISOString() });
+      // Keep the (possibly legacy) staffName in local state so a second
+      // submit this session still preserves it — see rename-safety above.
+      setExistingData({ status: "pending_review", submittedAt: now.toISOString(), staffName: payload.staffName });
     } catch (err) {
       console.error("Error submitting enrollment:", err);
       toast(language === "es" ? "Error al enviar" : "Error submitting form");

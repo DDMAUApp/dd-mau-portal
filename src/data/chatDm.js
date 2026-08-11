@@ -53,7 +53,12 @@ export async function findLiveDmId(myName, otherName) {
         const snap = await getDocs(query(
             collection(db, 'chats'),
             where('members', 'array-contains', myName),
-            limit(100),
+            // 300, not 100 (2026-08-11 audit): the query has no orderBy, so
+            // with more chats than the limit the target DM could fall outside
+            // the page and we'd silently fork — the exact bug this resolver
+            // exists to prevent. 300 comfortably exceeds any real per-person
+            // chat count here.
+            limit(300),
         ));
         let best = null;
         let bestMs = -1;

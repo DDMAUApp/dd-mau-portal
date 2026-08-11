@@ -37,16 +37,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     collection,
-    addDoc,
-    deleteDoc,
     doc,
     limit,
     onSnapshot,
     orderBy,
     query,
     serverTimestamp,
-    updateDoc,
+    addDoc as _fsAddDoc,
+    deleteDoc as _fsDeleteDoc,
+    updateDoc as _fsUpdateDoc,
 } from 'firebase/firestore';
+// 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
+// see firestoreRevive.js). Same pattern as Schedule/ChatThread.
+import { watchdogWrite } from '../data/firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, Sparkles, Camera, X } from 'lucide-react';

@@ -23,7 +23,22 @@
 //   { docs: [ { key, title, titleEs, body, bodyEs, version, required } ] }
 // Seeded with DEFAULT_HEALTH_DOCS on first manager visit if missing.
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, runTransaction, collection, onSnapshot, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import {
+    doc, collection, onSnapshot, serverTimestamp,
+    getDoc as _fsGetDoc,
+    setDoc as _fsSetDoc,
+    deleteDoc as _fsDeleteDoc,
+    runTransaction as _fsRunTransaction,
+} from 'firebase/firestore';
+// 2026-08-11 (full-app audit) — watchdog shadows. health.js is the write
+// chokepoint for the Health Department page AND the onboarding Hep A
+// bridge (hepAHealthSync.js): a wedged transport left compliance saves
+// hanging silently. Same shadow-the-primitives pattern as chatDm/notify.
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
 
 export const HEALTH_DOCS_CONFIG = ['config', 'health_docs'];
 

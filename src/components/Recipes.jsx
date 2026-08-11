@@ -1,6 +1,17 @@
 import { useState, useEffect, useRef, useMemo, useDeferredValue, lazy, Suspense } from 'react';
 import { db } from '../firebase';
-import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, runTransaction, serverTimestamp } from 'firebase/firestore';
+import {
+    doc, onSnapshot, collection, serverTimestamp,
+    setDoc as _fsSetDoc, addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc,
+    runTransaction as _fsRunTransaction,
+} from 'firebase/firestore';
+// 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
+// see firestoreRevive.js). Same pattern as Schedule/ChatThread.
+import { watchdogWrite } from '../data/firestoreRevive';
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone, sortAllergens } from '../data/allergens';

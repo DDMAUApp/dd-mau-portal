@@ -444,7 +444,12 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                 const m = /^q_(\d+)$/.exec(it.id || '');
                 if (m) queueIdRef.current = Math.max(queueIdRef.current, Number(m[1]) + 1);
             }
-            setQueue(q);
+            // prev ?? q, not q (2026-08-11 audit): doImport can fetch the
+            // queue itself and persistQueue() the consumed markers BEFORE
+            // this initial load resolves — letting the stale load land would
+            // clobber those markers and the step-2 banner would re-offer
+            // items already seeded into the run (double-add on tap).
+            setQueue(prev => prev ?? q);
         });
         return () => { alive = false; };
     }, [unlocked]);
