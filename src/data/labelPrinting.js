@@ -843,11 +843,18 @@ export function buildLabelPayload({
         : isEs
             ? (format?.preppedLabelTextEs || 'HECHO')
             : (format?.preppedLabelTextEn || 'PREPPED');
-    const prepDateNumber = fmtDate(prepDate);
-    const prepDateBig    = prepDateLabel
-        ? `${prepDateLabel} ${prepDateNumber}`
-        : prepDateNumber;
-    const prepTimeBig    = format?.showTime === false ? '' : fmtTime(prepDate);
+    // Per-kind date kill-switch (2026-08-11, catering round 3 — Andrew:
+    // "lets leave off the date too"). Empty strings = every renderer's
+    // existing if-guards skip the whole date line. Default (undefined)
+    // keeps the date — it's the entire point of a prep label; only
+    // customer-facing kinds turn it off.
+    const showDate = format?.showDate !== false;
+    const prepDateNumber = showDate ? fmtDate(prepDate) : '';
+    const prepDateBig    = !showDate ? ''
+        : prepDateLabel
+            ? `${prepDateLabel} ${prepDateNumber}`
+            : prepDateNumber;
+    const prepTimeBig    = (!showDate || format?.showTime === false) ? '' : fmtTime(prepDate);
 
     const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][useByDate.getDay()];
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];

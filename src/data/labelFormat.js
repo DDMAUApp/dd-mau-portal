@@ -150,6 +150,8 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
             showBrandBand: true,
             brandBandText: 'DD MAU',
             dateBold: true,
+            // Round 3 (Andrew): no date on catering labels at all.
+            showDate: false,
             showUseByBand: false,
             showPreppedLabel: false,
             showTime: false,
@@ -219,7 +221,7 @@ export function cleanKindFormats(raw) {
         // kind entry over the WHOLE format, so these override the globals for
         // that kind only. Booleans both ways (a per-kind ON must be able to
         // override a global OFF and vice versa).
-        for (const sk of ['showPreppedLabel', 'showTime', 'showByName',
+        for (const sk of ['showDate', 'showPreppedLabel', 'showTime', 'showByName',
             'showLocation', 'showAllergens', 'showIngredients', 'showNotes',
             'showFooter', 'showUseBy', 'showTitle']) {
             if (typeof v[sk] === 'boolean') entry[sk] = v[sk];

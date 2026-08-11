@@ -101,6 +101,21 @@ describe('brand band (black bar, white DD MAU)', () => {
         const bf = payloadToBridgeFormat(payload);
         expect(bf.lines.some(l => /cacahuate/i.test(l.text))).toBe(false);
     });
+    it('catering labels carry NO date (round 3) — other kinds keep theirs', () => {
+        expect(payload.prepDateNumber).toBe('');
+        expect(payload.prepDateBig).toBe('');
+        expect(payload.prepTimeBig).toBe('');
+        // Preview + Brother emit no date line at all.
+        const dateRe = /08\/11\/26|8\/11/;
+        expect(buildLabelPreviewModel(payload).segs.some(s => dateRe.test(s.text))).toBe(false);
+        expect(payloadToBridgeFormat(payload).lines.some(l => dateRe.test(l.text))).toBe(false);
+        // Default format (internal prep labels) still dates.
+        const plain = buildLabelPayload({
+            itemName: 'Sanitizer', prepDate: new Date('2026-08-11T12:00:00'),
+            shelfLifeDays: 3, format: mergeWithDefaults({}),
+        });
+        expect(plain.prepDateNumber).toBe('08/11/26');
+    });
     it('cleanKindFormats round-trips the band fields', () => {
         const out = cleanKindFormats({ catering: { showBrandBand: false, brandBandText: 'B'.repeat(50) } });
         expect(out.catering.showBrandBand).toBe(false);
