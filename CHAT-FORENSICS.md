@@ -1,5 +1,21 @@
 # CHAT FORENSIC REPORT — DD Mau Portal
 **Date:** 2026-08-11 · **Audit type:** READ-ONLY (no code changed) · **Auditor:** Claude
+
+> **STATUS UPDATE (same day, v1.0.404):** the repair batch SHIPPED. C1 (watchdog
+> parity), C2 (per-message send states + non-blocking composer), C3 (server-side
+> fan-out via `onChatMessageCreated`, opt-in `serverFanout` stamp), C4
+> (conversation-level push deep links via `data.chatId` + `chatDeepLink.js`),
+> C5 (`pruneNotifications` nightly, 3:40 AM CT — ~9.4k-doc backlog clears in ~3
+> nights), C6 (`findLiveDmId` resolver + prod data fix: "Fui jun Mok" was an
+> invisible member of Webster FOH + one DM), and C8 (file attachments —
+> pdf/doc/xls/ppt/csv/txt, 25MB, storage.rules extended). C7 was double-checked
+> and deliberately NOT shipped: the /chats rules block is OR'd with the open
+> catch-all (not carved), so constraints there are dead code without the
+> carve-out surgery that caused the 2026-07-12 outage; real enforcement is the
+> Auth project. Verified live: CF fan-out proven end-to-end (preview + tagged
+> notification with chatId in the debug_agent chat), 831 tests green, prune
+> query dry-run confirmed index-free. Sections below are the original
+> pre-batch audit — read F1–F9 with this update in mind.
 **Scope:** ChatCenter, ChatThread, chat.js, chatDm.js, chatPermissions.js, chatSearch.js,
 notify.js, firestore.rules, storage.rules, functions/index.js (dispatchNotification),
 firebase-messaging-sw.js, capacitor push routing, renameStaff.js — plus live prod probes.
