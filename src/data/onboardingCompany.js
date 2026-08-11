@@ -49,6 +49,24 @@ export async function loadCompanyInfoForHire(hire) {
     }
 }
 
+// Split a one-line mailing address into components for forms (like the
+// MO W-4) that want street / city / state / ZIP in separate boxes.
+// "8169 Big Bend Blvd, Webster Groves, MO 63119" →
+//   { street, city, state, zip }. Tolerant: missing pieces come back ''.
+export function splitAddress(address) {
+    const parts = String(address || '').split(',').map(s => s.trim()).filter(Boolean);
+    const out = { street: parts[0] || '', city: '', state: '', zip: '' };
+    if (parts.length >= 3) {
+        out.city = parts[1];
+        const m = /^([A-Za-z]{2})\s+([\d-]{5,10})$/.exec(parts[2]) || [];
+        out.state = m[1] || parts[2];
+        out.zip = m[2] || '';
+    } else if (parts.length === 2) {
+        out.city = parts[1];
+    }
+    return out;
+}
+
 // 'yyyy-mm-dd' → 'mm/dd/yyyy'; anything else passes through untouched.
 export function toUsDate(s) {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '').trim());
@@ -80,17 +98,29 @@ export function suggestEmployerValues(fields, { company, hire, adminName, todayS
         const key = f.id;
         const l = String(f.label || f.id).toLowerCase();
         let v = null;
+        const parts = splitAddress(addr);
         // ORDER MATTERS: the combined W-4 name+address box must win before
-        // the name-only / address-only patterns get a look.
+        // the name-only / address-only patterns get a look, and the MO W-4's
+        // city/state/zip boxes must win before its plain address box.
         if (/f1_12|name and address/.test(l)) {
             v = addr ? `${name}, ${addr}` : name;
-        } else if (/(business|org\b|organization).{0,12}name|employers? name/.test(l)) {
+        } else if (/employer city/.test(l)) {
+            v = parts.city;
+        } else if (/employer state/.test(l)) {
+            v = parts.state;
+        } else if (/employer zip/.test(l)) {
+            v = parts.zip;
+        } else if (/employer.{0,2}s address/.test(l)) {
+            v = parts.street;   // MO W-4 street box (city/state/zip separate)
+        } else if (/(business|org\b|organization).{0,12}name|employer.{0,2}s name/.test(l)) {
             v = name;
         } else if (/(business|org\b|organization).{0,12}address/.test(l)) {
-            v = addr;
-        } else if (/f1_14|employer identification|(^|[^a-z])ein([^a-z]|$)/.test(l)) {
+            v = addr;           // I-9 single-line org address
+        } else if (/missouri tax/.test(l)) {
+            v = String(company.moTaxId || '').trim();
+        } else if (/f1_14|employer identification|federal employer i|(^|[^a-z])ein([^a-z]|$)/.test(l)) {
             v = ein;
-        } else if (/f1_13|first date of employment|first ?day ?employed/.test(l)) {
+        } else if (/f1_13|first date of employment|first ?day ?employed|date services/.test(l)) {
             v = toUsDate(hire?.hireDate);
         } else if (/todays? date/.test(l)) {
             v = todayStr || '';
