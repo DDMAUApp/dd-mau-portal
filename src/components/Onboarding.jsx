@@ -418,6 +418,17 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     />
                     {selected ? (
                         <HireDetail
+                            // 2026-08-11 (Andrew): PII LEAK — switching from
+                            // Keaton to Desiree kept showing KEATON'S direct
+                            // deposit. DocReviewRow loads each doc's files once
+                            // (`if (files !== null) return`) and its instance
+                            // was REUSED across hires (key = doc id only), so
+                            // the previous hire's files lingered whenever the
+                            // new hire had none of their own to overwrite them.
+                            // Keying the whole detail panel by hire id remounts
+                            // every row on switch — no state of any kind can
+                            // survive from one hire to the next.
+                            key={selected.id}
                             hire={selected}
                             isEs={isEs}
                             staffName={staffName}
