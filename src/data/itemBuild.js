@@ -696,4 +696,7 @@ export const COMPONENT_KIND_TONE = Object.freeze({
     // a chemical sticker must never look like a food sticker.
     chemical: { bg: 'bg-rose-100',  text: 'text-rose-950',    icon: '🧪', labelEn: 'Chemical', labelEs: 'Químico' },
     status:   { bg: 'bg-yellow-100', text: 'text-yellow-950', icon: '⚠️', labelEn: 'Status',   labelEs: 'Estado' },
+    // 2026-08-11 (Andrew): catering — customer-facing labels. Festive tone
+    // so a catering sticker never gets mistaken for an internal prep label.
+    catering: { bg: 'bg-fuchsia-50', text: 'text-fuchsia-900', icon: '🎉', labelEn: 'Catering', labelEs: 'Catering' },
 });

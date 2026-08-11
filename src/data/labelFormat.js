@@ -127,8 +127,55 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
     // entry shallow-merges over the base format for that kind only:
     //   { layout?: 'nameFirst', titleScale?: 1..8, dateNumberScale?: 2..8,
     //     rotate90?: true }
-    kindFormats: {},
+    kindFormats: {
+        // 2026-08-11 (Andrew): CATERING — the first CUSTOMER-FACING label
+        // kind. Big bold item name on top (nameFirst), Spanish name under
+        // it, bold date, DD MAU branding footer — and none of the
+        // internal-ops lines (no PREPPED, no prep time, no staff name, no
+        // location, no use-by band). Andrew explicitly dropped the "Made
+        // fresh for your event" footer line — branding only.
+        // Seeded here (not in Firestore) so a fresh install prints right;
+        // admin can still tune it per-kind in the Label Format editor —
+        // mergeWithDefaults() below deep-merges saved kind entries OVER
+        // this seed, so edits win field-by-field.
+        catering: {
+            layout: 'nameFirst',
+            titleScale: 4,
+            titleBold: true,
+            showTitleTranslation: true,
+            title2Scale: 2,
+            dateBold: true,
+            showUseByBand: false,
+            showPreppedLabel: false,
+            showTime: false,
+            showByName: false,
+            showLocation: false,
+            showIngredients: false,
+            showNotes: false,
+            showUseBy: false,
+            showAllergens: true,
+            footerText: 'DD MAU · DDMAUSTL.COM',
+        },
+    },
 });
+
+// Merge a saved label-format doc over the defaults. kindFormats needs a
+// per-kind DEEP merge: a plain `{...DEFAULT, ...saved}` replaced the whole
+// kindFormats object the moment an admin saved ANY per-kind tweak, silently
+// wiping seeded kind defaults (like `catering` above) for every other kind.
+// Per-kind, saved fields win over seeded fields.
+export function mergeWithDefaults(saved) {
+    const data = saved && typeof saved === 'object' ? saved : {};
+    const merged = { ...DEFAULT_LABEL_FORMAT, ...data };
+    const savedKinds = data.kindFormats && typeof data.kindFormats === 'object' ? data.kindFormats : {};
+    const kinds = { ...DEFAULT_LABEL_FORMAT.kindFormats };
+    for (const [k, v] of Object.entries(savedKinds)) {
+        if (!v || typeof v !== 'object') continue;
+        kinds[k] = { ...(kinds[k] || {}), ...v };
+    }
+    merged.kindFormats = kinds;
+    return merged;
+}
 
 // Sanitize a kindFormats map — only known kinds/fields, clamped.
 export function cleanKindFormats(raw) {
@@ -162,6 +209,17 @@ export function cleanKindFormats(raw) {
         }
         // Per-kind giant use-by band control (weekday / discard-time line).
         if (v.showUseByBand === false) entry.showUseByBand = false;
+        // 2026-08-11 (catering, customer-facing kind) — per-kind visibility
+        // toggles + footer text. resolveLabelFormatForKind shallow-merges the
+        // kind entry over the WHOLE format, so these override the globals for
+        // that kind only. Booleans both ways (a per-kind ON must be able to
+        // override a global OFF and vice versa).
+        for (const sk of ['showPreppedLabel', 'showTime', 'showByName',
+            'showLocation', 'showAllergens', 'showIngredients', 'showNotes',
+            'showFooter', 'showUseBy', 'showTitle']) {
+            if (typeof v[sk] === 'boolean') entry[sk] = v[sk];
+        }
+        if (typeof v.footerText === 'string') entry.footerText = v.footerText.slice(0, 60);
         // 2026-07-27 "every text editable" — per-kind bold + size for the
         // remaining blocks. Booleans (not only-true) so a per-kind OFF can
         // override a global ON, same as titleBold above.
@@ -213,7 +271,7 @@ export function subscribeLabelFormat(cb, printer = 'epson') {
         return onSnapshot(doc(db, DOC_PATH), (snap) => {
             delivered = true;
             const data = snap.exists() ? (snap.data() || {}) : {};
-            cb({ ...DEFAULT_LABEL_FORMAT, ...data }, null, { following: false });
+            cb(mergeWithDefaults(data), null, { following: false });
         }, (err) => {
             console.warn('label_format subscription failed:', err);
             failOnce(err);
@@ -233,7 +291,7 @@ export function subscribeLabelFormat(cb, printer = 'epson') {
         // layout" — the exact bug the seededRef fix was written to kill.
         if (!bro && !epsSeen) return;
         delivered = true;
-        cb({ ...DEFAULT_LABEL_FORMAT, ...(bro || eps || {}) }, null, { following: !bro });
+        cb(mergeWithDefaults(bro || eps || {}), null, { following: !bro });
     };
     const unsubBrother = onSnapshot(doc(db, DOC_PATH_BROTHER), (snap) => {
         bro = snap.exists() ? (snap.data() || {}) : null;
@@ -296,12 +354,12 @@ export async function getLabelFormat(printer = 'epson') {
     try {
         if (isBrother(printer)) {
             const bro = await getDoc(doc(db, DOC_PATH_BROTHER));
-            if (bro.exists()) return { ...DEFAULT_LABEL_FORMAT, ...(bro.data() || {}) };
+            if (bro.exists()) return mergeWithDefaults(bro.data() || {});
             // No Brother doc yet ⇒ follow the Epson one (see the header note).
         }
         const snap = await getDoc(doc(db, DOC_PATH));
         if (!snap.exists()) return { ...DEFAULT_LABEL_FORMAT };
-        return { ...DEFAULT_LABEL_FORMAT, ...(snap.data() || {}) };
+        return mergeWithDefaults(snap.data() || {});
     } catch (e) {
         console.warn('label_format read failed:', e);
         return { ...DEFAULT_LABEL_FORMAT };

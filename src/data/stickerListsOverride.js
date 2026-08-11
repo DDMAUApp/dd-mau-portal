@@ -153,6 +153,59 @@ export const STICKER_SECTIONS = Object.freeze([
         ],
     },
     {
+        // 2026-08-11 (Andrew): CATERING — customer-facing stickers for
+        // catering orders (sauce cups, app trays, protein trays, tray
+        // items, bases). Built from the live catering menu
+        // (src/data/catering.js). Prints with the customer-facing
+        // 'catering' label format (big bold name + date + DD MAU footer —
+        // see kindFormats.catering in labelFormat.js). Andrew's edits at
+        // review: proteins WITHOUT the "Lemongrass" prefix (matches the
+        // catering menu naming), Vietnamese Egg Rolls labeled (Pork).
+        // Descriptions deliberately empty — nothing internal should ride
+        // onto a customer label.
+        key: 'catering',
+        kind: 'catering',
+        titleEn: '🎉 Catering',
+        titleEs: '🎉 Catering',
+        defaults: [
+            // Sauce cups
+            { nameEn: 'Vietnamese Vinaigrette', nameEs: 'Vinagreta Vietnamita' },
+            { nameEn: 'Peanut Sauce',           nameEs: 'Salsa de Cacahuate' },
+            { nameEn: 'Hoisin',                 nameEs: 'Hoisin' },
+            { nameEn: 'Sweet Chili',            nameEs: 'Chile Dulce' },
+            { nameEn: 'DD Sauce',               nameEs: 'Salsa DD' },
+            { nameEn: 'Spicy DD',               nameEs: 'DD Picante' },
+            // Apps & finger food
+            { nameEn: 'Crab Rangoons',               nameEs: 'Crab Rangoons' },
+            { nameEn: 'Vietnamese Egg Rolls (Pork)', nameEs: 'Rollos Vietnamitas (Cerdo)' },
+            { nameEn: 'Vegetarian Egg Rolls',        nameEs: 'Rollos Vegetarianos' },
+            { nameEn: 'Spring Rolls',                nameEs: 'Rollos de Primavera' },
+            { nameEn: 'Bao Sliders',                 nameEs: 'Mini Baos' },
+            { nameEn: 'Bánh Mì',                     nameEs: 'Bánh Mì' },
+            // Protein trays
+            { nameEn: 'Chicken',    nameEs: 'Pollo' },
+            { nameEn: 'Pork',       nameEs: 'Puerco' },
+            { nameEn: 'Steak',      nameEs: 'Res' },
+            { nameEn: 'Shrimp',     nameEs: 'Camarón' },
+            { nameEn: 'Tofu',       nameEs: 'Tofu' },
+            { nameEn: 'Veggie',     nameEs: 'Vegetal' },
+            { nameEn: 'Vegan Beef', nameEs: 'Res Vegana' },
+            // Trays & items
+            { nameEn: 'Fried Rice — Plain',   nameEs: 'Arroz Frito — Solo' },
+            { nameEn: 'Fried Rice — Chicken', nameEs: 'Arroz Frito — Pollo' },
+            { nameEn: 'Fried Rice — Pork',    nameEs: 'Arroz Frito — Puerco' },
+            { nameEn: 'Fried Rice — Steak',   nameEs: 'Arroz Frito — Res' },
+            { nameEn: 'Fried Rice — Shrimp',  nameEs: 'Arroz Frito — Camarón' },
+            { nameEn: 'Fried Rice — Tofu',    nameEs: 'Arroz Frito — Tofu' },
+            { nameEn: 'Mini Bowls',           nameEs: 'Mini Tazones' },
+            { nameEn: 'DD Mau Sampler',       nameEs: 'Muestra DD Mau' },
+            // Bases
+            { nameEn: 'Vermicelli Noodles', nameEs: 'Fideos Vermicelli' },
+            { nameEn: 'Jasmine Rice',       nameEs: 'Arroz Jazmín' },
+            { nameEn: 'Fresh Salad',        nameEs: 'Ensalada Fresca' },
+        ],
+    },
+    {
         // Catch-all category — Andrew 2026-06-25: "always have an add rows".
         // Starts empty; the editor always shows a "+ Add row" at the section
         // bottom (even when empty), so staff/admin can add any one-off sticker
@@ -193,7 +246,7 @@ export function getStampedDefaults(sectionKey) {
 // Proteins list can never disappear; only CUSTOM sections are deletable.
 const VALID_SECTION_KINDS = [
     'base', 'topping', 'protein', 'sauce', 'broth', 'side', 'garnish',
-    'note', 'drink', 'other', 'chemical', 'status',
+    'note', 'drink', 'other', 'chemical', 'status', 'catering',
 ];
 export function resolveSections(data) {
     const ov = Array.isArray(data?.sectionsOverride) ? data.sectionsOverride : null;

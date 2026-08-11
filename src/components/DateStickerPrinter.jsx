@@ -83,6 +83,7 @@ const CHIP_LABELS = {
     drinks: ['🧋 Drinks', '🧋 Bebidas'],
     chemicals: ['🧪 Chemicals', '🧪 Químicos'],
     statusLabels: ['⚠️ Use First', '⚠️ Usar Primero'],
+    catering: ['🎉 Catering', '🎉 Catering'],
     other: ['📦 Other', '📦 Otros'],
 };
 
@@ -1880,6 +1881,7 @@ const KIND_TO_CATEGORY = Object.freeze({
     other:    'Other',
     chemical: 'Other',
     status:   'Other',
+    catering: 'Other',
 });
 
 // Stable tone lookup for the search-results grid (identity-stable so the
