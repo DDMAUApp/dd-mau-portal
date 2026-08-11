@@ -26,14 +26,22 @@
 
 name: DD Mau debug agent (24/7)
 
+# 2026-08-11 — Andrew: "turn off the auto run for the debug agent. I will
+# ask it to run in the future if I need it to." Both AUTOMATIC triggers are
+# gone: the daily cron sweep and the critical-error instant wake. What
+# remains is strictly ask-to-run:
+#   • chat-command  — Andrew types a command in the 🐛 Debug Agent chat
+#                     (wakeDebugAgent CF fires the dispatch within seconds)
+#   • workflow_dispatch — the manual "Run workflow" button on GitHub
+# To restore auto-runs later, re-add under `on:`:
+#   schedule:
+#     - cron: '0 14 * * *'
+# and `critical-error` to the repository_dispatch types list.
 on:
-  schedule:
-    - cron: '0 14 * * *'     # once daily ~9:00 AM Central (14:00 UTC; 8 AM in winter)
   workflow_dispatch: {}        # manual "Run workflow" button
   repository_dispatch:         # INSTANT wake from a Cloud Function (functions/index.js
-    types:                     # wakeDebugAgent): chat command or critical error → runs in seconds,
-      - chat-command           # instead of waiting on the unreliable cron above.
-      - critical-error
+    types:                     # wakeDebugAgent) when Andrew commands it in chat.
+      - chat-command
 
 permissions:
   contents: write

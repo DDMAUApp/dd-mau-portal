@@ -64,7 +64,12 @@ messaging.onBackgroundMessage((payload) => {
 self.addEventListener("notificationclick", (event) => {
     event.notification.close();
     const data = event.notification.data || {};
-    const deepLink = data.deepLink || null;
+    let deepLink = data.deepLink || null;
+    // 2026-08-11 (chat forensics C4) — conversation-level routing: compose
+    // the chat id into the tab string ('chat:abc123'). App.jsx splits it
+    // (parseChatDeepLink) and ChatCenter opens the exact conversation.
+    // Payloads without chatId behave exactly as before.
+    if (deepLink === "chat" && data.chatId) deepLink = "chat:" + data.chatId;
     const link = data.link || "/";
     event.waitUntil(
         clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {

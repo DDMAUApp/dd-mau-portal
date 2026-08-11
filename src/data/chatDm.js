@@ -16,10 +16,63 @@
 //      bell drawer + FCM deep-link behave identically).
 import { db } from '../firebase';
 import {
-    doc, getDoc, setDoc, addDoc, updateDoc, collection, serverTimestamp, deleteField,
+    doc, collection, serverTimestamp, deleteField,
+    getDoc as _fsGetDoc,
+    setDoc as _fsSetDoc,
+    addDoc as _fsAddDoc,
+    getDocs as _fsGetDocs,
+    query, where, limit,
 } from 'firebase/firestore';
+// 2026-08-11 (chat forensics C1) — watchdog shadows, same pattern as
+// ChatThread/ChatCenter. See firestoreRevive.js.
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+
+// ── DM identity resolver (2026-08-11, chat forensics C6) ─────────────
+// dmDocId() embeds the two names VERBATIM in the doc id (trim only — no
+// case folding, no whitespace collapsing, despite what its old comment
+// claimed). That means a renamed staffer — or name data that drifts by
+// a space/case ("Fui jun Mok" → "Fuijun Mok") — computes a DIFFERENT id
+// for the same pair, forking the conversation into two threads (the old
+// one still lists because renameStaff rewrites members[], but "New chat
+// → same person" minted a fresh doc). Rewriting historical doc ids is
+// not possible, so the fix is at LOOKUP time: before trusting the
+// computed id, check whether a live 2-person DM with this exact pair
+// already exists under ANY id and reuse it. Bare array-contains query —
+// no composite index needed; a person's chats are capped (~100) so the
+// client-side filter is cheap.
+//
+// Returns the existing chat id, or null when the pair has no live DM
+// (caller falls back to dmDocId + create). Never throws.
+export async function findLiveDmId(myName, otherName) {
+    try {
+        if (!myName || !otherName || myName === otherName) return null;
+        const snap = await getDocs(query(
+            collection(db, 'chats'),
+            where('members', 'array-contains', myName),
+            limit(100),
+        ));
+        let best = null;
+        let bestMs = -1;
+        snap.forEach(d => {
+            const c = d.data() || {};
+            if (c.type !== 'dm' || c.deletedAt) return;
+            const m = Array.isArray(c.members) ? c.members : [];
+            if (m.length !== 2 || !m.includes(otherName)) return;
+            const ts = c.lastActivityAt || c.createdAt;
+            const ms = ts?.toMillis ? ts.toMillis() : (ts?.seconds ? ts.seconds * 1000 : 0);
+            if (ms > bestMs) { bestMs = ms; best = d.id; }
+        });
+        return best;
+    } catch (e) {
+        console.warn('findLiveDmId failed (falling back to deterministic id):', e);
+        return null;
+    }
+}
 import { dmDocId } from './chat';
-import { notifyStaff } from './notify';
 
 export async function sendDirectMessage({ fromName, fromId = null, toName, text }) {
     const body = String(text || '').trim();
@@ -27,7 +80,9 @@ export async function sendDirectMessage({ fromName, fromId = null, toName, text 
         return { ok: false, error: 'bad_args' };
     }
     try {
-        const id = dmDocId(fromName, toName);
+        // C6 — reuse a live DM for this pair under ANY id (rename-safe)
+        // before minting the deterministic one.
+        const id = (await findLiveDmId(fromName, toName)) || dmDocId(fromName, toName);
         const ref = doc(db, 'chats', id);
         const snap = await getDoc(ref);
         // Resurrect a soft-deleted DM (2026-07-26 platform audit H4): the
@@ -57,27 +112,14 @@ export async function sendDirectMessage({ fromName, fromId = null, toName, text 
             reactions: {},
             mentions: [],
             createdAt: serverTimestamp(),
+            // 2026-08-11 (chat forensics C3) — the onChatMessageCreated Cloud
+            // Function now owns the preview update + recipient notification
+            // for stamped messages (survives the sender's app closing right
+            // after send). The old inline preview/notify writes are gone —
+            // they were this file's copy of the exact fan-out that C3
+            // centralizes. DEPLOY COUPLING: CF ships before this client.
+            serverFanout: true,
         });
-        // Preview + activity bump — best-effort, same as the interactive path.
-        try {
-            await updateDoc(ref, {
-                lastMessage: { text: body.slice(0, 200), sender: fromName, ts: serverTimestamp(), type: 'text' },
-                lastActivityAt: serverTimestamp(),
-                [`lastReadByName.${fromName}`]: serverTimestamp(),
-            });
-        } catch (e) { console.warn('sendDirectMessage preview update failed:', e); }
-        // Push the recipient. DM notification shape: title = sender name,
-        // body = the message — matches ChatThread's fan-out.
-        notifyStaff({
-            forStaff: toName,
-            type: 'chat_message',
-            title: fromName,
-            body: body.slice(0, 200),
-            deepLink: 'chat',
-            link: '/chat',
-            tag: `chat:${id}`,
-            createdBy: fromName,
-        }).catch(() => {});
         return { ok: true, chatId: id };
     } catch (e) {
         console.warn('sendDirectMessage failed:', e);

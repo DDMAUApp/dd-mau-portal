@@ -51,8 +51,15 @@ export function channelDocId(key) {
 
 // Stable DM ID derived from the two participant names — sorted so the
 // same pair always resolves to the same chat regardless of who started.
-// We normalize whitespace + lowercase the key so case-mismatched name
-// data doesn't fork a DM into two threads.
+//
+// ⚠ HONESTY FIX (2026-08-11, chat forensics C6): an earlier comment here
+// claimed whitespace + case normalization — the code has only ever
+// TRIMMED. The id embeds the names verbatim, so a rename (or a name that
+// drifts by a space/case) computes a DIFFERENT id for the same pair.
+// Do NOT add normalization now: it would re-key every EXISTING DM and
+// fork all of them at once. The fork problem is solved at lookup time
+// instead — see findLiveDmId() in chatDm.js, which every DM-open/create
+// path consults before trusting this computed id.
 export function dmDocId(nameA, nameB) {
     const a = String(nameA || '').trim();
     const b = String(nameB || '').trim();
@@ -260,6 +267,7 @@ export function previewOf(msg, language = 'en') {
     if (msg.type === 'image') return who + tx('📷 Photo', '📷 Foto');
     if (msg.type === 'video') return who + tx('🎬 Video', '🎬 Video');
     if (msg.type === 'audio') return who + tx('🎤 Voice message', '🎤 Mensaje de voz');
+    if (msg.type === 'file') return who + `📎 ${msg.filename || tx('File', 'Archivo')}`;
     if (msg.type === 'poll') return who + '📊 ' + (msg.poll?.question || tx('Poll', 'Encuesta'));
     if (msg.type === 'eighty_six_alert') {
         const d = msg.eightySixData || {};
@@ -470,6 +478,7 @@ export const MESSAGE_TYPES = {
     image:              { renderer: 'bubble',       priority: 'normal'   },
     video:              { renderer: 'bubble',       priority: 'normal'   },
     audio:              { renderer: 'bubble',       priority: 'normal'   },
+    file:               { renderer: 'bubble',       priority: 'normal'   },  // C8 2026-08-11 — document attachment (filename + size on doc)
     announcement:       { renderer: 'announcement', priority: 'high'     },
     coverage_request:   { renderer: 'coverage',     priority: 'high'     },
     eighty_six_alert:   { renderer: 'eighty_six',   priority: 'emergency'},
@@ -567,7 +576,8 @@ export const EDIT_WINDOW_MS = 15 * 60 * 1000;
 export function isMessageEditable(message) {
     if (!message || message.deleted) return false;
     if (message.type === 'text') return true;
-    if ((message.type === 'image' || message.type === 'video' || message.type === 'audio')
+    if ((message.type === 'image' || message.type === 'video' || message.type === 'audio'
+        || message.type === 'file')
         && typeof message.text === 'string' && message.text.trim().length > 0) {
         return true;
     }

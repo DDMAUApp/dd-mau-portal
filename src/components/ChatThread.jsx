@@ -32,14 +32,40 @@ import { Component, memo, useState, useEffect, useLayoutEffect, useRef, useMemo,
 // the attach menu items + a Sparkles for the AI fix-grammar pill.
 import {
     Mic, Camera, Video, BarChart3, Ban, Smile, Sparkles, Calendar,
+    Paperclip, FileText,
 } from 'lucide-react';
+// 2026-08-11 (C8 file attachments) — a tap on a file bubble opens the
+// document via openExternalUrl (native → system browser sheet; web →
+// window.open fallback, both handled inside the bridge).
+import { openExternalUrl } from '../capacitor-bridge';
 import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
-    addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, where,
-    arrayUnion, arrayRemove, getDoc, runTransaction,
+    serverTimestamp, where,
+    arrayUnion, arrayRemove, runTransaction,
     Timestamp, FieldPath,
+    addDoc as _fsAddDoc,
+    setDoc as _fsSetDoc,
+    updateDoc as _fsUpdateDoc,
+    deleteDoc as _fsDeleteDoc,
+    getDoc as _fsGetDoc,
 } from 'firebase/firestore';
+// 2026-08-11 (chat forensics C1) — shadow-the-primitives watchdog coverage.
+// Chat was the last major surface WITHOUT the wedged-transport watchdog
+// (see firestoreRevive.js): a suspended-then-resumed WebView could leave
+// every send/mark-read/reaction hanging forever with no revive, no
+// SyncPill, and no error (Firestore queues, it doesn't reject). Same
+// pattern as Schedule.jsx / AdminPanel.jsx: module-level shadows so every
+// existing call site gets watchdog coverage without touching each one.
+// Writes → watchdogWrite (revive + pill + escalation), reads →
+// watchdogRead (revive on hang only — never shows "Saving…", never
+// escalates to reload).
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 import { ref as sref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
 // Pure formatters lifted out 2026-05-23 — see chatThreadHelpers.js
@@ -92,6 +118,33 @@ const ChatEightySixModal = lazy(() => import('./ChatEightySixModal').then(m => (
 const TYPING_TTL_MS = 5000;          // typing heartbeat valid for 5s
 const MAX_IMAGE_DIM = 1600;          // resize images larger than this
 const MAX_VIDEO_BYTES = 250 * 1024 * 1024;  // 250MB cap on video uploads (matches storage.rules chats/ cap)
+// 2026-08-11 (C8) — document attachments. 25MB covers any real menu PDF /
+// spreadsheet / invoice scan; the point of the cap is that "file" is for
+// DOCUMENTS — videos have their own path with the big cap. The ext→MIME
+// map is the single source of truth for what's attachable: we normalize
+// the upload's contentType from the EXTENSION (browsers often report
+// octet-stream for csv/docx), and storage.rules allowlists exactly these
+// MIME types — so an unmapped extension is rejected here, client-side,
+// with a clear toast instead of a cryptic storage error.
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const FILE_EXT_MIME = {
+    pdf:  'application/pdf',
+    doc:  'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls:  'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt:  'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    csv:  'text/csv',
+    txt:  'text/plain',
+};
+// Human-readable size for the staged pill + file bubbles ("2.4 MB").
+function formatBytes(n) {
+    const b = Number(n) || 0;
+    if (b >= 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+    if (b >= 1024) return `${Math.round(b / 1024)} KB`;
+    return `${b} B`;
+}
 // Voice messages auto-stop at 5 minutes. The MediaRecorder will happily
 // run forever if the user forgets to hit stop; a runaway hold-to-record
 // session can dump hundreds of MB into Storage and overrun the
@@ -289,7 +342,19 @@ function ChatThreadInner({
             if (!alive) return;
             clearTimeout(timeoutId);
             const list = [];
-            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            // 2026-08-11 (chat forensics C2) — stamp `_pending` from snapshot
+            // metadata. hasPendingWrites is true while the write is queued
+            // locally (offline / slow Wi-Fi) and flips false when the server
+            // acks — the ack resolves the serverTimestamp (a data change), so
+            // the listener re-fires and the flag clears without needing
+            // includeMetadataChanges. The bubble footer renders "Sending…"
+            // instead of a timestamp while pending, so the user gets honest
+            // per-message state instead of a locked composer.
+            snap.forEach(d => list.push({
+                id: d.id,
+                ...d.data(),
+                ...(d.metadata.hasPendingWrites ? { _pending: true } : {}),
+            }));
             // Snapshot is newest-first because of the desc order; reverse
             // so render order stays oldest-first / newest-at-bottom.
             list.reverse();
@@ -298,7 +363,14 @@ function ChatThreadInner({
             // messages and then the fresh 50-limit snapshot truncated it a
             // beat later — a visible yank if the user scrolled up quickly
             // (2026-07-22 audit N6).
-            _cacheMessages(chat.id, list.slice(-50));
+            // Strip the ephemeral _pending flag from the cache — a re-open
+            // paints from here before the live snapshot lands, and a stale
+            // "Sending…" on an already-delivered message would lie.
+            _cacheMessages(chat.id, list.slice(-50).map(m => {
+                if (!m._pending) return m;
+                const { _pending, ...rest } = m;
+                return rest;
+            }));
             setMessages(list);
             setLoading(false);
             setLoadError(null);
@@ -843,7 +915,13 @@ function ChatThreadInner({
         const now = Date.now();
         if (now - lastTypingRef.current < 2000) return; // throttle to 2s
         lastTypingRef.current = now;
-        updateDoc(doc(db, 'chats', chat.id), {
+        // RAW primitive on purpose (C1 exception): the typing heartbeat fires
+        // every 2s while composing, and routing it through watchdogWrite would
+        // flash the "Saving…" pill on slow-but-healthy Wi-Fi for a write
+        // nobody cares about. Ephemeral, best-effort, self-expiring (5s TTL)
+        // — a wedged transport still gets revived by the real send/read
+        // traffic, which IS watchdogged.
+        _fsUpdateDoc(doc(db, 'chats', chat.id), {
             [`typingByName.${staffName}`]: serverTimestamp(),
         }).catch(() => {});
     }
@@ -939,13 +1017,29 @@ function ChatThreadInner({
         if (!body) return;
         if (sendingRef.current) return;
         sendingRef.current = true;
-        setSending(true);
         // Capture the payload before we mutate composer state — if
         // the send fails we want to recover the EXACT body the
         // user typed, even if they've started typing the next one.
         const capturedReply = replyTarget;
         // 2026-05-24 — chat always force-delivers. See top-of-file comment.
         const capturedNotify = true;
+        // 2026-08-11 (chat forensics C2) — NON-BLOCKING text send. The old
+        // flow awaited the server ack (`await sendMessage`) with the whole
+        // composer disabled — on slow/offline restaurant Wi-Fi the ack can
+        // take seconds-to-minutes (Firestore queues, it doesn't reject), so
+        // the composer sat locked on "sending" while the message was already
+        // visible in the thread. Now: clear the composer immediately (the
+        // bubble renders instantly via latency compensation, footer shows
+        // "Sending…" until the ack — see the _pending stamp above) and let
+        // the user keep typing. The failed-send queue still catches real
+        // REJECTIONS (permission/invalid) below.
+        //
+        // sendingRef guards the same-tick double-fire (Enter + click before
+        // React flushes the cleared draft); it's released on the next tick —
+        // by then the draft state is '' so a second Enter is a no-op.
+        setDraft('');
+        setReplyTarget(null);
+        setTimeout(() => { sendingRef.current = false; }, 0);
         try {
             await sendMessage({
                 chat, staffName, viewer, staffList,
@@ -954,9 +1048,6 @@ function ChatThreadInner({
                 replyTo: capturedReply,
                 forceDeliver: capturedNotify,
             });
-            setDraft('');
-            setReplyTarget(null);
-            // notifyAnyway removed 2026-05-24 — chat always pushes.
         } catch (e) {
             console.warn('send text failed:', e);
             setFailedSends(prev => {
@@ -973,14 +1064,6 @@ function ChatThreadInner({
                 return next.slice(-5);
             });
             toast(tx('Send failed — saved for retry', 'Error al enviar — guardado'), { kind: 'error' });
-            // 2026-07-22 (audit N8): clear the composer once the body is safely
-            // in the retry queue. Leaving it in the draft meant tapping Retry
-            // AND hitting send on the composer copy posted the message twice.
-            setDraft((cur) => (cur === body ? '' : cur));
-            setReplyTarget(null);
-        } finally {
-            sendingRef.current = false;
-            setSending(false);
         }
     }
 
@@ -993,6 +1076,13 @@ function ChatThreadInner({
         if (!item) return;
         if (sendingRef.current) return;
         sendingRef.current = true;
+        // C2 — remove from the queue OPTIMISTICALLY before re-sending. The
+        // retried message renders as a pending bubble immediately; if we left
+        // the "Failed · Retry" banner up while a queued (offline) retry never
+        // resolved, a second tap would post the message twice. On a real
+        // rejection the catch re-adds it.
+        setFailedSends(prev => prev.filter(f => f.id !== id));
+        setTimeout(() => { sendingRef.current = false; }, 0);
         try {
             await sendMessage({
                 chat, staffName, viewer, staffList,
@@ -1001,12 +1091,10 @@ function ChatThreadInner({
                 replyTo: item.replyTo,
                 forceDeliver: item.forceDeliver,
             });
-            setFailedSends(prev => prev.filter(f => f.id !== id));
         } catch (e) {
             console.warn('retry send failed:', e);
+            setFailedSends(prev => [...prev.filter(f => f.id !== id), item].slice(-5));
             toast(tx('Still failing — check your connection', 'Aún falla — revisa tu conexión'), { kind: 'error' });
-        } finally {
-            sendingRef.current = false;
         }
     }
 
@@ -1040,6 +1128,35 @@ function ChatThreadInner({
         if (!file) return;
         if (kind === 'video' && file.size > MAX_VIDEO_BYTES) {
             toast(tx('Video too large (250MB max).', 'Video muy grande (250MB máx).'), { kind: 'warn' });
+            return;
+        }
+        // 2026-08-11 (C8) — document attachments. No resize/probe; validate
+        // by EXTENSION against the FILE_EXT_MIME allowlist (browsers report
+        // unreliable MIME types for docs) and normalize the contentType from
+        // it so storage.rules' allowlist always matches. Stage and return —
+        // the shared sendStagedAttachment path does the upload + send.
+        if (kind === 'file') {
+            const ext = (file.name?.split('.').pop() || '').toLowerCase();
+            const mime = FILE_EXT_MIME[ext];
+            if (!mime) {
+                toast(tx(
+                    'That file type isn’t supported. Use PDF, Word, Excel, PowerPoint, CSV, or TXT.',
+                    'Tipo de archivo no soportado. Usa PDF, Word, Excel, PowerPoint, CSV o TXT.',
+                ), { kind: 'warn' });
+                return;
+            }
+            if (file.size > MAX_FILE_BYTES) {
+                toast(tx('File too large (25MB max).', 'Archivo muy grande (25MB máx).'), { kind: 'warn' });
+                return;
+            }
+            setPendingAttachment({
+                kind: 'file',
+                uploadFile: file,
+                previewUrl: null,    // no visual preview for documents
+                mimeType: mime,      // normalized from extension, not the browser's guess
+                filename: file.name || `file.${ext}`,
+                size: file.size,
+            });
             return;
         }
         // Briefly disable the composer while we resize/probe — these
@@ -1149,6 +1266,9 @@ function ChatThreadInner({
                 width: att.width,
                 height: att.height,
                 duration: att.duration,
+                // C8 — document bubbles render name + size and need them on
+                // the message doc (the Storage URL is opaque).
+                ...(att.kind === 'file' ? { filename: att.filename, size: att.size } : {}),
                 replyTo: replyTarget,
                 forceDeliver: true,
             });
@@ -1859,7 +1979,7 @@ function ChatThreadInner({
             //    correct under contention.
             try {
                 const ref = doc(db, 'ops', `86_${location}`);
-                await runTransaction(db, async (txn) => {
+                await watchdogWrite(runTransaction(db, async (txn) => {
                     const snap = await txn.get(ref);
                     const cur = snap.exists() ? (snap.data().items || []) : [];
                     // 2026-05-24 audit fix: dedup was case-folded + trimmed
@@ -1894,7 +2014,7 @@ function ChatThreadInner({
                         },
                     ];
                     txn.set(ref, { items: nextItems, updatedAt: serverTimestamp() }, { merge: true });
-                });
+                }));
             } catch (e) {
                 // Non-fatal — the chat message + push already went
                 // out. Surface a warn so the dashboard sync issue is
@@ -1982,7 +2102,7 @@ function ChatThreadInner({
             //    between the two reads.
             try {
                 const ref = doc(db, 'ops', `86_${location}`);
-                await runTransaction(db, async (txn) => {
+                await watchdogWrite(runTransaction(db, async (txn) => {
                     const snap = await txn.get(ref);
                     if (!snap.exists()) return;
                     const cur = snap.data().items || [];
@@ -1996,7 +2116,7 @@ function ChatThreadInner({
                     const next = cur.filter(it => slug(it?.name) !== norm);
                     if (next.length === cur.length) return; // nothing to remove
                     txn.set(ref, { items: next, updatedAt: serverTimestamp() }, { merge: true });
-                });
+                }));
             } catch (e) {
                 console.warn('86 list resolve sync failed:', e);
             }
@@ -2593,6 +2713,7 @@ function ChatThreadInner({
                 onSendText={handleSend}
                 onPickImage={(e) => handleMediaPick(e, 'image')}
                 onPickVideo={(e) => handleMediaPick(e, 'video')}
+                onPickFile={(e) => handleMediaPick(e, 'file')}
                 onStartRecording={startRecording}
                 onStopRecording={() => stopRecording(false)}
                 onCancelRecording={() => stopRecording(true)}
@@ -3064,6 +3185,31 @@ function MessageBubbleInner({
                         {message.type === 'audio' && (
                             <AudioPlayer src={message.mediaUrl} duration={message.duration} isMine={isMine} />
                         )}
+                        {message.type === 'file' && (
+                            /* C8 — document card. Tap opens the file via the
+                               capacitor bridge (native → system browser sheet,
+                               web → new tab). Name + size on the card since
+                               the Storage URL is opaque. */
+                            <button
+                                type="button"
+                                onClick={() => { if (message.mediaUrl) openExternalUrl(message.mediaUrl); }}
+                                className={`flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left w-full max-w-[280px] transition active:scale-[0.98] ${isMine
+                                    ? 'bg-white/15 hover:bg-white/25'
+                                    : 'bg-dd-bg hover:bg-dd-line/40 border border-dd-line/60'}`}
+                            >
+                                <span className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${isMine ? 'bg-white/20 text-white' : 'bg-dd-green/15 text-dd-green-700'}`}>
+                                    <FileText size={20} strokeWidth={2.25} aria-hidden="true" />
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                    <span className={`block text-[13px] font-bold truncate ${isMine ? 'text-white' : 'text-dd-text'}`}>
+                                        {message.filename || tx('File', 'Archivo')}
+                                    </span>
+                                    <span className={`block text-[11px] ${isMine ? 'text-white/70' : 'text-dd-text-2'}`}>
+                                        {message.size != null ? formatBytes(message.size) : tx('Tap to open', 'Toca para abrir')}
+                                    </span>
+                                </span>
+                            </button>
+                        )}
                         {(message.text || message.type === 'text') && (
                             editing ? (
                                 <InlineEditor
@@ -3087,7 +3233,12 @@ function MessageBubbleInner({
                             )
                         )}
                         <div className={`text-[10px] mt-1 text-right ${isMine ? 'text-white/70' : 'text-dd-text-2'}`}>
-                            {time}
+                            {/* C2 — while the write is queued (offline / slow
+                                Wi-Fi) show an honest per-message state instead
+                                of a blank timestamp. Clears on server ack. */}
+                            {message._pending
+                                ? <span className="opacity-80">🕓 {tx('Sending…', 'Enviando…')}</span>
+                                : time}
                             {message.edited && (
                                 <span title={message.editedAt?.toMillis
                                     ? new Date(message.editedAt.toMillis()).toLocaleString()
@@ -3212,6 +3363,8 @@ function msgFieldsEqual(a, b) {
     if (a === b) return true;
     if (!a || !b) return false;
     if (a.id !== b.id) return false;
+    // C2 — the Sending→sent footer flip must re-render the bubble.
+    if (!!a._pending !== !!b._pending) return false;
     if (a.text !== b.text) return false;
     if (a.edited !== b.edited) return false;
     if (a.deleted !== b.deleted) return false;
@@ -3442,7 +3595,7 @@ function AudioPlayer({ src, duration, isMine }) {
 function Composer({
     isEs, draft, setDraft, sending, recording,
     replyTarget, onClearReply,
-    onSendText, onPickImage, onPickVideo,
+    onSendText, onPickImage, onPickVideo, onPickFile,
     onStartRecording, onStopRecording, onCancelRecording,
     onOpenPoll, onOpenSchedule, onOpen86,
     recordStartMs,
@@ -3457,6 +3610,7 @@ function Composer({
 }) {
     const imageInputRef = useRef(null);
     const videoInputRef = useRef(null);
+    const fileInputRef = useRef(null);   // C8 — document attachments
     // Textarea ref — needed so the emoji picker can insert at the
     // user's current cursor position (not blindly at the end). We
     // keep the cursor in a state slot too so re-renders don't lose
@@ -3775,12 +3929,21 @@ function Composer({
                             <Mic size={26} strokeWidth={2.25} aria-hidden="true" />
                         </div>
                     )}
+                    {pendingAttachment.kind === 'file' && (
+                        <div className="w-14 h-14 rounded-md bg-dd-green/15 text-dd-green-700 flex items-center justify-center shrink-0">
+                            <FileText size={26} strokeWidth={2.25} aria-hidden="true" />
+                        </div>
+                    )}
                     <div className="flex-1 min-w-0">
                         <div className="text-[10.5px] font-black uppercase tracking-wider text-dd-green-700">
                             {pendingAttachment.kind === 'image'
                                 ? (isEs ? '📎 Foto lista' : '📎 Photo ready')
                                 : pendingAttachment.kind === 'video'
                                 ? (isEs ? '📎 Video listo' : '📎 Video ready')
+                                : pendingAttachment.kind === 'file'
+                                ? (isEs
+                                    ? `📎 Archivo listo · ${formatBytes(pendingAttachment.size)}`
+                                    : `📎 File ready · ${formatBytes(pendingAttachment.size)}`)
                                 : (isEs ? '📎 Memo de voz listo' : '📎 Voice memo ready')}
                         </div>
                         {pendingAttachment.kind === 'audio' ? (
@@ -3851,6 +4014,16 @@ function Composer({
                 onChange={onPickVideo}
                 className="hidden"
             />
+            {/* C8 — document picker. Extension allowlist mirrors
+                FILE_EXT_MIME (the validating source of truth in
+                handleMediaPick); `accept` is just the OS chooser hint. */}
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt"
+                onChange={onPickFile}
+                className="hidden"
+            />
             {/* 2026-05-27 — Andrew: rebuild + menu as a floating
                 translucent bubble popup (Zenzap / iMessage style)
                 instead of a horizontal bar that pushes the composer
@@ -3909,6 +4082,15 @@ function Composer({
                             Icon={Video}
                             label={isEs ? 'Video' : 'Video'}
                             onClick={() => { videoInputRef.current?.click(); setShowAttachMenu(false); }}
+                            disabled={sending}
+                        />
+                        {/* C8 — Andrew 2026-08-11: "can we also add a way to
+                            add a file to a message?" PDF/Word/Excel/
+                            PowerPoint/CSV/TXT, 25MB cap. */}
+                        <AttachMenuItem
+                            Icon={Paperclip}
+                            label={isEs ? 'Archivo' : 'File'}
+                            onClick={() => { fileInputRef.current?.click(); setShowAttachMenu(false); }}
                             disabled={sending}
                         />
                         {onOpenPoll && (
@@ -4107,6 +4289,7 @@ async function sendMessage({
     chat, staffName, viewer, staffList,
     type, text = '', mediaUrl, mediaPath, mediaType,
     duration, width, height, thumbnailUrl,
+    filename, size,                       // C8 — type 'file' document metadata
     replyTo, poll, eightySixData, forceDeliver = false,
 }) {
     if (!chat?.id) return;
@@ -4151,144 +4334,29 @@ async function sendMessage({
         ...(width != null ? { width } : {}),
         ...(height != null ? { height } : {}),
         ...(thumbnailUrl ? { thumbnailUrl } : {}),
+        ...(filename ? { filename } : {}),
+        ...(size != null ? { size } : {}),
         ...replyToField,
         ...pollField,
         ...eightySixField,
         reactions: {},
         mentions,
         createdAt: serverTimestamp(),
+        // 2026-08-11 (chat forensics C3) — opt into SERVER-SIDE fan-out.
+        // The onChatMessageCreated Cloud Function now owns the chat-list
+        // preview update + the per-recipient /notifications fan-out for
+        // messages carrying this stamp. The old client-side detached
+        // fan-out (fire-and-forget after addDoc) died whenever the sender
+        // locked their phone within ~2s of sending — message delivered,
+        // pushes silently dropped. Server-side fan-out survives anything
+        // this device does after the message write lands.
+        // DEPLOY COUPLING: the CF ships before this client. Don't remove
+        // the stamp without restoring a client-side fan-out.
+        serverFanout: true,
     };
-    // 1) Append message — this is the ONLY step the send UI waits on.
+    // Append the message — the only write this device is responsible for.
+    // Preview + notifications happen server-side (see serverFanout above).
     const ref = await addDoc(collection(db, 'chats', chat.id, 'messages'), msgDoc);
-
-    // 2026-06-14 perf (chat glitch) — steps 2 (preview update) + 3 (the
-    // per-recipient notification fan-out, 30+ writes on a big channel) used
-    // to be AWAITED before sendMessage returned, so the composer stayed
-    // disabled and the typed text sat in the box until the whole fan-out
-    // settled (felt like a hung/glitchy send on a phone). They're not needed
-    // for the message to exist or appear (the snapshot renders it the moment
-    // the addDoc above lands), so run them detached/fire-and-forget. Each
-    // already swallows its own errors; only the message write (awaited above)
-    // drives the failed-send recovery. We return ref.id immediately.
-    void (async () => {
-    // 2) Denormalize chat preview + bump activity
-    const preview = type === 'image' ? '📷 Photo'
-        : type === 'video' ? '🎬 Video'
-        : type === 'audio' ? '🎤 Voice'
-        : type === 'poll' ? `📊 ${poll?.question || 'Poll'}`
-        : type === 'eighty_six_alert'
-            ? `${eightySixData?.transition === 'in' ? '✅ Back in stock' : '🚫 86'}: ${eightySixData?.itemName || 'item'}`
-            : text;
-    try {
-        await updateDoc(doc(db, 'chats', chat.id), {
-            lastMessage: {
-                text: preview.slice(0, 200),
-                sender: staffName,
-                ts: serverTimestamp(),
-                type,
-            },
-            lastActivityAt: serverTimestamp(),
-            // Clear my typing heartbeat — I just hit send.
-            [`typingByName.${staffName}`]: null,
-            // I implicitly read my own send.
-            [`lastReadByName.${staffName}`]: serverTimestamp(),
-        });
-    } catch (e) {
-        console.warn('chat-preview update failed:', e);
-    }
-
-    // 3) Fan-out notifications. We hit notifyStaff once per recipient
-    // (not the existing notifyAdmins helper — chats span the whole team).
-    //
-    // Channels can have 30+ members. Each notification is a tiny doc,
-    // and the dispatchNotification Cloud Function handles FCM delivery,
-    // so fan-out is cheap. We mark @mentioned recipients with type
-    // 'chat_mention' so the bell drawer can show a louder tone.
-    const recipients = (chat.members || []).filter(n => n && n !== staffName);
-    const chatLabel = chat.type === 'dm' ? staffName : (chat.name || 'Chat');
-    const title = chat.type === 'dm' ? staffName : `${chatLabel}`;
-    const body = chat.type === 'dm' ? preview : `${staffName}: ${preview}`;
-    // 2026-05-28 — Andrew: "when i reply to a message on the chat does
-    // the person im replying to get a notification? saying so and so
-    // replied to your message." Before this they got the generic
-    // chat_message that every member got. Now the replied-to author
-    // gets a distinct chat_reply notification with louder copy
-    // ("↩ Andrew replied to you") and includes the snippet of THEIR
-    // own message so they remember which one was replied to.
-    //
-    // Mention beats reply: if the replied-to person was ALSO @-tagged
-    // in the body, the mention wins (it's explicit intent + already
-    // loud). No double-notify.
-    //
-    // Self-reply (replying to your own message) skips the reply
-    // notification entirely — you don't need a push for talking to
-    // yourself in a thread.
-    const replyToAuthor = (replyTo?.senderName || '').trim();
-    const replySnippet = String(replyTo?.snippet || '').slice(0, 80);
-    await Promise.all(recipients.map(async (to) => {
-        const wasMentioned = mentions.includes(to);
-        const isReplyTarget = !wasMentioned
-            && replyToAuthor
-            && to === replyToAuthor
-            && replyToAuthor !== staffName;
-        const notifType = wasMentioned
-            ? 'chat_mention'
-            : isReplyTarget
-                ? 'chat_reply'
-                : 'chat_message';
-        const notifTitle = wasMentioned
-            ? `@${staffName} → ${title}`
-            : isReplyTarget
-                ? (chat.type === 'dm'
-                    ? `↩ ${staffName} replied`
-                    : `↩ ${staffName} replied in ${chatLabel}`)
-                : title;
-        // For replies, body shape: "they replied to: '{your message}'"
-        // gives the receiver immediate context for which of THEIR
-        // messages was the target — useful in long threads where
-        // they might have sent dozens of messages today.
-        const notifBody = isReplyTarget
-            ? (replySnippet
-                ? `↩ "${replySnippet}"\n${staffName}: ${preview.slice(0, 80)}`
-                : `${staffName}: ${preview.slice(0, 120)}`)
-            : body.slice(0, 140);
-        try {
-            await notifyStaff({
-                forStaff: to,
-                type: notifType,
-                title: notifTitle,
-                body: notifBody.slice(0, 200),
-                // The NotificationsDrawer routes deepLink='chat' to
-                // the chat tab. ChatCenter sorts unread chats to the
-                // top so the user lands next to their new message.
-                deepLink: 'chat',
-                link: '/chat',
-                // 2026-07-21 (chat audit, bug #5) — mentions/replies get their
-                // OWN tag so a later ordinary message can't overwrite (bury)
-                // them in the OS tray. Plain messages still coalesce under one
-                // tag (burst chatter = one notification, intended).
-                tag: notifType === 'chat_message'
-                    ? `chat:${chat.id}:${to}`
-                    : `chat:${chat.id}:${to}:${notifType}`,
-                // 2026-05-16 — Andrew: every chat message must reach
-                // every member ASAP. Flagging chat notifications as
-                // high-priority signals to the FCM dispatcher (and any
-                // future quiet-hours enforcement) that this delivery
-                // can't be silenced or batched into a digest.
-                priority: 'high',
-                // Off-shift gate override — when the sender flipped
-                // the "Notify anyway" toggle, stamp every recipient's
-                // notif so the dispatcher bypasses the off-shift gate.
-                // Mentions ALWAYS deliver regardless (server side),
-                // but force-delivering them is harmless.
-                forceDeliver: forceDeliver === true,
-                createdBy: staffName,
-            });
-        } catch (e) {
-            console.warn(`chat notify failed for ${to}:`, e);
-        }
-    }));
-    })().catch((e) => { console.warn('chat preview/notify fan-out failed:', e?.message); });
 
     return ref.id;
 }

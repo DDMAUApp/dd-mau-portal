@@ -16,6 +16,7 @@ import { showLocalNotification } from './data/localNotification';
 import { installFirestoreRevive } from './data/firestoreRevive';
 import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
+import { parseChatDeepLink, setPendingChatOpen } from './data/chatDeepLink';
 // AppToast is mounted at root in main.jsx (not here) so it renders
 // across every code path including the lock screen and the public
 // onboarding/apply routes that bypass App's main shell.
@@ -1943,7 +1944,16 @@ export default function App() {
     // required-task gate. Setting activeTab pre-login is harmless — the lock
     // screen renders regardless and the tab shows once they unlock.
     useEffect(() => {
-        const go = (tab) => {
+        const go = (rawTab) => {
+            if (!rawTab) return;
+            // 2026-08-11 (chat forensics C4) — a chat push may arrive as the
+            // composite 'chat:{chatId}'. Split it: the conversation id parks
+            // in the chatDeepLink store (ChatCenter consumes it on mount, or
+            // live via the ddmau:open-chat event), and the navigate event
+            // carries the plain 'chat' tab so the required-task gate + tab
+            // router see exactly what they always saw.
+            const { tab, chatId } = parseChatDeepLink(rawTab);
+            if (chatId) setPendingChatOpen(chatId);
             if (tab) window.dispatchEvent(new CustomEvent('ddmau:navigate', { detail: { tab: String(tab) } }));
         };
         let unsubNative = () => {};

@@ -121,10 +121,16 @@ service firebase.storage {
     // videos of 2-3 minutes routinely exceed 50 MB, and real uploads
     // were being rejected. 250 MB covers normal clips while still
     // bounding a scripted bucket-fill.
+    // 2026-08-11 (C8) — document attachments joined image/video/audio.
+    // The document MIME list mirrors FILE_EXT_MIME in ChatThread.jsx
+    // (the client normalizes contentType from the file EXTENSION, so
+    // these are exactly the strings that arrive). Documents are capped
+    // at 25MB client-side; the 250MB rule cap here stays sized for
+    // video, the largest legitimate chat upload.
     match /chats/{chatId}/{fileName} {
       allow read: if true;
       allow write: if request.resource.size < 250 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*|video/.*|audio/.*');
+                   && request.resource.contentType.matches('image/.*|video/.*|audio/.*|application/pdf|application/msword|application/vnd\\.openxmlformats-officedocument\\..*|application/vnd\\.ms-excel|application/vnd\\.ms-powerpoint|text/csv|text/plain');
       allow delete: if true;     // hard-delete cascade from chat purge
     }
 

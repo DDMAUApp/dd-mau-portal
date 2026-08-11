@@ -25,14 +25,31 @@ import { useState, useEffect, useMemo, useRef, useCallback, memo, lazy, Suspense
 import { db } from '../firebase';
 import {
     collection, doc, query, where, onSnapshot,
-    addDoc, setDoc, updateDoc, getDoc, getDocs,
     serverTimestamp, orderBy, limit, writeBatch, deleteField,
+    addDoc as _fsAddDoc,
+    setDoc as _fsSetDoc,
+    updateDoc as _fsUpdateDoc,
+    getDoc as _fsGetDoc,
+    getDocs as _fsGetDocs,
 } from 'firebase/firestore';
+// 2026-08-11 (chat forensics C1) — shadow-the-primitives watchdog coverage,
+// same pattern as ChatThread.jsx / Schedule.jsx / AdminPanel.jsx. Chat had
+// zero coverage against the wedged-transport disease. writeBatch commits
+// are wrapped per-site below (the batch object itself is inert until
+// .commit()).
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import {
     AUTO_CHANNELS, channelDocId, channelMembersFor, dmDocId,
     tierOf, canEditChat, previewOf, isChatUnread, formatChatTime,
 } from '../data/chat';
 import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
+import { findLiveDmId } from '../data/chatDm';
+import { consumePendingChatOpen } from '../data/chatDeepLink';
 import { isAdminId } from '../data/staff';
 // 2026-05-27 — breadcrumb every chat-open + chat-back so the Sentry
 // timeline panel shows what the user did before any chat-related
@@ -477,7 +494,7 @@ export default function ChatCenter({
                     });
                     count++;
                 }
-                await batch.commit();
+                await watchdogWrite(batch.commit());
                 try { localStorage.setItem(FLAG_KEY, String(Date.now())); } catch {}
             } catch (e) {
                 console.warn('one-shot autochannel purge failed:', e);
@@ -531,7 +548,7 @@ export default function ChatCenter({
                     const batch = writeBatch(db);
                     chatDocs.slice(i, i + 450).forEach(id => batch.update(doc(db, 'notifications', id), { read: true }));
                     // eslint-disable-next-line no-await-in-loop
-                    await batch.commit();
+                    await watchdogWrite(batch.commit());
                 }
             } catch (e) {
                 console.warn('mark-chat-read failed:', e);
@@ -599,6 +616,39 @@ export default function ChatCenter({
     useEffect(() => {
         if (activeChatId) setMobileShowList(false);
     }, [activeChatId]);
+
+    // ── Conversation-level push deep link (2026-08-11, chat forensics C4) ──
+    // A chat push tap parks its chatId in the chatDeepLink store (it can
+    // land before this component mounts — cold launch / PIN lock). Consume
+    // it on mount; if the user is already here when a tap lands, the
+    // ddmau:open-chat event delivers it live. We wait for the chat to
+    // actually be IN the loaded list before opening (a stale push for a
+    // chat the user was removed from must not strand mobile on an empty
+    // thread pane), with a 15s give-up so a mismatch can't linger.
+    const [pendingOpenChatId, setPendingOpenChatId] = useState(() => consumePendingChatOpen());
+    useEffect(() => {
+        const onOpen = (e) => {
+            const id = e?.detail?.chatId;
+            if (id) setPendingOpenChatId(String(id));
+        };
+        window.addEventListener('ddmau:open-chat', onOpen);
+        return () => window.removeEventListener('ddmau:open-chat', onOpen);
+    }, []);
+    useEffect(() => {
+        if (!pendingOpenChatId) return;
+        const found = allChats.find(c => c.id === pendingOpenChatId);
+        if (!found) return; // list still loading (or not a member) — wait for the timeout below
+        breadcrumb('chat.open.deeplink', found.id, { type: found.type || 'unknown' });
+        setJumpToMessageId(null);
+        setActiveChatId(found.id);
+        setMobileShowList(false);
+        setPendingOpenChatId(null);
+    }, [pendingOpenChatId, allChats]);
+    useEffect(() => {
+        if (!pendingOpenChatId) return;
+        const t = setTimeout(() => setPendingOpenChatId(null), 15000);
+        return () => clearTimeout(t);
+    }, [pendingOpenChatId]);
 
     // Android hardware-Back inside an open thread → go back to the chat LIST,
     // not all the way to the Home tab. Only claim Back while a thread is open
@@ -1392,9 +1442,13 @@ function NewChatModal({
         setBusy(true);
         try {
             if (mode === 'dm') {
-                // Use deterministic DM id so re-opening DM stays in same thread.
+                // Deterministic DM id — but first reuse a live DM for this
+                // pair under ANY id (2026-08-11 chat forensics C6). After a
+                // staff rename the deterministic id changes (names are
+                // embedded in it), so without this lookup "New chat → same
+                // person" forked the pair into a second thread.
                 const other = picked[0];
-                const id = dmDocId(staffName, other);
+                const id = (await findLiveDmId(staffName, other)) || dmDocId(staffName, other);
                 const ref = doc(db, 'chats', id);
                 const snap = await getDoc(ref);
                 // 2026-07-26 platform audit H4: a soft-deleted DM (members

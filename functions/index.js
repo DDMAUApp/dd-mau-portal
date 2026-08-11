@@ -633,6 +633,12 @@ exports.dispatchNotification = onDocumentCreated(
                 type: notif.type || "",
                 tag,
                 deepLink: pushDeepLink,
+                // 2026-08-11 (chat forensics C4) — conversation-level routing.
+                // When the notification carries a chatId, the tap handlers
+                // (native + SW) forward it alongside the tab so ChatCenter can
+                // open the exact conversation instead of just the chat list.
+                // Old clients ignore the extra key — fully backward compatible.
+                ...(notif.chatId ? { chatId: String(notif.chatId) } : {}),
                 link: notif.link || "/",
             },
             android: {
@@ -5573,6 +5579,216 @@ exports.emptyDeliveredInventoryCarts = onSchedule(
             } catch (e) {
                 logger.error(`nightlyCartArchive[${loc}] failed:`, e);
             }
+        }
+    },
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// CHAT MESSAGE FAN-OUT — server-side preview + notifications
+// 2026-08-11 (chat forensics C3).
+//
+// WHY: the chat-list preview update and the per-recipient
+// /notifications fan-out used to run as detached fire-and-forget
+// writes on the SENDER's device after the message write. The normal
+// restaurant gesture — send, pocket the phone — could kill the WebView
+// before those writes flushed: the message delivered but recipients
+// got NO push and NO bell entry, silently. Moving fan-out server-side
+// makes delivery survive anything the sender's device does after the
+// message doc lands.
+//
+// OPT-IN CONTRACT: only messages stamped `serverFanout: true` are
+// processed. The two client paths that stamp it (ChatThread.sendMessage
+// + chatDm.sendDirectMessage) dropped their own fan-out in the same
+// release. Every OTHER message producer (announcement composer,
+// coverage modal, photo-issue modal, scheduled-message pump) keeps its
+// own specialized fan-out and is deliberately ignored here — the
+// opt-in stamp makes double-notification structurally impossible.
+//
+// Deploy order rule: this function ships BEFORE the web/OTA client
+// that stamps serverFanout. Old clients never stamp → CF no-ops →
+// their client-side fan-out still runs. No gap, no doubles.
+// ═══════════════════════════════════════════════════════════════════
+exports.onChatMessageCreated = onDocumentCreated(
+    {
+        document: "chats/{chatId}/messages/{messageId}",
+        region: "us-central1",
+        retry: false,
+    },
+    async (event) => {
+        const msg = event.data?.data();
+        if (!msg || msg.serverFanout !== true) return;
+        const { chatId, messageId } = event.params;
+        const sender = String(msg.senderName || "").trim();
+        if (!sender) return;
+
+        let chat;
+        try {
+            const chatSnap = await db.doc(`chats/${chatId}`).get();
+            if (!chatSnap.exists) return;
+            chat = chatSnap.data() || {};
+        } catch (e) {
+            logger.error(`onChatMessageCreated: chat read failed (${chatId}):`, e);
+            return;
+        }
+        if (chat.deletedAt) return; // soft-deleted chat — no fan-out
+
+        // Preview — mirrors the client's previewOf() shapes (chat.js).
+        // English-only on purpose: the preview may be read by recipients
+        // in either language and the writer's language is unknown; the
+        // client renders localized previews from lastMessage.type anyway.
+        const type = msg.type || "text";
+        const d86 = msg.eightySixData || {};
+        const preview = type === "image" ? "📷 Photo"
+            : type === "video" ? "🎬 Video"
+            : type === "audio" ? "🎤 Voice"
+            : type === "file" ? `📎 ${msg.filename || "File"}`
+            : type === "poll" ? `📊 ${(msg.poll && msg.poll.question) || "Poll"}`
+            : type === "eighty_six_alert"
+                ? `${d86.transition === "in" ? "✅ Back in stock" : "🚫 86"}: ${d86.itemName || "item"}`
+                : String(msg.text || "");
+
+        // 1) Chat-list preview + activity bump (was client step 2).
+        try {
+            await db.doc(`chats/${chatId}`).update({
+                lastMessage: {
+                    text: preview.slice(0, 200),
+                    sender,
+                    ts: FieldValue.serverTimestamp(),
+                    type,
+                },
+                lastActivityAt: FieldValue.serverTimestamp(),
+                [`typingByName.${sender}`]: null,
+                [`lastReadByName.${sender}`]: FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            logger.warn(`onChatMessageCreated: preview update failed (${chatId}):`, e?.message);
+        }
+
+        // 2) Notification fan-out (was client step 3). Shape mirrors
+        // src/data/notify.js notifyStaff so the drawer + dispatcher +
+        // channel-mute gates behave identically.
+        const members = Array.isArray(chat.members) ? chat.members : [];
+        const recipients = [...new Set(members.filter((n) => n && n !== sender))];
+        if (recipients.length === 0) return;
+
+        const mentions = Array.isArray(msg.mentions) ? msg.mentions : [];
+        const chatLabel = chat.type === "dm" ? sender : (chat.name || "Chat");
+        const title = chat.type === "dm" ? sender : chatLabel;
+        const body = chat.type === "dm" ? preview : `${sender}: ${preview}`;
+        const replyToAuthor = String(msg.replyTo?.senderName || "").trim();
+        const replySnippet = String(msg.replyTo?.snippet || "").slice(0, 80);
+
+        const results = await Promise.allSettled(recipients.map(async (to) => {
+            const wasMentioned = mentions.includes(to);
+            const isReplyTarget = !wasMentioned
+                && replyToAuthor && to === replyToAuthor && replyToAuthor !== sender;
+            const notifType = wasMentioned ? "chat_mention"
+                : isReplyTarget ? "chat_reply" : "chat_message";
+            const notifTitle = wasMentioned
+                ? `@${sender} → ${title}`
+                : isReplyTarget
+                    ? (chat.type === "dm" ? `↩ ${sender} replied` : `↩ ${sender} replied in ${chatLabel}`)
+                    : title;
+            const notifBody = isReplyTarget
+                ? (replySnippet
+                    ? `↩ "${replySnippet}"\n${sender}: ${preview.slice(0, 80)}`
+                    : `${sender}: ${preview.slice(0, 120)}`)
+                : body.slice(0, 140);
+            await db.collection("notifications").add({
+                forStaff: to,
+                type: notifType,
+                title: notifTitle,
+                body: notifBody.slice(0, 200),
+                titleEn: notifTitle,
+                titleEs: notifTitle,
+                bodyEn: notifBody.slice(0, 200),
+                bodyEs: notifBody.slice(0, 200),
+                link: "/chat",
+                deepLink: "chat",
+                chatId,                       // C4 — conversation-level tap routing
+                // Mentions/replies keep their own tag so ordinary chatter
+                // can't bury them in the OS tray (chat audit bug #5).
+                tag: notifType === "chat_message"
+                    ? `chat:${chatId}:${to}`
+                    : `chat:${chatId}:${to}:${notifType}`,
+                priority: "high",
+                forceDeliver: true,
+                createdAt: FieldValue.serverTimestamp(),
+                read: false,
+                createdBy: sender,
+            });
+        }));
+        const failed = results.filter((r) => r.status === "rejected").length;
+        if (failed > 0) {
+            logger.error(`onChatMessageCreated: ${failed}/${recipients.length} notification writes failed (chat ${chatId}, msg ${messageId})`);
+        } else {
+            logger.info(`onChatMessageCreated: fanned out ${recipients.length} notifications (chat ${chatId}, type ${type})`);
+        }
+    },
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// NOTIFICATION RETENTION — nightly prune
+// 2026-08-11 (chat forensics C5).
+//
+// /notifications only ever grew: 15,838 docs (7,154 permanently
+// unread) at audit time. Consequences: the iOS badge (a count() of
+// unread per recipient, computed on EVERY dispatch) drifts into
+// meaningless four-digit numbers for staff who don't open the app,
+// and the bell drawer's unread backlog can exceed the client's
+// mark-read sweep cap. Retention policy:
+//   • read notifications:   delete after 30 days
+//   • unread notifications: delete after 90 days (they were never
+//     going to be read — and a 90-day-old push is noise, not news)
+// Client rules block deletes on this collection; the admin SDK here
+// bypasses them legitimately (same pattern as pruneAuditLogs).
+// Batched + capped per run so the first nights chew the backlog
+// without a runaway invocation.
+// ═══════════════════════════════════════════════════════════════════
+exports.pruneNotifications = onSchedule(
+    {
+        schedule: "40 8 * * *",   // 08:40 UTC = 3:40 AM Central, off-peak
+        timeZone: "Etc/UTC",
+        region: "us-central1",
+    },
+    async () => {
+        const now = Date.now();
+        const cut30 = new Date(now - 30 * 86400_000);
+        const cut90 = new Date(now - 90 * 86400_000);
+        let deleted = 0;
+        try {
+            // Up to 10 passes × 400 docs per run (≤4,000 deletes/night).
+            // Single-field index on createdAt only — the read/age split is
+            // decided in code so no composite index is needed.
+            for (let pass = 0; pass < 10; pass++) {
+                const snap = await db.collection("notifications")
+                    .where("createdAt", "<", cut30)
+                    .orderBy("createdAt", "asc")
+                    .limit(400)
+                    .get();
+                if (snap.empty) break;
+                const batch = db.batch();
+                let inBatch = 0;
+                snap.forEach((docSnap) => {
+                    const n = docSnap.data() || {};
+                    const ts = n.createdAt?.toDate ? n.createdAt.toDate() : null;
+                    const isRead = n.read === true;
+                    if (isRead || (ts && ts < cut90)) {
+                        batch.delete(docSnap.ref);
+                        inBatch++;
+                    }
+                });
+                if (inBatch > 0) await batch.commit();
+                deleted += inBatch;
+                // A full page of keepers (unread, 30-90d old) means the
+                // oldest slice is all keepers — later passes would re-read
+                // the same page forever. Stop; tomorrow's run re-evaluates.
+                if (inBatch === 0) break;
+                if (snap.size < 400) break;
+            }
+            logger.info(`pruneNotifications: deleted ${deleted} (read>30d or any>90d).`);
+        } catch (e) {
+            logger.error("pruneNotifications failed:", e);
         }
     },
 );

@@ -800,8 +800,14 @@ let _earlyTapWired = false;       // native listener registered exactly once
 const _seenTapIds = new Set();    // de-dupe replayed tap events
 
 function _routePushTap(data) {
-    const tab = data?.deepLink || data?.tab || null;
+    let tab = data?.deepLink || data?.tab || null;
     if (!tab) return;
+    // 2026-08-11 (chat forensics C4) — compose the conversation id into the
+    // tab string so the whole existing handler chain (pending buffer,
+    // dedupe, App.jsx go()) carries it without a signature change. App.jsx
+    // splits it back out via parseChatDeepLink. Old payloads without
+    // chatId route exactly as before.
+    if (tab === 'chat' && data?.chatId) tab = `chat:${data.chatId}`;
     // De-dupe: a replayed/duplicate tap for the same notification must not
     // navigate twice. Fall back to the tab string when no id is present.
     const id = String(data?.notifId || data?.id || data?.['gcm.message_id'] || data?.google?.['message_id'] || `tab:${tab}`);

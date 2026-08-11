@@ -18,8 +18,20 @@
 // underlying action (creating a hire, submitting a doc, etc.).
 
 import { db } from '../firebase';
-import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import {
+    collection, doc, serverTimestamp,
+    addDoc as _fsAddDoc,
+    getDoc as _fsGetDoc,
+    setDoc as _fsSetDoc,
+} from 'firebase/firestore';
 import { isAdminId } from './staff';
+// 2026-08-11 (chat forensics C1) — watchdog shadows. notify.js is the
+// app-wide notification fan-out chokepoint; a wedged transport here
+// silently dropped pushes with no revive. See firestoreRevive.js.
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 
 // HF-6, 2026-05-30: stable fallback tag bucket. The fallback path for
 // callers that didn't pass an explicit `tag` used to be
