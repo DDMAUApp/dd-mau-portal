@@ -22,7 +22,22 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { db, storage, functions } from '../firebase';
-import { doc, getDoc, updateDoc, increment, collection, query, where, onSnapshot } from 'firebase/firestore';
+import {
+    doc, increment, collection, query, where, onSnapshot,
+    getDoc as _fsGetDoc,
+    updateDoc as _fsUpdateDoc,
+} from 'firebase/firestore';
+// 2026-08-11 — watchdog shadows (same pattern as Schedule/AdminPanel/chat).
+// ROOT CAUSE of the "new hire's create-password link doesn't work" incident
+// (Andres, 8 resets / 25 link opens): his iPhone's Firestore transport was
+// wedged, so the create-password updateDoc HUNG silently for 3+ hours and
+// then flushed late, clobbering every admin reset in between. The revive
+// machinery (installFirestoreRevive) already runs in portal mode — but a
+// write only triggers it when routed through watchdogWrite. Now every
+// portal write self-heals instead of hanging forever.
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { httpsCallable } from 'firebase/functions';
 import { ref as sref, uploadBytes, getDownloadURL, listAll, getBytes } from 'firebase/storage';
 import {
