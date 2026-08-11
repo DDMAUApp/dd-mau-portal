@@ -61,6 +61,9 @@ function winAnsiSafe(font, value) {
     return out;
 }
 
+// eslint-disable-next-line import/order
+import { loadCompanyInfoForHire, suggestEmployerValues } from '../data/onboardingCompany';
+
 export default function OnboardingEmployerFill({
     docDef,
     hire,
@@ -107,6 +110,27 @@ export default function OnboardingEmployerFill({
                 }
                 if (!alive) return;
                 setTemplate(chosen);
+
+                // 1b. Auto-fill company info (2026-08-11, Andrew): pre-seed the
+                // employer fields from /config/onboarding_company for the
+                // hire's LOCATION — I-9 org name/address, W-4 employer
+                // name+address / EIN, first-day + today's dates, signer
+                // name+title. Suggestions only — every value stays editable
+                // on screen before the admin finalizes/signs. Existing typed
+                // values always win (`...prev` last).
+                try {
+                    const company = await loadCompanyInfoForHire(hire);
+                    if (company && alive) {
+                        const d = new Date();
+                        const todayStr = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+                        const suggested = suggestEmployerValues(chosen.fields || [], {
+                            company, hire, adminName: staffName, todayStr,
+                        });
+                        if (Object.keys(suggested).length) {
+                            setValues(prev => ({ ...suggested, ...prev }));
+                        }
+                    }
+                } catch (e) { console.warn('company auto-fill skipped:', e); }
 
                 // 2. Find the hire's most-recent submitted PDF in Storage.
                 const folderRef = sref(storage, `onboarding/${hireId}/${docDef.id}`);
