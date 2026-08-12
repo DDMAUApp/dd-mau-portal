@@ -84,6 +84,7 @@ const CHIP_LABELS = {
     chemicals: ['🧪 Chemicals', '🧪 Químicos'],
     statusLabels: ['⚠️ Use First', '⚠️ Usar Primero'],
     catering: ['🎉 Catering', '🎉 Catering'],
+    bottles: ['🍾 Bottles', '🍾 Botellas'],
     other: ['📦 Other', '📦 Otros'],
 };
 
@@ -509,6 +510,9 @@ export default function DateStickerPrinter({
             // recipe never carried it, so the override silently no-opped
             // for every sticker-page print even after the modal-side fix.
             kind: component.kind || null,
+            // 2026-08-11 (bottles): the row's own description prints on
+            // customer-facing kinds (buildLabelPayload desc → showItemDesc).
+            ...(component.descEn ? { descEn: component.descEn } : {}),
             ...(shelfFromBuild ? { shelfLifeDays: shelfFromBuild } : {}),
             ...(component.shelfLifeHours ? { shelfLifeHours: component.shelfLifeHours } : {}),
             ...(component.thawedDays ? { thawedDays: component.thawedDays } : {}),
@@ -1882,6 +1886,7 @@ const KIND_TO_CATEGORY = Object.freeze({
     chemical: 'Other',
     status:   'Other',
     catering: 'Other',
+    bottles:  'Other',
 });
 
 // Stable tone lookup for the search-results grid (identity-stable so the

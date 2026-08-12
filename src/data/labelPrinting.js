@@ -724,6 +724,10 @@ export function buildLabelPayload({
     ingredients = [],
     language = 'en',
     notes = '',
+    // 2026-08-11 (bottles) — the sticker row's own short description
+    // ("Sweet, tangy, garlic-chili classic"). Only rendered when the
+    // kind's format opts in via showItemDesc (bottles today).
+    desc = '',
     // Andrew 2026-05-20: "make a label edit button so i can go in
     // and edit all the labels format at once". `format` carries the
     // admin's saved label preferences — section toggles, sizes, text
@@ -918,6 +922,29 @@ export function buildLabelPayload({
         brandBand: format?.showBrandBand === true
             ? String(format?.brandBandText || 'DD MAU').slice(0, 24)
             : null,
+        // ── Bottles / "framed premium" elements (2026-08-11, Andrew's
+        // Look 2 pick for retail sauce bottles). All opt-in per kind:
+        // headerText  — small letterspaced brand line at the very top
+        //               (NOT inverted — that's brandBand's job)
+        // headerOrnament — "◆ ◆ ◆" row under the header
+        // frame       — double border around the whole label (Brother
+        //               canvas + previews; Epson approximates with "=" rules)
+        // itemDesc    — the sticker row's own 4-5 word description
+        // addressLines — the printing STORE's address (resolved from the
+        //               location this device prints for; no hand-picking)
+        headerText: String(format?.headerText || '').trim().slice(0, 24) || null,
+        headerOrnament: format?.showOrnament === true,
+        frame: format?.showFrame === true,
+        itemDesc: format?.showItemDesc === true ? String(desc || '').trim().slice(0, 60) : '',
+        // `location` arrives as a display LABEL and the two callers use
+        // different ones ('Maryland Heights' vs 'MD Heights') — match both
+        // so preview and print always agree. Anything else = Webster (the
+        // flagship), same fallback the employer auto-fill uses.
+        addressLines: format?.showAddress === true
+            ? (/maryland|md\s*heights/i.test(String(location || ''))
+                ? ['11982 DORSETT RD', 'MARYLAND HEIGHTS, MO 63043']
+                : ['8169 BIG BEND BLVD', 'WEBSTER GROVES, MO 63119'])
+            : [],
         titleLines: format?.showTitle === false ? [] : titleLines,
         titleLines2: format?.showTitle === false ? [] : titleLines2,
         title2Scale,
@@ -1115,6 +1142,19 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text>${escapeXml(banded)}&#10;</text>`);
         lines.push(`<text reverse="false"/><text em="false"/><text width="1" height="1"/>`);
     }
+    // ── Framed header (2026-08-11, bottles Look 2) ────────────────
+    // Epson can't draw a box, so the frame degrades to "=" rules top +
+    // bottom (the matching bottom rule is pushed before the cut below).
+    // The header is the brand letterspaced ("D D   M A U") with an
+    // ornament row — the Epson charset has no ◆, so it prints "* * *".
+    if (payload.frame) lines.push(`<text>${divEq}&#10;</text>`);
+    if (payload.headerText) {
+        lines.push(`<text align="center"/><text em="true"/>`);
+        lines.push(`<text>${escapeXml(payload.headerText.split('').join(' '))}&#10;</text>`);
+        lines.push(`<text em="false"/>`);
+        if (payload.headerOrnament) lines.push(`<text>* * *&#10;</text>`);
+        lines.push(`<text align="left"/>`);
+    }
     if (payload.layout === 'nameFirst') {
         // ── NAME-FIRST layout (per-kind override) ────────────────
         // Item name HUGE at the top (sanitizer buckets etc. — the name
@@ -1309,6 +1349,22 @@ function renderPrepLabelBody(payload) {
         if (nFit > 1) lines.push(`<text width="1" height="1"/>`);
         if (payload.notesBold) lines.push(`<text em="false"/>`);
     }
+    // ── Item description + store address (2026-08-11, bottles) ────
+    // Rendered just above the footer: "— Sweet, tangy, garlic-chili
+    // classic —" then the printing store's address, both centered.
+    if (payload.itemDesc) {
+        lines.push(`<text align="center"/>`);
+        lines.push(`<text>${escapeXml(`- ${payload.itemDesc} -`)}&#10;</text>`);
+        lines.push(`<text align="left"/>`);
+    }
+    if ((payload.addressLines || []).length > 0) {
+        pushDiv(divDash);
+        lines.push(`<text align="center"/><text em="true"/>`);
+        for (const a of payload.addressLines) {
+            lines.push(`<text>${escapeXml(a)}&#10;</text>`);
+        }
+        lines.push(`<text em="false"/><text align="left"/>`);
+    }
     if (payload.footer) {
         pushDiv(divDash);
         lines.push(`<text align="center"/>`);
@@ -1321,6 +1377,7 @@ function renderPrepLabelBody(payload) {
         if (fFit > 1) lines.push(`<text width="1" height="1"/>`);
         if (payload.footerBold !== false) lines.push(`<text em="false"/>`);
     }
+    if (payload.frame) lines.push(`<text>${divEq}&#10;</text>`);
     lines.push(`<feed line="1"/>`);
     lines.push(`<cut type="feed"/>`);
     return lines.join('');
@@ -1361,6 +1418,12 @@ export function buildLabelPreviewModel(payload) {
         const left = Math.floor(pad / 2);
         push(' '.repeat(left) + label + ' '.repeat(pad - left),
             { w: 2, h: 2, em: true, center: true, band: true });
+    }
+    // Framed header (bottles) — mirrors the renderer (KEEP IN SYNC).
+    if (payload.frame) push(divEq);
+    if (payload.headerText) {
+        push(payload.headerText.split('').join(' '), { em: true, center: true });
+        if (payload.headerOrnament) push('* * *', { center: true });
     }
     if (payload.layout === 'nameFirst') {
         for (const t of (payload.titleLines || [])) {
@@ -1440,6 +1503,12 @@ export function buildLabelPreviewModel(payload) {
             Math.floor(cols / Math.max(1, String(payload.notes).length))));
         push(payload.notes, { w: nFit, h: nFit, em: !!payload.notesBold });
     }
+    // Item description + store address (bottles) — mirrors the renderer.
+    if (payload.itemDesc) push(`- ${payload.itemDesc} -`, { center: true });
+    if ((payload.addressLines || []).length > 0) {
+        pushDiv(divDash);
+        for (const a of payload.addressLines) push(a, { em: true, center: true });
+    }
     if (payload.footer) {
         pushDiv(divDash);
         const fCfg = Math.max(1, Math.min(3, Number(payload.footerScale) || 1));
@@ -1447,7 +1516,8 @@ export function buildLabelPreviewModel(payload) {
             Math.floor(cols / Math.max(1, String(payload.footer).length))));
         push(payload.footer, { w: fFit, h: fFit, em: payload.footerBold !== false, center: true });
     }
-    return { cols, segs };
+    if (payload.frame) push(divEq);
+    return { cols, segs, frame: !!payload.frame };
 }
 
 // Public: render N copies of a prep label inside one SOAP envelope.
@@ -2831,6 +2901,10 @@ async function _printPrepLabelImpl({
             ingredients: pickIngredientsForLabel(recipe, language),
             language,
             notes,
+            // Bottles: the sticker row's own short description rides the
+            // recipe object (descEn) — only rendered when the kind's
+            // format opts in (showItemDesc).
+            desc: recipe?.descEn || recipe?.desc || '',
             format,
             paperWidthMm: printer.paperWidthMm,
             leftOffsetMm: printer.leftOffsetMm,
@@ -2857,6 +2931,7 @@ async function _printPrepLabelImpl({
                 footer: bf.footer,
                 footerScale: bf.footerScale,
                 footerBold: bf.footerBold,
+                frame: bf.frame,       // bottles Look 2 double border
                 copies: c,
                 rightShift: printer.brotherRightShift,
                 jobName: recipe?.titleEn || 'DD Mau Label',

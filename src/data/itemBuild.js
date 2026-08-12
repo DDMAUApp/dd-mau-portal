@@ -699,4 +699,8 @@ export const COMPONENT_KIND_TONE = Object.freeze({
     // 2026-08-11 (Andrew): catering — customer-facing labels. Festive tone
     // so a catering sticker never gets mistaken for an internal prep label.
     catering: { bg: 'bg-fuchsia-50', text: 'text-fuchsia-900', icon: '🎉', labelEn: 'Catering', labelEs: 'Catering' },
+    // 2026-08-11 (Andrew): bottles — retail 16oz sauce bottles, customer-
+    // facing framed labels. Distinct tone so a bottle label is never
+    // mistaken for a prep sticker.
+    bottles:  { bg: 'bg-amber-50',   text: 'text-amber-900',   icon: '🍾', labelEn: 'Bottle',   labelEs: 'Botella' },
 });

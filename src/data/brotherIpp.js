@@ -212,8 +212,12 @@ async function postIpp(ip, ippBytes, timeoutMs = 15000) {
 export function renderLabelCanvas(lines, {
     width = BROTHER_IMAGEABLE_W, rightShift = 16, footer = 'DD Mau',
     footerScale = 1, footerBold = false,
+    // 2026-08-11 (bottles Look 2) — draw a double border around the whole
+    // label (thick outer rule + thin inner rule, apothecary style). Extra
+    // padding keeps text clear of the rules.
+    frame = false,
 } = {}) {
-    const PAD = 22;
+    const PAD = frame ? 40 : 22;
     const GAP = 14;
     // Base font px (scale=1). 62mm tape (664px imageable) is wide — go big so
     // the label reads from across the kitchen. Lines auto-shrink only if a
@@ -294,6 +298,16 @@ export function renderLabelCanvas(lines, {
         ctx.font = `${footerWeight} ${footerPx}px Arial, sans-serif`;
         ctx.fillText(String(footer), cx, y);
     }
+    if (frame) {
+        // Double border: 6px outer rule at the label edge, 2px inner rule
+        // inset — drawn AFTER the text so the rules stay crisp. strokeRect
+        // centers the stroke on the path, so inset by half the line width.
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 6;
+        ctx.strokeRect(3 + rightShift / 2, 3, width - 6 - rightShift / 2, height - 6);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(14 + rightShift / 2, 14, width - 28 - rightShift / 2, height - 28);
+    }
     const img = ctx.getImageData(0, 0, width, height);
     return { rgba: img.data, width, height };
 }
@@ -356,10 +370,10 @@ export async function warmBrotherDirect(ip) {
 
 // ── Top-level: render + send one label (copies = repeat the job; the
 // QL-820NWB does NOT support the IPP `copies` attribute, so we loop). ──
-export async function printBrotherDirect({ ip, lines, footer, footerScale, footerBold, copies = 1, rightShift, jobName, shouldAbort }) {
+export async function printBrotherDirect({ ip, lines, footer, footerScale, footerBold, frame = false, copies = 1, rightShift, jobName, shouldAbort }) {
     if (!ip) return { ok: false, error: 'no_brother_ip' };
     if (!Capacitor.isNativePlatform()) return { ok: false, error: 'web_unsupported' };
-    const { rgba, width, height } = renderLabelCanvas(lines, { footer, footerScale, footerBold, rightShift });
+    const { rgba, width, height } = renderLabelCanvas(lines, { footer, footerScale, footerBold, frame, rightShift });
     const urf = imageDataToUrf(rgba, width, height);
     const n = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
     // The QL-820NWB DROPS a second job that lands while it's still printing the

@@ -206,6 +206,30 @@ export const STICKER_SECTIONS = Object.freeze([
         ],
     },
     {
+        // 2026-08-11 (Andrew): BOTTLES — retail 16oz sauce bottles. Fully
+        // customer-facing labels (Look 2 "framed premium" — see
+        // labelFormat.js kindFormats.bottles). descEn is the 4-5 word
+        // customer description PRINTED on the label (grounded in the real
+        // recipes) — unlike other sections where desc is internal-only.
+        key: 'bottles',
+        kind: 'bottles',
+        titleEn: '🍾 Bottles',
+        titleEs: '🍾 Botellas',
+        defaults: [
+            { nameEn: 'Vietnamese Vinaigrette',       nameEs: 'Vinagreta Vietnamita',        descEn: 'Sweet, tangy, garlic-chili classic' },
+            { nameEn: 'Vegan Vietnamese Vinaigrette', nameEs: 'Vinagreta Vietnamita Vegana', descEn: 'Plant-based sweet and tangy' },
+            { nameEn: 'Peanut Dressing',              nameEs: 'Aderezo de Cacahuate',        descEn: 'Creamy hoisin-peanut dipping sauce' },
+            { nameEn: 'Spicy Peanut Dressing',        nameEs: 'Aderezo de Cacahuate Picante', descEn: 'Creamy peanut, cayenne kick' },
+            { nameEn: 'Hoisin',                       nameEs: 'Hoisin',                      descEn: 'Rich, sweet-savory hoisin blend' },
+            { nameEn: 'DD Dressing',                  nameEs: 'Aderezo DD',                  descEn: 'House aioli, pickled tang' },
+            { nameEn: 'Spicy DD',                     nameEs: 'DD Picante',                  descEn: 'House aioli, sriracha heat' },
+            { nameEn: 'Sweet Chili',                  nameEs: 'Chile Dulce',                 descEn: 'Classic Thai-style sweet heat' },
+            { nameEn: 'Creamy Sweet Chili',           nameEs: 'Chile Dulce Cremoso',         descEn: 'Sweet chili, whipped creamy' },
+            { nameEn: 'Buffalo Sweet Chili',          nameEs: 'Chile Dulce Buffalo',         descEn: 'Sweet chili meets buffalo' },
+            { nameEn: 'Sweet Garlic Sauce',           nameEs: 'Salsa de Ajo Dulce',          descEn: 'Sticky-sweet soy garlic glaze' },
+        ],
+    },
+    {
         // Catch-all category — Andrew 2026-06-25: "always have an add rows".
         // Starts empty; the editor always shows a "+ Add row" at the section
         // bottom (even when empty), so staff/admin can add any one-off sticker
@@ -246,7 +270,7 @@ export function getStampedDefaults(sectionKey) {
 // Proteins list can never disappear; only CUSTOM sections are deletable.
 const VALID_SECTION_KINDS = [
     'base', 'topping', 'protein', 'sauce', 'broth', 'side', 'garnish',
-    'note', 'drink', 'other', 'chemical', 'status', 'catering',
+    'note', 'drink', 'other', 'chemical', 'status', 'catering', 'bottles',
 ];
 export function resolveSections(data) {
     const ov = Array.isArray(data?.sectionsOverride) ? data.sectionsOverride : null;

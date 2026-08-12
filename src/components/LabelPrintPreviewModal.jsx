@@ -39,7 +39,14 @@ export function LabelMock({ model, pxPerCol = PX_PER_COL }) {
     const labelW = model.cols * pxPerCol;
     return (
         <div className="bg-white rounded-sm shadow-md py-3 px-2 self-start"
-            style={{ width: `${labelW + 16}px`, minWidth: `${labelW + 16}px` }}>
+            style={{
+                width: `${labelW + 16}px`, minWidth: `${labelW + 16}px`,
+                // Frame (bottles Look 2) — double border like the print.
+                ...(model.frame ? {
+                    border: '3px solid #000',
+                    boxShadow: 'inset 0 0 0 5px #fff, inset 0 0 0 6px #000',
+                } : {}),
+            }}>
             {model.segs.map((s, i) => (
                 // FLEX centering, not text-align (2026-07-27 —
                 // "40mm sanitizer not centered"): a span WIDER

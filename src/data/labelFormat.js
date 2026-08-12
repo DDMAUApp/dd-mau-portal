@@ -163,6 +163,35 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
             showAllergens: true,
             footerText: 'DD MAU · DDMAUSTL.COM',
         },
+        // 2026-08-11 (Andrew, "look 2 build it"): BOTTLES — retail 16oz
+        // sauce bottle labels, the framed-premium look he picked from the
+        // three mockups: double border frame, letterspaced DD MAU + ◆ ◆ ◆
+        // ornament at the top, huge sauce name, the item's own 4-5 word
+        // description, the PRINTING store's address (auto — the device
+        // knows its location), DDMAUSTL.COM footer. No date, no internal
+        // ops lines, English only — it's customer packaging.
+        bottles: {
+            layout: 'nameFirst',
+            titleScale: 3,
+            titleBold: true,
+            showTitleTranslation: false,
+            showFrame: true,
+            headerText: 'DD MAU',
+            showOrnament: true,
+            showItemDesc: true,
+            showAddress: true,
+            showDate: false,
+            showUseByBand: false,
+            showPreppedLabel: false,
+            showTime: false,
+            showByName: false,
+            showLocation: false,
+            showIngredients: false,
+            showNotes: false,
+            showUseBy: false,
+            showAllergens: false,
+            footerText: 'DDMAUSTL.COM',
+        },
     },
 });
 
@@ -230,6 +259,11 @@ export function cleanKindFormats(raw) {
         // Brand band (black bar, white text, top of label) — catering et al.
         if (typeof v.showBrandBand === 'boolean') entry.showBrandBand = v.showBrandBand;
         if (typeof v.brandBandText === 'string') entry.brandBandText = v.brandBandText.slice(0, 24);
+        // Framed-premium elements (2026-08-11, bottles Look 2).
+        for (const bk of ['showFrame', 'showOrnament', 'showItemDesc', 'showAddress']) {
+            if (typeof v[bk] === 'boolean') entry[bk] = v[bk];
+        }
+        if (typeof v.headerText === 'string') entry.headerText = v.headerText.slice(0, 24);
         // 2026-07-27 "every text editable" — per-kind bold + size for the
         // remaining blocks. Booleans (not only-true) so a per-kind OFF can
         // override a global ON, same as titleBold above.

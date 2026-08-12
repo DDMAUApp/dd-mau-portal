@@ -358,6 +358,15 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
         lines.push({ text: String(payload.brandBand), scale: 1.1, bold: true, band: true });
     }
 
+    // 0b. Framed header (2026-08-11, bottles Look 2) — small letterspaced
+    //     brand line + ◆ ornament row at the very top. The frame itself is
+    //     drawn by renderLabelCanvas (see the `frame` field on the return);
+    //     the (dormant) Pi bridge ignores both.
+    if (payload.headerText) {
+        lines.push({ text: String(payload.headerText).split('').join(' '), scale: 0.7, bold: true });
+        if (payload.headerOrnament) lines.push({ text: '◆ ◆ ◆', scale: 0.5, bold: false });
+    }
+
     // 1. Title (already word-wrapped by buildLabelPayload).
     const titleScale = Math.max(Number(payload.titleScale) || 2, 1);
     for (const tl of payload.titleLines || []) {
@@ -444,6 +453,19 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
         });
     }
 
+    // 7. Item description + store address (2026-08-11, bottles) — the
+    //    dash-wrapped description, a thin rule, then the printing store's
+    //    address, just above the footer.
+    if (payload.itemDesc) {
+        lines.push({ text: `- ${payload.itemDesc} -`, scale: 0.6, bold: false });
+    }
+    if (Array.isArray(payload.addressLines) && payload.addressLines.length > 0) {
+        lines.push({ text: '─────────────', scale: 0.4, bold: false });
+        for (const a of payload.addressLines) {
+            lines.push({ text: String(a), scale: 0.55, bold: true });
+        }
+    }
+
     return {
         kind: 'prep',
         lines,
@@ -461,6 +483,9 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
         // 1 = today's exact size; older bridges simply ignore the field.
         footerScale: clamp(payload.footerScale, 1, 3, 1),
         footerBold: payload.footerBold !== false,
+        // Bottles Look 2: renderLabelCanvas draws a double border around the
+        // whole label when set. The (dormant) Pi bridge ignores it.
+        frame: !!payload.frame,
     };
 }
 

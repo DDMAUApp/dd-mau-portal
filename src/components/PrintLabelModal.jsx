@@ -256,6 +256,8 @@ export default function PrintLabelModal({
         ingredients: pickIngredientsForLabel(effectiveRecipe, language),
         language,
         notes,
+        // Bottles — per-item description (see buildLabelPayload desc).
+        desc: effectiveRecipe?.descEn || effectiveRecipe?.desc || '',
         // Per-kind override (sanitizers etc.) — same resolution the print
         // path applies, so the preview stays WYSIWYG.
         format: resolveLabelFormatForKind(labelFormat, effectiveRecipe?.kind),
@@ -875,6 +877,31 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
             {payload.brandBand}
         </div>
     );
+    // Framed header (bottles Look 2) — letterspaced brand + ◆ ornament.
+    const headerBlock = payload.headerText && (
+        <div style={{ textAlign: 'center', marginBottom: '4px' }}>
+            <div style={{ fontWeight: 800, letterSpacing: '5px', fontSize: '12px' }} className="text-dd-text">
+                {payload.headerText}
+            </div>
+            {payload.headerOrnament && (
+                <div style={{ fontSize: '10px', letterSpacing: '2px' }} className="text-dd-text">◆ ◆ ◆</div>
+            )}
+        </div>
+    );
+    // Item description + store address (bottles) — just above the footer.
+    const descBlock = payload.itemDesc && (
+        <div className="italic text-dd-text" style={{ fontSize: '11.5px', marginTop: '4px' }}>
+            — {payload.itemDesc} —
+        </div>
+    );
+    const addressBlock = (payload.addressLines || []).length > 0 && (
+        <>
+            <hr className="border-t border-dd-text/70 my-1.5 mx-6" />
+            <div className="font-bold text-dd-text" style={{ fontSize: '10px', lineHeight: 1.5 }}>
+                {payload.addressLines.map((a, i) => <div key={i}>{a}</div>)}
+            </div>
+        </>
+    );
     const titleBlock = payload.titleLines && payload.titleLines.length > 0 && (
         <div className={`${(nameFirst || payload.titleBold) ? 'font-bold ' : ''}text-dd-text leading-tight`}>
             {payload.titleLines.map((t, i) => (
@@ -950,8 +977,16 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
         </>
     );
     return (
-        <div className="text-center font-sans">
+        <div className="text-center font-sans"
+            /* Frame (bottles Look 2): double border — thick outer + thin
+               inner ring via box-shadow — mirroring the printed canvas. */
+            style={payload.frame ? {
+                border: '3px solid currentColor',
+                boxShadow: 'inset 0 0 0 3px transparent, inset 0 0 0 5px currentColor',
+                padding: '10px 6px 8px',
+            } : undefined}>
             {brandBandBlock}
+            {headerBlock}
             {nameFirst ? (
                 <>
                     {titleBlock}
@@ -1060,6 +1095,8 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                     </>
                 );
             })()}
+            {descBlock}
+            {addressBlock}
             {/* Footer only when the print has one (audit 2026-07-27 #1 —
                 the old `|| 'DD MAU'` fallback previewed a footer the
                 printer omits when the admin turned it off). */}
