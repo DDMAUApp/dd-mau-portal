@@ -1063,13 +1063,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // counts as "X's item" when X is EITHER of those, so an item two
             // people bumped shows under both names. null = everyone (off).
             const [invPersonFilter, setInvPersonFilter] = useState(null);
+            // Deferred copy for the FILTERING (2026-08-12, Andrew: "the person
+            // toggle is laggy"): the select repaints at urgent priority while
+            // the ~250-row list re-filter runs at deferred priority — same
+            // split the search box uses (invSearchDeferred). Print keeps the
+            // live value (equal by the time anyone taps Print).
+            const invPersonFilterDeferred = useDeferredValue(invPersonFilter);
             const invPersonMatches = useCallback((itemId) => {
-                if (!invPersonFilter) return true;
+                if (!invPersonFilterDeferred) return true;
                 const m = invCountMeta[itemId];
                 if (!m) return false;
-                if (m.by === invPersonFilter) return true;
-                return Object.values(m.who || {}).some(w => (w?.n || '') === invPersonFilter);
-            }, [invPersonFilter, invCountMeta]);
+                if (m.by === invPersonFilterDeferred) return true;
+                return Object.values(m.who || {}).some(w => (w?.n || '') === invPersonFilterDeferred);
+            }, [invPersonFilterDeferred, invCountMeta]);
             // Names offered in the dropdown — everyone who touched an item
             // that currently has a count. Recomputes live as people count.
             const invPersonNames = useMemo(() => {
@@ -7168,7 +7174,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                             matchesLow = Number.isFinite(min) && min > 0 && c > 0 && c <= min;
                         }
                         if (itemMatchesSearchAi(item, searchLower) && matchesCounted && matchesLow
-                            && (!invPersonFilter || invPersonMatches(item.id))) {
+                            && (!invPersonFilterDeferred || invPersonMatches(item.id))) {
                             vendorGroups[v].push({ ...item, catIdx, itemIdx: iIdx, catName: cat.name, catNameEs: cat.nameEs });
                         }
                     });
@@ -7180,7 +7186,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                 return { vendorGroups, vendorNames };
             }, [
                 invViewMode, customInventory, invSearchDeferred, invShowOnlyCounted, invShowOnlyLow,
-                invPersonFilter, invPersonMatches,
+                invPersonFilterDeferred, invPersonMatches,
                 // eslint-disable-next-line react-hooks/exhaustive-deps
                 (invShowOnlyCounted || invShowOnlyLow) ? inventory : null,
             ]);
@@ -8691,11 +8697,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         return c > 0 && c <= min;
                                     });
                                 }
-                                if (invPersonFilter) {
+                                if (invPersonFilterDeferred) {
                                     filteredItems = filteredItems.filter(item => invPersonMatches(item.id));
                                 }
                                 // Hide the whole category card when a filter is active and nothing matches.
-                                if ((searchLower || invShowOnlyCounted || invShowOnlyLow || invPersonFilter) && filteredItems.length === 0) return null;
+                                if ((searchLower || invShowOnlyCounted || invShowOnlyLow || invPersonFilterDeferred) && filteredItems.length === 0) return null;
 
                                 const catKey = "cat-" + catIdx;
                                 const isCollapsed = collapsedCats[catKey] && !searchLower;
@@ -9456,7 +9462,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         const c = Number(inventory[it.id] || 0);
                                         if (!(c > 0 && c <= min)) return false;
                                     }
-                                    if (invPersonFilter && !invPersonMatches(it.id)) return false;
+                                    if (invPersonFilterDeferred && !invPersonMatches(it.id)) return false;
                                     return true;
                                 });
                                 // Group by location. Items without one go
@@ -9800,7 +9806,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         ? category.items.filter(item => itemMatchesSearchAi(item, searchLower))
                                                         : category.items;
                                                     if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
-                                                    if (invPersonFilter) filteredItems = filteredItems.filter(item => invPersonMatches(item.id));
+                                                    if (invPersonFilterDeferred) filteredItems = filteredItems.filter(item => invPersonMatches(item.id));
                                                     if (invShowOnlyLow) {
                                                         filteredItems = filteredItems.filter(item => {
                                                             const min = Number(item?.min);
