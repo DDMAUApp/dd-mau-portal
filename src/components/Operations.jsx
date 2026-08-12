@@ -6,6 +6,7 @@ import {
     setDoc as _fsSetDoc,
     getDoc as _fsGetDoc,
     getDocs as _fsGetDocs,
+    getDocsFromServer as _fsGetDocsFromServer,
     updateDoc as _fsUpdateDoc,
     addDoc as _fsAddDoc,
 } from 'firebase/firestore';
@@ -24,6 +25,17 @@ const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
+// ⚠ EMPTY-FROM-CACHE LIE (2026-08-12, Andrew: "recent orders not showing
+// up" mid-order): a slow default-source getDocs (>8s on store Wi-Fi)
+// trips watchdogRead's revive network-cycle, and Firestore resolves the
+// PENDING read from CACHE while the network is disabled — an empty cache
+// "succeeds" with zero docs, so one-shot loaders honestly rendered "No
+// past orders yet" over 73 real orders. Any one-shot getDocs whose empty
+// result drives an empty-state MUST re-ask the server before believing
+// an empty cached snapshot:
+//   let snap = await getDocs(q);
+//   if (snap.metadata.fromCache && snap.empty) snap = await getDocsFromServer(q);
+const getDocsFromServer = (...a) => watchdogRead(_fsGetDocsFromServer(...a));
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
@@ -1043,6 +1055,32 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // "what do I need to put on the order list this week?"
             // without scrolling through every other item.
             const [invShowOnlyLow, setInvShowOnlyLow] = useState(false);
+            // ── By-person filter (2026-08-12, Andrew: "view lists by name so
+            // i can only see the items andrew added and print that") ────────
+            // Every count write already stamps countMeta[itemId] = { by, at,
+            // who: {key: {n, q, t}} } — `by` is the LAST person who touched
+            // the count, `who` is the per-person contribution map. An item
+            // counts as "X's item" when X is EITHER of those, so an item two
+            // people bumped shows under both names. null = everyone (off).
+            const [invPersonFilter, setInvPersonFilter] = useState(null);
+            const invPersonMatches = useCallback((itemId) => {
+                if (!invPersonFilter) return true;
+                const m = invCountMeta[itemId];
+                if (!m) return false;
+                if (m.by === invPersonFilter) return true;
+                return Object.values(m.who || {}).some(w => (w?.n || '') === invPersonFilter);
+            }, [invPersonFilter, invCountMeta]);
+            // Names offered in the dropdown — everyone who touched an item
+            // that currently has a count. Recomputes live as people count.
+            const invPersonNames = useMemo(() => {
+                const names = new Set();
+                for (const [id, m] of Object.entries(invCountMeta)) {
+                    if (!((Number(inventory[id]) || 0) > 0)) continue;
+                    if (m?.by) names.add(m.by);
+                    for (const w of Object.values(m?.who || {})) if (w?.n) names.add(w.n);
+                }
+                return [...names].sort();
+            }, [invCountMeta, inventory]);
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
@@ -4251,7 +4289,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // (see saveInventorySnapshot) and sorts lexicographically
                     // the same as chronologically.
                     const colRef = collection(db, "inventoryHistory_" + storeLocation);
-                    const snap = await getDocs(query(colRef, orderBy('date', 'desc'), limit(30)));
+                    const histQ = query(colRef, orderBy('date', 'desc'), limit(30));
+                    let snap = await getDocs(histQ);
+                    // Empty-from-cache lie (2026-08-12) — same guard as
+                    // RecentOrdersBar: an empty cached answer would silently
+                    // wipe every "Last ordered" badge + order suggestion.
+                    if (snap.metadata.fromCache && snap.empty) {
+                        snap = await getDocsFromServer(histQ);
+                    }
                     const slice = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                     const summary = {};
                     const vendorImports = {};
@@ -5300,6 +5345,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 Object.entries(inventory).forEach(([id, rawQty]) => {
                     const qty = Number(rawQty) || 0;
                     if (qty <= 0) return;
+                    // By-person filter (2026-08-12): the printed sheet matches
+                    // the on-screen selection — pick a person, print ONLY
+                    // their items. (Vendor-only rows below carry no count
+                    // stamps, so they're skipped entirely under a person
+                    // filter rather than misattributed.)
+                    if (invPersonFilter && !invPersonMatches(id)) return;
                     const lookup = itemLookup.get(id);
                     if (!lookup) return;
                     const { item, categoryName } = lookup;
@@ -5319,6 +5370,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 });
                 Object.entries(vendorCounts).forEach(([key, qty]) => {
                     if (qty <= 0) return;
+                    // Vendor-only rows carry no count stamps — under a person
+                    // filter they can't be attributed, so leave them off that
+                    // person's sheet (2026-08-12).
+                    if (invPersonFilter) return;
                     const [vendor, vendorId] = key.split(":");
                     const data = findVendorEntry(vendor, vendorId);
                     const vendorName = vendor === "sysco" ? "Sysco" : "US Foods";
@@ -5418,7 +5473,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 </style></head><body>`;
                 html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                 html += `<h1>DD Mau Order Sheet</h1>`;
-                html += `<div class="meta">${esc(dateStr)} at ${esc(timeStr)} &mdash; ${esc(storeLocation)} &mdash; ${rows.length} items, ${totalQty} total</div>`;
+                html += `<div class="meta">${esc(dateStr)} at ${esc(timeStr)} &mdash; ${esc(storeLocation)} &mdash; ${rows.length} items, ${totalQty} total${invPersonFilter ? ` &mdash; items added by ${esc(invPersonFilter)}` : ''}</div>`;
 
                 // Comparison table
                 html += `<table><thead><tr>`;
@@ -7112,7 +7167,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                             const c = Number(inventory[item.id] || 0);
                             matchesLow = Number.isFinite(min) && min > 0 && c > 0 && c <= min;
                         }
-                        if (itemMatchesSearchAi(item, searchLower) && matchesCounted && matchesLow) {
+                        if (itemMatchesSearchAi(item, searchLower) && matchesCounted && matchesLow
+                            && (!invPersonFilter || invPersonMatches(item.id))) {
                             vendorGroups[v].push({ ...item, catIdx, itemIdx: iIdx, catName: cat.name, catNameEs: cat.nameEs });
                         }
                     });
@@ -7124,6 +7180,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                 return { vendorGroups, vendorNames };
             }, [
                 invViewMode, customInventory, invSearchDeferred, invShowOnlyCounted, invShowOnlyLow,
+                invPersonFilter, invPersonMatches,
                 // eslint-disable-next-line react-hooks/exhaustive-deps
                 (invShowOnlyCounted || invShowOnlyLow) ? inventory : null,
             ]);
@@ -8179,6 +8236,21 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                 className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyCounted ? "bg-mint-700 text-white" : "bg-mint-100 text-mint-700 hover:bg-mint-200"}`}>
                                                 {invShowOnlyCounted ? (language === "es" ? "Ver Todo" : "Show All") : (language === "es" ? "Solo Contados" : "Counted Only")}
                                             </button>
+                                            {/* By-person filter (2026-08-12, Andrew: "view lists by
+                                                name so i can only see the items andrew added and
+                                                print that"). Names come from the live count stamps;
+                                                the 🖨 Print sheet honors the selection too. */}
+                                            {invPersonNames.length > 0 && (
+                                                <select
+                                                    value={invPersonFilter || ''}
+                                                    onChange={(e) => setInvPersonFilter(e.target.value || null)}
+                                                    className={`text-xs font-bold px-2 py-1 rounded-lg transition border-0 ${invPersonFilter ? "bg-indigo-600 text-white" : "bg-indigo-100 text-indigo-800 hover:bg-indigo-200"}`}>
+                                                    <option value=''>{language === "es" ? "👤 Todos" : "👤 Everyone"}</option>
+                                                    {invPersonNames.map(n => (
+                                                        <option key={n} value={n}>👤 {n}</option>
+                                                    ))}
+                                                </select>
+                                            )}
                                         </div>
                                     </div>
                                 );
@@ -8619,8 +8691,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         return c > 0 && c <= min;
                                     });
                                 }
+                                if (invPersonFilter) {
+                                    filteredItems = filteredItems.filter(item => invPersonMatches(item.id));
+                                }
                                 // Hide the whole category card when a filter is active and nothing matches.
-                                if ((searchLower || invShowOnlyCounted || invShowOnlyLow) && filteredItems.length === 0) return null;
+                                if ((searchLower || invShowOnlyCounted || invShowOnlyLow || invPersonFilter) && filteredItems.length === 0) return null;
 
                                 const catKey = "cat-" + catIdx;
                                 const isCollapsed = collapsedCats[catKey] && !searchLower;
@@ -9381,6 +9456,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         const c = Number(inventory[it.id] || 0);
                                         if (!(c > 0 && c <= min)) return false;
                                     }
+                                    if (invPersonFilter && !invPersonMatches(it.id)) return false;
                                     return true;
                                 });
                                 // Group by location. Items without one go
@@ -9724,6 +9800,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         ? category.items.filter(item => itemMatchesSearchAi(item, searchLower))
                                                         : category.items;
                                                     if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
+                                                    if (invPersonFilter) filteredItems = filteredItems.filter(item => invPersonMatches(item.id));
                                                     if (invShowOnlyLow) {
                                                         filteredItems = filteredItems.filter(item => {
                                                             const min = Number(item?.min);
@@ -10787,7 +10864,15 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, setVen
         }, 25_000);
         const q = query(colRef, orderBy('date', 'desc'), limit(5));
         getDocs(q)
-            .then((snap) => {
+            .then(async (snap) => {
+                // Empty-from-cache lie (2026-08-12 — see the shadow-block
+                // comment at the top of this file): a revive network-cycle
+                // can resolve this pending read from an EMPTY cache. Never
+                // render "No past orders" off a cached empty — confirm
+                // with the server first.
+                if (snap.metadata.fromCache && snap.empty) {
+                    snap = await getDocsFromServer(q);
+                }
                 if (cancelled) return;
                 clearTimeout(timeoutId);
                 setHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
