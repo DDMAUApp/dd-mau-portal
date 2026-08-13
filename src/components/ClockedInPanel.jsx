@@ -156,6 +156,17 @@ function useClockedIn(location) {
     const [mSess, setMSess] = useState(null);   // ops/clock_sessions_maryland
     const [tick, setTick] = useState(0);
     const refresh = useCallback(() => setTick(t => t + 1), []);
+    // 30s wall clock (2026-08-12, Andrew: "i keep seeing the stale") — the
+    // status memo below only recomputed when a SNAPSHOT arrived, so if the
+    // scraper stalled, "updated 3m ago" froze at 3m and the STALE badge
+    // could never fire (no new snapshot = no recompute — the exact moment
+    // staleness matters). This clock keeps minutesAgo/isStale honest
+    // between writes.
+    const [clock, setClock] = useState(0);
+    useEffect(() => {
+        const id = setInterval(() => setClock(c => c + 1), 30_000);
+        return () => clearInterval(id);
+    }, []);
 
     // Re-establish the realtime listener whenever the app returns to the
     // foreground. On Android (and a backgrounded PWA/WebView) the Firestore
@@ -223,7 +234,8 @@ function useClockedIn(location) {
             perLoc: { webster: { ...w, entries: wE }, maryland: { ...m, entries: mE } },
             refresh,
         };
-    }, [webster, maryland, wSess, mSess, location, refresh]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [webster, maryland, wSess, mSess, location, refresh, clock]);
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
