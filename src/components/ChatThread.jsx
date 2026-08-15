@@ -1405,7 +1405,13 @@ function ChatThreadInner({
             setRecording(true);
         } catch (e) {
             console.warn('mic access failed:', e);
-            toast(tx('Mic access denied', 'Acceso al micrófono denegado'), { kind: 'error' });
+            // Actionable copy (2026-08-15): the bare "Mic access denied" read
+            // like a broken app. Tell them it's a phone permission + where
+            // to flip it, and that typing still works.
+            toast(tx(
+                'Voice memos need microphone permission — allow it in Settings → DD Mau → Microphone. Typing works as usual.',
+                'Los memos de voz necesitan permiso de micrófono — actívalo en Ajustes → DD Mau → Micrófono. Escribir funciona igual.',
+            ), { kind: 'error', duration: 6000 });
         }
     }
     function stopRecording(cancel = false) {
@@ -3670,6 +3676,24 @@ function Composer({
     // also sends (see onKeyDown). Overlapping / rapid sends are already
     // guarded by sendingRef inside handleSendText, so no dedupe is needed.
     const fireSend = () => { onSendText(); };
+    // ── Send→mic ghost-tap guard (2026-08-15, Andrew: "Julie: can't send,
+    // says cannot access mic") ────────────────────────────────────────
+    // Send fires on pointerUP and clears the draft; React then swaps the
+    // send arrow for the MIC button in the same spot. iOS still delivers
+    // the DERIVED click of that same touch ~50-100ms later — and it lands
+    // on the mic, which calls getUserMedia and toasts "Mic access denied"
+    // for anyone who never granted the permission. The message DID send;
+    // the toast made it look like it failed. `preventDefault` on pointerup
+    // was meant to swallow that click but WKWebView doesn't honor it
+    // reliably. Belt-and-suspenders: stamp the send moment and have the
+    // mic ignore any activation within 600ms of it — no real human lifts
+    // off send and taps record that fast.
+    const lastSendAtRef = useRef(0);
+    const fireSendGuarded = () => { lastSendAtRef.current = Date.now(); fireSend(); };
+    const startRecordingGuarded = () => {
+        if (Date.now() - lastSendAtRef.current < 600) return;
+        onStartRecording();
+    };
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     // Mobile-only attach drawer. On mobile the composer collapses to
     // [+] [textarea] [send] (standard messenger pattern); tapping +
@@ -4278,8 +4302,8 @@ function Composer({
                         //  • onClick stays ONLY for keyboard (Enter/Space) activation,
                         //    which fires no pointer events; sendingRef dedupes regardless.
                         onPointerDown={(e) => { e.preventDefault(); }}
-                        onPointerUp={(e) => { e.preventDefault(); fireSend(); }}
-                        onClick={fireSend}
+                        onPointerUp={(e) => { e.preventDefault(); fireSendGuarded(); }}
+                        onClick={fireSendGuarded}
                         disabled={sending}
                         // `ddmau-composer-btn-send` keeps the brand green on
                         // dark mobile (overrides the generic composer-btn
@@ -4293,7 +4317,7 @@ function Composer({
                     </button>
                 ) : (
                     <button
-                        onClick={onStartRecording}
+                        onClick={startRecordingGuarded}
                         disabled={sending}
                         className="ddmau-composer-btn w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center shrink-0 disabled:opacity-40 text-dd-text-2"
                         aria-label={isEs ? 'Mensaje de voz' : 'Voice message'}
