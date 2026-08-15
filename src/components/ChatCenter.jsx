@@ -92,6 +92,60 @@ const ChatPhotoIssueModal = lazy(() => import('./ChatPhotoIssueModal').then(m =>
 const ChatSearchPanel = lazy(() => import('./ChatSearchPanel').then(m => ({ default: m.default })));
 const ChatNotifSettings = lazy(() => import('./ChatNotifSettings').then(m => ({ default: m.default })));
 
+// ── Chat-list warm cache (2026-08-13, Andrew: "chat pages are still
+// taking a long time to load but not always") ────────────────────────
+// The list renders a spinner until the FIRST chats snapshot arrives.
+// Usually that's instant (Firestore serves IndexedDB cache), but after
+// iOS backgrounds the app the stream can take 6-15s to re-establish —
+// the intermittent "long time to load." Same medicine ChatThread's
+// _msgCache applies to messages: mirror the last list to localStorage
+// (slimmed to exactly what a list row renders) and PAINT IT SYNCHRONOUSLY
+// on mount; the live snapshot replaces it the moment it lands. The
+// loading/error screens already yield to a non-empty list, so a warm
+// device never sees the spinner or the Retry screen again.
+// Timestamps serialize as {seconds} — every consumer (isChatUnread,
+// formatChatTime, the sort) reads `.toMillis?.() ?? .seconds*1000`.
+const CHAT_LIST_CACHE_MAX_AGE_MS = 7 * 86_400_000;
+const chatListCacheKey = (name) => `ddmau:chatListCache:${name}`;
+const _slimTs = (ts) => {
+    const ms = ts?.toMillis ? ts.toMillis() : (ts?.seconds ? ts.seconds * 1000 : 0);
+    return ms ? { seconds: Math.floor(ms / 1000) } : null;
+};
+function saveChatListCache(staffName, list) {
+    try {
+        const slim = list.slice(0, 100).map((c) => ({
+            id: c.id,
+            type: c.type || 'group',
+            name: c.name || '',
+            kind: c.kind || null,
+            // members only for DMs (display name + avatar need the other
+            // person); channel member arrays would bloat the cache.
+            ...(c.type === 'dm' ? { members: c.members || [] } : {}),
+            lastMessage: c.lastMessage ? {
+                text: String(c.lastMessage.text || '').slice(0, 140),
+                sender: c.lastMessage.sender || '',
+                type: c.lastMessage.type || 'text',
+                ts: _slimTs(c.lastMessage.ts),
+            } : null,
+            lastActivityAt: _slimTs(c.lastActivityAt),
+            createdAt: _slimTs(c.createdAt),
+            // Only the viewer's own read marker — that's all unread badges need.
+            lastReadByName: { [staffName]: _slimTs(c.lastReadByName?.[staffName]) },
+        }));
+        localStorage.setItem(chatListCacheKey(staffName), JSON.stringify({ at: Date.now(), chats: slim }));
+    } catch { /* quota/private mode — cache is best-effort */ }
+}
+function loadChatListCache(staffName) {
+    try {
+        const raw = localStorage.getItem(chatListCacheKey(staffName));
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!parsed || !Array.isArray(parsed.chats)) return [];
+        if (Date.now() - (parsed.at || 0) > CHAT_LIST_CACHE_MAX_AGE_MS) return [];
+        return parsed.chats;
+    } catch { return []; }
+}
+
 export default function ChatCenter({
     language = 'en',
     staffName = '',
@@ -180,7 +234,10 @@ export default function ChatCenter({
     // Two queries: members array-contains me (groups + DMs the user is
     // in) UNION channels which the auto-sync below keeps me in. Single
     // listener per query; result lists are merged + deduped by id.
-    const [chats, setChats] = useState([]);
+    // Warm-paint from the localStorage mirror (see saveChatListCache above)
+    // so re-opening chat NEVER waits on the first snapshot. The live
+    // subscription below replaces this within its first tick.
+    const [chats, setChats] = useState(() => loadChatListCache(staffName));
     // 2026-05-27 — load/error UX state. Andrew: "about half the time
     // the separate chats do not load the first time." Root cause of
     // the chat LIST half of that bug: the onSnapshot error handler was
@@ -281,6 +338,8 @@ export default function ChatCenter({
             setChats(list);
             setChatsLoading(false);
             setChatsError(null);
+            // Keep the warm-paint mirror fresh (best-effort, ~20KB).
+            saveChatListCache(staffName, list);
         }, (err) => {
             clearTimeout(timeoutId);
             console.warn('chats snapshot failed:', err);

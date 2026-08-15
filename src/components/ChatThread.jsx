@@ -224,11 +224,53 @@ class ChatThreadErrorBoundary extends Component {
 // re-open paints instantly while the onSnapshot revalidates in the background.
 // Bounded to the most-recent ~25 chats to cap memory.
 const _msgCache = new Map(); // chatId -> messages[]
+// ── localStorage layer under the in-memory cache (2026-08-13, Andrew:
+// "chat pages are still taking a long time to load but not always") ──
+// The Map dies with the JS process, so every COLD app start (iOS kills
+// the app overnight) opened threads against an empty cache and waited
+// out the 6-15s post-suspend stream re-establish. Persist a slim copy
+// (last 30 messages, timestamps flattened to {seconds} — every consumer
+// duck-types toMillis/seconds) so the first open of the day paints
+// instantly too. ~15 chats retained LRU; best-effort (quota/private
+// mode failures are swallowed).
+const MSG_CACHE_LS_INDEX = 'ddmau:msgCacheIndex';
+const msgCacheLsKey = (chatId) => `ddmau:msgCache:${chatId}`;
+const _lsTs = (ts) => {
+    const ms = ts?.toMillis ? ts.toMillis() : (ts?.seconds ? ts.seconds * 1000 : 0);
+    return ms ? { seconds: Math.floor(ms / 1000) } : null;
+};
+function _persistMessages(chatId, list) {
+    try {
+        const slim = list.slice(-30).map((m) => ({
+            ...m,
+            createdAt: _lsTs(m.createdAt),
+            editedAt: _lsTs(m.editedAt),
+        }));
+        localStorage.setItem(msgCacheLsKey(chatId), JSON.stringify(slim));
+        // LRU index — most-recent last; prune beyond 15 chats.
+        const idx = (JSON.parse(localStorage.getItem(MSG_CACHE_LS_INDEX) || '[]') || [])
+            .filter((id) => id !== chatId);
+        idx.push(chatId);
+        while (idx.length > 15) {
+            const evict = idx.shift();
+            localStorage.removeItem(msgCacheLsKey(evict));
+        }
+        localStorage.setItem(MSG_CACHE_LS_INDEX, JSON.stringify(idx));
+    } catch { /* best-effort */ }
+}
+function _loadPersistedMessages(chatId) {
+    try {
+        const raw = localStorage.getItem(msgCacheLsKey(chatId));
+        const list = raw ? JSON.parse(raw) : null;
+        return Array.isArray(list) ? list : [];
+    } catch { return []; }
+}
 function _cacheMessages(chatId, list) {
     if (!chatId) return;
     _msgCache.delete(chatId);           // re-insert to mark most-recent (LRU)
     _msgCache.set(chatId, list);
     if (_msgCache.size > 25) _msgCache.delete(_msgCache.keys().next().value);
+    _persistMessages(chatId, list);
 }
 
 function ChatThreadInner({
@@ -263,7 +305,10 @@ function ChatThreadInner({
     // Most chat sessions don't scroll back further than ~30 messages,
     // so the new default is 50, with a "Load older" button for older
     // scrollback. (AUDIT CHAT-008.)
-    const [messages, setMessages] = useState(() => _msgCache.get(chat?.id) || []);
+    // Memory cache first (same session), then the localStorage layer
+    // (cold start) — see _persistMessages above.
+    const [messages, setMessages] = useState(() =>
+        _msgCache.get(chat?.id) || _loadPersistedMessages(chat?.id));
     const [messageLimit, setMessageLimit] = useState(50);
     const [hasMore, setHasMore] = useState(true);
     // 2026-05-27 — load/error UX state. Andrew: "about half the time
