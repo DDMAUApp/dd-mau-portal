@@ -196,6 +196,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // calendar window. on the left of the week button but like 1/3 the
     // week button size." Boolean for opening the modal (lazy mount).
     const [showMonthModal, setShowMonthModal] = useState(false);
+    // false | 'foh' | 'boh' — which side tab the editor opens on (2026-08-15:
+    // it always opened on FOH, so a manager adding hours from a BOH staffer's
+    // modal edited the wrong list and "the new times weren't there").
     const [showPresetEditor, setShowPresetEditor] = useState(false);
     // Mobile "fit-to-screen" zoom — Andrew 2026-05-22 "i want to be
     // able to zoom out and see the full picture of the weeks calendar
@@ -4166,7 +4169,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
         }
     };
-    const onEditPresetsCb = useStableCallback(() => setShowPresetEditor(true));
+    const onEditPresetsCb = useStableCallback((side) => setShowPresetEditor(side === 'boh' ? 'boh' : 'foh'));
 
     // ── Time-off (Phase 2: admin-entered) ──
     const handleAddTimeOff = async (entry) => {
@@ -7151,12 +7154,13 @@ ${dayBlocks}
                     canEditBOH={canEditBOH}
                     timeOff={viewerTimeOff}
                     shiftPresets={effectiveShiftPresets}
-                    onEditPresets={canEdit ? () => setShowPresetEditor(true) : null}
+                    onEditPresets={canEdit ? (side) => setShowPresetEditor(side === 'boh' ? 'boh' : 'foh') : null}
                 />
             )}
             {showPresetEditor && canEdit && (
                 <ShiftPresetsEditor
                     presets={effectiveShiftPresets}
+                    initialSide={showPresetEditor === 'boh' ? 'boh' : 'foh'}
                     onSave={handleSaveShiftPresets}
                     onClose={() => setShowPresetEditor(false)}
                     isEn={isEn}
@@ -9377,7 +9381,7 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                                                                 </button>
                                                                 {canEdit && onEditPresets && (
                                                                     <button type="button"
-                                                                        onClick={() => onEditPresets()}
+                                                                        onClick={() => onEditPresets(side)}
                                                                         className="flex-1 px-1 py-1 rounded-md bg-white border border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg active:scale-95 transition"
                                                                         title={isEn ? 'Edit these hour options' : 'Editar estas opciones de horas'}>
                                                                         ⚙
@@ -10587,9 +10591,9 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
 // editable"). Edits the FOH + BOH preset lists stored in
 // config/schedule_settings.shiftPresets. Empty/invalid rows are dropped on save
 // by sanitizeShiftPresets, so a half-filled row can't corrupt the config.
-function ShiftPresetsEditor({ presets, onSave, onClose, isEn }) {
+function ShiftPresetsEditor({ presets, onSave, onClose, isEn, initialSide = 'foh' }) {
     const tx = (en, es) => (isEn ? en : es);
-    const [side, setSide] = useState('foh');
+    const [side, setSide] = useState(initialSide === 'boh' ? 'boh' : 'foh');
     const [draft, setDraft] = useState(() => ({
         foh: (presets?.foh || []).map(p => ({ ...p })),
         boh: (presets?.boh || []).map(p => ({ ...p })),
@@ -10600,10 +10604,26 @@ function ShiftPresetsEditor({ presets, onSave, onClose, isEn }) {
     const updateRow = (i, k, v) => setList(list.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
     const addRow = () => setList([...list, { label: '', start: '15:00', end: '20:00', isDouble: false }]);
     const delRow = (i) => setList(list.filter((_, idx) => idx !== i));
+    const otherSide = side === 'foh' ? 'boh' : 'foh';
+    // Same hours at both stations is the common case — one tap instead of
+    // re-typing every row on the other tab.
+    const copyToOther = () => setDraft(d => ({ ...d, [otherSide]: (d[side] || []).map(p => ({ ...p })) }));
+    // A row with times but no label used to be silently DROPPED on save
+    // (sanitizeShiftPresets requires a label) — the manager typed the hours,
+    // hit save, and the chip never appeared. Derive a "10:30–3" style label
+    // from the times instead so every filled-in row survives.
+    const autoLabel = (p) => {
+        if ((p.label || '').trim() || !p.start || !p.end) return p;
+        // "10:30AM" → "10:30", "3PM" → "3" — matches the hand-typed chip style ("10–3").
+        const short = (t) => formatTime12h(t).replace(':00', '').replace(/\s?(AM|PM)$/i, '') || t;
+        return { ...p, label: `${short(p.start)}–${short(p.end)}${p.isDouble ? ' (2x)' : ''}` };
+    };
     const save = async () => {
         if (busy) return;
         setBusy(true);
-        try { await onSave(draft); } finally { setBusy(false); }
+        try {
+            await onSave({ foh: (draft.foh || []).map(autoLabel), boh: (draft.boh || []).map(autoLabel) });
+        } finally { setBusy(false); }
     };
     return (
         <ModalPortal>
@@ -10623,6 +10643,11 @@ function ShiftPresetsEditor({ presets, onSave, onClose, isEn }) {
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
                     <p className="text-[11px] text-dd-text-2">{tx('These are the one-tap chips shown when you press + on the schedule. The label is what shows on the chip; the times fill the shift.', 'Estos son los botones al presionar + en el horario. La etiqueta se muestra en el botón; las horas llenan el turno.')}</p>
+                    <p className="text-[11px] font-bold text-dd-green-700">
+                        {side === 'foh'
+                            ? tx('Editing the FRONT-OF-HOUSE list — these chips show for FOH staff. Switch to BOH above to edit the kitchen list.', 'Editando la lista de SERVICIO — se muestra para el personal de FOH. Cambia a BOH arriba para editar la de cocina.')
+                            : tx('Editing the BACK-OF-HOUSE list — these chips show for kitchen staff. Switch to FOH above to edit the front list.', 'Editando la lista de COCINA — se muestra para el personal de BOH. Cambia a FOH arriba para editar la de servicio.')}
+                    </p>
                     {list.map((r, i) => (
                         <div key={i} className="flex items-center gap-1.5 bg-white border border-dd-line rounded-lg p-1.5">
                             <input value={r.label} onChange={e => updateRow(i, 'label', e.target.value)} placeholder={tx('Label', 'Etiqueta')}
@@ -10643,6 +10668,13 @@ function ShiftPresetsEditor({ presets, onSave, onClose, isEn }) {
                         className="w-full py-2 rounded-lg border border-dashed border-dd-green/40 text-dd-green-700 text-xs font-bold hover:bg-dd-green-50">
                         + {tx('Add preset', 'Agregar preset')}
                     </button>
+                    {list.length > 0 && (
+                        <button type="button" onClick={copyToOther}
+                            className="w-full py-2 rounded-lg border border-dd-line text-dd-text-2 text-xs font-bold hover:bg-dd-bg"
+                            title={tx('Replace the other side\'s list with this one', 'Reemplaza la lista del otro lado con esta')}>
+                            ⇄ {tx(`Copy this list to ${otherSide.toUpperCase()}`, `Copiar esta lista a ${otherSide.toUpperCase()}`)}
+                        </button>
+                    )}
                 </div>
                 <div className="border-t border-gray-200 p-4 flex gap-2 shrink-0">
                     <button onClick={onClose} className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Cancel', 'Cancelar')}</button>
@@ -10930,7 +10962,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                         <div className="flex items-center justify-between mb-1.5">
                             <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider">{tx('Quick presets', 'Presets rápidos')}</label>
                             {onEditPresets && (
-                                <button type="button" onClick={onEditPresets}
+                                <button type="button" onClick={() => onEditPresets(presetSide)}
                                     className="text-[10px] font-bold text-dd-green-700 hover:underline">
                                     ⚙ {tx('Edit hours', 'Editar horas')}
                                 </button>
