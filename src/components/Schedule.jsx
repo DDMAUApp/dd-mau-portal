@@ -62,6 +62,7 @@ import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { auditAvailabilityChange, auditPtoChange, auditShiftChange, auditScheduleConfig } from '../data/audit';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, aggregateSplh, scheduledHoursByDayPart, variance } from '../data/splh';
+import { applyOptimistic, revertOptimistic, overlayOptimistic } from '../data/optimisticShifts';
 // 2026-05-27 — Andrew: forecast bar redesigned to a weather-channel-
 // style row of day cards. Lucide weather glyphs picked per NWS
 // shortForecast keyword (sunny/cloudy/rain/etc.).
@@ -159,6 +160,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const tx = (en, es) => (isEn ? en : es);
 
     const [shifts, setShifts] = useState([]);
+    // 2026-08-15 (schedule perf forensics S1) — optimistic overlay for the
+    // transaction-based edit paths (time edit, drag/drop move). See
+    // src/data/optimisticShifts.js for the why. Handlers call
+    // applyOptimisticShift() BEFORE the transaction and revertOptimisticShift()
+    // in their catch; the shifts listener below re-overlays every snapshot.
+    const optimisticRef = useRef(new Map());
+    const applyOptimisticShift = useCallback((shiftId, patch) => {
+        setShifts(prev => applyOptimistic(optimisticRef.current, prev, shiftId, patch));
+    }, []);
+    const revertOptimisticShift = useCallback((shiftId) => {
+        setShifts(prev => revertOptimistic(optimisticRef.current, prev, shiftId));
+    }, []);
     const [loading, setLoading] = useState(true);
     // Tracks whether the grid is currently rendering localStorage-
     // cached data vs a live Firestore snapshot. Surfaced as a small
@@ -653,11 +666,42 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             where('date', '>=', weekStartStr),
             where('date', '<', weekEndStr),
         );
-        const unsub = onSnapshot(q, (snap) => {
-            const items = [];
-            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
-            setShifts(items);
-            setLoading(false);
+        // 2026-08-15 (schedule perf forensics S4) — with the persistent
+        // IndexedDB cache the FIRST emit for a week is usually served from
+        // cache (metadata.fromCache), and after the revive watchdog cycles
+        // the network a cache emit can arrive that pre-dates a just-saved
+        // edit. Treating those as "live" stamped the Live pill green and
+        // rewrote the 24h instant-paint slot with older data (the "changed a
+        // shift … then reverted" reports). Only a server-confirmed snapshot may
+        // drop the Cached badge or refresh the slot. The cache→server flip is a
+        // METADATA-only event when the data is identical, so we must opt into
+        // includeMetadataChanges — but we only touch `shifts` state when
+        // documents actually changed (docChanges() excludes metadata-only
+        // changes by default), so the extra callbacks cost no grid re-render.
+        let firstEmit = true;
+        let cacheSlotFresh = false;
+        const unsub = onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
+            const dataChanged = firstEmit || snap.docChanges().length > 0;
+            firstEmit = false;
+            let items = null;
+            const readItems = () => {
+                if (items) return items;
+                items = [];
+                snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+                return items;
+            };
+            if (dataChanged) {
+                // Re-apply any in-flight optimistic edits so another doc's echo
+                // (or a cache-first emit) can't visually revert them (S1).
+                setShifts(overlayOptimistic(optimisticRef.current, readItems()));
+                setLoading(false);
+            }
+            if (snap.metadata?.fromCache) {
+                setScheduleCacheStatus(prev => (prev.usingCache
+                    ? prev
+                    : { usingCache: true, cachedAt: prev.cachedAt || Date.now(), liveAt: prev.liveAt }));
+                return;
+            }
             // First live snapshot — cached badge can drop, real
             // "last updated" timestamp lights up. Subsequent ticks
             // bump liveAt so the user sees the relative-time label
@@ -668,8 +712,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 // serializer turns them into plain objects without
                 // .toMillis(). On the rehydrate path we re-wrap them
                 // (see above). Symmetric round-trip.
-                const cleaned = items.map(stripShiftTimestamps);
-                localStorage.setItem(CACHE_KEY, JSON.stringify({ items: cleaned, savedAt: Date.now() }));
+                // Skip the ~110KB stringify on metadata-only flips once the
+                // slot holds server-confirmed data for this window; the first
+                // server-confirmed emit and every real data change refresh it.
+                if (dataChanged || !cacheSlotFresh) {
+                    const cleaned = readItems().map(stripShiftTimestamps);
+                    localStorage.setItem(CACHE_KEY, JSON.stringify({ items: cleaned, savedAt: Date.now() }));
+                    cacheSlotFresh = true;
+                }
             } catch { /* storage full or disabled — non-fatal */ }
         }, (err) => {
             console.error('Schedule snapshot error:', err);
@@ -1128,8 +1178,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const tag = `${type}:${forStaff}:${opts.tagSuffix || Date.now()}`;
         const titleVar = splitNotifVariants(title);
         const bodyVar = splitNotifVariants(body);
+        // 2026-08-15 (schedule perf forensics S2) — DON'T await the server ack.
+        // `addDoc` here is the watchdog-shadowed primitive, whose promise
+        // resolves only when Firestore's backend commits, so every
+        // `await notify(...)` in an edit handler was a full server round-trip
+        // (2 of them on a drag/drop) holding the cube / ConfirmModal / editor
+        // in its busy state AFTER the shift write had already landed. The
+        // notification doc is latency-compensated + persisted-offline by the
+        // SDK, so returning immediately loses nothing — the Cloud Function
+        // dispatches it when it lands. Failures are still logged.
         try {
-            await addDoc(collection(db, 'notifications'), {
+            addDoc(collection(db, 'notifications'), {
                 forStaff, type,
                 title: resolveText(title, recipient),
                 body: resolveText(body, recipient),
@@ -1145,7 +1204,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 createdAt: serverTimestamp(),
                 read: false,
                 createdBy: staffName,
-            });
+            }).catch((e) => console.warn('notify failed (non-fatal):', e));
         } catch (e) {
             console.warn('notify failed (non-fatal):', e);
         }
@@ -1681,8 +1740,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             console.warn(`[Schedule] blocked add for side=${targetSide} — user lacks editor toggle`);
             return;
         }
+        // 2026-08-15 (schedule perf forensics S3) — pre-mint the id and use
+        // setDoc so the write is latency-compensated (the grid shows the new
+        // cube instantly) AND we don't have to hold the modal open for the
+        // server ack just to learn docRef.id. The await moves to the end,
+        // purely so a rejected write still surfaces the error toast (the SDK
+        // removes the local echo on rejection by itself).
+        const docRef = doc(collection(db, 'shifts'));
+        let writeP;
         try {
-            const docRef = await addDoc(collection(db, 'shifts'), {
+            writeP = setDoc(docRef, {
                 ...shiftData,
                 published: false, // draft — manager hits Publish to release
                 createdBy: staffName,
@@ -1752,6 +1819,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     ));
                 }, 0);
             }
+            await writeP;
         } catch (e) {
             console.error('Add shift failed:', e);
             toast(tx('Could not save shift: ', 'No se pudo guardar el turno: ') + e.message);
@@ -1930,6 +1998,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const wasPublished = sh && sh.published !== false;
         const oldDetail = sh ? `${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}` : '';
         const newDetail = `${formatTime12h(startTime)}–${formatTime12h(endTime)}`;
+        // S1 — paint the new times NOW; the transaction below confirms (or the
+        // catch reverts). Transactions have no local echo of their own.
+        applyOptimisticShift(shiftId, { startTime, endTime });
         try {
             // Transaction, not updateDoc (stabilization Phase F): if the
             // manager's listener froze (the wedge disease), the shift they
@@ -1995,6 +2066,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
             }
         } catch (e) {
+            revertOptimisticShift(shiftId);
             console.error('Update shift times failed:', e);
             toast(tx('Could not update times: ', 'No se pudieron actualizar los horarios: ') + e.message);
         }
@@ -2042,6 +2114,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // rendering, fall back to the current side.
         const newOwner = (staffList || []).find(x => x.name === newStaffName);
         const newOwnerSide = newOwner ? resolveStaffSide(newOwner) : shift.side;
+        // S1 — move the cube NOW; the transaction confirms (or the catch
+        // reverts). Mirrors the fields the txn writes so the overlay settles
+        // as soon as the server echo lands.
+        applyOptimisticShift(shiftId, {
+            staffName: newStaffName,
+            date: newDate,
+            ...(newOwnerSide && newOwnerSide !== shift.side ? { side: newOwnerSide } : {}),
+        });
         try {
             // Andrew 2026-05-30 audit fix — wrap the drop write in
             // runTransaction. Before this it was a plain updateDoc, so
@@ -2140,6 +2220,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 }
             }
         } catch (e) {
+            revertOptimisticShift(shiftId);
             console.error('Drop shift failed:', e);
             toast(tx('Could not move shift: ', 'No se pudo mover: ') + e.message);
         }
@@ -9374,8 +9455,11 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
         const newH = ((Math.floor(total / 60) % 24) + 24) % 24;
         const newM = ((total % 60) + 60) % 60;
         const newEnd = `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
-        await onUpdateShiftTimes(shift.id, shift.startTime, newEnd);
+        // S1 — the parent paints the new time optimistically and reverts on
+        // failure, so close the picker immediately instead of holding it for
+        // the transaction round-trip.
         setResizePickerOpen(false);
+        onUpdateShiftTimes(shift.id, shift.startTime, newEnd);
     };
 
     // Right-click / long-press context menu state. Open via:
@@ -9420,8 +9504,10 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
             setEditingTimes(false);
             return;
         }
-        await onUpdateShiftTimes(shift.id, draftStart, draftEnd);
+        // S1 — same as nudgeEnd: leave edit mode now; the optimistic overlay
+        // shows the new times and a failed transaction reverts + toasts.
         setEditingTimes(false);
+        onUpdateShiftTimes(shift.id, draftStart, draftEnd);
     };
     const cancelTimeEdit = () => setEditingTimes(false);
     // Raw shift hours — when this is one of two shifts on the same day, we
