@@ -32,9 +32,9 @@
 //     silently in 'both' mode (queried the literal doc ops/labor_both,
 //     which does not exist). The context resolves 'both' → webster
 //     primary the same way the home tiles already did.
-//   • laborHistory_{loc} (last 28d, SPLH) consolidated: Schedule + Labor
-//     Dashboard each pulled ~1,500 docs on cold mount. Schedule's
-//     localStorage cache + 'both'→webster fallback are preserved here.
+//   • laborHistory_{loc} (last 28d, SPLH): consolidated here 2026-06-02,
+//     then REMOVED 2026-08-15 (42k resident docs taxed every Firestore emit
+//     app-wide; see the P0-1 note below). Context still exposes the keys.
 //
 // API:
 //   <AppDataProvider staffName="..." storeLocation="..."> { children }
@@ -57,24 +57,38 @@ import { canViewLabor } from '../data/staff';
 
 const AppDataContext = createContext(null);
 
-// laborHistory cache constants. Hoisted so the hydrate-from-cache step
-// (initial useState lazy initializer) and the live-listener writeback
-// stay in sync.
-const SPLH_CACHE_PREFIX = 'ddmau:splh:'; // suffixed by location
-const SPLH_CACHE_TTL_MS = 30 * 60 * 1000;
-const splhCacheKey = (loc) => `${SPLH_CACHE_PREFIX}${loc}`;
-const hydrateSplhFromCache = (loc) => {
-    try {
-        const raw = localStorage.getItem(splhCacheKey(loc));
-        if (!raw) return [];
-        const cached = JSON.parse(raw);
-        if (!cached?.savedAt || !Array.isArray(cached.items)) return [];
-        if (Date.now() - cached.savedAt >= SPLH_CACHE_TTL_MS) return [];
-        return cached.items;
-    } catch {
-        return [];
+// ── laborHistory (REMOVED 2026-08-15 — chat perf forensics P0-1) ─────
+// This provider used to hold TWO always-on listeners on
+// `laborHistory_{webster,maryland}` with a 28-day cutoff, plus a
+// localStorage mirror of every row. The comments said "~1,500 docs";
+// the scraper actually writes a row every ~2 min, 24/7, so each listener
+// held ~21,300 docs (42,561 total, measured live) and the mirror was
+// 7.7 MB of JSON parsed at boot and re-serialized on every new row.
+//
+// Why that made CHAT laggy for every manager/admin: the Firestore SDK
+// re-runs limbo detection over EVERY doc in EVERY active view on EVERY
+// emit (each local write, its server echo, and its ack — see
+// View.applyChanges → updateLimboDocuments in @firebase/firestore).
+// With 42k docs resident that was ~110 ms of main-thread work per emit
+// on an M-series Mac (profiled: 92% of typing-time CPU), ×3 per typing
+// heartbeat / send / read-marker — 300–500 ms stalls per keystroke burst,
+// worse on phones. And `aggregateSplh` needs `totalHours`, which NO
+// laborHistory row carries, so the 42k docs produced an EMPTY grid: all
+// cost, zero value.
+//
+// The consumers (Schedule SPLH advisor, LaborDashboard SPLH grid) keep
+// the same context API and simply see [] — the exact result they were
+// already computing. When SPLH is rebuilt it must be a server-side
+// hourly rollup (~28 docs/location) that includes labor hours; never
+// re-add a raw-row listener here. The old mirror keys are purged below
+// so devices reclaim the storage.
+const SPLH_CACHE_PREFIX = 'ddmau:splh:'; // legacy key prefix (purge only)
+const EMPTY_LABOR_HISTORY = Object.freeze({ webster: [], maryland: [] });
+try {
+    if (typeof localStorage !== 'undefined') {
+        for (const loc of ['webster', 'maryland']) localStorage.removeItem(`${SPLH_CACHE_PREFIX}${loc}`);
     }
-};
+} catch { /* storage unavailable — nothing to purge */ }
 
 // Generic localStorage cache for the HOME-TILE data (86 board + the
 // 14-day shift window). Andrew 2026-06-14: the home screen's 86-count
@@ -110,14 +124,10 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
     const [timeOff, setTimeOff] = useState([]);
     const [eightySix, setEightySix] = useState(() => readHomeCache('eightySix', { webster: null, maryland: null }));
     const [labor, setLabor] = useState({ webster: null, maryland: null });
-    // laborHistory: last 28 days of laborHistory_{loc} per location,
-    // used by Schedule's SPLH advisor + LaborDashboard's historical
-    // grid. Hydrated from localStorage on initial mount so cold-start
-    // renders don't flash empty while Firestore is still pending.
-    const [laborHistory, setLaborHistory] = useState(() => ({
-        webster:  hydrateSplhFromCache('webster'),
-        maryland: hydrateSplhFromCache('maryland'),
-    }));
+    // laborHistory: intentionally a frozen empty pair — see the P0-1 note at
+    // the top of this file. Kept in the context so Schedule / LaborDashboard
+    // need no changes; both already treat [] as "no SPLH data".
+    const laborHistory = EMPTY_LABOR_HISTORY;
 
     // Labor data is gated to staff WITH labor access — the same `canViewLabor`
     // switch the labor UI already uses (set by the Admin Panel "Labor %"
@@ -293,74 +303,8 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
         return () => { unsubW(); unsubM(); };
     }, [canSeeLabor]);
 
-    // laborHistory_{loc} — last 28 days of hourly snapshots used for SPLH
-    // (sales per labor hour) analysis. Subscribes for whichever
-    // location(s) any consumer might need based on the active
-    // storeLocation. 'both' mode pulls webster (matches the prior
-    // Schedule.jsx fallback — there's no global "both" view of SPLH;
-    // managers eyeballing it pick a side mentally).
-    //
-    // 2026-06-02 consolidation: this lived in BOTH Schedule.jsx and
-    // LaborDashboard.jsx as parallel listeners. Each cold mount pulled
-    // ~1,500 docs per consumer. Now subscribed once here; both consumers
-    // read from useAppData().laborHistory / .laborHistoryByLoc.
-    //
-    // Cache strategy (preserved from Schedule's original): localStorage
-    // mirror with 30-min TTL hydrates the initial state synchronously,
-    // and every fresh snapshot rewrites the cache. Schedule's "fast
-    // path" perception of an already-warm advisor on tab return is
-    // preserved.
-    //
-    // We re-subscribe when storeLocation changes ONLY to potentially
-    // add the second location — we never tear down the active
-    // subscription. (For two locations the cost is trivial; this is a
-    // future-proofing comment for if a third location is added.) For
-    // now we subscribe to both unconditionally — matches the eightySix /
-    // labor pattern above and means an admin flipping the location
-    // toggle sees no flicker.
-    // 2026-06-14 perf: (1) dep array is now [canSeeLabor] (was []) so a live
-    // "Labor %" grant actually starts this listener — matching the labor
-    // effect above; previously it never re-ran. (2) The ~3k-doc laborHistory
-    // pull is DEFERRED to idle: it's consumed only by Schedule + LaborDashboard
-    // (never the home screen), so attaching it after first paint keeps home
-    // from competing with it on the WebView's connection. The 30-min cache
-    // already hydrated the initial state synchronously, so on Schedule/Labor
-    // the advisor still shows warm data instantly while the live listener
-    // attaches a beat later.
-    useEffect(() => {
-        if (!canSeeLabor) { setLaborHistory({ webster: [], maryland: [] }); return undefined; }
-        let unsubW = null, unsubM = null, cancelled = false;
-        const subscribeLoc = (loc) => {
-            const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
-            const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
-            return onSnapshot(
-                query(collection(db, `laborHistory_${loc}`), where('date', '>=', cutoffKey)),
-                (snap) => {
-                    const arr = [];
-                    snap.forEach(d => arr.push(d.data()));
-                    setLaborHistory(prev => ({ ...prev, [loc]: arr }));
-                    try {
-                        localStorage.setItem(splhCacheKey(loc), JSON.stringify({ items: arr, savedAt: Date.now() }));
-                    } catch { /* storage full — non-fatal */ }
-                },
-                (err) => console.warn(`laborHistory_${loc} snapshot failed:`, err),
-            );
-        };
-        const start = () => {
-            if (cancelled) return;
-            unsubW = subscribeLoc('webster');
-            unsubM = subscribeLoc('maryland');
-        };
-        const hasIC = typeof requestIdleCallback === 'function';
-        const idleId = hasIC ? requestIdleCallback(start, { timeout: 4000 }) : setTimeout(start, 1200);
-        return () => {
-            cancelled = true;
-            if (hasIC) { try { cancelIdleCallback(idleId); } catch { /* noop */ } }
-            else clearTimeout(idleId);
-            if (unsubW) unsubW();
-            if (unsubM) unsubM();
-        };
-    }, [canSeeLabor]);
+    // laborHistory_{loc} listeners: REMOVED 2026-08-15 (P0-1). See the note
+    // at the top of this file. Do not re-add a raw-row listener here.
 
     // Convenience: resolve per-location data once based on storeLocation.
     // For 'both' we return the webster value as the primary plus expose

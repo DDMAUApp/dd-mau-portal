@@ -134,6 +134,11 @@ export default defineConfig({
   // ddmauapp.github.io/dd-mau-portal/ URL auto-redirects to the custom
   // domain once GitHub Pages has the custom domain set in repo settings.
   base: '/',
+  // Local dev/preview only — lets `new Profiler()` (JS Self-Profiling
+  // API) sample the main thread from page scripts so chat/inventory
+  // perf can be profiled headlessly. Not emitted by GitHub Pages.
+  server: { headers: { 'Document-Policy': 'js-profiling' } },
+  preview: { headers: { 'Document-Policy': 'js-profiling' } },
   build: {
     outDir: 'dist',
     // 2026-06-03 — Target ES2015 to dodge Temporal Dead Zone issues

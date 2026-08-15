@@ -828,10 +828,12 @@ function ChatThreadInner({
         lastJumpedRef.current = jumpToMessageId;
         setHighlightMsgId(jumpToMessageId);
         setAtBottom(false);
+        // 160ms (was 60): the progressive first paint (P1-1) fills the older
+        // rows in ≤120ms, and the target may be one of them.
         const t = setTimeout(() => {
             const el = document.getElementById(`msg-${jumpToMessageId}`);
             el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 60);
+        }, 160);
         const t2 = setTimeout(() => setHighlightMsgId(null), 2800);
         return () => { clearTimeout(t); clearTimeout(t2); };
     }, [jumpToMessageId, messages]);
@@ -2278,8 +2280,32 @@ function ChatThreadInner({
         }
     }
 
+    // 2026-08-15 (chat perf forensics P1-1) — progressive first paint.
+    // Mounting the full 50-message window was a single ~200 ms React commit
+    // on an M-series Mac (prod build; ~2-3× that on a phone) — the biggest
+    // remaining stall on chat-open once the Firestore emit tax was gone.
+    // The viewport only ever shows the newest handful of messages on open
+    // (we're pinned to the bottom), so paint the last FIRST_PAINT_COUNT
+    // first, then fill in the rest one frame later. Users see the same
+    // pixels; the first commit is ~2.5× cheaper. The ResizeObserver above
+    // re-pins scrollTop before paint when the older rows land, so there is
+    // no visual jump. Timer fallback covers hidden tabs where rAF is paused.
+    const FIRST_PAINT_COUNT = 20;
+    const [paintAll, setPaintAll] = useState(false);
+    useEffect(() => {
+        setPaintAll(false);
+        let raf1 = 0, raf2 = 0;
+        const done = () => setPaintAll(true);
+        raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(done); });
+        const t = setTimeout(done, 120);
+        return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); clearTimeout(t); };
+    }, [chat?.id]);
+    const paintMessages = useMemo(
+        () => (paintAll || messages.length <= FIRST_PAINT_COUNT) ? messages : messages.slice(-FIRST_PAINT_COUNT),
+        [messages, paintAll],
+    );
     // Group messages by date for date separators ("Today", "Yesterday", date)
-    const grouped = useMemo(() => groupByDate(messages, isEs), [messages, isEs]);
+    const grouped = useMemo(() => groupByDate(paintMessages, isEs), [paintMessages, isEs]);
     // 2026-06-25 — chat scroll perf. The MessageBubble comparator used to
     // JSON.stringify chat.lastReadByName + chat.members PER BUBBLE on every
     // re-render — and a re-render fires every time anyone's "seen" timestamp
