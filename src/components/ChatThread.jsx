@@ -3690,8 +3690,27 @@ function Composer({
     // off send and taps record that fast.
     const lastSendAtRef = useRef(0);
     const fireSendGuarded = () => { lastSendAtRef.current = Date.now(); fireSend(); };
+    // Live-audit finding (2026-08-15): anchoring the guard to the SEND
+    // moment isn't enough — on a slow render the draft-clear can take
+    // ~1s, so the mic mounts (and the ghost click lands) well after the
+    // 600ms window closed. Anchor to the MIC'S OWN MOUNT instead: the
+    // derived click always lands within a few hundred ms of the swap,
+    // whatever the render speed. Both windows apply.
+    const micMountedAtRef = useRef(0);
+    const micWasShowingRef = useRef(false);
+    // Mirrors `!canSend` (declared below) from the raw props so this stays
+    // above the TDZ line. Stamped DURING RENDER (not in an effect): an
+    // effect commits after paint, and the ghost click can land in that
+    // gap — the live audit caught exactly that (button in DOM, ref still
+    // 0). A ref write in render is safe here: it's idempotent per
+    // transition and read only from event handlers.
+    const micShowing = !draft.trim() && !pendingAttachment;
+    if (micShowing && !micWasShowingRef.current) micMountedAtRef.current = Date.now();
+    micWasShowingRef.current = micShowing;
     const startRecordingGuarded = () => {
-        if (Date.now() - lastSendAtRef.current < 600) return;
+        const now = Date.now();
+        if (now - lastSendAtRef.current < 600) return;
+        if (now - micMountedAtRef.current < 400) return;
         onStartRecording();
     };
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
