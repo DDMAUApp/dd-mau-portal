@@ -54,7 +54,7 @@ const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
 // but no reload escalation and no "Saving…" pill — a slow week prefetch on
 // store Wi-Fi must never reload the app or claim to be saving.
 const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
-import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
+import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, LOCATION_ABBR, isOnScheduleAt } from '../data/staff';
 import { assessOffer, assessCancelOffer, assessDenyClaim, assessDenySwapRequest } from '../data/offerRules';
 import { patchStaffRecordByName } from '../data/staffDoc';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
@@ -96,7 +96,7 @@ import {
     SHIFT_PRESETS_FOH, SHIFT_PRESETS_BOH, getShiftPresets, sanitizeShiftPresets,
     roleColors, toDateStr, parseLocalDate, startOfWeek, addDays, weeksBetween,
     blockedDatesInRange, stripShiftTimestamps, rehydrateShiftTimestamps,
-    formatTime12h, ptoIsPartial, ptoWindowLabel, timeRangesOverlap,
+    formatTime12h, ptoIsPartial, ptoWindowLabel, timeRangesOverlap, selectGhostShifts,
     hoursBetween, dayPaidHours, isDoubleDay, formatHours, hoursColor,
     minorShiftWarnings, SCHEDULE_DAY_KEYS, shortTime12h,
 } from '../data/scheduleCore';
@@ -1522,6 +1522,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             return shiftSide === side && sideStaffNames.has(s.staffName);
         });
     }, [shifts, storeLocation, sideStaffNames, personFilter, side, staffByName, canEdit, staffName]);
+
+    // ── Cross-location "ghost" shifts (2026-08-15) ────────────────────
+    // Andrew: "for people that work at multiple locations, show their
+    // shifts and drafts from the OTHER location — grayed, with the times
+    // and a big MH / WG — so when I'm building Webster I can see Jose is
+    // already at Maryland Heights that day." Any shift belonging to a
+    // staffer who has a row in THIS view, at a location other than the one
+    // being viewed. Drafts stay hidden from non-editors (same rule as
+    // visibleShifts); the viewer's own other-store shifts are already in
+    // visibleShifts (audit H1/H2) so they're excluded here to avoid a
+    // duplicate. Read-only in the grid: no drag, no edit, no offer.
+    const ghostShifts = useMemo(
+        () => selectGhostShifts(shifts, { storeLocation, rowNames: sideStaffNames, personFilter, canEdit, viewerName: staffName }),
+        [shifts, storeLocation, sideStaffNames, personFilter, canEdit, staffName],
+    );
 
     // ── Conflict detection ──────────────────────────────────────
     // Audit follow-up 2026-05-23: managers were finding double-bookings
@@ -6940,6 +6955,7 @@ ${dayBlocks}
                                 weekStart={weekStart}
                                 staffSummary={staffSummary}
                                 shifts={visibleShifts}
+                                ghostShifts={ghostShifts}
                                 isEn={isEn}
                                 currentStaffName={staffName}
                                 canEdit={canEdit}
@@ -7022,6 +7038,7 @@ ${dayBlocks}
                                         selectedDayIdx={selectedDayIdx}
                                         setSelectedDayIdx={setSelectedDayIdx}
                                         shifts={visibleShifts}
+                                        ghostShifts={ghostShifts}
                                         staffSummary={staffSummary}
                                         isEn={isEn}
                                         currentStaffName={staffName}
@@ -8526,7 +8543,7 @@ function QuickAddSlot({ dateStr, isEn, onAddSlot }) {
 // every unrelated parent tick (notifications, clock, modals). Inner name
 // kept as WeeklyGrid for clean React DevTools display, same pattern as
 // ShiftCube below.
-const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onEditShift, movingShiftId, onMoveToCell, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, shiftPresets, onEditPresets, onUpdateShiftTimes, onPtoChipClick,
+const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, ghostShifts = EMPTY_CELL_SHIFTS, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onEditShift, movingShiftId, onMoveToCell, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, shiftPresets, onEditPresets, onUpdateShiftTimes, onPtoChipClick,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
@@ -8699,6 +8716,21 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
         }
         return map;
     }, [shifts]);
+    // Cross-location ghosts (2026-08-15) — same bucketing, rendered read-only
+    // under the real cubes so a manager building this store's week can see
+    // the person is already committed at the other store that day.
+    const ghostsByCell = useMemo(() => {
+        const map = new Map();
+        for (const sh of ghostShifts) {
+            const key = `${sh.staffName}|${sh.date}`;
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(sh);
+        }
+        for (const arr of map.values()) {
+            arr.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+        }
+        return map;
+    }, [ghostShifts]);
 
     // Meal-window staff counts — for each day, how many distinct people
     // have shifts that overlap the lunch window (12-1) and the dinner
@@ -9174,6 +9206,7 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
                             {days.map((d, i) => {
                                 const dStr = toDateStr(d);
                                 const cellShifts = shiftsByCell.get(`${s.name}|${dStr}`) || EMPTY_CELL_SHIFTS;
+                                const cellGhosts = ghostsByCell.get(`${s.name}|${dStr}`) || EMPTY_CELL_SHIFTS;
                                 const isToday = dStr === today;
                                 const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
                                 // 2026-05-16 — use the shared closedByDate map
@@ -9307,6 +9340,10 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, i
                                                     isSelected={selectedShiftIds && selectedShiftIds.has(sh.id)}
                                                     onToggleSelection={onToggleShiftSelection} />
                                             ))}
+                                            {cellGhosts.map(g => (
+                                                <GhostShiftCube key={g.id} shift={g} isEn={isEn} compact
+                                                    conflict={cellShifts.some(sh => timeRangesOverlap(sh.startTime, sh.endTime, g.startTime, g.endTime))} />
+                                            ))}
                                             {canEdit && !onPTO && (() => {
                                                 // Inline quick-add affordance — renders regardless
                                                 // of how many shifts the cell already has so a
@@ -9435,6 +9472,41 @@ function shiftFieldsEqual(a, b) {
     if ((a.role || '') !== (b.role || '')) return false;
     return true;
 }
+// ── Cross-location ghost cube (2026-08-15) ─────────────────────────────
+// Read-only stand-in for a shift this person has at the OTHER store. Gray,
+// dashed, with the times and a big location badge (MH / WG) so it reads as
+// "busy elsewhere" at a glance and can't be confused with a real cube in
+// this store's schedule. No drag, no edit, no offer — switch location to
+// act on it. `conflict` (a real cube in the same cell overlaps it) turns the
+// badge red: the person is double-booked across stores.
+const GhostShiftCube = memo(function GhostShiftCube({ shift, isEn, compact, conflict }) {
+    const abbr = LOCATION_ABBR[shift.location] || String(shift.location || '?').slice(0, 2).toUpperCase();
+    const locLabel = LOCATION_LABELS[shift.location] || shift.location || '';
+    const isDraft = shift.published === false;
+    const title = conflict
+        ? (isEn ? `⚠ Overlaps a shift here — ${locLabel} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}` : `⚠ Se cruza con un turno aquí — ${locLabel} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`)
+        : (isEn ? `${locLabel} shift${isDraft ? ' (draft)' : ''} — switch location to edit` : `Turno en ${locLabel}${isDraft ? ' (borrador)' : ''} — cambia de ubicación para editar`);
+    return (
+        <div
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            title={title}
+            aria-label={title}
+            className={`schedule-ghost-cube relative rounded-md border border-dashed select-none flex items-center gap-1.5 px-1.5 py-1 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${conflict ? 'border-red-400 bg-red-50/70 text-red-700' : 'border-gray-400/70 bg-gray-100 text-gray-500'} ${isDraft ? 'opacity-70' : 'opacity-90'}`}
+        >
+            <span className={`shrink-0 font-black tracking-wider tabular-nums ${compact ? 'text-[13px]' : 'text-[15px]'} ${conflict ? 'text-red-700' : 'text-gray-600'}`}>{abbr}</span>
+            <span className="min-w-0 flex-1">
+                <span className="block font-bold tabular-nums tracking-tight truncate">
+                    {formatTime12h(shift.startTime)}–{formatTime12h(shift.endTime)}
+                </span>
+                {isDraft && (
+                    <span className="block text-[9px] font-bold uppercase tracking-wider">{isEn ? 'Draft' : 'Borrador'}</span>
+                )}
+            </span>
+        </div>
+    );
+});
+
 const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, onEditShift, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, onRequestCover, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
     // Multi-select: shift+click toggles. Parent owns the Set of selected ids.
     isSelected = false, onToggleSelection,
@@ -9821,13 +9893,18 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
     }
 });
 
-function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staffSummary, isEn, currentStaffName, canEdit, onDeleteShift, onOfferShift, onTakeShift, onCancelOffer, onRequestCover }) {
+function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, ghostShifts = EMPTY_CELL_SHIFTS, staffSummary, isEn, currentStaffName, canEdit, onDeleteShift, onOfferShift, onTakeShift, onCancelOffer, onRequestCover }) {
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
     const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
     const selectedDate = days[selectedDayIdx];
     const dStr = toDateStr(selectedDate);
     const dayShifts = shifts
+        .filter(sh => sh.date === dStr)
+        .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+    // Cross-location ghosts for the selected day (2026-08-15) — listed
+    // read-only under the real rows so the day picture is complete.
+    const dayGhosts = ghostShifts
         .filter(sh => sh.date === dStr)
         .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
 
@@ -9895,6 +9972,33 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
                                 dayShiftCount={dayCount} />
                         );
                     })}
+                </div>
+            )}
+            {dayGhosts.length > 0 && (
+                <div className="mt-4">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5">
+                        {isEn ? 'At the other location' : 'En la otra ubicación'}
+                    </div>
+                    <div className="space-y-1">
+                        {dayGhosts.map(g => {
+                            const conflict = dayShifts.some(sh => sh.staffName === g.staffName
+                                && timeRangesOverlap(sh.startTime, sh.endTime, g.startTime, g.endTime));
+                            const abbr = LOCATION_ABBR[g.location] || String(g.location || '?').slice(0, 2).toUpperCase();
+                            return (
+                                <div key={g.id}
+                                    title={(LOCATION_LABELS[g.location] || g.location || '') + (g.published === false ? (isEn ? ' (draft)' : ' (borrador)') : '')}
+                                    className={`flex items-center gap-3 p-3 rounded-lg border-2 border-dashed ${conflict ? 'border-red-400 bg-red-50/60 text-red-700' : 'border-gray-300 bg-gray-100 text-gray-500'} ${g.published === false ? 'opacity-70' : ''}`}>
+                                    <span className={`text-base font-black tracking-wider ${conflict ? 'text-red-700' : 'text-gray-600'}`}>{abbr}</span>
+                                    <span className="min-w-0 flex-1">
+                                        <span className="font-bold">{g.staffName}</span>
+                                        <span className="ml-2 tabular-nums">{formatTime12h(g.startTime)} – {formatTime12h(g.endTime)}</span>
+                                        {g.published === false && <span className="ml-2 text-[10px] font-bold uppercase">{isEn ? 'Draft' : 'Borrador'}</span>}
+                                        {conflict && <span className="ml-2 text-[10px] font-bold">⚠ {isEn ? 'overlaps a shift here' : 'se cruza con un turno aquí'}</span>}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             )}
         </div>

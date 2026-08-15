@@ -269,6 +269,27 @@ export const timeRangesOverlap = (aS, aE, bS, bE) => {
     return hhmmToMin(aS) < hhmmToMin(bE) && hhmmToMin(bS) < hhmmToMin(aE);
 };
 
+// ── Cross-location "ghost" shifts (2026-08-15) ─────────────────────────
+// Which shifts should render as read-only ghosts on the viewed store's
+// grid: any shift at a DIFFERENT store belonging to someone who has a row
+// in this view. Drafts are hidden from non-editors; the viewer's own
+// other-store shifts are excluded for non-editors because visibleShifts
+// already shows them (audit H1/H2). 'both' view shows everything for real,
+// so no ghosts.
+export function selectGhostShifts(shifts, { storeLocation, rowNames, personFilter = null, canEdit = false, viewerName = null } = {}) {
+    if (storeLocation === 'both') return EMPTY_CELL_SHIFTS;
+    const out = [];
+    for (const s of (shifts || [])) {
+        if (!s || !s.location || s.location === storeLocation) continue;
+        if (!rowNames || !rowNames.has(s.staffName)) continue;
+        if (personFilter && s.staffName !== personFilter) continue;
+        if (!canEdit && s.published === false) continue;
+        if (!canEdit && s.staffName === viewerName) continue;
+        out.push(s);
+    }
+    return out.length ? out : EMPTY_CELL_SHIFTS;
+}
+
 // Calculate hours between two HH:mm times, handling overnight shifts.
 export const hoursBetween = (start, end, isDouble = false) => {
     if (!start || !end) return 0;

@@ -216,6 +216,13 @@ export const LOCATION_LABELS = {
   both: "Both Locations"
 };
 
+// Short badges for the schedule grid's cross-location "ghost" cubes
+// (2026-08-15, Andrew: "big MH or WG so it stands out").
+export const LOCATION_ABBR = {
+  webster: "WG",
+  maryland: "MH",
+};
+
 // scheduleHome — added 2026-05-15. Separates "where can this person
 // work" (location, used for shift-pick eligibility) from "which
 // store's schedule grid does this person belong to by default"
