@@ -62,6 +62,14 @@ import {
 // BuildSheetFlatSection renderer. (No /config/sticker_lists override
 // doc existed at switchover — verified — so retiring the old keys
 // needed no migration; subscribeStickerLists ignores unknown keys.)
+// Kinds whose labels are customer-facing (no prep date / time / name).
+// Kept OUT of the sticker search index (2026-08-15, Andrew: "when you
+// search egg rolls I don't want it to pull up the catering items — those
+// are just for labels"). They stay reachable via their own category chip.
+// Keyed by KIND (not section key) so admin-reordered / custom sections that
+// use these label formats behave the same.
+export const CUSTOMER_FACING_KINDS = Object.freeze(new Set(['catering', 'bottles']));
+
 export const STICKER_SECTIONS = Object.freeze([
     {
         key: 'proteins',
@@ -164,7 +172,7 @@ export const STICKER_SECTIONS = Object.freeze([
         // Descriptions deliberately empty — nothing internal should ride
         // onto a customer label.
         key: 'catering',
-        kind: 'catering',
+        kind: 'catering', // customer-facing kind — see CUSTOMER_FACING_KINDS
         titleEn: '🎉 Catering',
         titleEs: '🎉 Catering',
         defaults: [
@@ -212,7 +220,7 @@ export const STICKER_SECTIONS = Object.freeze([
         // customer description PRINTED on the label (grounded in the real
         // recipes) — unlike other sections where desc is internal-only.
         key: 'bottles',
-        kind: 'bottles',
+        kind: 'bottles', // customer-facing kind — see CUSTOMER_FACING_KINDS
         titleEn: '🍾 Bottles',
         titleEs: '🍾 Botellas',
         defaults: [

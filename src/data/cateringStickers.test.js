@@ -122,3 +122,16 @@ describe('brand band (black bar, white DD MAU)', () => {
         expect(out.catering.brandBandText.length).toBe(24);
     });
 });
+
+// 2026-08-15 — customer-facing kinds stay out of the sticker search index.
+import { CUSTOMER_FACING_KINDS } from './stickerListsOverride';
+describe('customer-facing kinds are search-excluded by KIND', () => {
+    it('flags catering + bottles and survives an admin sectionsOverride re-order', () => {
+        expect(CUSTOMER_FACING_KINDS.has('catering')).toBe(true);
+        expect(CUSTOMER_FACING_KINDS.has('bottles')).toBe(true);
+        expect(CUSTOMER_FACING_KINDS.has('protein')).toBe(false);
+        const reordered = resolveSections({ sectionsOverride: [{ key: 'bottles', kind: 'bottles', titleEn: 'B' }, { key: 'catering', kind: 'catering', titleEn: 'C' }] });
+        const cf = reordered.filter(s => CUSTOMER_FACING_KINDS.has(s.kind)).map(s => s.key);
+        expect(cf).toEqual(['bottles', 'catering']);
+    });
+});

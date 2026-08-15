@@ -53,6 +53,7 @@ import {
     makeStickerRowId,
     getStampedDefaults,
     STICKER_SECTIONS,
+    CUSTOMER_FACING_KINDS,
 } from '../data/stickerListsOverride';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
@@ -283,6 +284,11 @@ export default function DateStickerPrinter({
             return row;
         };
         for (const section of stickerSections) {
+            // Customer-facing kinds (catering, bottles) print no date/time/
+            // name — they're labels, not prep stickers — so a search for
+            // "egg rolls" must not surface them next to the prep rows.
+            // They stay reachable through their own category chip.
+            if (CUSTOMER_FACING_KINDS.has(section.kind)) continue;
             const rows = stickerLists?.[section.key] || section.defaults;
             for (const [i, row] of rows.entries()) {
                 base.push(stampHay({
