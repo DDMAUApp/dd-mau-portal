@@ -188,7 +188,14 @@ const prewarmChunks = () => {
             // My Hours — staff check their timecards daily (Andrew 2026-07-27:
             // "the my hours loads slow"); without prewarm the first tap paid a
             // chunk fetch before the page could even start its query.
-            import('./components/MyHoursPage').catch(() => {});
+            import('./components/MyHoursPage').catch(() => {})
+                // Training — third wave, after My Hours settles. The lesson
+                // catalog (training.js) is a 55 kB-gzip data chunk on top of the
+                // 10 kB page chunk; new hires open it repeatedly in their first
+                // weeks and Andrew reported the tab "loading kinda slow"
+                // (2026-08-17). Warming it here means the first tap only waits
+                // on the progress snapshot, not a 65 kB fetch over store Wi-Fi.
+                .finally(() => { import('./components/TrainingHub').catch(() => {}); });
         });
 };
 
@@ -2404,7 +2411,7 @@ export default function App() {
             // We negate the top-level dark backgrounds some legacy components
             // ship with via a CSS reset class that the tab itself defines.
             if (activeTab === 'chat') return <PageErrorBoundary tabName="Chat" language={language}><ChatCenter language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} /></PageErrorBoundary>;
-            if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <PageErrorBoundary tabName="Training" language={language}><TrainingHub staffName={staffName} language={language} staffList={staffList} /></PageErrorBoundary>;
+            if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <PageErrorBoundary tabName="Training" language={language}><TrainingHub staffName={staffName} language={language} staffList={staffList} isManager={isManager} /></PageErrorBoundary>;
             if (activeTab === 'operations' && hasOpsAccess) return <PageErrorBoundary tabName="Operations" language={language}><Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'mytasks') return <PageErrorBoundary tabName="My Tasks" language={language}><MyTasksPanel language={language} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} isManager={isManager} /></PageErrorBoundary>;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <PageErrorBoundary tabName="Menu" language={language}><MenuReference language={language} /></PageErrorBoundary>;

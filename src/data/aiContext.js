@@ -130,11 +130,11 @@ function buildRecipeIndex() {
 // ── Operational rules / quick facts ───────────────────────────────────────
 
 const OPERATIONAL_RULES = `## OPERATIONAL RULES & QUICK FACTS
-- **Uniform**: DD Mau shirt + black pants (no holes, no designs, no yoga pants — shorts are fine), closed-toe non-slip shoes, hair pulled back, hat or visor.
+- **Uniform**: clean DD Mau shirt + dark or khaki pants (no rips, no designs, no yoga pants/leggings — shorts are fine if clean/no graphics), closed-toe non-slip shoes, hair tied back, trimmed clean nails (no acrylics; polish only if fresh and unchipped), minimal jewelry. Phones and earbuds stay in the back.
 - **Hand-washing**: After clocking in, after handling raw meat, after eating/drinking/phone, after bathroom, after sneezing. Soap + warm water 20 sec.
 - **Drinks**: Personal drinks stay out of guest sight, never on the line.
 - **Breaks**: Every double shift = 1-hour unpaid break. Always check with the Shift Lead.
-- **Burns**: Cool with cold water (no ice). Tell Lead if it blisters.
+- **Burns**: Run cool water over it for at least 10 minutes (no ice). Tell the Shift Lead every time.
 - **Allergen process**: Guest mentions allergy → STOP, get Shift Lead, Lead confirms with kitchen. Never guess.
 - **Complaints**: Front-line staff find the Shift Lead — Lead runs RESTORE.
 - **Receipts**: Hand back the change always. Receipt only printed if guest chose "print receipt" on Toast.

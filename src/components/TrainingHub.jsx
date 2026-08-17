@@ -6,13 +6,15 @@ import {
 } from "firebase/firestore";
 // 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
 // see firestoreRevive.js). Same pattern as Schedule/ChatThread.
-import { watchdogWrite, watchdogRead } from "../data/firestoreRevive";
+import { watchdogWrite, watchdogRead, reviveFirestore } from "../data/firestoreRevive";
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import { t } from "../data/translations";
 import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";
+import { toast } from "../toast";
+import { pushBackHandler } from "../capacitor-bridge";
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.
 import { GraduationCap, BarChart3 } from "lucide-react";
 import { PageHeader } from "../v2/PageShell";
@@ -33,14 +35,20 @@ import { PageHeader } from "../v2/PageShell";
 // change; Andrew wants to fix typos / tweak wording without waiting
 // for GitHub Pages. The override layer means edits are live in seconds
 // on every device.
-function applyLessonOverride(lesson, override) {
+// 2026-08-17 audit: an EMPTY override value ('' title / [] body) used to win
+// over the static text and render a blank lesson for every device. Empty
+// now falls back to the deployed default — the editor also refuses to save
+// an empty title/body, but old docs and hand edits shouldn't blank a lesson.
+const nonEmptyStr = (v) => (typeof v === 'string' && v.trim().length > 0 ? v : null);
+const nonEmptyArr = (v) => (Array.isArray(v) && v.some(p => typeof p === 'string' && p.trim().length > 0) ? v : null);
+export function applyLessonOverride(lesson, override) {
     if (!override) return lesson;
     return {
         ...lesson,
-        titleEn: override.titleEn != null ? override.titleEn : lesson.titleEn,
-        titleEs: override.titleEs != null ? override.titleEs : lesson.titleEs,
-        contentEn: Array.isArray(override.contentEn) ? override.contentEn : lesson.contentEn,
-        contentEs: Array.isArray(override.contentEs) ? override.contentEs : lesson.contentEs,
+        titleEn: nonEmptyStr(override.titleEn) ?? lesson.titleEn,
+        titleEs: nonEmptyStr(override.titleEs) ?? lesson.titleEs,
+        contentEn: nonEmptyArr(override.contentEn) ?? lesson.contentEn,
+        contentEs: nonEmptyArr(override.contentEs) ?? lesson.contentEs,
         // Per-lesson YouTube video IDs — admins set via the Edit modal.
         // Stored on the override doc so a video can be added/swapped
         // without redeploying training.js. ES variant is optional; if
@@ -90,6 +98,28 @@ export function parseYouTubeId(input) {
 // Doc id helper — staff name → safe Firestore doc id
 const staffDocId = (name) => (name || "unknown").toLowerCase().replace(/\s+/g, "_");
 
+// Deterministic per-attempt shuffle of a question's answer options.
+// 2026-08-17 audit: several modules (M7, M9) had the correct answer at
+// option "b" on EVERY question and options were rendered in source order,
+// so tapping B down the page scored 100% without reading. Ordering is a
+// pure function of (seed, question id) — stable while answering, different
+// on the next attempt. Answers are stored by option ID, so shuffling never
+// affects grading, saved progress, or the localStorage restore.
+export function orderQuizOptions(options, seedStr) {
+    if (!Array.isArray(options) || options.length < 2) return options || [];
+    // FNV-1a over seed + option id → sort key. Tiny, no deps, good enough
+    // spread for 2–5 options.
+    const h = (s) => {
+        let x = 0x811c9dc5;
+        for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 0x01000193) >>> 0; }
+        return x;
+    };
+    return options
+        .map((o, i) => ({ o, i, k: h(`${seedStr}#${o.id}`) }))
+        .sort((a, b) => (a.k - b.k) || (a.i - b.i))
+        .map(x => x.o);
+}
+
 // Module track display order + label
 const TRACK_ORDER = ["new-hire", "stations", "menu", "service-safety", "manager-ops"];
 const TRACK_LABELS = {
@@ -119,6 +149,9 @@ const ALLERGEN_COLS = [
     { key: "wheat", labelEn: "Wheat", labelEs: "Trigo" },
     { key: "soy", labelEn: "Soy", labelEs: "Soya" },
     { key: "sesame", labelEn: "Sesame", labelEs: "Ajonjolí" },
+    // 2026-08-17 audit: L1 says "we track all 9 plus MSG" and the official
+    // docx matrix has an MSG column, but the in-app chart never showed it.
+    { key: "msg", labelEn: "MSG", labelEs: "MSG" },
 ];
 
 function AllergenCell({ mark }) {
@@ -180,7 +213,7 @@ function AllergenMatrix({ matrix, isEn }) {
 }
 
 // Wrapper for any view's content. Mobile: just renders children full-width.
-// md+: pins the module sidebar on the left, content fills the rest.
+// md+: an optional module sidebar on the left, content fills the rest.
 //
 // 2026-07-26 audit — HOISTED out of TrainingHub's render body. Defined
 // inline, `Shell` got a brand-new function identity every render, so React
@@ -189,33 +222,124 @@ function AllergenMatrix({ matrix, isEn }) {
 // LessonEditor's inputs wiped whenever a progress/override snapshot landed.
 // Same bug class as the Schedule.jsx Panel hoist. The sidebar JSX (which
 // closes over TrainingHub state) is threaded in as a prop.
-function Shell({ sidebar, children }) {
+//
+// 2026-08-17 (Andrew, iPad): "make the content window larger — on the iPad
+// it's the modules and next to it the lessons … hard to read". On a tablet
+// the app already spends 256 px on the AppShell nav, so a second always-on
+// 256–288 px module rail left ~250 px for the lesson text at 820 px. The
+// module rail is now COLLAPSIBLE: open by default only at xl+ (≥1280 px,
+// real desktops), closed by default on tablets, toggled by the "Modules"
+// pill in the content column. Below xl, picking a module from the rail
+// closes it again so the lesson gets the full width. Mobile (<md) is
+// unchanged (no rail; the list view IS the module list).
+const SIDEBAR_DEFAULT_OPEN_MQ = '(min-width: 1280px)';
+function Shell({ sidebar, children, sidebarOpen, onToggleSidebar, isEn }) {
     return (
         <div className="md:flex md:gap-5 md:p-4">
-            <aside className="hidden md:block md:w-64 lg:w-72 md:flex-shrink-0 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto bg-white md:border md:border-gray-200 md:rounded-xl md:p-3">
-                {sidebar}
-            </aside>
+            {sidebarOpen && (
+                <aside className="hidden md:block md:w-64 md:flex-shrink-0 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto bg-white md:border md:border-gray-200 md:rounded-xl md:p-3">
+                    {sidebar}
+                </aside>
+            )}
             <div className="flex-1 min-w-0 md:bg-white md:border md:border-gray-200 md:rounded-xl">
+                <div className="hidden md:flex justify-end px-4 pt-3 -mb-2">
+                    <button type="button" onClick={onToggleSidebar}
+                        aria-expanded={!!sidebarOpen}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 hover:text-gray-700 transition">
+                        {sidebarOpen
+                            ? <>◀ {isEn ? 'Hide module list' : 'Ocultar módulos'}</>
+                            : <>☰ {isEn ? 'Modules' : 'Módulos'}</>}
+                    </button>
+                </div>
                 {children}
             </div>
         </div>
     );
 }
 
-export default function TrainingHub({ staffName, language, staffList }) {
+// Reading position survives a tab switch (App.jsx remounts the route on
+// every tab change — a push-notification hop into Chat used to drop the
+// trainee back on the module list). sessionStorage: per-tab/PWA session,
+// cleared on cold launch, keyed by staff so a shared iPad doesn't hand one
+// person another's lesson.
+const POS_KEY = (name) => `ddmau:training:pos:${(name || '').toLowerCase()}`;
+function readSavedPos(name) {
+    try {
+        const raw = sessionStorage.getItem(POS_KEY(name));
+        if (!raw) return null;
+        const p = JSON.parse(raw);
+        if (!p || typeof p !== 'object') return null;
+        // Only resumable, read-only views. Quiz/result/tracker restart clean.
+        if (!['module', 'lesson'].includes(p.view)) return null;
+        return p;
+    } catch { return null; }
+}
+
+export default function TrainingHub({ staffName, language, staffList, isManager = false }) {
     const isEn = language !== "es";
     const tx = (en, es) => (isEn ? en : es);
 
     const adminUser = isAdmin(staffName, staffList);
     const currentStaff = (staffList || []).find(s => s.name === staffName);
     const isLead = adminUser || !!(currentStaff?.shiftLead);
+    // Tracker + Unlock: owners AND managers (2026-08-17). The lock copy has
+    // always said "ask your manager to clear the lock" — but only ADMIN_IDS
+    // could see the Tracker, so a locked staffer at a store with just a
+    // manager on duty was stuck. Lesson EDIT stays owner-only.
+    const canTrack = adminUser || !!isManager;
 
     // View state
-    const [view, setView] = useState("list"); // list | module | lesson | quiz | quiz-result | tracker
-    const [activeModuleId, setActiveModuleId] = useState(null);
-    const [activeLessonId, setActiveLessonId] = useState(null);
+    const [savedPos] = useState(() => readSavedPos(staffName));
+    const [view, setView] = useState(savedPos?.view || "list"); // list | module | lesson | quiz | quiz-result | tracker
+    const [activeModuleId, setActiveModuleId] = useState(savedPos?.moduleId || null);
+    const [activeLessonId, setActiveLessonId] = useState(savedPos?.lessonId || null);
     const [quizAnswers, setQuizAnswers] = useState({});
     const [lastResult, setLastResult] = useState(null);
+    // Per-attempt shuffle seed for the answer options — see orderQuizOptions.
+    // Re-rolled every time "Take the quiz" is tapped; stable for the life of
+    // one attempt so the options don't jump around while answering.
+    const [quizSeed, setQuizSeed] = useState(() => Date.now());
+    useEffect(() => {
+        try {
+            if (view === 'module' || view === 'lesson') {
+                sessionStorage.setItem(POS_KEY(staffName), JSON.stringify({ view, moduleId: activeModuleId, lessonId: activeLessonId }));
+            } else {
+                sessionStorage.removeItem(POS_KEY(staffName));
+            }
+        } catch {}
+    }, [view, activeModuleId, activeLessonId, staffName]);
+
+    // Android hardware back: step UP one level inside Training instead of
+    // bouncing to Home (bridge Priority-2). Registered only when there is
+    // somewhere to go up to; on the list view the bridge's own home/exit
+    // behaviour applies.
+    useEffect(() => {
+        if (view === 'list') return undefined;
+        return pushBackHandler(() => {
+            if (view === 'lesson' || view === 'quiz' || view === 'quiz-result') setView('module');
+            else { setView('list'); setActiveModuleId(null); }
+        });
+    }, [view]);
+
+    // Module rail (md+): open by default on real desktops only — see Shell.
+    const [sidebarOpen, setSidebarOpen] = useState(() => {
+        try { return window.matchMedia(SIDEBAR_DEFAULT_OPEN_MQ).matches; } catch { return false; }
+    });
+    // Below xl the rail steals the lesson's width, so a pick from the rail
+    // closes it. At xl+ it stays put (desktop split-pane).
+    const closeSidebarIfNarrow = () => {
+        try { if (!window.matchMedia(SIDEBAR_DEFAULT_OPEN_MQ).matches) setSidebarOpen(false); } catch {}
+    };
+
+    // 2026-08-17 — every view change (and every lesson change inside the
+    // lesson view) starts at the top. Before, tapping "Next →" at the bottom
+    // of a lesson landed you mid-way down the NEXT lesson (window scroll
+    // position carried over because only the content swapped) — on a phone
+    // that reads as "the page is broken / I lost my place".
+    const scrollTopOnChange = `${view}|${activeModuleId}|${activeLessonId}`;
+    useEffect(() => {
+        try { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch { try { window.scrollTo(0, 0); } catch {} }
+    }, [scrollTopOnChange]);
 
     // Persist quiz answers to localStorage so a mid-quiz refresh
     // doesn't lose progress (AUDIT TRAIN-003). Keyed by
@@ -250,23 +374,18 @@ export default function TrainingHub({ staffName, language, staffList }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [view, activeModuleId, staffName]);
     // Save on every change while in the quiz view.
-    // 2026-05-30 perf — debounce the localStorage write. Previously every
-    // keystroke on a free-text answer (or rapid radio-button taps)
-    // serialized the entire quizAnswers object to JSON + wrote to disk.
-    // localStorage writes are synchronous and can stutter on slower
-    // devices when fired hundreds of times during a long quiz. 250ms
-    // debounce coalesces bursts; a final flush on unmount + view-leave
-    // ensures the latest state always lands.
+    // 2026-08-17 — write immediately (was a 250 ms debounce whose cleanup
+    // only cleared the timer, so an answer tapped <250 ms before leaving
+    // the view / backgrounding the app was never saved). Every quiz is
+    // multiple-choice, so this is one <200-byte write per tap — no need to
+    // coalesce.
     useEffect(() => {
         if (view !== "quiz" || !activeModuleId) return;
         const k = quizStorageKey(activeModuleId);
         if (!k) return;
-        const id = setTimeout(() => {
-            try {
-                localStorage.setItem(k, JSON.stringify(quizAnswers));
-            } catch { /* storage full — non-fatal */ }
-        }, 250);
-        return () => clearTimeout(id);
+        try {
+            localStorage.setItem(k, JSON.stringify(quizAnswers));
+        } catch { /* storage full — non-fatal */ }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [quizAnswers, view, activeModuleId, staffName]);
     // Clear after the result lands.
@@ -319,12 +438,22 @@ export default function TrainingHub({ staffName, language, staffList }) {
         // our own pending writes in the snapshot, so optimistic quiz updates
         // don't flicker; all local progress changes are persisted, so replacing
         // the whole progress object on each snapshot loses nothing.
+        // 2026-08-17: first-snapshot watchdog. onSnapshot is not covered by
+        // watchdogRead/Write, so on a wedged transport (post-resume iOS) a
+        // never-seen doc could sit un-answered until the 3-minute liveness
+        // probe. If nothing arrives in 8 s, poke the transport once; the
+        // page itself already renders without progress (see progressReady).
+        let gotFirst = false;
+        const wd = setTimeout(() => {
+            if (gotFirst) return;
+            reviveFirestore('training-progress-first-snapshot').catch(() => {});
+        }, 8000);
         const unsub = onSnapshot(
             doc(db, "training_v2", staffDocId(staffName)),
-            (snap) => { setProgress(snap.exists() ? snap.data() : { modules: {} }); setLoading(false); },
-            (e) => { console.warn('training progress snapshot error:', e); setLoading(false); },
+            (snap) => { gotFirst = true; setProgress(snap.exists() ? snap.data() : { modules: {} }); setLoading(false); },
+            (e) => { gotFirst = true; console.warn('training progress snapshot error:', e); setLoading(false); },
         );
-        return () => unsub();
+        return () => { clearTimeout(wd); unsub(); };
     }, [staffName]);
 
     const persistProgress = async (next) => {
@@ -392,7 +521,12 @@ export default function TrainingHub({ staffName, language, staffList }) {
             },
         }));
         // Granular write — only mutates `modules.${mId}.lessonsCompleted`.
-        await persistModulePatch(mId, { lessonsCompleted: newLessons });
+        // 2026-08-17: arrayUnion (was the whole local array). The page no
+        // longer waits for the progress snapshot before rendering, so a tap
+        // that lands before the doc arrives (or a second device / stale tab)
+        // must never overwrite an existing list with a shorter one. Union is
+        // idempotent, so double-taps and replays are harmless too.
+        await persistModulePatch(mId, { lessonsCompleted: arrayUnion(lId) });
     };
 
     // Synchronous re-entry guard (2026-07-26 platform audit H7): a fast
@@ -401,15 +535,18 @@ export default function TrainingHub({ staffName, language, staffList }) {
     // unlock required. A ref (not state) so the second tap in the same
     // tick is already blocked.
     const submittingQuizRef = useRef(false);
+    const [submittingQuiz, setSubmittingQuiz] = useState(false);
     const submitQuiz = async () => {
         const m = activeModule;
         if (!m) return;
         if (submittingQuizRef.current) return;
         submittingQuizRef.current = true;
+        setSubmittingQuiz(true);
         try {
             await _submitQuizInner(m);
         } finally {
             submittingQuizRef.current = false;
+            setSubmittingQuiz(false);
         }
     };
     const _submitQuizInner = async (m) => {
@@ -440,7 +577,10 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const lastTwoFailed = sinceUnlock.length >= 2
             && !sinceUnlock[sinceUnlock.length - 1].passed
             && !sinceUnlock[sinceUnlock.length - 2].passed;
-        const locked = passed ? false : lastTwoFailed;
+        // 2026-08-17: a module that is ALREADY passed can never lock — the
+        // module page invites "retake the quiz any time", and two failed
+        // retakes used to slap 🔒 over a ✅ and demand an owner unlock.
+        const locked = (passed || cur.passed) ? false : lastTwoFailed;
 
         const patch = {
             attempts: arrayUnion(attempt),
@@ -461,14 +601,25 @@ export default function TrainingHub({ staffName, language, staffList }) {
                 [m.id]: { ...cur, ...patch, attempts, lockedAt: patch.lockedAt ?? cur.lockedAt ?? null, passedAt: patch.passedAt ?? cur.passedAt },
             },
         }));
-        await persistModulePatch(m.id, patch);
-        // Submission recorded — drop the saved-progress entry so a
-        // subsequent retake starts with a fresh slate. (Otherwise
-        // localStorage would keep the last-submitted answers and
-        // restore them on re-entry to the quiz view.)
+        // 2026-08-17: show the result FIRST, then persist. The local state
+        // above is already the truth the UI needs; awaiting the server ack
+        // before flipping the view meant "I hit Submit and nothing happens"
+        // on slow store Wi-Fi, and on a wedged transport the 18 s watchdog
+        // reload landed the user back on the quiz with their answers still
+        // in localStorage → a second submit → a second (spurious) attempt →
+        // possible unearned lock. Clear the saved answers and move on now;
+        // the SDK's offline queue + watchdogWrite guarantee delivery, and a
+        // hard rejection surfaces as a toast rather than a frozen button.
         clearSavedQuiz(m.id);
         setLastResult({ score, correct, total: m.quiz.questions.length, passed, locked });
         setView("quiz-result");
+        try {
+            await persistModulePatch(m.id, patch);
+        } catch (e) {
+            console.error('quiz attempt save failed:', e);
+            toast(tx('⚠ Your quiz result could not be saved. Check your connection and tell your manager if this keeps happening.',
+                     '⚠ No se pudo guardar tu resultado. Revisa tu conexión y avisa a tu gerente si sigue pasando.'), { kind: 'warn', duration: 8000 });
+        }
     };
 
     /* ───────── Tracker (admin) ───────── */
@@ -489,19 +640,32 @@ export default function TrainingHub({ staffName, language, staffList }) {
         // and clear the lockedAt timestamp; the staff can retake the quiz
         // and a fresh attempt gets appended.
         const ref = doc(db, "training_v2", staffDocId);
-        await updateDoc(ref, {
-            [`modules.${moduleId}.locked`]: false,
-            [`modules.${moduleId}.lockedAt`]: deleteField(),
-            [`modules.${moduleId}.unlockedAt`]: new Date().toISOString(),
-            [`modules.${moduleId}.unlockedBy`]: staffName,
-        });
+        try {
+            await updateDoc(ref, {
+                [`modules.${moduleId}.locked`]: false,
+                [`modules.${moduleId}.lockedAt`]: deleteField(),
+                [`modules.${moduleId}.unlockedAt`]: new Date().toISOString(),
+                [`modules.${moduleId}.unlockedBy`]: staffName,
+            });
+            toast(tx('✓ Unlocked', '✓ Desbloqueado'));
+        } catch (e) {
+            console.error('clearLock failed:', e);
+            toast(tx('⚠ Unlock failed — check your connection and try again.', '⚠ No se pudo desbloquear — revisa tu conexión e intenta de nuevo.'), { kind: 'warn' });
+        }
         loadTracker();
     };
 
     /* ───────── Renderers ───────── */
-    if (loading) {
-        return <div className="p-4 text-center text-gray-500">{tx("Loading…", "Cargando…")}</div>;
-    }
+    // 2026-08-17 — no full-page "Loading…" gate any more. The module list is
+    // static data (MODULES + overrides) and renders instantly; the progress
+    // snapshot (✅ / % / 🔒 pills) lands a beat later and fills in. While it
+    // is still in flight, `progressReady` keeps the quiz gated (the lock /
+    // pass math needs the real attempt history) — lesson reads are safe at
+    // any time because they are arrayUnion writes. On a device with a warm
+    // persistence cache the gap is a few ms; on a cold cache / slow store
+    // Wi-Fi this is the difference between "blank page for a second or two"
+    // and "the page is just there".
+    const progressReady = !loading;
 
     /* ───────── Desktop split-pane shell ─────────
        On mobile the existing per-view returns render as-is (full-width).
@@ -514,12 +678,14 @@ export default function TrainingHub({ staffName, language, staffList }) {
             modules: visibleModules.filter(m => m.track === track),
         })).filter(g => g.modules.length > 0);
         return (
-            <div className="space-y-3">
+            // onClickCapture: any pick inside the rail collapses it below xl so
+            // the destination gets the full content width (see Shell note).
+            <div className="space-y-3" onClickCapture={closeSidebarIfNarrow}>
                 <button onClick={() => { setView("list"); setActiveModuleId(null); }}
                     className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold ${view === "list" ? "bg-mint-100 text-mint-800" : "text-gray-500 hover:bg-gray-50"}`}>
                     📚 {tx("All modules", "Todos los módulos")}
                 </button>
-                {adminUser && (
+                {canTrack && (
                     <button onClick={() => { loadTracker(); setView("tracker"); }}
                         className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold ${view === "tracker" ? "bg-purple-100 text-purple-800" : "text-purple-600 hover:bg-purple-50"}`}>
                         📊 {tx("Tracker", "Progreso")}
@@ -571,7 +737,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const m = activeModule;
         const allAnswered = m.quiz.questions.every(q => quizAnswers[q.id]);
         return (
-            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(o => !o)} isEn={isEn}><div className="p-4 md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <h2 className="text-xl font-bold text-mint-700 mb-1">{m.icon} {tx(m.titleEn, m.titleEs)} — {tx("Quiz", "Examen")}</h2>
                 <p className="text-xs text-gray-500 mb-4">{tx(`Pass ${Math.round(m.quiz.passThreshold * 100)}% to clear this module. Two failed attempts in a row will lock the module — your manager has to clear the lock.`, `Aprueba con ${Math.round(m.quiz.passThreshold * 100)}% para completar este módulo. Dos intentos fallidos seguidos bloquean el módulo — tu gerente debe quitar el bloqueo.`)}</p>
@@ -579,12 +745,12 @@ export default function TrainingHub({ staffName, language, staffList }) {
                     <div key={q.id} className="mb-5 p-4 bg-white border border-gray-200 rounded-xl">
                         <div className="text-sm font-bold text-gray-800 mb-3">{qi + 1}. {tx(q.questionEn, q.questionEs)}</div>
                         <div className="space-y-2">
-                            {q.options.map(opt => {
+                            {orderQuizOptions(q.options, `${quizSeed}|${q.id}`).map((opt, oi) => {
                                 const selected = quizAnswers[q.id] === opt.id;
                                 return (
                                     <button key={opt.id} onClick={() => setQuizAnswers(prev => ({ ...prev, [q.id]: opt.id }))}
                                         className={`w-full text-left px-3 py-2 rounded-lg border-2 transition ${selected ? "bg-mint-50 border-mint-500" : "bg-white border-gray-200 hover:border-gray-300"}`}>
-                                        <span className="font-bold text-mint-700 mr-2">{opt.id.toUpperCase()}.</span>
+                                        <span className="font-bold text-mint-700 mr-2">{String.fromCharCode(65 + oi)}.</span>
                                         <span className="text-sm">{tx(opt.textEn, opt.textEs)}</span>
                                     </button>
                                 );
@@ -592,9 +758,9 @@ export default function TrainingHub({ staffName, language, staffList }) {
                         </div>
                     </div>
                 ))}
-                <button onClick={submitQuiz} disabled={!allAnswered}
-                    className={`w-full py-3 rounded-xl font-bold text-white text-base ${allAnswered ? "bg-mint-700 hover:bg-mint-800" : "bg-gray-300 cursor-not-allowed"}`}>
-                    {tx("Submit Quiz", "Enviar Examen")}
+                <button onClick={submitQuiz} disabled={!allAnswered || submittingQuiz}
+                    className={`w-full py-3 rounded-xl font-bold text-white text-base ${allAnswered && !submittingQuiz ? "bg-mint-700 hover:bg-mint-800" : "bg-gray-300 cursor-not-allowed"}`}>
+                    {submittingQuiz ? tx("Submitting…", "Enviando…") : tx("Submit Quiz", "Enviar Examen")}
                 </button>
                 {!allAnswered && <p className="text-xs text-gray-500 text-center mt-2">{tx("Answer every question to submit", "Responde todas las preguntas para enviar")}</p>}
             </div></Shell>
@@ -605,7 +771,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     if (view === "quiz-result" && lastResult && activeModule) {
         const r = lastResult;
         return (
-            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(o => !o)} isEn={isEn}><div className="p-4 md:p-5">
                 <div className={`rounded-2xl p-6 text-center ${r.passed ? "bg-green-50 border-2 border-green-300" : r.locked ? "bg-red-50 border-2 border-red-300" : "bg-amber-50 border-2 border-amber-300"}`}>
                     <div className="text-5xl mb-3">{r.passed ? "🎉" : r.locked ? "🔒" : "❌"}</div>
                     <h2 className="text-2xl font-bold mb-2">
@@ -646,7 +812,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const overrideKey = `${m.id}__${activeLesson.id}`;
         const hasOverride = !!overrides[overrideKey];
         return (
-            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(o => !o)} isEn={isEn}><div className="p-4 md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <p className="text-xs text-gray-500 mb-1">{m.code} · {tx("Lesson", "Lección")} {lIdx + 1} / {m.lessons.length}</p>
                 <div className="flex items-start gap-2 mb-4">
@@ -703,7 +869,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                     );
                 })()}
 
-                <div className="space-y-3 text-gray-800 text-sm leading-relaxed">
+                <div className="space-y-3 text-gray-800 text-[15px] md:text-base leading-relaxed">
                     {content.map((para, i) => (
                         <p key={i} className={para.startsWith("•") || para.startsWith("—") || /^\d+\./.test(para) ? "ml-2" : ""}>{para}</p>
                     ))}
@@ -715,10 +881,21 @@ export default function TrainingHub({ staffName, language, staffList }) {
                             className="flex-1 py-3 rounded-xl bg-gray-200 text-gray-700 font-bold">← {tx("Previous", "Anterior")}</button>
                     )}
                     {!completed && (
-                        <button onClick={async () => {
-                            await markLessonComplete(m.id, activeLessonId);
+                        <button onClick={() => {
+                            // 2026-08-17: advance FIRST, persist in the background.
+                            // Awaiting the write here made every "Mark as read"
+                            // cost a server round-trip (seconds on bad Wi-Fi, a
+                            // dead-looking button on a wedged transport) and, if
+                            // the reader had already tapped Next, the late
+                            // setActiveLessonId yanked them back a lesson.
+                            const lessonId = activeLessonId;
                             if (lIdx < m.lessons.length - 1) setActiveLessonId(m.lessons[lIdx + 1].id);
                             else setView("module");
+                            markLessonComplete(m.id, lessonId).catch(e => {
+                                console.error('lesson-complete save failed:', e);
+                                toast(tx('⚠ Could not save that lesson as read — check your connection.',
+                                         '⚠ No se pudo guardar la lección como leída — revisa tu conexión.'), { kind: 'warn' });
+                            });
                         }} className="flex-1 py-3 rounded-xl bg-mint-700 text-white font-bold">
                             {tx("Mark as read", "Marcar como leída")}
                         </button>
@@ -756,7 +933,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
             return c;
         })();
         return (
-            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(o => !o)} isEn={isEn}><div className="p-4 md:p-5">
                 <button onClick={() => { setView("list"); setActiveModuleId(null); }} className="text-sm text-mint-700 mb-3">← {tx("All modules", "Todos los módulos")}</button>
                 <div className="flex items-start gap-3 mb-4">
                     <div className="text-4xl">{m.icon}</div>
@@ -796,11 +973,11 @@ export default function TrainingHub({ staffName, language, staffList }) {
                 </div>
 
                 <h3 className="text-sm font-bold text-gray-600 uppercase tracking-wide mb-2">{tx("Quiz", "Examen")}</h3>
-                <button onClick={() => { if (!st.locked && allLessonsRead) { setQuizAnswers({}); setView("quiz"); } }}
-                    disabled={st.locked || !allLessonsRead}
+                <button onClick={() => { if (progressReady && !st.locked && allLessonsRead) { setQuizAnswers({}); setQuizSeed(Date.now()); setView("quiz"); } }}
+                    disabled={!progressReady || st.locked || !allLessonsRead}
                     className={`w-full p-4 rounded-xl border-2 text-left transition ${
                         st.locked ? "bg-red-50 border-red-300 cursor-not-allowed" :
-                        !allLessonsRead ? "bg-gray-50 border-gray-200 cursor-not-allowed" :
+                        !progressReady || !allLessonsRead ? "bg-gray-50 border-gray-200 cursor-not-allowed" :
                         st.passed ? "bg-green-50 border-green-300 hover:border-green-500" :
                         "bg-mint-50 border-mint-300 hover:border-mint-500"}`}>
                     <div className="flex items-center justify-between">
@@ -810,7 +987,10 @@ export default function TrainingHub({ staffName, language, staffList }) {
                                 {tx("Take the quiz", "Tomar el examen")}
                                 <span className="text-xs font-normal text-gray-500 ml-2">{m.quiz.questions.length} {tx("questions", "preguntas")} · {Math.round(m.quiz.passThreshold * 100)}% {tx("to pass", "para aprobar")}</span>
                             </div>
-                            {!allLessonsRead && !st.locked && (
+                            {!progressReady && (
+                                <div className="text-xs text-gray-500 mt-1">{tx("Syncing your progress…", "Sincronizando tu progreso…")}</div>
+                            )}
+                            {progressReady && !allLessonsRead && !st.locked && (
                                 <div className="text-xs text-gray-500 mt-1">{tx("Read all lessons first", "Lee todas las lecciones primero")}</div>
                             )}
                             {failsInRow > 0 && !st.locked && !st.passed && (
@@ -824,10 +1004,10 @@ export default function TrainingHub({ staffName, language, staffList }) {
     }
 
     // Tracker (admin)
-    if (view === "tracker" && adminUser) {
+    if (view === "tracker" && canTrack) {
         const docs = Object.entries(allProgress);
         return (
-            <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
+            <Shell sidebar={moduleListSidebar} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(o => !o)} isEn={isEn}><div className="p-4 md:p-5">
                 <button onClick={() => setView("list")} className="text-sm text-mint-700 mb-3">← {tx("Back", "Atrás")}</button>
                 <div className="flex items-center justify-between mb-3">
                     <h2 className="text-xl font-bold text-mint-700">📊 {tx("Training Tracker", "Progreso de Capacitación")}</h2>
@@ -883,7 +1063,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     })).filter(g => g.modules.length > 0);
 
     return (
-        <Shell sidebar={moduleListSidebar}><div className="p-4 pb-bottom-nav md:p-5">
+        <Shell sidebar={moduleListSidebar} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(o => !o)} isEn={isEn}><div className="p-4 md:p-5">
             <PageHeader
                 icon={GraduationCap}
                 title={t("trainingHub", language) || tx("Training Hub", "Centro de Capacitación")}
@@ -891,7 +1071,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                     "Read each lesson, then pass the quiz to clear the module. 80% to pass; safety modules require 85%.",
                     "Lee cada lección, luego aprueba el examen para completar el módulo. 80% para aprobar; los módulos de seguridad requieren 85%.",
                 )}
-                actions={adminUser && (
+                actions={canTrack && (
                     <button onClick={() => { loadTracker(); setView("tracker"); }}
                         className="glass-button-apple inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
                         <BarChart3 size={14} strokeWidth={2.25} aria-hidden="true" />
@@ -990,6 +1170,15 @@ function LessonEditor({ lesson, moduleId, moduleCode, lessonIdx, overrideKey, ha
     const videoEsInvalid = trimEs && !parsedVidEs;
 
     const save = async () => {
+        // Hard block on an empty title or body in either language — an
+        // empty override used to blank the lesson for everyone (2026-08-17).
+        if (!titleEn.trim() || !titleEs.trim() || enLines.length === 0 || esLines.length === 0) {
+            setErr(tx(
+                "Title and body are required in BOTH languages. To drop your edits, use “Revert to default” instead.",
+                "El título y el cuerpo son obligatorios en AMBOS idiomas. Para descartar tus cambios usa “Revertir”."
+            ));
+            return;
+        }
         if (!balanced) {
             if (!confirm(tx(
                 `EN has ${enLines.length} lines, ES has ${esLines.length}. Save anyway? The bilingual renderer expects them to match.`,

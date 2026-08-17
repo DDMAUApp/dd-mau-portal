@@ -342,6 +342,35 @@ async function renameInsuranceIndex(oldName, newName) {
     return 1;
 }
 
+// /training_v2/{staffDocId} — Training Hub progress (lessons read, quiz
+// attempts, locks). Doc id = lowercase name with spaces → "_" (see
+// TrainingHub.jsx staffDocId) and the doc carries `staffName` for the
+// tracker. Before 2026-08-17 a rename left the old doc orphaned: the
+// renamed person subscribed to a fresh empty doc (every module "not
+// started", locks gone) and the admin Tracker listed both names. Copy
+// old → new (merge, so a doc the new name already has keeps its own
+// fields) and delete the old one in a single batch.
+export const trainingDocId = (name) => (name || 'unknown').toLowerCase().replace(/\s+/g, '_');
+async function renameTrainingProgress(oldName, newName) {
+    const oldId = trainingDocId(oldName);
+    const newId = trainingDocId(newName);
+    if (oldId === newId) return 0; // case/whitespace-only rename → same doc
+    const oldRef = doc(db, 'training_v2', oldId);
+    const snap = await getDoc(oldRef);
+    if (!snap.exists()) return 0;
+    const data = snap.data() || {};
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'training_v2', newId), {
+        ...data,
+        staffName: newName,
+        renamedFrom: oldName,
+        updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    batch.delete(oldRef);
+    await batch.commit();
+    return 1;
+}
+
 export async function renameStaffEverywhere({ oldName, newName, staffId, by } = {}) {
     const o = String(oldName || '').trim();
     const n = String(newName || '').trim();
@@ -379,6 +408,7 @@ export async function renameStaffEverywhere({ oldName, newName, staffId, by } = 
         ['announcements',   () => renameAnnouncements(o, n)],
         ['chats',           () => renameChats(o, n)],
         ['insurance_index', () => renameInsuranceIndex(o, n)],
+        ['training_v2',     () => renameTrainingProgress(o, n)],
     ];
 
     for (const [label, run] of tasks) {

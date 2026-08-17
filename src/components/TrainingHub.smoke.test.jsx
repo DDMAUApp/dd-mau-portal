@@ -30,6 +30,13 @@ vi.mock('firebase/firestore', () => ({
 
 import TrainingHub from './TrainingHub';
 
+// The module rail is open by default only at xl+ (matchMedia). jsdom has no
+// matchMedia — pretend we're a desktop so the Shell/aside assertions below
+// exercise the split-pane path.
+if (typeof window !== 'undefined' && !window.matchMedia) {
+    window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+}
+
 const STAFF_LIST = [{ id: 1, name: 'Andrew Shih', role: 'Owner' }];
 const PROGRESS_PATH = 'training_v2/andrew_shih';
 const OVERRIDES_PATH = 'config/training_overrides';
@@ -51,8 +58,11 @@ describe('TrainingHub smoke', () => {
         expect(typeof snapshotCbs[OVERRIDES_PATH]).toBe('function');
         expect(typeof snapshotCbs[PROGRESS_PATH]).toBe('function');
 
-        // Loading gate until the progress snapshot lands.
-        expect(screen.getByText('Loading…')).toBeInTheDocument();
+        // 2026-08-17: no full-page loading gate — the (static) module list
+        // renders before the progress snapshot lands; pills fill in after.
+        expect(screen.queryByText('Loading…')).toBeNull();
+        expect(screen.getByText('Training Hub')).toBeInTheDocument();
+        expect(screen.queryAllByText('✅').length).toBe(0);
 
         // Partial doc arrives — page must render (finding: missing array
         // fields crashed moduleState consumers).

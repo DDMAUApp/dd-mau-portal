@@ -215,7 +215,7 @@ export const MASTER_RECIPES = [
         titleEs: "Aderezo DD",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
-        allergens: ['eggs', 'milk'],
+        allergens: ['eggs'], // 2026-08-17 audit: yolks + oil + pickle juice + sugar — no dairy (matches menu.js, allergen matrix docx, M17)
         yieldsEn: "BASE — 12 yolks. Use the multiplier (above) to scale: ×5 = standard production batch.",
         yieldsEs: "BASE — 12 yemas. Usa el multiplicador (arriba) para escalar: ×5 = lote de producción estándar.",
         ingredientsEn: [
@@ -250,7 +250,7 @@ export const MASTER_RECIPES = [
         titleEs: "Aderezo DD Picante",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
-        allergens: ['eggs', 'milk'],
+        allergens: ['eggs'], // 2026-08-17 audit: yolks + oil + pickle juice + sugar — no dairy (matches menu.js, allergen matrix docx, M17)
         yieldsEn: "BASE — 12 yolks. Use the multiplier (above) to scale: ×5 = standard production batch.",
         yieldsEs: "BASE — 12 yemas. Usa el multiplicador (arriba) para escalar: ×5 = lote de producción estándar.",
         ingredientsEn: [
