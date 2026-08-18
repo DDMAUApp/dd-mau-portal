@@ -4470,6 +4470,295 @@ exports.processHealthImportJob = onDocumentCreated(
     }
 );
 
+// ── 2026-08-18 — processRecipeImportJob: AI recipe import (Recipes tab) ──
+// Andrew: "add a recipe import — file, picture, any other way that makes it
+// easier to enter the recipe … use AI or picture/file reading to import."
+//
+// Same job-doc transport as processHealthImportJob (write a doc, listen for
+// the result) because it is the one path that is reliable on the native
+// iPad WebView. The client (src/data/recipeImport.js) creates
+// recipe_import_jobs/{id} = { kind, imageUrls | text | recipe, ..., status:
+// 'pending' } and this trigger fills status:'done' + result.
+//
+// kinds:
+//   • 'images'    — 1-8 photos / rendered PDF pages (Storage URLs) → recipes[]
+//   • 'text'      — pasted / .txt / .docx text → recipes[]
+//   • 'translate' — one recipe draft (EN filled) → the same draft with the
+//                   Spanish side + allergen tags + emoji/category filled in
+// Output is ALWAYS the app's own recipe schema (see RecipeForm in
+// Recipes.jsx) — bilingual, allergen codes from the app's 10-code list —
+// so the client can drop it straight into the review form. Sonnet-class
+// (not Haiku): handwritten prep sheets photographed at an angle + faithful
+// kitchen Spanish; an import is a rare admin action so the extra cents
+// don't matter. Falls back to Haiku if the Sonnet model id ever 404s.
+const RECIPE_ALLERGEN_CODES = ["peanut", "treenut", "shell", "fish", "milk", "eggs", "wheat", "soy", "sesame", "msg"];
+// SSRF allowlist — host AND path must point at THIS project's bucket
+// (a bare storage.googleapis.com host would proxy any public bucket).
+function recipeImportUrlAllowed(u) {
+    const host = u.hostname.toLowerCase();
+    const p = u.pathname;
+    if (host === "firebasestorage.googleapis.com") return /^\/v0\/b\/dd-mau-staff-app(\.firebasestorage\.app|\.appspot\.com)?\/o\//.test(p);
+    if (host === "storage.googleapis.com") return /^\/dd-mau-staff-app(\.firebasestorage\.app|\.appspot\.com)?\//.test(p);
+    if (host === "dd-mau-staff-app.firebasestorage.app" || host === "dd-mau-staff-app.appspot.com") return true;
+    return false;
+}
+
+function recipeImportSystemPrompt({ categories, existingTitles }) {
+    const cats = (Array.isArray(categories) && categories.length ? categories : [
+        "Sauces & Dressings", "Seasonings, Marinades & Soy", "Snacks & Fried Items", "Pho & Soups", "Drinks & Desserts",
+    ]).map((c) => `"${c}"`).join(", ");
+    const titles = Array.isArray(existingTitles) ? existingTitles.slice(0, 120).map((t) => `"${t}"`).join(", ") : "";
+    return [
+        "You convert restaurant kitchen recipes (photos of handwritten or printed prep sheets, PDF pages, or pasted text) into the structured bilingual recipe format used by DD Mau's staff app. DD Mau is a Vietnamese eatery in St. Louis; the kitchen team is English- and Spanish-speaking.",
+        "",
+        "Return ONLY a JSON object — no prose, no markdown fences — with exactly this shape:",
+        '{ "recipes": [ {',
+        '  "titleEn": "Peanut Butter Sauce", "titleEs": "Salsa de Crema de Cacahuate",',
+        '  "emoji": "🥜", "category": "Sauces & Dressings",',
+        '  "prepTimeEn": "15 min", "cookTimeEn": "10 min",',
+        '  "yieldsEn": "16 qt bucket · lasts 3–7 days", "yieldsEs": "Balde de 16 cuartos · dura 3–7 días",',
+        `  "allergens": ["peanut","soy","wheat"],`,
+        '  "ingredientsEn": ["2 cans (5 lb each) Lee Kum Kee Hoisin Sauce", "..."], "ingredientsEs": ["2 latas (5 lb cada una) de salsa Hoisin Lee Kum Kee", "..."],',
+        '  "instructionsEn": ["Heat peanut butter in microwave for 3 minutes.", "..."], "instructionsEs": ["Calienta la crema de cacahuate en el microondas por 3 minutos.", "..."],',
+        '  "confidence": "high" | "medium" | "low",',
+        '  "warnings": ["anything unreadable, guessed, or worth a human check — or empty"],',
+        '  "sourceLabel": "short label of where this came from, e.g. page 2 or the sheet title"',
+        "} ], \"warnings\": [\"document-level notes, or empty\"] }",
+        "",
+        "Rules:",
+        "- Extract EVERY recipe present. A document may hold one recipe or many; a titled sub-recipe printed as its own block (e.g. 'Chili/Garlic Paste') stays INSIDE its parent as extra ingredient lines prefixed with '— ' and extra numbered steps, unless the source clearly presents it as a standalone recipe.",
+        "- Quantities: copy EXACTLY what is written, in the kitchen's own units (bowl, cup, quart, gallon, can, bag, case, silver spoon, TBSP, tsp, lb, oz). Never convert, round, or invent amounts. Keep unicode fractions (½ ¼ ⅛) if used. Keep brand names. Keep '(5 lb each)'-style pack notes.",
+        "- One ingredient per array line. One step per array line, in order, imperative voice, no leading numbers/bullets.",
+        "- ingredientsEs / instructionsEs / yieldsEs / titleEs are FAITHFUL translations of the English (Latin-American kitchen Spanish: taza, cuarto, galón, cucharada/cucharadita, lata, balde, salsa de pescado, azúcar, ajo, cebolla, ajonjolí, glutamato (MSG)…). Same number of lines as the English, same order, same numbers. Do not translate brand names. If the source is in Spanish, the English side is the faithful translation.",
+        "- If the source has no explicit yield or times, leave prepTimeEn / cookTimeEn / yieldsEn as empty strings — do not guess.",
+        `- allergens: choose ONLY from ${RECIPE_ALLERGEN_CODES.join(", ")} based on the ingredients. Guide: fish sauce/salmon/catfish → fish · shrimp/crab/OYSTER SAUCE → shell · soy sauce, Kikkoman, hoisin, oyster sauce → soy AND wheat · sesame oil/seeds → sesame · butter, milk, cream cheese, condensed milk, ranch, buttermilk → milk · egg, egg yolks, egg roll & wonton & rangoon wrappers → eggs (wrappers also wheat) · flour, panko, batter, wrappers, noodles → wheat · peanut butter/peanuts → peanut · almond/cashew/walnut (incl. Kite Hill almond cream cheese) → treenut · MSG, chicken powder/bouillon → msg. Vegan 'beef'/vegan 'shrimp' (soy/wheat protein) → soy, wheat. Tag ONLY what an ingredient on the list actually carries per this guide or a well-known brand fact. If a code is merely POSSIBLE (an unnamed brand might contain it, a sambal might have shrimp paste), do NOT tag it — put 'possible: <allergen> (check label)' in warnings instead. Never tag an allergen with no ingredient behind it.`,
+        `- category: use one of the existing categories when it fits: ${cats}. Otherwise a short new one.`,
+        "- emoji: one emoji that suits the recipe.",
+        titles ? `- Recipes already in the book (for your awareness — still extract them if present, the app will offer replace/skip): ${titles}` : "",
+        "- If an image is not a recipe or is unreadable, return { \"recipes\": [], \"warnings\": [\"why\"] }.",
+    ].filter(Boolean).join("\n");
+}
+
+function sanitizeImportedRecipe(r) {
+    if (!r || typeof r !== "object") return null;
+    const str = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+    const list = (v, n = 60, len = 300) => (Array.isArray(v)
+        ? v.filter((x) => typeof x === "string" && x.trim()).slice(0, n).map((x) => x.trim().slice(0, len))
+        : []);
+    const titleEn = str(r.titleEn, 120);
+    if (!titleEn) return null;
+    const allergens = Array.isArray(r.allergens)
+        ? [...new Set(r.allergens.filter((c) => RECIPE_ALLERGEN_CODES.includes(c)))]
+        : [];
+    return {
+        titleEn,
+        titleEs: str(r.titleEs, 120),
+        emoji: str(r.emoji, 8) || "🍽️",
+        category: str(r.category, 60),
+        prepTimeEn: str(r.prepTimeEn, 40),
+        cookTimeEn: str(r.cookTimeEn, 40),
+        yieldsEn: str(r.yieldsEn, 200),
+        yieldsEs: str(r.yieldsEs, 200),
+        allergens,
+        ingredientsEn: list(r.ingredientsEn),
+        ingredientsEs: list(r.ingredientsEs),
+        instructionsEn: list(r.instructionsEn, 60, 600),
+        instructionsEs: list(r.instructionsEs, 60, 600),
+        confidence: ["high", "medium", "low"].includes(r.confidence) ? r.confidence : "medium",
+        warnings: list(r.warnings, 10, 240),
+        sourceLabel: str(r.sourceLabel, 80),
+    };
+}
+
+async function callAnthropicJson({ system, userContent, maxTokens, tag }) {
+    // Bounded per-attempt timeout + retry on overload — same shape as
+    // runHealthDocExtraction. Recipe extraction of a multi-page sheet can
+    // legitimately take 30-90s on Sonnet, so the per-attempt cap is 150s and
+    // the trigger's own ceiling is 300s.
+    const MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5"];
+    const ATTEMPTS = 3;
+    let modelIdx = 0;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+        const ctrl = new AbortController();
+        const killer = setTimeout(() => ctrl.abort(), 150_000);
+        const t0 = Date.now();
+        try {
+            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                    "x-api-key": ANTHROPIC_API_KEY.value(),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                    model: MODELS[modelIdx],
+                    max_tokens: maxTokens,
+                    system,
+                    messages: [{ role: "user", content: userContent }],
+                }),
+                signal: ctrl.signal,
+            });
+            clearTimeout(killer);
+            if (resp.ok) {
+                const body = await resp.json();
+                logger.info(`${tag} ok`, { attempt, model: MODELS[modelIdx], ms: Date.now() - t0, usage: body?.usage, stop: body?.stop_reason });
+                if (body?.stop_reason === "max_tokens") {
+                    throw new Error("AI reply was cut off — too much on one page batch; try fewer pages per import");
+                }
+                const textBlock = (body?.content || []).find((c) => c?.type === "text");
+                return textBlock?.text || "";
+            }
+            const errText = await resp.text();
+            logger.warn(`${tag} anthropic non-200`, { status: resp.status, attempt, model: MODELS[modelIdx], body: errText.slice(0, 200) });
+            // Unknown model id → try the fallback model once, same attempt budget.
+            if ((resp.status === 404 || (resp.status === 400 && /model/i.test(errText))) && modelIdx < MODELS.length - 1) {
+                modelIdx += 1;
+                continue;
+            }
+            if (![429, 500, 503, 529].includes(resp.status) || attempt === ATTEMPTS) {
+                throw new Error(`AI request failed (${resp.status})`);
+            }
+        } catch (e) {
+            clearTimeout(killer);
+            if (/AI request failed|AI reply was cut off/.test(e?.message || "")) throw e;
+            // A 150 s timeout is not worth retrying — a second attempt can't
+            // finish inside the client's 240 s window or the trigger's 300 s.
+            if (e?.name === "AbortError") throw new Error("AI read timed out — try fewer pages per import");
+            logger.warn(`${tag} attempt failed`, { attempt, msg: e?.message });
+            if (attempt === ATTEMPTS) throw new Error("AI read unavailable — try again");
+        }
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+    }
+    throw new Error("AI read unavailable");
+}
+
+function parseJsonObject(raw) {
+    try {
+        return JSON.parse(String(raw || "").trim().replace(/^```(?:json)?\n?/i, "").replace(/```$/i, "").trim());
+    } catch {
+        const m = String(raw || "").match(/\{[\s\S]*\}/);
+        if (m) { try { return JSON.parse(m[0]); } catch { /* fall through */ } }
+    }
+    return null;
+}
+
+async function fetchStorageImagesAsBlocks(imageUrls, { max = 8, capBytes = 8 * 1024 * 1024 } = {}) {
+    if (!Array.isArray(imageUrls) || imageUrls.length === 0 || imageUrls.length > max) {
+        throw new Error(`1-${max} images required`);
+    }
+    const blocks = [];
+    for (const url of imageUrls) {
+        if (typeof url !== "string" || !/^https:\/\//.test(url)) throw new Error("image URLs must be https");
+        let u;
+        try { u = new URL(url); } catch { throw new Error("bad image URL"); }
+        if (!recipeImportUrlAllowed(u)) throw new Error(`image URL not allowed: ${u.hostname}`);
+        const ctrl = new AbortController();
+        const killer = setTimeout(() => ctrl.abort(), 20_000);
+        let resp;
+        try { resp = await fetch(url, { signal: ctrl.signal }); }
+        finally { clearTimeout(killer); }
+        if (!resp.ok) throw new Error(`could not fetch an image (${resp.status})`);
+        // Size-cap BEFORE buffering when the server tells us the length.
+        const declared = Number(resp.headers.get("content-length") || 0);
+        if (declared > capBytes) throw new Error("an image is too large (cap 8 MB) — retake at a lower resolution");
+        const mediaType = (resp.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+        if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(mediaType)) {
+            // HEIC/HEIF from an iPhone on a browser that couldn't convert it,
+            // or something that isn't an image at all. Say so instead of
+            // relabeling and getting an opaque 400 back from the AI.
+            throw new Error(`unsupported image type (${mediaType || "unknown"}) — use JPEG/PNG (iPhone HEIC: shoot in "Most Compatible" or use the app)`);
+        }
+        const buf = await resp.arrayBuffer();
+        if (buf.byteLength > capBytes) throw new Error("an image is too large (cap 8 MB)");
+        blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data: Buffer.from(buf).toString("base64") } });
+    }
+    return blocks;
+}
+
+async function runRecipeImport(job) {
+    const kind = job?.kind;
+    const system = recipeImportSystemPrompt({ categories: job?.categories, existingTitles: job?.existingTitles });
+    let userContent;
+    let maxTokens = 32000;   // a dense 6-page batch is ~12 bilingual recipes ≈ 20k tokens
+    if (kind === "images") {
+        const imageBlocks = await fetchStorageImagesAsBlocks(job.imageUrls);
+        userContent = [
+            ...imageBlocks,
+            { type: "text", text: `These ${imageBlocks.length} image(s) are recipe sheet(s) / pages from DD Mau's kitchen. Extract every recipe into the JSON shape from the system prompt.` },
+        ];
+    } else if (kind === "text") {
+        const text = typeof job.text === "string" ? job.text.trim().slice(0, 60_000) : "";
+        if (!text) throw new Error("no text to import");
+        userContent = [{ type: "text", text: `Recipe text from DD Mau's kitchen follows between the markers. Extract every recipe into the JSON shape from the system prompt.\n<<<RECIPE_TEXT\n${text}\nRECIPE_TEXT>>>` }];
+    } else if (kind === "translate") {
+        const draft = job.recipe && typeof job.recipe === "object" ? job.recipe : null;
+        if (!draft) throw new Error("no recipe draft");
+        maxTokens = 6000;
+        userContent = [{ type: "text", text: [
+            "Below is ONE recipe draft from the app's editor as JSON. Return the SAME recipe (one element in `recipes`) with:",
+            "- every empty Spanish field (titleEs, yieldsEs, ingredientsEs, instructionsEs) filled as a faithful translation of the English side (line-for-line); Spanish fields that are already filled stay EXACTLY as given;",
+            "- if the English side is empty but Spanish is filled, fill English from Spanish instead;",
+            "- `allergens` derived from the ingredients per the guide (merge with any codes already present, never drop one that is present);",
+            "- emoji and category filled only if empty. Do NOT change any English text, quantity, or the order of lines.",
+            "```json",
+            JSON.stringify(draft).slice(0, 40_000),
+            "```",
+        ].join("\n") }];
+    } else {
+        throw new Error("unknown import kind");
+    }
+
+    const raw = await callAnthropicJson({ system, userContent, maxTokens, tag: `recipeImport:${kind}` });
+    const parsed = parseJsonObject(raw);
+    if (!parsed || !Array.isArray(parsed.recipes)) {
+        logger.warn("recipeImport: could not parse model output", { snippet: String(raw).slice(0, 300) });
+        return { recipes: [], warnings: ["The AI reply could not be parsed — try a clearer photo or paste the text."] };
+    }
+    const recipes = parsed.recipes.map(sanitizeImportedRecipe).filter(Boolean).slice(0, 25);
+    const warnings = Array.isArray(parsed.warnings)
+        ? parsed.warnings.filter((w) => typeof w === "string" && w.trim()).slice(0, 10).map((w) => w.trim().slice(0, 240))
+        : [];
+    return { recipes, warnings };
+}
+
+exports.processRecipeImportJob = onDocumentCreated(
+    {
+        document: "recipe_import_jobs/{jobId}",
+        region: "us-central1",
+        timeoutSeconds: 300,
+        memory: "1GiB",        // up to 8 base64 images in flight + a 16k-token JSON reply
+        maxInstances: 5,
+        secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
+    },
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return;
+        const d = snap.data() || {};
+        if (d.status && d.status !== "pending") return;
+        const t0 = Date.now();
+        try {
+            // Global bucket — the collection is client-writable with the public
+            // key and every doc costs a Sonnet call. 60 jobs / 5 min is far
+            // above any real import session (a 38-page book = 7 jobs).
+            await enforceRateLimit({
+                ip: "recipe-import-global",
+                namespace: "processRecipeImportJob",
+                limit: 60,
+                windowMs: 5 * 60_000,
+            });
+            const result = await runRecipeImport(d);
+            await snap.ref.update(
+                { status: "done", result, finishedAt: FieldValue.serverTimestamp(), ms: Date.now() - t0 },
+            ).catch((e) => { if (e?.code !== 5 && !/NOT_FOUND/i.test(e?.message || "")) throw e; });
+        } catch (e) {
+            logger.warn("processRecipeImportJob failed", { kind: d.kind, msg: e?.message, ms: Date.now() - t0 });
+            await snap.ref.update(
+                { status: "error", error: String(e?.message || e).slice(0, 300), finishedAt: FieldValue.serverTimestamp() },
+            ).catch((err) => { if (err?.code !== 5 && !/NOT_FOUND/i.test(err?.message || "")) logger.warn("job error-write failed:", err?.message); });
+        }
+    }
+);
+
 // ── 2026-07-12 — healthComplianceReminders: daily compliance nudges ──
 // Health Department module. Every day at 10am Central, staff with
 // missing Hep A records or unsigned required docs get a push
@@ -5146,6 +5435,10 @@ exports.pruneSystemLogs = onSchedule(
             // an orphan (page closed mid-read / crashed) — and each doc holds
             // transient PII-adjacent image URLs. Sweep daily.
             { coll: "health_import_jobs", field: "createdAt", days: 1 },
+            // AI recipe-import jobs (2026-08-18): same lifecycle as the health
+            // jobs — client deletes on settle; orphans hold confidential
+            // recipe text / staged image URLs, so sweep daily.
+            { coll: "recipe_import_jobs", field: "createdAt", days: 1 },
             // Rate-limit buckets (2026-07-13 audit): every 5-10 min window per
             // namespace+IP mints a doc that was never deleted — unbounded
             // growth (~580 docs and counting). expiresAt is the bucket's last
@@ -5216,6 +5509,31 @@ exports.pruneSystemLogs = onSchedule(
                 report.push(`${rule.coll}: ERR`);
                 totalErrors++;
             }
+        }
+
+        // 2026-08-18 — orphaned recipe-import photos. The client deletes its
+        // staged images (Storage menu_imports/recipe_*) when the AI job
+        // settles; a killed tab / WebView mid-read leaves them behind in a
+        // world-readable-by-URL folder. Sweep anything older than a day.
+        try {
+            const { getStorage } = require("firebase-admin/storage");
+            const bucket = getStorage().bucket();
+            const [files] = await bucket.getFiles({ prefix: "menu_imports/recipe_", maxResults: 500 });
+            const cutoff = Date.now() - 24 * 60 * 60_000;
+            let swept = 0;
+            for (const f of files) {
+                const created = Date.parse(f.metadata?.timeCreated || "") || 0;
+                if (created && created < cutoff) {
+                    await f.delete().catch(() => {});
+                    swept++;
+                }
+            }
+            report.push(`recipe_import_photos: ${swept}`);
+            totalDeleted += swept;
+        } catch (err) {
+            logger.warn("pruneSystemLogs recipe_import_photos failed:", err.message);
+            report.push("recipe_import_photos: ERR");
+            totalErrors++;
         }
 
         // bug_reports — only prune RESOLVED rows >365d. Open reports
