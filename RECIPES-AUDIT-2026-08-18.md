@@ -33,11 +33,14 @@ Text fixes: `(×5 = …)`/`(×2 = …)` annotations stripped from DD / Spicy DD 
 
 `masterRecipes.js` regenerated from the fixed live doc (`scripts/sync-master-recipes.cjs`, `--check` mode available) so the AI assistant index and the sticker sub-recipe lookup stop using May quantities.
 
-## 2. Questions for Andrew (typo vs. kitchen change — I did NOT decide these)
-1. **Hoisin Sauce water:** live had "1 /2 gallon" (all sources say **1 gallon**). I read the typed "/2" as intent and set **½ gallon** — confirm.
-2. **Lemongrass Shrimp small batch:** live "4 cups vegetable oil" (PDF ¼ cup), "1 cup sesame oil" (PDF ¼), "¼ cup garlic powder" (PDF ⅛), "32 oz lemongrass (1 cup)". Left as-is.
-3. **Tofu Marinade:** I restored "2 quarts Kikkoman soy sauce" — was the Jun 26 deletion on purpose?
-4. **Vietnamese Coffee:** ingredient says 4 cans condensed milk, step 4 says 2½ (all sources 2½). Left as-is.
+## 2. Questions for Andrew (typo vs. kitchen change)
+Answered 2026-08-18 (applied live, audit rows `via: owner_answers_2026_08_18`):
+1. **Hoisin Sauce water:** ½ gallon is right ("we use less of that"). ✅ stays.
+2. **Lemongrass Shrimp small batch:** leave as-is. ✅
+3. **Tofu Marinade:** the Jun 26 soy-sauce deletion WAS intentional — the tofu marinade is **gluten-free** now. My restore was reverted: soy sauce line removed EN/ES, step 1 rewritten in both languages, allergens = none. (The ES step had still said "salsa de soya" — that is what fooled me.)
+4. **Vietnamese Coffee:** 4 cans is right → step 4 now says 4 cans (EN/ES).
+
+Still open:
 5. **Egg rolls:** 20 white onions (live) vs 8–10 / 6 (all sources). **Chicken Wings** ¼ cup baking powder vs 1 cup. **Vegan Popcorn Shrimp** 6 cups cornstarch vs 4. Left as-is (live is the kitchen).
 6. **Vegan Beef Marinade "Hoisin Sauce"** — canned LKK (no peanut, what I assumed from "use the empty hoisin can") or the house Hoisin (peanut butter → peanut allergen)?
 7. **String bean sauce** — no method/yield, "4 cups wine" (which?), can size. Hidden? It's live.
