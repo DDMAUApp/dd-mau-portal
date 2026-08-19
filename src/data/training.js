@@ -4155,8 +4155,8 @@ export const MODULES = [
     // "When we see, or cause a spill or spot a wet floor … we don't leave
     // the spot without putting up a caution. They guard the wet floor
     // until a caution sign can be put up and cleaned up." First module on
-    // the Service & Safety track. `draft: true` = visible to admins only
-    // (DRAFT tag) until Andrew approves the text; flip to publish.
+    // the Service & Safety track. Published 2026-08-19 after Andrew's review
+    // (lone-worker exception kept; sign locations = trash area + drinks shelf).
     // 2026-08-19 review pass: glass-near-food rule, hand-wash after floor
     // contact, absorb-then-degrease, lone-worker exception made explicit,
     // store-specific facts kept neutral (sign locations are the owner's).
@@ -4167,7 +4167,6 @@ export const MODULES = [
         tier: "all",
         icon: "⚠️",
         durationMin: 8,
-        draft: true,
         titleEn: "Wet Floors & Spills — Guard It Until It's Safe",
         titleEs: "Pisos Mojados y Derrames — Cuídalo Hasta Que Esté Seguro",
         lessons: [
@@ -4203,7 +4202,7 @@ export const MODULES = [
                     "4. PUT THE SIGN UP FIRST, THEN CLEAN. The yellow sign stands on the side people walk from, before the first towel touches the floor. Then clean it the right way: paper towels or a dry mop for water and ice. Grease: soak it up with paper towels first, THEN degreaser and the kitchen mop, then dry — never plain water on grease (it spreads) and never cardboard over it (it hides the grease and slides out from under you). Broken glass: broom and dustpan, then a damp paper towel for the tiny pieces — never your hands. Glass goes in a box or a doubled bag, never loose in the trash.",
                     "5. KEEP THE SIGN UP UNTIL IT IS COMPLETELY DRY. Dry the spot with paper towels or a floor-only towel — never a sani-bucket towel or a table towel — and check it with the back of your hand. Damp is still wet. Only the person who cleaned it takes the sign down — not whoever walks past. Put the sign back where it lives, then WASH YOUR HANDS before you touch food, the register, or a clean towel (floor + chemicals = wash, same rule as M3).",
                     "Then tell the Shift Lead if it was a big spill, anything greasy, broken glass, or if any guest was near it — and ALWAYS if anyone slipped, even if they say they're fine.",
-                    "Know where the caution signs live at YOUR store before your first shift alone — ask your Shift Lead to walk you to them on day one. That's a fair question, not a dumb one."
+                    "Where the caution signs live: one by the trash area and one by the drinks shelf. Walk to both with your Shift Lead on day one so you can grab one without thinking — that's a fair question, not a dumb one."
                 ],
                 contentEs: [
                     "1. DETENTE Y QUÉDATE. Párate junto al lugar — no encima — con tu cuerpo entre el área mojada y la gente que pasa. Si llevas comida, déjala en la superficie limpia más cercana. El piso va primero.",
@@ -4212,7 +4211,7 @@ export const MODULES = [
                     "4. PRIMERO PON EL LETRERO, DESPUÉS LIMPIA. El letrero amarillo se para del lado por donde viene la gente, antes de que la primera toalla toque el piso. Luego limpia bien: toallas de papel o trapeador seco para agua y hielo. Grasa: primero absórbela con toallas de papel, DESPUÉS desengrasante y el trapeador de la cocina, y luego seca — nunca agua sola sobre grasa (la esparce) y nunca cartón encima (esconde la grasa y se resbala bajo tus pies). Vidrio roto: escoba y recogedor, y después una toalla de papel húmeda para los pedacitos — nunca con las manos. El vidrio va en una caja o bolsa doble, nunca suelto en la basura.",
                     "5. DEJA EL LETRERO HASTA QUE ESTÉ COMPLETAMENTE SECO. Seca el lugar con toallas de papel o una toalla solo para pisos — nunca una toalla de la cubeta de sanitizante ni una de mesas — y revisa con el dorso de la mano. Húmedo sigue siendo mojado. Solo la persona que limpió quita el letrero — no cualquiera que pase por ahí. Regresa el letrero a su lugar y luego LÁVATE LAS MANOS antes de tocar comida, la caja o una toalla limpia (piso + químicos = lavarse, misma regla que M3).",
                     "Luego avísale al líder de turno si fue un derrame grande, algo con grasa, vidrio roto, o si algún cliente estaba cerca — y SIEMPRE si alguien se resbaló, aunque diga que está bien.",
-                    "Aprende dónde están los letreros de precaución en TU local antes de tu primer turno solo — pídele al líder de turno que te los muestre el primer día. Es una pregunta válida, no una pregunta tonta."
+                    "Dónde están los letreros de precaución: uno junto al área de la basura y uno junto al estante de las bebidas. Ve a los dos con tu líder de turno el primer día para que puedas agarrar uno sin pensarlo — es una pregunta válida, no una pregunta tonta."
                 ]
             },
             {
