@@ -17,7 +17,7 @@
 //   • tap a planned chip → edit series, skip this day, move this
 //     occurrence (arms move mode → tap the target day), end or delete
 //   • ⚡ Generate today now — runs the materializer immediately
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     subscribeTaskPlan, createTaskPlanRule, updateTaskPlanRule,
     archiveTaskPlanRule, deleteTaskPlanRule, skipOccurrence, moveOccurrence,
@@ -28,6 +28,35 @@ import {
 import { inferStaffSide } from '../data/assignedTasks';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
+
+// Auto-growing single-field text box (Andrew 2026-08-19: "when I click a
+// task to edit make the input expand to the size of the text … so I can
+// read the whole text"). A <textarea> that sizes itself to its content —
+// long task text wraps instead of scrolling off the right edge. Enter
+// still commits (tasks are one-liners); Shift+Enter is swallowed too so
+// no newlines sneak into task strings.
+function GrowingText({ value, onChange, className = '', minRows = 1, onEnter, ...rest }) {
+    const ref = useRef(null);
+    useLayoutEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${el.scrollHeight}px`;
+    }, [value]);
+    return (
+        <textarea
+            ref={ref}
+            rows={minRows}
+            value={value}
+            onChange={onChange}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); if (onEnter) onEnter(e); else e.currentTarget.blur(); }
+            }}
+            className={`resize-none overflow-hidden leading-snug ${className}`}
+            {...rest}
+        />
+    );
+}
 
 const WD_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WD_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -476,7 +505,7 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
                         <div className="text-[11px] font-bold uppercase tracking-widest text-dd-text-2 mb-1.5">
                             ＋ {tx('Add a task starting this day', 'Agregar tarea desde este día')}
                         </div>
-                        <input type="text" value={task} onChange={e => setTask(e.target.value)}
+                        <GrowingText value={task} onChange={e => setTask(e.target.value.replace(/\r?\n/g, ' '))}
                             placeholder={tx('e.g. Clean the table bases', 'ej. Limpiar bases de mesas')}
                             className="w-full px-3 py-2 rounded-lg border border-dd-line text-base mb-2" />
                         <div className="grid grid-cols-2 gap-2 mb-2">
@@ -803,9 +832,8 @@ function OpsEditableRow({ t, draft, sideStaff, isEs, tx, onField, onEditRecur, o
                     className="cursor-grab select-none text-dd-text-2 text-lg leading-none px-1 -ml-0.5"
                     style={{ touchAction: 'none', pointerEvents: 'auto' }}>≡</span>
                 <span className={t.done ? 'text-emerald-600' : 'text-dd-text-2'}>{t.done ? '✓' : '○'}</span>
-                <input type="text" value={text}
-                    onChange={(e) => onField(t.id, 'task', e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                <GrowingText value={text}
+                    onChange={(e) => onField(t.id, 'task', e.target.value.replace(/\r?\n/g, ' '))}
                     aria-label={tx('Task text', 'Texto de la tarea')}
                     className={`flex-1 min-w-[10rem] text-sm px-1.5 py-1 rounded-md border border-transparent focus:border-dd-line focus:bg-white bg-transparent ${
                         t.done ? 'text-dd-text-2 line-through' : 'text-dd-text font-medium'}`} />
@@ -915,7 +943,7 @@ function RuleEditor({ rule, date, isEs, tx, staffList, onArmMove, onClose }) {
                 <div className="text-[11px] text-dd-text-2 -mt-2">
                     {recurrenceLabel(rule, isEs)} · {rule.side} · {date}
                 </div>
-                <input type="text" value={task} onChange={e => setTask(e.target.value)}
+                <GrowingText value={task} onChange={e => setTask(e.target.value.replace(/\r?\n/g, ' '))} minRows={2}
                     className="w-full px-3 py-2 rounded-lg border border-dd-line text-base" />
                 <select value={assignee} onChange={e => setAssignee(e.target.value)}
                     className="w-full px-2 py-2 rounded-lg border border-dd-line bg-white text-sm">
