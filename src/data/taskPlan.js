@@ -40,6 +40,7 @@
 //   Materialized /assigned_tasks/plan_{ruleId}_{date} — normal assignment
 //   fields + { planRuleId, planDate } so the planner can find its own.
 
+import { taskDueOnDay, normalizeRecurDays, normalizeRecurDates, cleanRecurrenceFields } from './checklistRecurrence';
 import { db } from '../firebase';
 import {
     collection, doc, getDoc, getDocs, onSnapshot, query, where, limit,
@@ -302,18 +303,8 @@ export async function ensureMaterializedForToday(side, byName, { force = false }
 // (daily / weekdays / Mondays…) matched on the business day-of-week,
 // subtasks all-checked + required photo = done.
 
-const CHECKLIST_RECUR = {
-    daily:     () => true,
-    weekday:   w => w >= 1 && w <= 5,
-    weekend:   w => w === 0 || w === 6,
-    monday:    w => w === 1,
-    tuesday:   w => w === 2,
-    wednesday: w => w === 3,
-    thursday:  w => w === 4,
-    friday:    w => w === 5,
-    saturday:  w => w === 6,
-    sunday:    w => w === 0,
-};
+// (Matcher lives in src/data/checklistRecurrence.js — shared with the
+// Tasks page so both agree on 'days' / 'dates' custom sets.)
 
 // Pure (unit-tested): flatten one side's checklist for a given day with
 // done state. Handles the legacy morning/afternoon shape history docs
@@ -324,7 +315,7 @@ export function checklistTasksForDay(customTasks, checks, side, dateStr) {
     const w = weekdayOf(dateStr);
     const ch = checks || {};
     return all
-        .filter(t => (CHECKLIST_RECUR[t?.recurrence || 'daily'] || CHECKLIST_RECUR.daily)(w))
+        .filter(t => taskDueOnDay(t, w, dateStr))
         .map(t => {
             const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
             let done = subs.length > 0 ? subs.every(x => !!ch[x.id]) : !!ch[t.id];
@@ -333,10 +324,12 @@ export function checklistTasksForDay(customTasks, checks, side, dateStr) {
             return {
                 id: t.id, task: t.task, category: t.category || 'other',
                 recurrence: t.recurrence || 'daily',
+                recurDays: normalizeRecurDays(t.recurDays),
+                recurDates: normalizeRecurDates(t.recurDates),
                 // 2026-07-29: pass through so the DaySheet's inline row
                 // editors can show/edit who + by-when (Operations already
                 // renders + alarms on both fields).
-                assignTo: Array.isArray(t.assignTo) ? t.assignTo : [],
+                assignTo: Array.isArray(t.assignTo) ? t.assignTo : (t.assignTo ? [t.assignTo] : []),
                 completeBy: typeof t.completeBy === 'string' ? t.completeBy : '',
                 done, subCount: subs.length, subsDone,
             };
@@ -415,6 +408,10 @@ export async function updateOpsChecklistTask(location, taskId, patch) {
     const clean = {};
     if (typeof patch?.task === 'string' && patch.task.trim()) clean.task = patch.task.trim().slice(0, 300);
     if (typeof patch?.recurrence === 'string') clean.recurrence = patch.recurrence;
+    // 2026-08-19: custom sets travel with their id (cleanRecurrenceFields
+    // below drops whichever companion doesn't match the saved recurrence).
+    if (patch && 'recurDays' in patch) clean.recurDays = normalizeRecurDays(patch.recurDays);
+    if (patch && 'recurDates' in patch) clean.recurDates = normalizeRecurDates(patch.recurDates).slice(0, 120);
     // 2026-07-29: inline row editors also write who + by-when. Empty/null
     // means REMOVE the field — the mutate spread can't delete keys, so
     // removals are tracked separately and dropped from the next object.
@@ -434,7 +431,7 @@ export async function updateOpsChecklistTask(location, taskId, patch) {
         const next = { ...t, ...clean };
         if (dropAssign) delete next.assignTo;
         if (dropTime) delete next.completeBy;
-        return next;
+        return ('recurrence' in clean || 'recurDays' in clean || 'recurDates' in clean) ? cleanRecurrenceFields(next) : next;
     });
 }
 

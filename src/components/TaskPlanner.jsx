@@ -26,6 +26,9 @@ import {
     updateOpsChecklistTask, deleteOpsChecklistTask, moveOpsChecklistTask,
 } from '../data/taskPlan';
 import { inferStaffSide } from '../data/assignedTasks';
+import { db } from '../firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { taskDueOnDay, recurrenceLabelFor, normalizeRecurDays, normalizeRecurDates } from '../data/checklistRecurrence';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
 
@@ -98,6 +101,43 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
         if (!expanded) return;
         return subscribeTaskPlan(setRules);
     }, [expanded]);
+
+    // 2026-08-19 (Andrew): "each calendar day shows names with the number of
+    // tasks per day — chris6 and dan5". Live Daily Ops list for the chosen
+    // store; each cell tallies that day's due tasks per assignee (FOH + BOH)
+    // plus any planned rules. 📥 = unassigned.
+    const [calLoc, setCalLoc] = useState(storeLocation === 'maryland' ? 'maryland' : 'webster');
+    const [calTasks, setCalTasks] = useState(null); // customTasks of the live checklist doc
+    useEffect(() => {
+        if (!expanded) return undefined;
+        const unsub = onSnapshot(doc(db, 'ops', 'checklists2_' + calLoc),
+            (snap) => setCalTasks(snap.exists() ? (snap.data()?.customTasks || {}) : {}),
+            (e) => { console.warn('planner checklist snapshot error:', e); setCalTasks({}); });
+        return () => unsub();
+    }, [expanded, calLoc]);
+    const calAllTasks = useMemo(() => {
+        const out = [];
+        for (const side of ['FOH', 'BOH']) {
+            const sd = calTasks?.[side] || {};
+            const arr = Array.isArray(sd.all) ? sd.all : [...(sd.morning || []), ...(sd.afternoon || [])];
+            for (const t of arr) if (t && t.id) out.push({ ...t, side });
+        }
+        return out;
+    }, [calTasks]);
+    // → [{ name, count }] sorted desc; name '📥' = unassigned
+    const countsForDay = (dateStr, dueRules) => {
+        const w = weekdayOf(dateStr);
+        const tally = new Map();
+        const bump = (n) => tally.set(n, (tally.get(n) || 0) + 1);
+        for (const t of calAllTasks) {
+            if (!taskDueOnDay(t, w, dateStr)) continue;
+            const who = Array.isArray(t.assignTo) ? t.assignTo : (t.assignTo ? [t.assignTo] : []);
+            if (who.length === 0) bump('📥'); else who.forEach(n => bump(String(n)));
+        }
+        for (const r of dueRules) bump(r.assignTo?.staffName || '📥');
+        return [...tally.entries()].map(([name, count]) => ({ name, count }))
+            .sort((a, b) => (a.name === '📥') - (b.name === '📥') || b.count - a.count || a.name.localeCompare(b.name));
+    };
 
     const today = toDateStr();
     const activeRules = useMemo(() => rules.filter(r => r.active !== false), [rules]);
@@ -210,6 +250,14 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
                         <div className="font-black text-dd-text">{monthTitle}</div>
                         <button onClick={() => shiftMonth(1)} className="px-3 py-1.5 rounded-lg bg-dd-bg font-bold">›</button>
                     </div>
+                    <div className="flex items-center justify-between mb-2 text-[11px]">
+                        <span className="text-dd-text-2">{tx('Each day: who has how many tasks (Daily Ops list + planned tasks)', 'Cada día: quién tiene cuántas tareas (lista de Ops + planificadas)')}</span>
+                        <button onClick={() => setCalLoc(l => l === 'webster' ? 'maryland' : 'webster')}
+                            className="px-2 py-1 rounded-md font-bold border bg-white text-dd-text-2 border-dd-line"
+                            title={tx('Switch store', 'Cambiar tienda')}>
+                            {calLoc === 'webster' ? '📍 Webster' : '📍 Maryland'}
+                        </button>
+                    </div>
                     <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase text-dd-text-2 mb-1">
                         {(isEs ? WD_ES : WD_EN).map(d => <div key={d}>{d}</div>)}
                     </div>
@@ -229,26 +277,42 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
                                         {Number(dateStr.slice(8))}
                                     </div>
                                     <div className="space-y-0.5 mt-0.5">
-                                        {due.slice(0, 3).map(r => (
-                                            <div key={r.id}
-                                                className={`text-[9px] leading-tight truncate rounded px-1 py-0.5 font-bold ${
-                                                    r.side === 'BOH' ? 'bg-blue-100 text-blue-900' : 'bg-emerald-100 text-emerald-900'}`}>
-                                                {r.task}
-                                            </div>
-                                        ))}
-                                        {due.length > 3 && (
-                                            <div className="text-[9px] text-dd-text-2 font-bold">+{due.length - 3}</div>
-                                        )}
+                                        {(() => {
+                                            const counts = calTasks === null ? [] : countsForDay(dateStr, due);
+                                            const named = counts.filter(c => c.name !== '📥');
+                                            const unassigned = counts.find(c => c.name === '📥');
+                                            const shown = named.slice(0, 3);
+                                            const more = named.length - shown.length;
+                                            return (
+                                                <>
+                                                    {shown.map(c => (
+                                                        <div key={c.name}
+                                                            className="text-[9px] leading-tight truncate rounded px-1 py-0.5 font-bold bg-emerald-100 text-emerald-900"
+                                                            title={`${c.name}: ${c.count}`}>
+                                                            {c.name.split(' ')[0]}<span className="opacity-70"> {c.count}</span>
+                                                        </div>
+                                                    ))}
+                                                    {more > 0 && (
+                                                        <div className="text-[9px] text-dd-text-2 font-bold" title={named.slice(3).map(c => `${c.name}: ${c.count}`).join(', ')}>+{more} {tx('more', 'más')}</div>
+                                                    )}
+                                                    {unassigned && (
+                                                        <div className="text-[9px] leading-tight truncate rounded px-1 py-0.5 font-bold bg-dd-bg text-dd-text-2" title={tx('Unassigned tasks', 'Tareas sin asignar')}>
+                                                            📥 {unassigned.count}
+                                                        </div>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
                                     </div>
                                 </button>
                             );
                         })}
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-dd-text-2">
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 font-bold">FOH</span>
-                        <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-900 font-bold">BOH</span>
-                        <span>{tx('Tap a day to add or edit its tasks. Unchecked non-daily tasks carry over automatically.',
-                            'Toca un día para agregar o editar. Las tareas no diarias sin marcar pasan al día siguiente solas.')}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 font-bold">{tx('name · tasks', 'nombre · tareas')}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-dd-bg text-dd-text-2 font-bold">📥 {tx('unassigned', 'sin asignar')}</span>
+                        <span>{tx('Tap a day to open its list and edit who / which days. Unchecked non-daily planned tasks carry over automatically.',
+                            'Toca un día para abrir su lista y editar quién / qué días. Las tareas planificadas no diarias sin marcar pasan al día siguiente solas.')}</span>
                         <button onClick={generateNow} disabled={generating}
                             className="ml-auto px-3 py-1.5 rounded-lg bg-dd-green text-white text-xs font-bold disabled:opacity-40 active:scale-95">
                             {generating ? tx('Working…', 'Trabajando…') : tx('⚡ Generate today now', '⚡ Generar hoy ahora')}
@@ -264,7 +328,7 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
                     isEs={isEs} tx={tx}
                     staffName={staffName}
                     staffList={staffList}
-                    storeLocation={storeLocation}
+                    storeLocation={calLoc}
                     onEdit={(rule) => { setEditRule({ rule, date: daySheet }); }}
                     onClose={() => setDaySheet(null)}
                 />
@@ -589,18 +653,6 @@ function DaySheet({ dateStr, rules, isEs, tx, staffName, staffList, storeLocatio
 // commit IMMEDIATELY; the three field edits (text / assignee / time)
 // BUFFER into per-row drafts until the 💾 button at the bottom — Andrew
 // wants an explicit save for typing.
-const OPS_RECUR_OPTS = [
-    ['daily',     'Every day',  'Cada día'],
-    ['weekday',   'Weekdays',   'Lunes-Viernes'],
-    ['weekend',   'Weekends',   'Fines de semana'],
-    ['monday',    'Mondays',    'Lunes'],
-    ['tuesday',   'Tuesdays',   'Martes'],
-    ['wednesday', 'Wednesdays', 'Miércoles'],
-    ['thursday',  'Thursdays',  'Jueves'],
-    ['friday',    'Fridays',    'Viernes'],
-    ['saturday',  'Saturdays',  'Sábados'],
-    ['sunday',    'Sundays',    'Domingos'],
-];
 
 // Drafts: { [taskId]: { task?, assignTo?, completeBy? } } — only the
 // fields the user touched (assignTo buffered as the ONE selected name; ''
@@ -620,16 +672,20 @@ function OpsEditableList({ tasks, listLoc, sideStaff, isEs, tx, onChanged, onEdi
 
     const [drafts, setDrafts] = useState({});
     const [saving, setSaving] = useState(false);
+    // assignTo is an ARRAY of names (Andrew 2026-08-19: "assign a task to
+    // multiple people"); compared by joined value.
     const fieldBase = (t, field) =>
         field === 'task' ? (t.task || '')
-            : field === 'assignTo' ? ((t.assignTo && t.assignTo[0]) || '')
+            : field === 'assignTo' ? (Array.isArray(t.assignTo) ? t.assignTo : [])
                 : (t.completeBy || '');
     const setField = (id, field, value) => {
         setDrafts(prev => {
             const t = byId[id];
             const row = { ...(prev[id] || {}) };
-            const base = t ? fieldBase(t, field) : '';
-            const same = field === 'task' ? value.trim() === base.trim() : value === base;
+            const base = t ? fieldBase(t, field) : (field === 'assignTo' ? [] : '');
+            const same = field === 'task' ? value.trim() === base.trim()
+                : field === 'assignTo' ? [...(value || [])].join('\u0001') === [...(base || [])].join('\u0001')
+                : value === base;
             if (same) delete row[field]; else row[field] = value;
             const next = { ...prev };
             if (Object.keys(row).length === 0) delete next[id]; else next[id] = row;
@@ -660,9 +716,8 @@ function OpsEditableList({ tasks, listLoc, sideStaff, isEs, tx, onChanged, onEdi
                 if (!text) { failed[id] = d; blankName = true; continue; }
                 patch.task = text;
             }
-            // One name (or [] = unassign) — multi-assign collapses to the
-            // chosen name by design when edited from this compact select.
-            if ('assignTo' in d) patch.assignTo = d.assignTo ? [d.assignTo] : [];
+            // Full assignee list ([] = unassign).
+            if ('assignTo' in d) patch.assignTo = Array.isArray(d.assignTo) ? d.assignTo : [];
             if ('completeBy' in d) patch.completeBy = d.completeBy; // '' = remove
             try {
                 if (Object.keys(patch).length) await updateOpsChecklistTask(listLoc, id, patch);
@@ -811,14 +866,13 @@ function OpsEditableList({ tasks, listLoc, sideStaff, isEs, tx, onChanged, onEdi
 function OpsEditableRow({ t, draft, sideStaff, isEs, tx, onField, onEditRecur, onDelete, dragging, dragOffset, onHandleDown, rowRef }) {
     const dirty = !!draft;
     const text = draft && 'task' in draft ? draft.task : (t.task || '');
-    const who = draft && 'assignTo' in draft ? draft.assignTo : ((t.assignTo && t.assignTo[0]) || '');
+    const who = draft && 'assignTo' in draft ? (draft.assignTo || []) : (Array.isArray(t.assignTo) ? t.assignTo : []);
     const time = draft && 'completeBy' in draft ? draft.completeBy : (t.completeBy || '');
-    // Extra assignees survive untouched unless the select is changed —
-    // the +N chip disappears once a draft collapses them to one name.
-    const extras = (draft && 'assignTo' in draft) ? 0 : Math.max(0, (t.assignTo?.length || 0) - 1);
-    // Keep an off-side / renamed current assignee visible instead of
-    // showing a blank select (a stray change would then look like a clear).
-    const options = who && !sideStaff.includes(who) ? [who, ...sideStaff] : sideStaff;
+    const [pickOpen, setPickOpen] = useState(false);
+    const firstNames = who.map(n => String(n).split(' ')[0]);
+    const whoLabel = who.length === 0 ? '👤 —'
+        : who.length <= 2 ? `👤 ${firstNames.join(', ')}`
+        : `👤 ${firstNames.slice(0, 2).join(', ')} +${who.length - 2}`;
     return (
         <div ref={rowRef}
             className={`px-2 py-1.5 rounded-lg border ${dirty ? 'border-amber-300 ring-1 ring-amber-300' : 'border-dd-line'} ${
@@ -839,19 +893,27 @@ function OpsEditableRow({ t, draft, sideStaff, isEs, tx, onField, onEditRecur, o
                         t.done ? 'text-dd-text-2 line-through' : 'text-dd-text font-medium'}`} />
                 {t.subCount > 0 && <span className="text-[10px] text-dd-text-2">{t.subsDone}/{t.subCount}</span>}
                 <div className="flex items-center gap-1 ml-auto">
-                    <select value={who} onChange={(e) => onField(t.id, 'assignTo', e.target.value)}
-                        title={tx('Assign to', 'Asignar a')}
-                        className="max-w-[7.5rem] px-1.5 py-1 rounded-md border border-dd-line bg-white text-[11px]">
-                        <option value="">👤 —</option>
-                        {options.map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                    {extras > 0 && (
-                        <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-dd-bg text-dd-text-2">+{extras}</span>
+                    <button type="button" onClick={() => setPickOpen(true)}
+                        title={who.length ? who.join(', ') : tx('Assign to', 'Asignar a')}
+                        className={`max-w-[9rem] truncate px-1.5 py-1 rounded-md border text-[11px] text-left ${who.length ? 'border-dd-line bg-white text-dd-text font-bold' : 'border-dd-line bg-white text-dd-text-2'}`}>
+                        {whoLabel}
+                    </button>
+                    {pickOpen && (
+                        <AssigneePicker
+                            value={who} options={sideStaff} taskText={t.task} isEs={isEs} tx={tx}
+                            onChange={(next) => onField(t.id, 'assignTo', next)}
+                            onClose={() => setPickOpen(false)} />
                     )}
                     <input type="time" value={time}
                         onChange={(e) => onField(t.id, 'completeBy', e.target.value)}
                         title={tx('Complete by', 'Completar antes de')}
                         className="px-1.5 py-1 rounded-md border border-dd-line bg-white text-[11px]" />
+                    {(t.recurrence && t.recurrence !== 'daily') && (
+                        <button onClick={() => onEditRecur(t)} title={tx('Which days', 'Qué días')}
+                            className="max-w-[6.5rem] truncate text-[9px] font-bold px-1.5 py-1 rounded-md bg-cyan-100 text-cyan-800 border border-cyan-300">
+                            🔁 {recurrenceLabelFor(t, isEs ? 'es' : 'en')}
+                        </button>
+                    )}
                     <button onClick={() => onEditRecur(t)} title={tx('Which days', 'Qué días')}
                         className="w-7 h-7 rounded-md border border-dd-line bg-white text-[12px] active:scale-95">✏️</button>
                     <button onClick={() => onDelete(t)} title={tx('Delete', 'Eliminar')}
@@ -862,18 +924,111 @@ function OpsEditableRow({ t, draft, sideStaff, isEs, tx, onField, onEditRecur, o
     );
 }
 
-// ✏️ popover — ONLY the which-days rule lives here now (Andrew
-// 2026-07-29: "keep the pencil to click just to give the task rules";
-// text / assignee / time / delete are inline). Saves immediately on 💾.
+// 👤 multi-assignee picker (Andrew 2026-08-19: "assign a task to multiple
+// people"). Bottom sheet with one checkbox per staffer on the list's side;
+// commits into the row DRAFT (saved with the 💾 button like every field).
+function AssigneePicker({ value, options, taskText, isEs, tx, onChange, onClose }) {
+    const sel = new Set(value || []);
+    // Keep off-side / renamed names visible so a stray tap never silently drops them.
+    const all = [...new Set([...(value || []), ...options])];
+    const toggle = (n) => {
+        const next = new Set(sel);
+        if (next.has(n)) next.delete(n); else next.add(n);
+        onChange(all.filter(x => next.has(x)));
+    };
+    return (
+        <ModalPortal onBackPress={onClose}>
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3" onClick={onClose}>
+            <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-4 space-y-3 max-h-[85vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                    <h3 className="text-base font-black text-dd-text">👤 {tx('Assign to', 'Asignar a')}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
+                </div>
+                <div className="text-[11px] text-dd-text-2 -mt-2 truncate">{taskText}</div>
+                <div className="flex gap-1 flex-wrap">
+                    <button type="button" onClick={() => onChange([])} className="text-[11px] font-bold px-2 py-1 rounded-full bg-dd-bg">{tx('No one (main list)', 'Nadie (lista principal)')}</button>
+                    <button type="button" onClick={() => onChange([...all])} className="text-[11px] font-bold px-2 py-1 rounded-full bg-dd-bg">{tx('Everyone', 'Todos')}</button>
+                </div>
+                <div className="overflow-y-auto space-y-1 -mx-1 px-1">
+                    {all.map(n => (
+                        <label key={n} className={`flex items-center gap-2 px-2 py-2 rounded-lg border cursor-pointer ${sel.has(n) ? 'border-dd-green bg-dd-sage-50/60' : 'border-dd-line'}`}>
+                            <input type="checkbox" checked={sel.has(n)} onChange={() => toggle(n)} className="w-4 h-4 accent-dd-green" />
+                            <span className="text-sm font-bold text-dd-text">{n}</span>
+                        </label>
+                    ))}
+                    {all.length === 0 && <p className="text-xs text-dd-text-2 italic">{tx('No staff on this side yet.', 'Aún no hay personal en este lado.')}</p>}
+                </div>
+                <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm">
+                    {tx(`Done · ${sel.size} selected`, `Listo · ${sel.size} seleccionados`)}
+                </button>
+                <p className="text-[10px] text-dd-text-2 text-center -mt-1">{tx('Saves with the 💾 button at the bottom of the list.', 'Se guarda con el botón 💾 al final de la lista.')}</p>
+            </div>
+        </div>
+        </ModalPortal>
+    );
+}
+
+// ✏️ popover — which days a Daily Ops task shows (Andrew 2026-07-29 "keep
+// the pencil just to give the task rules"; 2026-08-19 "everyday, certain
+// days of the week, or certain calendar days — where I can choose multiple
+// days"). Three modes; saves immediately on 💾:
+//   daily  → recurrence 'daily'
+//   days   → recurrence 'days'  + recurDays  [0..6]
+//   dates  → recurrence 'dates' + recurDates ['YYYY-MM-DD', …]
+// Legacy presets (weekday / weekend / monday…) open in the "days" mode
+// pre-ticked and are re-saved as 'days' (same meaning, richer data).
+const PRESET_TO_DAYS = {
+    weekday: [1, 2, 3, 4, 5], weekend: [0, 6],
+    sunday: [0], monday: [1], tuesday: [2], wednesday: [3], thursday: [4], friday: [5], saturday: [6],
+};
 function OpsRecurrenceEditor({ task, location, isEs, tx, onSaved, onClose }) {
-    const [recur, setRecur] = useState(task.recurrence || 'daily');
+    const initial = (() => {
+        const r = task.recurrence || 'daily';
+        if (r === 'days') return { mode: 'days', days: normalizeRecurDays(task.recurDays), dates: [] };
+        if (r === 'dates') return { mode: 'dates', days: [], dates: normalizeRecurDates(task.recurDates) };
+        if (PRESET_TO_DAYS[r]) return { mode: 'days', days: PRESET_TO_DAYS[r], dates: [] };
+        return { mode: 'daily', days: [], dates: [] };
+    })();
+    const [mode, setMode] = useState(initial.mode);
+    const [days, setDays] = useState(initial.days);
+    const [dates, setDates] = useState(initial.dates);
     const [busy, setBusy] = useState(false);
+    const [calAnchor, setCalAnchor] = useState(() => toDateStr().slice(0, 8) + '01');
+    const todayStr = toDateStr();
+
+    const toggleDay = (d) => setDays(prev => (prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort((a, b) => a - b)));
+    const toggleDate = (ds) => setDates(prev => (prev.includes(ds) ? prev.filter(x => x !== ds) : [...prev, ds].sort()));
+    const calCells = useMemo(() => {
+        const [y, m] = calAnchor.split('-').map(Number);
+        const n = new Date(y, m, 0).getDate();
+        const lead = weekdayOf(calAnchor);
+        const out = [];
+        for (let i = 0; i < lead; i++) out.push(null);
+        for (let d = 1; d <= n; d++) out.push(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+        return out;
+    }, [calAnchor]);
+    const shiftCal = (delta) => {
+        const [y, m] = calAnchor.split('-').map(Number);
+        const d = new Date(Date.UTC(y, m - 1 + delta, 1, 12));
+        setCalAnchor(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`);
+    };
+    const calTitle = (() => { const [y, m] = calAnchor.split('-').map(Number); return `${(isEs ? MONTHS_ES : MONTHS_EN)[m - 1]} ${y}`; })();
+
     const save = async () => {
         if (busy) return;
-        if (recur === (task.recurrence || 'daily')) { onClose(); return; }
+        let patch;
+        if (mode === 'daily') patch = { recurrence: 'daily' };
+        else if (mode === 'days') {
+            if (days.length === 0) { toast(tx('Pick at least one weekday', 'Elige al menos un día'), { kind: 'error' }); return; }
+            patch = { recurrence: 'days', recurDays: days };
+        } else {
+            if (dates.length === 0) { toast(tx('Pick at least one date', 'Elige al menos una fecha'), { kind: 'error' }); return; }
+            patch = { recurrence: 'dates', recurDates: dates };
+        }
         setBusy(true);
         try {
-            await updateOpsChecklistTask(location, task.id, { recurrence: recur });
+            await updateOpsChecklistTask(location, task.id, patch);
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
             onSaved();
         } catch (e) {
@@ -881,21 +1036,73 @@ function OpsRecurrenceEditor({ task, location, isEs, tx, onSaved, onClose }) {
             setBusy(false);
         }
     };
+    const WD = isEs ? WD_ES : WD_EN;
+    const modeBtn = (id, label) => (
+        <button key={id} type="button" onClick={() => setMode(id)}
+            className={`flex-1 px-2 py-2 rounded-lg text-xs font-bold border ${mode === id ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-dd-text-2 border-dd-line'}`}>
+            {label}
+        </button>
+    );
     return (
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3" onClick={onClose}>
-            <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-4 space-y-3"
+            <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-4 space-y-3 max-h-[90vh] overflow-y-auto"
                 onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between">
                     <h3 className="text-base font-black text-dd-text">📅 {tx('Which days', 'Qué días')}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
                 </div>
                 <div className="text-[11px] text-dd-text-2 -mt-2 truncate">{task.task}</div>
-                <select value={recur} onChange={e => setRecur(e.target.value)}
-                    className="w-full px-2 py-2 rounded-lg border border-dd-line bg-white text-sm">
-                    {OPS_RECUR_OPTS.map(([id, en, es]) => (
-                        <option key={id} value={id}>{isEs ? es : en}</option>
-                    ))}
-                </select>
+                <div className="flex gap-1">
+                    {modeBtn('daily', tx('Every day', 'Cada día'))}
+                    {modeBtn('days', tx('Days of the week', 'Días de la semana'))}
+                    {modeBtn('dates', tx('Calendar days', 'Días del calendario'))}
+                </div>
+                {mode === 'days' && (
+                    <div>
+                        <div className="grid grid-cols-7 gap-1">
+                            {WD.map((label, d) => (
+                                <button key={d} type="button" onClick={() => toggleDay(d)}
+                                    className={`py-2 rounded-lg text-xs font-bold border ${days.includes(d) ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-dd-text border-dd-line'}`}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex gap-1 mt-2 flex-wrap">
+                            <button type="button" onClick={() => setDays([1, 2, 3, 4, 5])} className="text-[11px] font-bold px-2 py-1 rounded-full bg-dd-bg">{tx('Mon–Fri', 'Lun–Vie')}</button>
+                            <button type="button" onClick={() => setDays([0, 6])} className="text-[11px] font-bold px-2 py-1 rounded-full bg-dd-bg">{tx('Sat–Sun', 'Sáb–Dom')}</button>
+                            <button type="button" onClick={() => setDays([])} className="text-[11px] font-bold px-2 py-1 rounded-full bg-dd-bg">{tx('Clear', 'Limpiar')}</button>
+                        </div>
+                        <p className="text-[11px] text-dd-text-2 mt-2">{tx('Shows every week on the ticked days.', 'Aparece cada semana en los días marcados.')}</p>
+                    </div>
+                )}
+                {mode === 'dates' && (
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <button type="button" onClick={() => shiftCal(-1)} className="px-3 py-1 rounded-lg bg-dd-bg font-bold">‹</button>
+                            <div className="text-sm font-black text-dd-text">{calTitle}</div>
+                            <button type="button" onClick={() => shiftCal(1)} className="px-3 py-1 rounded-lg bg-dd-bg font-bold">›</button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase text-dd-text-2 mb-1">
+                            {WD.map(d => <div key={d}>{d}</div>)}
+                        </div>
+                        <div className="grid grid-cols-7 gap-1">
+                            {calCells.map((ds, i) => ds ? (
+                                <button key={ds} type="button" onClick={() => toggleDate(ds)}
+                                    className={`py-1.5 rounded-lg text-xs font-bold border ${dates.includes(ds) ? 'bg-dd-green text-white border-dd-green' : ds === todayStr ? 'bg-white text-dd-green-700 border-dd-green' : ds < todayStr ? 'bg-white text-dd-text-2/50 border-dd-line' : 'bg-white text-dd-text border-dd-line'}`}>
+                                    {Number(ds.slice(8))}
+                                </button>
+                            ) : <div key={`b${i}`} />)}
+                        </div>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                            {dates.map(ds => (
+                                <button key={ds} type="button" onClick={() => toggleDate(ds)} className="text-[11px] font-bold px-2 py-1 rounded-full bg-dd-sage-50 border border-dd-green text-dd-green-700">
+                                    {Number(ds.slice(5, 7))}/{Number(ds.slice(8))} ✕
+                                </button>
+                            ))}
+                            {dates.length === 0 && <span className="text-[11px] text-dd-text-2 italic">{tx('Tap the days it should show.', 'Toca los días en que debe aparecer.')}</span>}
+                        </div>
+                    </div>
+                )}
                 <button disabled={busy} onClick={save}
                     className="w-full py-2.5 rounded-xl bg-dd-green text-white font-bold text-sm disabled:opacity-40">
                     {busy ? tx('Saving…', 'Guardando…') : tx('💾 Done', '💾 Listo')}

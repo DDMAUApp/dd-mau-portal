@@ -20,6 +20,7 @@ import {
 // them. Writes → watchdogWrite (revive + SyncPill + escalation), reads →
 // watchdogRead (revive on hang only).
 import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+import { taskDueOnDay, recurrenceLabelFor } from '../data/checklistRecurrence';
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
@@ -157,11 +158,13 @@ const TASK_RECURRENCE = [
     { id: "sunday",    labelEn: "Sundays",         labelEs: "Domingos",         match: (d) => getBusinessDow(d) === 0 },
 ];
 const TASK_RECURRENCE_BY_ID = Object.fromEntries(TASK_RECURRENCE.map(r => [r.id, r]));
-const taskShowsToday = (task, date = new Date()) => {
-    const r = task.recurrence || "daily";
-    const rule = TASK_RECURRENCE_BY_ID[r] || TASK_RECURRENCE_BY_ID.daily;
-    return rule.match(date);
-};
+// 2026-08-19 — shared matcher (src/data/checklistRecurrence.js) so the
+// Planner's new "certain weekdays" ('days' + recurDays) and "certain
+// calendar days" ('dates' + recurDates) show here on exactly the right
+// days. Presets behave as before.
+const _dateKeyChicago = new Intl.DateTimeFormat("en-CA", { timeZone: BUSINESS_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+const taskShowsToday = (task, date = new Date()) =>
+    taskDueOnDay(task, getBusinessDow(date), _dateKeyChicago.format(date));
 
 // Current Chicago wall-clock minutes-since-midnight. Used by overdue/urgency
 // checks so a "2:30 PM" deadline triggers correctly regardless of the device's
@@ -3590,6 +3593,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 item.task = editTask.trim();
                 if (editCategory && editCategory !== "other") { item.category = editCategory; } else { delete item.category; }
                 if (editRecurrence && editRecurrence !== "daily") { item.recurrence = editRecurrence; } else { delete item.recurrence; }
+                // Planner-authored custom sets ride along only with their own id.
+                if (item.recurrence !== 'days') delete item.recurDays;
+                if (item.recurrence !== 'dates') delete item.recurDates;
                 item.requirePhoto = editRequirePhoto;
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
                 const assignArr = Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : [];
@@ -6151,6 +6157,14 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                 {TASK_RECURRENCE.map(r => (
                                                     <option key={r.id} value={r.id}>{language === "es" ? r.labelEs : r.labelEn}</option>
                                                 ))}
+                                                {/* Custom sets are authored in Admin → Planner; keep them selectable
+                                                    here so Save doesn't silently reset them to daily. */}
+                                                {(editRecurrence === 'days' || editRecurrence === 'dates') && (
+                                                    <option value={editRecurrence}>
+                                                        {language === "es" ? "Días personalizados (Planificador): " : "Custom days (Planner): "}
+                                                        {recurrenceLabelFor(customTasks?.[checklistSide]?.[PERIOD_KEY]?.[editingIdx] || {}, language)}
+                                                    </option>
+                                                )}
                                             </select>
                                         </div>
                                         {/* Complete by time */}
@@ -6296,7 +6310,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                     })()}
                                                     {item.recurrence && item.recurrence !== "daily" && (
                                                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-800 border border-cyan-300">
-                                                            🔁 {(TASK_RECURRENCE_BY_ID[item.recurrence] || {})[language === "es" ? "labelEs" : "labelEn"] || item.recurrence}
+                                                            🔁 {recurrenceLabelFor(item, language)}
                                                         </span>
                                                     )}
                                                     {item.requirePhoto && <span className="text-xs">{"\u{1F4F8}"}</span>}
