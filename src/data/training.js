@@ -4180,7 +4180,7 @@ export const MODULES = [
                     "Safe means three things, in this order: people are warned, a yellow caution sign is standing on the spot, and the floor has been cleaned AND is completely dry. Until all three are done, somebody is standing guard — and that somebody is you.",
                     "This counts everywhere guests and front-of-house staff walk: dining room, boba station, entrance, behind the register, the hallway to the restrooms. The kitchen is different for plain water — everyone back there wears non-slip shoes (see Lesson 3) — but grease and broken glass follow the full rule anywhere, front or back.",
                     "It also counts for everything slick: water, ice, grease, sauce, broken glass, a leaking mop bucket, rain and snow that people bring in on their shoes. If a shoe could slide on it, it's a wet floor.",
-                    "Why it matters beyond the injury: a guest who falls can mean a lawsuit that costs more than a year of profit, and a coworker who falls is out of work for weeks. Thirty seconds of standing guard is the cheapest insurance we have."
+                    "Why it matters beyond the injury: a guest who falls remembers DD Mau for the fall, not the food — and tells everyone. A coworker who falls is out of work for weeks and the rest of the team covers the shifts. Thirty seconds of standing guard is the cheapest insurance we have."
                 ],
                 contentEs: [
                     "Los resbalones y caídas son la lesión más común en los restaurantes — para los clientes y para nosotros. Una mancha mojada del tamaño de un plato basta para tirar a alguien al piso, y un cliente puede cruzar un charco que nadie está cuidando antes de que termines de decir \"piso mojado\".",
@@ -4188,7 +4188,7 @@ export const MODULES = [
                     "Seguro significa tres cosas, en este orden: la gente está avisada, hay un letrero amarillo de precaución parado en el lugar, y el piso está limpio Y completamente seco. Hasta que se cumplan las tres, alguien está montando guardia — y ese alguien eres tú.",
                     "Esto aplica en todos los lugares por donde pasan los clientes y el personal del frente: comedor, estación de boba, entrada, detrás de la caja, el pasillo a los baños. La cocina es diferente para el agua sola — todos ahí atrás usan zapatos antiderrapantes (ver Lección 3) — pero la grasa y el vidrio roto siguen la regla completa en cualquier parte, al frente o atrás.",
                     "También aplica a todo lo resbaloso: agua, hielo, grasa, salsa, vidrio roto, una cubeta del trapeador que gotea, lluvia y nieve que la gente mete con los zapatos al entrar. Si un zapato puede deslizarse, es un piso mojado.",
-                    "Por qué importa más allá de la lesión: un cliente que se cae puede significar una demanda que cuesta más que un año de ganancias, y un compañero que se cae pasa semanas sin poder trabajar. Treinta segundos montando guardia son el seguro más barato que tenemos."
+                    "Por qué importa más allá de la lesión: un cliente que se cae recuerda a DD Mau por la caída, no por la comida — y se lo cuenta a todos. Un compañero que se cae pasa semanas sin poder trabajar y el resto del equipo cubre sus turnos. Treinta segundos montando guardia son el seguro más barato que tenemos."
                 ]
             },
             {
