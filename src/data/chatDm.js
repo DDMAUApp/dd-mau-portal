@@ -79,7 +79,39 @@ export async function findLiveDmId(myName, otherName) {
 }
 import { dmDocId } from './chat';
 
-export async function sendDirectMessage({ fromName, fromId = null, toName, text }) {
+// `extra` (2026-08-18, training assignments): optional extra fields merged
+// into the message doc — e.g. { type: 'training_assignment', training: {…} }.
+// `text` stays the plain-text fallback so clients that don't know the type
+// (OTA lag), the chat-list preview and the push body all still read well.
+// `knownChatId` (2026-08-19): a bulk sender (training assignments → 66 DMs)
+// resolves the live-DM map ONCE with liveDmMapFor() and passes the id in,
+// instead of re-running the array-contains query per recipient.
+// One query → { otherName: chatId } for every live 2-person DM this sender is
+// in (latest activity wins on duplicates). For bulk sends.
+export async function liveDmMapFor(myName) {
+    const map = new Map();
+    try {
+        if (!myName) return map;
+        const snap = await getDocs(query(collection(db, 'chats'), where('members', 'array-contains', myName), limit(300)));
+        const best = new Map();
+        snap.forEach(d => {
+            const c = d.data() || {};
+            if (c.type !== 'dm' || c.deletedAt) return;
+            const m = Array.isArray(c.members) ? c.members : [];
+            if (m.length !== 2) return;
+            const other = m.find(n => n !== myName);
+            if (!other) return;
+            const ts = c.lastActivityAt || c.createdAt;
+            const ms = ts?.toMillis ? ts.toMillis() : (ts?.seconds ? ts.seconds * 1000 : 0);
+            if (!best.has(other) || ms > best.get(other)) { best.set(other, ms); map.set(other, d.id); }
+        });
+    } catch (e) {
+        console.warn('liveDmMapFor failed (per-recipient lookup will be used):', e);
+    }
+    return map;
+}
+
+export async function sendDirectMessage({ fromName, fromId = null, toName, text, extra = null, knownChatId = null }) {
     const body = String(text || '').trim();
     if (!fromName || !toName || fromName === toName || !body) {
         return { ok: false, error: 'bad_args' };
@@ -87,7 +119,7 @@ export async function sendDirectMessage({ fromName, fromId = null, toName, text 
     try {
         // C6 — reuse a live DM for this pair under ANY id (rename-safe)
         // before minting the deterministic one.
-        const id = (await findLiveDmId(fromName, toName)) || dmDocId(fromName, toName);
+        const id = knownChatId || (await findLiveDmId(fromName, toName)) || dmDocId(fromName, toName);
         const ref = doc(db, 'chats', id);
         const snap = await getDoc(ref);
         // Resurrect a soft-deleted DM (2026-07-26 platform audit H4): the
@@ -116,6 +148,7 @@ export async function sendDirectMessage({ fromName, fromId = null, toName, text 
             text: body,
             reactions: {},
             mentions: [],
+            ...(extra && typeof extra === 'object' ? extra : {}),
             createdAt: serverTimestamp(),
             // 2026-08-11 (chat forensics C3) — the onChatMessageCreated Cloud
             // Function now owns the preview update + recipient notification

@@ -4150,6 +4150,196 @@ export const MODULES = [
                 }
             ]
         }
+    },
+    // ── M18 — Wet Floors & Spills (Andrew 2026-08-18) ──────────────────
+    // "When we see, or cause a spill or spot a wet floor … we don't leave
+    // the spot without putting up a caution. They guard the wet floor
+    // until a caution sign can be put up and cleaned up." First module on
+    // the Service & Safety track. `draft: true` = visible to admins only
+    // (DRAFT tag) until Andrew approves the text; flip to publish.
+    // 2026-08-19 review pass: glass-near-food rule, hand-wash after floor
+    // contact, absorb-then-degrease, lone-worker exception made explicit,
+    // store-specific facts kept neutral (sign locations are the owner's).
+    {
+        id: "m18",
+        code: "M18",
+        track: "service-safety",
+        tier: "all",
+        icon: "⚠️",
+        durationMin: 8,
+        draft: true,
+        titleEn: "Wet Floors & Spills — Guard It Until It's Safe",
+        titleEs: "Pisos Mojados y Derrames — Cuídalo Hasta Que Esté Seguro",
+        lessons: [
+            {
+                id: "m18-l1",
+                titleEn: "You See It, You Own It",
+                titleEs: "Si Lo Ves, Es Tuyo",
+                contentEn: [
+                    "Slips and falls are the most common injury in restaurants — for guests and for us. A wet spot the size of a dinner plate is enough to put someone on the floor, and a guest can walk through a puddle nobody is guarding before you finish saying \"wet floor\".",
+                    "The DD Mau rule is simple: if you SEE a spill or a wet floor, or you CAUSE one, that spot is yours until it is safe. You do not walk away from it. Not to grab a sign while someone else can bring it, not to finish an order, not because it's \"just water\".",
+                    "Safe means three things, in this order: people are warned, a yellow caution sign is standing on the spot, and the floor has been cleaned AND is completely dry. Until all three are done, somebody is standing guard — and that somebody is you.",
+                    "This counts everywhere: dining room, boba station, entrance, behind the register, the line, the dish pit, the walk-in door, the back hallway. Crew slip just as hard as guests do, and a fall next to the fryer is worse.",
+                    "It also counts for everything slick: water, ice, grease, sauce, broken glass, a leaking mop bucket, rain and snow that people bring in on their shoes. If a shoe could slide on it, it's a wet floor.",
+                    "Why it matters beyond the injury: a guest who falls can mean a lawsuit that costs more than a year of profit, and a coworker who falls is out of work for weeks. Thirty seconds of standing guard is the cheapest insurance we have."
+                ],
+                contentEs: [
+                    "Los resbalones y caídas son la lesión más común en los restaurantes — para los clientes y para nosotros. Una mancha mojada del tamaño de un plato basta para tirar a alguien al piso, y un cliente puede cruzar un charco que nadie está cuidando antes de que termines de decir \"piso mojado\".",
+                    "La regla de DD Mau es simple: si VES un derrame o un piso mojado, o lo CAUSAS, ese lugar es tuyo hasta que esté seguro. No te alejas de ahí. Ni para ir por un letrero cuando otro lo puede traer, ni para terminar una orden, ni porque \"solo es agua\".",
+                    "Seguro significa tres cosas, en este orden: la gente está avisada, hay un letrero amarillo de precaución parado en el lugar, y el piso está limpio Y completamente seco. Hasta que se cumplan las tres, alguien está montando guardia — y ese alguien eres tú.",
+                    "Esto aplica en todas partes: comedor, estación de boba, entrada, detrás de la caja, la línea, el área de lavado, la puerta del walk-in, el pasillo de atrás. El equipo se resbala igual que los clientes, y una caída junto a la freidora es peor.",
+                    "También aplica a todo lo resbaloso: agua, hielo, grasa, salsa, vidrio roto, una cubeta del trapeador que gotea, lluvia y nieve que la gente mete con los zapatos al entrar. Si un zapato puede deslizarse, es un piso mojado.",
+                    "Por qué importa más allá de la lesión: un cliente que se cae puede significar una demanda que cuesta más que un año de ganancias, y un compañero que se cae pasa semanas sin poder trabajar. Treinta segundos montando guardia son el seguro más barato que tenemos."
+                ]
+            },
+            {
+                id: "m18-l2",
+                titleEn: "The 5 Steps — Every Time",
+                titleEs: "Los 5 Pasos — Siempre",
+                contentEn: [
+                    "1. STOP AND STAY. Stand next to the spot — not in it — with your body between the wet area and the people walking. If you're carrying food, set it down on the nearest clean surface. The floor comes first.",
+                    "2. WARN. Say it loud, the same way you call \"behind!\": \"Wet floor!\" / \"¡Piso mojado!\" Wave people around it — guests, kids, coworkers carrying trays. Nobody crosses the spot while you're there.",
+                    "3. CALL FOR THE SIGN AND SUPPLIES — YOU STAY. Call to the nearest coworker by name: \"Marcos — caution sign and towels to the boba station, please.\" Call twice if you have to. The only exception: you are the only person in the building and nobody can hear you. Then a barrier is your caution — put a chair, a tray stand or an upside-down bus tub right on the spot, get the sign fast, and come straight back. A barrier is the backup, never the plan.",
+                    "4. PUT THE SIGN UP FIRST, THEN CLEAN. The yellow sign stands on the side people walk from, before the first towel touches the floor. Then clean it the right way: paper towels or a dry mop for water and ice. Grease: soak it up with paper towels first, THEN degreaser and the kitchen mop, then dry — never plain water on grease (it spreads) and never cardboard over it (it hides the grease and slides out from under you). Broken glass: broom and dustpan, then a damp paper towel for the tiny pieces — never your hands. Glass goes in a box or a doubled bag, never loose in the trash.",
+                    "5. KEEP THE SIGN UP UNTIL IT IS COMPLETELY DRY. Dry the spot with paper towels or a floor-only towel — never a sani-bucket towel or a table towel — and check it with the back of your hand. Damp is still wet. Only the person who cleaned it takes the sign down — not whoever walks past. Put the sign back where it lives, then WASH YOUR HANDS before you touch food, the register, or a clean towel (floor + chemicals = wash, same rule as M3).",
+                    "Then tell the Shift Lead if it was a big spill, anything greasy, broken glass, or if any guest was near it — and ALWAYS if anyone slipped, even if they say they're fine.",
+                    "Know where the caution signs live at YOUR store before your first shift alone — ask your Shift Lead to walk you to them on day one. That's a fair question, not a dumb one."
+                ],
+                contentEs: [
+                    "1. DETENTE Y QUÉDATE. Párate junto al lugar — no encima — con tu cuerpo entre el área mojada y la gente que pasa. Si llevas comida, déjala en la superficie limpia más cercana. El piso va primero.",
+                    "2. AVISA. Dilo fuerte, igual que cuando gritas \"¡atrás!\": \"¡Piso mojado!\" / \"Wet floor!\" Haz que la gente rodee el lugar — clientes, niños, compañeros con bandejas. Nadie cruza el lugar mientras tú estés ahí.",
+                    "3. PIDE EL LETRERO Y LOS MATERIALES — TÚ TE QUEDAS. Llama al compañero más cercano por su nombre: \"Marcos — letrero de precaución y toallas a la estación de boba, por favor.\" Grita dos veces si hace falta. La única excepción: eres la única persona en el local y nadie te puede oír. Entonces una barrera es tu precaución — pon una silla, un soporte de bandejas o un bus tub volteado boca abajo justo en el lugar, ve rápido por el letrero y regresa directo. La barrera es el respaldo, nunca el plan.",
+                    "4. PRIMERO PON EL LETRERO, DESPUÉS LIMPIA. El letrero amarillo se para del lado por donde viene la gente, antes de que la primera toalla toque el piso. Luego limpia bien: toallas de papel o trapeador seco para agua y hielo. Grasa: primero absórbela con toallas de papel, DESPUÉS desengrasante y el trapeador de la cocina, y luego seca — nunca agua sola sobre grasa (la esparce) y nunca cartón encima (esconde la grasa y se resbala bajo tus pies). Vidrio roto: escoba y recogedor, y después una toalla de papel húmeda para los pedacitos — nunca con las manos. El vidrio va en una caja o bolsa doble, nunca suelto en la basura.",
+                    "5. DEJA EL LETRERO HASTA QUE ESTÉ COMPLETAMENTE SECO. Seca el lugar con toallas de papel o una toalla solo para pisos — nunca una toalla de la cubeta de sanitizante ni una de mesas — y revisa con el dorso de la mano. Húmedo sigue siendo mojado. Solo la persona que limpió quita el letrero — no cualquiera que pase por ahí. Regresa el letrero a su lugar y luego LÁVATE LAS MANOS antes de tocar comida, la caja o una toalla limpia (piso + químicos = lavarse, misma regla que M3).",
+                    "Luego avísale al líder de turno si fue un derrame grande, algo con grasa, vidrio roto, o si algún cliente estaba cerca — y SIEMPRE si alguien se resbaló, aunque diga que está bien.",
+                    "Aprende dónde están los letreros de precaución en TU local antes de tu primer turno solo — pídele al líder de turno que te los muestre el primer día. Es una pregunta válida, no una pregunta tonta."
+                ]
+            },
+            {
+                id: "m18-l3",
+                titleEn: "Hot Spots & Special Cases",
+                titleEs: "Puntos Críticos y Casos Especiales",
+                contentEn: [
+                    "BOBA STATION AND ICE. Dropped ice is water in two minutes. Every piece gets picked up or swept now — not after the rush. On a busy shift, give the boba-station floor a dry-towel check every time you restock.",
+                    "ENTRANCE ON RAIN AND SNOW DAYS. Mats go down before we open and a caution sign stands by the door all day. Whoever is on Dining Room or Cashier checks the floor just inside the door every 15 minutes and dries it — guests bring water in on their shoes with every visit.",
+                    "WHILE YOU MOP. The mop bucket is a wet floor too. Put a sign at both ends of a mopped hallway, mop small sections so there's always a dry path, and never leave the bucket blocking a doorway.",
+                    "BEHIND THE LINE AND THE DISH PIT. Same rule, no shortcuts — the crew slip here more than guests do anywhere. Grease by the fryer gets soaked up and degreased right away; standing water by the dish machine gets squeegeed to the drain and a sign until it's dry.",
+                    "BROKEN GLASS OR A DROPPED DRINK NEAR A GUEST'S TABLE. Apologize, guard, and don't rush the guest — they stay seated while you clean. Sweep, don't hand-pick. And if the glass broke near open food, ice, or a guest's bowl: anything it could have landed in gets thrown out — no checking, no picking pieces out. An ice bin gets dumped, washed, sanitized and refilled. A guest's food or drink near the break gets replaced (the Lead comps it).",
+                    "IF SOMEONE SLIPS OR FALLS. Call for the Shift Lead immediately. Do not move anyone who is hurt. Keep guarding the spot so nobody else goes down. The Lead takes care of the guest and writes down what happened — your job is to stay calm and keep the area safe.",
+                    "The short version you should be able to say in your sleep: see it → stay → warn → call for the sign → sign up first, clean, dry → wash hands → take the sign down → tell the Lead if it was serious."
+                ],
+                contentEs: [
+                    "ESTACIÓN DE BOBA Y HIELO. El hielo tirado es agua en dos minutos. Cada hielo se recoge o se barre ahora — no después del rush. En un turno ocupado, revisa el piso de la estación de boba con una toalla seca cada vez que surtes.",
+                    "ENTRADA EN DÍAS DE LLUVIA Y NIEVE. Los tapetes se ponen antes de abrir y un letrero de precaución se queda junto a la puerta todo el día. Quien esté en Comedor o Caja revisa el piso justo adentro de la puerta cada 15 minutos y lo seca — los clientes meten agua con los zapatos cada vez que entran.",
+                    "MIENTRAS TRAPEAS. La cubeta del trapeador también es un piso mojado. Pon letrero en los dos extremos de un pasillo trapeado, trapea por secciones pequeñas para que siempre haya un camino seco, y nunca dejes la cubeta atravesada en el paso de una puerta.",
+                    "DETRÁS DE LA LÍNEA Y EN EL ÁREA DE LAVADO. Misma regla, sin atajos — aquí el equipo se resbala más que los clientes en cualquier otro lado. A la grasa junto a la freidora se le absorbe y se le echa desengrasante de inmediato; el agua estancada junto a la máquina lavaplatos se empuja con el jalador hacia la coladera y lleva letrero hasta que esté seca.",
+                    "VIDRIO ROTO O BEBIDA TIRADA JUNTO A LA MESA DE UN CLIENTE. Discúlpate, cuida el lugar y no apresures al cliente — que se quede sentado mientras limpias. Barre, no recojas con la mano. Y si el vidrio se rompió cerca de comida abierta, hielo o el tazón de un cliente: todo donde pudo haber caído se tira — sin revisar, sin sacar pedacitos. Un depósito de hielo se vacía, se lava, se sanitiza y se vuelve a llenar. La comida o bebida de un cliente cerca del vidrio se reemplaza (el líder la da de cortesía).",
+                    "SI ALGUIEN SE RESBALA O SE CAE. Llama al líder de turno de inmediato. No muevas a nadie que esté lastimado. Sigue cuidando el lugar para que nadie más se caiga. El líder atiende al cliente y anota lo que pasó — tu trabajo es mantener la calma y el área segura.",
+                    "La versión corta que debes poder decir hasta dormido: lo ves → te quedas → avisas → pides el letrero → pones el letrero, limpias, secas → te lavas las manos → quitas el letrero → avisas al líder si fue serio."
+                ]
+            }
+        ],
+        quiz: {
+            passThreshold: 0.85,
+            questions: [
+                {
+                    id: "m18-q1",
+                    questionEn: "You drop a cup of ice at the boba station. The nearest caution sign is in the back. What do you do?",
+                    questionEs: "Se te cae un vaso de hielo en la estación de boba. El letrero de precaución más cercano está atrás. ¿Qué haces?",
+                    options: [
+                        { id: "a", textEn: "Run to the back for the sign — it only takes a minute", textEs: "Corres atrás por el letrero — solo toma un minuto" },
+                        { id: "b", textEn: "Stay at the spot, warn people, and call a coworker to bring the sign", textEs: "Te quedas en el lugar, avisas a la gente y pides a un compañero que traiga el letrero" },
+                        { id: "c", textEn: "Kick the ice under the counter and keep working", textEs: "Empujas el hielo debajo del mostrador y sigues trabajando" },
+                        { id: "d", textEn: "Tell the cashier about it and go back to your station", textEs: "Le avisas al cajero y regresas a tu estación" }
+                    ],
+                    correct: "b"
+                },
+                {
+                    id: "m18-q2",
+                    questionEn: "When is it OK to leave a wet spot unattended?",
+                    questionEs: "¿Cuándo está bien dejar un lugar mojado sin cuidar?",
+                    options: [
+                        { id: "a", textEn: "As soon as you've told someone about it", textEs: "En cuanto le avisas a alguien" },
+                        { id: "b", textEn: "After about five minutes — it's probably dry by then", textEs: "Después de unos cinco minutos — ya debe estar seco" },
+                        { id: "c", textEn: "Once the sign is up and the floor is clean and completely dry", textEs: "Cuando el letrero está puesto y el piso está limpio y completamente seco" },
+                        { id: "d", textEn: "If it's behind the line where guests can't see it", textEs: "Si está detrás de la línea donde los clientes no lo ven" }
+                    ],
+                    correct: "c"
+                },
+                {
+                    id: "m18-q3",
+                    questionEn: "You are the only person in the building, nobody can hear you, and there's a puddle at the entrance. What's the right move?",
+                    questionEs: "Eres la única persona en el local, nadie te puede oír, y hay un charco en la entrada. ¿Cuál es la acción correcta?",
+                    options: [
+                        { id: "a", textEn: "Block the spot with a chair or tray stand, get the sign fast, come straight back", textEs: "Bloqueas el lugar con una silla o un soporte de bandejas, vas rápido por el letrero y regresas directo" },
+                        { id: "b", textEn: "Leave it — you can't be in two places at once", textEs: "Lo dejas — no puedes estar en dos lugares a la vez" },
+                        { id: "c", textEn: "Put a napkin over it so people notice the wet spot", textEs: "Le pones una servilleta encima para que la gente note lo mojado" },
+                        { id: "d", textEn: "Mop it without a sign and move on with your prep", textEs: "Lo trapeas sin letrero y sigues con tu prep" }
+                    ],
+                    correct: "a"
+                },
+                {
+                    id: "m18-q4",
+                    questionEn: "There's grease on the floor by the fryer. How do you clean it?",
+                    questionEs: "Hay grasa en el piso junto a la freidora. ¿Cómo la limpias?",
+                    options: [
+                        { id: "a", textEn: "Plain water and a mop, then let it air-dry", textEs: "Agua sola y trapeador, y dejas que se seque solo" },
+                        { id: "b", textEn: "Lay cardboard over it until close so nobody steps in it", textEs: "Le pones cartón encima hasta el cierre para que nadie lo pise" },
+                        { id: "c", textEn: "Sign up, soak it up, degreaser and mop, then dry it", textEs: "Letrero, absorbes, desengrasante y trapeador, y luego secas" },
+                        { id: "d", textEn: "Sprinkle salt on it and keep cooking through the rush", textEs: "Le echas sal y sigues cocinando durante el rush" }
+                    ],
+                    correct: "c"
+                },
+                {
+                    id: "m18-q5",
+                    questionEn: "Who takes the caution sign down?",
+                    questionEs: "¿Quién quita el letrero de precaución?",
+                    options: [
+                        { id: "a", textEn: "Whoever walks by it first once it looks dry", textEs: "El primero que pase cuando ya se vea seco" },
+                        { id: "b", textEn: "The person who cleaned it, after checking it's completely dry", textEs: "La persona que limpió, después de revisar que está completamente seco" },
+                        { id: "c", textEn: "The Shift Lead, during the closing walk-through", textEs: "El líder de turno, durante el recorrido de cierre" },
+                        { id: "d", textEn: "A guest who needs to get through to their table", textEs: "Un cliente que necesita pasar a su mesa" }
+                    ],
+                    correct: "b"
+                },
+                {
+                    id: "m18-q6",
+                    questionEn: "A guest slips on water near a table. What do you do FIRST?",
+                    questionEs: "Un cliente se resbala con agua cerca de una mesa. ¿Qué haces PRIMERO?",
+                    options: [
+                        { id: "a", textEn: "Help them up quickly so the other guests don't notice", textEs: "Lo levantas rápido para que los demás clientes no se den cuenta" },
+                        { id: "b", textEn: "Clean up the water before anyone else sees it", textEs: "Limpias el agua antes de que alguien más la vea" },
+                        { id: "c", textEn: "Offer a free drink and go back to your station", textEs: "Ofreces una bebida gratis y regresas a tu estación" },
+                        { id: "d", textEn: "Stay with them, call for the Shift Lead, keep the spot guarded", textEs: "Te quedas con la persona, llamas al líder de turno y sigues cuidando el lugar" }
+                    ],
+                    correct: "d"
+                },
+                {
+                    id: "m18-q7",
+                    questionEn: "Which of these counts as a wet floor you have to guard?",
+                    questionEs: "¿Cuál de estos cuenta como un piso mojado que tienes que cuidar?",
+                    options: [
+                        { id: "a", textEn: "Big spills in the dining room, not small ones", textEs: "Derrames grandes en el comedor, no los pequeños" },
+                        { id: "b", textEn: "Spots where guests walk, not behind the line", textEs: "Lugares por donde pasan los clientes, no detrás de la línea" },
+                        { id: "c", textEn: "Anything a shoe could slide on, front or back of house", textEs: "Cualquier cosa en la que un zapato se pueda resbalar, al frente o atrás" },
+                        { id: "d", textEn: "Spills during service, not during prep or close", textEs: "Derrames durante el servicio, no en prep ni en el cierre" }
+                    ],
+                    correct: "c"
+                },
+                {
+                    id: "m18-q8",
+                    questionEn: "A glass breaks right next to the open ice bin. What happens to the ice?",
+                    questionEs: "Se rompe un vaso justo al lado del depósito de hielo abierto. ¿Qué pasa con el hielo?",
+                    options: [
+                        { id: "a", textEn: "Scoop out the top layer where the glass might be", textEs: "Sacas la capa de arriba donde pudo caer el vidrio" },
+                        { id: "b", textEn: "Keep using it — glass sinks to the bottom", textEs: "Lo sigues usando — el vidrio se va al fondo" },
+                        { id: "c", textEn: "Dump it all, wash and sanitize the bin, refill", textEs: "Lo tiras todo, lavas y sanitizas el depósito, y lo llenas de nuevo" },
+                        { id: "d", textEn: "Pick through it carefully with gloves on", textEs: "Lo revisas con cuidado con guantes puestos" }
+                    ],
+                    correct: "c"
+                }
+            ]
+        }
     }
 ];
 

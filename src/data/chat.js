@@ -277,6 +277,13 @@ export function previewOf(msg, language = 'en') {
         return who + `${prefix}: ${d.itemName || tx('item', 'artículo')}`;
     }
     if (msg.type === 'system') return msg.text || '';
+    if (msg.type === 'training_assignment') {
+        const tr = msg.training || {};
+        const title = es ? (tr.titleEs || tr.titleEn) : (tr.titleEn || tr.titleEs);
+        // chat.lastMessage carries only {text,type,...} — no payload — so fall
+        // through to the text preview when there is no title to show.
+        if (title) return who + (tr.reminder ? tx('⏰ Training reminder: ', '⏰ Recordatorio: ') : tx('📚 Required training: ', '📚 Capacitación requerida: ')) + title;
+    }
     const t = (msg.text || '').replace(/\s+/g, ' ').trim();
     return who + (t.length > 60 ? t.slice(0, 57) + '…' : t);
 }
@@ -486,6 +493,10 @@ export const MESSAGE_TYPES = {
     task_handoff:       { renderer: 'task',         priority: 'normal'   },
     poll:               { renderer: 'poll',         priority: 'normal'   },
     system_event:       { renderer: 'system',       priority: 'normal'   },
+    // 2026-08-18 — admin assigns a training module with a due date; the
+    // card carries { training: { assignmentId, moduleId, moduleCode,
+    // titleEn, titleEs, dueAtMs, note } } + a plain-text fallback.
+    training_assignment:{ renderer: 'training',     priority: 'high'     },
 };
 
 // Poll schema — stored inline on a message of type 'poll':

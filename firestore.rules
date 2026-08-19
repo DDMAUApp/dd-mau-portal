@@ -132,6 +132,7 @@ service cloud.firestore {
         'system',
         'tardies',
         'time_off',
+        'training_assignments',
         'tv_heartbeats'
       ];
     }
@@ -401,6 +402,25 @@ service cloud.firestore {
     match /recipe_audits/{auditId} {
       allow read, create: if true;
       allow update, delete: if false;
+    }
+
+    // Training assignments (2026-08-19) — admin assigns a module with a due
+    // date; staff DM'd; roster in Admin → Training. Anyone can read (staff
+    // need their own banner) and create (managers assign from chat); after
+    // creation only the bookkeeping maps + open/closed may change — the
+    // assignment itself (module, due, recipients, who sent it) is frozen so a
+    // staffer can't push the due date out, drop themselves, or delete the
+    // roster. Progress (passed/lessons) lives in /training_v2, not here.
+    match /training_assignments/{assignmentId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.moduleId is string
+                    && request.resource.data.recipients is list
+                    && request.resource.data.status == 'open';
+      allow update: if request.resource.data is map
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['sent', 'opened', 'reminders', 'autoReminders', 'status', 'closedAt', 'closedBy', 'note']);
+      allow delete: if false;
     }
 
     // Backup history — written by the scheduledFirestoreBackup Cloud
@@ -760,6 +780,11 @@ service cloud.firestore {
                         // tampered client from forging a fake crit
                         // page to spam the owners.
                         "critical_error_alert",
+                        // 2026-08-19 — CF-only scheduled nudges (forceDeliver
+                        // pierces the off-shift gate; written by
+                        // healthComplianceReminders / trainingAssignmentReminders).
+                        "health_reminder",
+                        "training_reminder",
                     ]);
       allow update: if request.resource.data is map;
       allow delete: if false;

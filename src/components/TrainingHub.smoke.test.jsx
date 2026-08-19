@@ -26,6 +26,13 @@ vi.mock('firebase/firestore', () => ({
     deleteField: vi.fn(() => ({})),
     arrayUnion: vi.fn((...items) => ({ _arrayUnion: items })),
     serverTimestamp: vi.fn(() => ({})),
+    // 2026-08-18 training assignments: query(collection, where(...)) →
+    // a ref whose path is the collection's, so onSnapshot captures it too.
+    query: vi.fn((ref) => ref),
+    where: vi.fn(() => ({})),
+    Timestamp: { fromDate: (d) => ({ toMillis: () => d.getTime() }) },
+    addDoc: vi.fn(async () => ({ id: 'x' })),
+    FieldPath: class FieldPath { constructor(...segs) { this.segs = segs; } },
 }));
 
 import TrainingHub from './TrainingHub';

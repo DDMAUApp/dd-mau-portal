@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "../firebase";
 import {
-    doc, collection, deleteField, onSnapshot, arrayUnion,
+    doc, collection, deleteField, onSnapshot, arrayUnion, query, where,
     setDoc as _fsSetDoc, updateDoc as _fsUpdateDoc, getDocs as _fsGetDocs,
 } from "firebase/firestore";
 // 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
@@ -15,6 +15,8 @@ import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";
 import { toast } from "../toast";
 import { pushBackHandler } from "../capacitor-bridge";
+import { ASSIGNMENTS, myOpenAssignments, stampAssignmentOpened, fmtDue } from "../data/trainingAssignments";
+import { consumePendingTrainingOpen } from "../data/trainingDeepLink";
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.
 import { GraduationCap, BarChart3 } from "lucide-react";
 import { PageHeader } from "../v2/PageShell";
@@ -415,8 +417,36 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
         return () => unsub();
     }, []);
 
+    // ── Training assignments (2026-08-18) ──────────────────────────────
+    // Open assignments that include this staffer drive the "Required — due
+    // by …" banner + the DUE chip on module cards. Live; small collection.
+    const [assignments, setAssignments] = useState([]);
+    useEffect(() => {
+        const q = query(collection(db, ASSIGNMENTS), where("status", "==", "open"));
+        const unsub = onSnapshot(q, (snap) => {
+            const list = [];
+            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            setAssignments(list);
+        }, (e) => console.warn("training assignments snapshot error:", e));
+        return () => unsub();
+    }, []);
+    // [] until the progress snapshot lands so a module already passed never
+    // flashes an amber "Required" banner for a second.
+    const myAssignments = useMemo(
+        () => (progress ? myOpenAssignments(assignments, staffName, progress.modules || {}) : []),
+        [assignments, staffName, progress],
+    );
+    const assignmentByModule = useMemo(() => {
+        const m = new Map();
+        for (const a of myAssignments) if (!m.has(a.moduleId)) m.set(a.moduleId, a);
+        return m;
+    }, [myAssignments]);
+
     // Filter modules by tier + apply lesson overrides
     const visibleModules = useMemo(() => MODULES.filter(m => {
+        // `draft: true` modules are visible to admins only (tagged DRAFT)
+        // until the owner approves the text and the flag is removed.
+        if (m.draft && !adminUser) return false;
         if (m.tier === "all") return true;
         if (m.tier === "lead") return isLead;
         if (m.tier === "admin") return adminUser;
@@ -427,6 +457,48 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
     })), [isLead, adminUser, overrides]);
 
     const activeModule = useMemo(() => visibleModules.find(m => m.id === activeModuleId), [activeModuleId, visibleModules]);
+
+    // Deep link from a chat card / push ('training:m18'): parked in
+    // trainingDeepLink.js; consume on mount + listen live. Only modules this
+    // staffer can actually see (drafts are admin-only, tiers apply) — otherwise
+    // say so instead of leaving the page in a view with no module.
+    const visibleRef = useRef(visibleModules);
+    visibleRef.current = visibleModules;
+    useEffect(() => {
+        const openModule = (mId) => {
+            if (!mId) return;
+            const m = visibleRef.current.find(x => x.id === mId);
+            if (!m) {
+                if (MODULES.some(x => x.id === mId)) toast(tx("This lesson isn't published yet — check back soon.", "Esta lección todavía no está publicada — vuelve pronto."));
+                return;
+            }
+            setActiveModuleId(mId);
+            setActiveLessonId(null);
+            setView("module");
+        };
+        const parked = consumePendingTrainingOpen();
+        if (parked) openModule(parked);
+        const onOpen = (e) => { consumePendingTrainingOpen(); openModule(e?.detail?.moduleId); };
+        window.addEventListener("ddmau:open-training", onOpen);
+        return () => window.removeEventListener("ddmau:open-training", onOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Stamp "opened" on every open assignment for the module the first time
+    // this staffer actually lands inside it (module/lesson/quiz views with a
+    // resolvable module). Once per assignment per session; the write is
+    // idempotent anyway.
+    const stampedRef = useRef(new Set());
+    useEffect(() => {
+        if (!activeModule || view === "list" || view === "tracker") return;
+        const key = staffDocId(staffName);
+        for (const a of myAssignments) {
+            if (a.moduleId !== activeModule.id || !a.id) continue;
+            if (a.opened?.[key] || stampedRef.current.has(a.id)) continue;
+            stampedRef.current.add(a.id);
+            stampAssignmentOpened(a.id, staffName);
+        }
+    }, [activeModule, view, myAssignments, staffName]);
     const activeLesson = useMemo(() => activeModule?.lessons.find(l => l.id === activeLessonId), [activeModule, activeLessonId]);
 
     /* ───────── Firestore I/O ───────── */
@@ -939,7 +1011,10 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
                     <div className="text-4xl">{m.icon}</div>
                     <div className="flex-1">
                         <p className="text-xs text-gray-500">{m.code} · {m.durationMin} {tx("min", "min")} · {TRACK_LABELS[m.track][isEn ? "en" : "es"]}</p>
-                        <h2 className="text-xl font-bold text-mint-700">{tx(m.titleEn, m.titleEs)}</h2>
+                        <h2 className="text-xl font-bold text-mint-700">
+                            {tx(m.titleEn, m.titleEs)}
+                            {m.draft && <span className="ml-2 text-[10px] font-black px-1.5 py-0.5 rounded bg-gray-800 text-white align-middle">{tx("DRAFT — admins only until published", "BORRADOR — solo admins hasta publicar")}</span>}
+                        </h2>
                     </div>
                 </div>
 
@@ -1080,6 +1155,32 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
                 )}
             />
 
+            {/* Required-training banner (2026-08-18): one card per open
+                assignment this staffer is on and hasn't passed yet. */}
+            {myAssignments.filter(a => !a.done).map(a => {
+                const m = visibleModules.find(x => x.id === a.moduleId);
+                if (!m) return null;
+                const overdue = a.dueMs > 0 && Date.now() > a.dueMs;
+                return (
+                    <div key={a.id} className={`mb-3 rounded-xl border-2 p-3 flex items-center gap-3 ${overdue ? "border-red-400 bg-red-50" : "border-amber-400 bg-amber-50"}`}>
+                        <div className="text-2xl">{overdue ? "⏰" : "📌"}</div>
+                        <div className="flex-1 min-w-0">
+                            <div className={`text-[11px] font-black uppercase tracking-wide ${overdue ? "text-red-800" : "text-amber-800"}`}>
+                                {overdue ? tx("Overdue — required training", "Vencida — capacitación requerida") : tx("Required training", "Capacitación requerida")}
+                            </div>
+                            <div className="text-sm font-bold text-gray-900 truncate">{m.code} · {tx(m.titleEn, m.titleEs)}</div>
+                            <div className="text-xs text-gray-700">
+                                {tx("Due by", "Fecha límite:")} {fmtDue(a.dueMs, isEn ? "en" : "es")} · {tx("read the lessons, then pass the quiz", "lee las lecciones y aprueba el examen")}
+                            </div>
+                        </div>
+                        <button onClick={() => { setActiveModuleId(m.id); setView("module"); }}
+                            className={`px-3 py-2 rounded-lg text-white text-xs font-black whitespace-nowrap ${overdue ? "bg-red-600" : "bg-amber-600"}`}>
+                            {tx("Start →", "Empezar →")}
+                        </button>
+                    </div>
+                );
+            })}
+
             {grouped.map(g => (
                 <div key={g.track} className="mb-5">
                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{TRACK_ICONS[g.track]} {TRACK_LABELS[g.track][isEn ? "en" : "es"]}</h3>
@@ -1089,16 +1190,29 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
                             const totalL = m.lessons.length;
                             const doneL = st.lessonsCompleted.length;
                             const pct = totalL > 0 ? Math.round(doneL / totalL * 100) : 0;
+                            const asg = assignmentByModule.get(m.id);
+                            const asgOverdue = asg && !asg.done && asg.dueMs > 0 && Date.now() > asg.dueMs;
                             return (
                                 <button key={m.id} onClick={() => { setActiveModuleId(m.id); setView("module"); }}
                                     className={`w-full text-left p-3 bg-white border-2 rounded-xl transition flex items-center gap-3 ${
                                         st.locked ? "border-red-300" :
                                         st.passed ? "border-green-300" :
+                                        asg && !asg.done ? (asgOverdue ? "border-red-400" : "border-amber-400") :
                                         "border-gray-200 hover:border-mint-300"}`}>
                                     <div className="text-3xl">{m.icon}</div>
                                     <div className="flex-1 min-w-0">
-                                        <div className="text-sm font-bold text-gray-800 truncate">{m.code} · {tx(m.titleEn, m.titleEs)}</div>
-                                        <div className="text-xs text-gray-500">{totalL} {tx("lessons", "lecciones")} · {m.durationMin} {tx("min", "min")}</div>
+                                        <div className="text-sm font-bold text-gray-800 truncate">
+                                            {m.code} · {tx(m.titleEn, m.titleEs)}
+                                            {m.draft && <span className="ml-2 text-[10px] font-black px-1.5 py-0.5 rounded bg-gray-800 text-white align-middle">DRAFT</span>}
+                                        </div>
+                                        <div className="text-xs text-gray-500">
+                                            {totalL} {tx("lessons", "lecciones")} · {m.durationMin} {tx("min", "min")}
+                                            {asg && !asg.done && (
+                                                <span className={`ml-2 font-bold ${asgOverdue ? "text-red-700" : "text-amber-700"}`}>
+                                                    · {asgOverdue ? tx("OVERDUE", "VENCIDA") : tx("due", "vence")} {fmtDue(asg.dueMs, isEn ? "en" : "es")}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                     <div className="text-right text-xs">
                                         {st.locked ? <span className="text-red-700 font-bold">🔒</span> :

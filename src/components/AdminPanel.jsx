@@ -57,6 +57,7 @@ import AdminHub, { AdminToolHeader } from './AdminHub';
 // page. i want to know which staff has used the app?" Self-contained
 // read-only card; reads staffList in-place, no new Firestore writes.
 import StaffUsageAudit from './StaffUsageAudit';
+import TrainingAssignmentsPanel from './TrainingAssignmentsPanel';
 import TimecardDisputesPanel from './TimecardDisputesPanel';
 import HealthBulkEditor from './HealthBulkEditor';
 import ScheduleAuditLog from './ScheduleAuditLog';
@@ -2482,6 +2483,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const TOOL_META = {
                 staff:            { emoji: '👥', tint: 'tint-green',  label: hubTx('Staff list', 'Personal') },
                 usage:            { emoji: '📊', tint: 'tint-teal',   label: hubTx('App usage', 'Uso app') },
+                trainingassign:   { emoji: '🎓', tint: 'tint-green',  label: hubTx('Training', 'Capacitación') },
                 offsite:          { emoji: '🚐', tint: 'tint-purple', label: hubTx('Off-site', 'Fuera') },
                 deleted:          { emoji: '🗂️', tint: 'tint-slate',  label: hubTx('Deleted', 'Eliminados') },
                 taskplanner:      { emoji: '🗓', tint: 'tint-green',  label: hubTx('Planner', 'Planificador') },
@@ -2515,7 +2517,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // keep the exact same gates their sections had.
             const hubGroups = [
                 { id: 'g-staff',    emoji: '👥', title: hubTx('Staff', 'Personal'),
-                    tools: ['staff', 'usage', 'offsite', 'deleted'] },
+                    tools: ['staff', 'usage', 'trainingassign', 'offsite', 'deleted'] },
                 { id: 'g-tasks',    emoji: '📋', title: hubTx('Tasks', 'Tareas'),
                     tools: ['taskplanner', 'todos', 'timecards', 'maintenance'] },
                 { id: 'g-money',    emoji: '💰', title: hubTx('Money', 'Dinero'),
@@ -2653,6 +2655,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         currentManagerId={(staffList || []).find(s => s.name === staffName)?.id ?? null}
                         onSetPhone={setPhoneForStaff}
                         startExpanded
+                    />}
+
+                    {/* ── TRAINING ASSIGNMENTS (2026-08-18) — assign a module
+                        with a due date to staff via chat DM; live roster of
+                        sent / opened / lessons / quiz / completed. */}
+                    {show('trainingassign') && <TrainingAssignmentsPanel
+                        staffList={staffList}
+                        language={language}
+                        staffName={staffName}
+                        staffId={(staffList || []).find(s => s.name === staffName)?.id ?? null}
+                        isAdminUser={isAdmin(staffName, staffList)}
                     />}
 
                     {/* ── TIMECARD FIX REQUESTS ── Andrew 2026-07-24: staff

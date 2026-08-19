@@ -21,6 +21,7 @@
 
 import { initializeApp } from 'firebase/app';
 import {
+    FieldPath,
     getFirestore, connectFirestoreEmulator, doc, collection,
     setDoc, addDoc, updateDoc, deleteDoc, getDoc, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
@@ -150,6 +151,18 @@ await allow('recipe_audits: create', () => addDoc(collection(db, 'recipe_audits'
 await allow('backup_history: create', () => addDoc(collection(db, 'backup_history'), { note: 'probe' }));
 await allow('staff_rename_log: create', () => addDoc(collection(db, 'staff_rename_log'), { oldName: 'a', newName: 'b' }));
 await allow('onboarding_audits: create', () => addDoc(collection(db, 'onboarding_audits'), { action: 'probe' }));
+
+// ── training_assignments (2026-08-19) — create open; bookkeeping maps +
+// status editable; module/due/recipients frozen; never deletable ──────
+await seed('training_assignments/ta1', { moduleId: S('m18'), status: S('open'), dueAt: TS('2026-09-01T00:00:00Z'), recipients: L(M({ name: S('Alice') })), sent: M({}), opened: M({}) });
+await allow('training_assignments: create open', () => addDoc(collection(db, 'training_assignments'), { moduleId: 'm18', recipients: [{ name: 'Alice' }], status: 'open', dueAt: new Date(), sent: {}, opened: {} }));
+await deny('training_assignments: create closed', () => addDoc(collection(db, 'training_assignments'), { moduleId: 'm18', recipients: [], status: 'closed' }));
+await allow('training_assignments: stamp opened', () => updateDoc(doc(db, 'training_assignments', 'ta1'), new FieldPath('opened', 'alice'), '2026-08-19T00:00:00Z'));
+await allow('training_assignments: close', () => updateDoc(doc(db, 'training_assignments', 'ta1'), { status: 'closed', closedAt: serverTimestamp(), closedBy: 'Alice' }));
+await deny('training_assignments: move dueAt', () => updateDoc(doc(db, 'training_assignments', 'ta1'), { dueAt: new Date(2030, 0, 1) }));
+await deny('training_assignments: edit recipients', () => updateDoc(doc(db, 'training_assignments', 'ta1'), { recipients: [] }));
+await deny('training_assignments: delete', () => deleteDoc(doc(db, 'training_assignments', 'ta1')));
+await deny('notifications: client mints training_reminder', () => addDoc(collection(db, 'notifications'), { forStaff: 'Alice', type: 'training_reminder', forceDeliver: true }));
 
 // ── 6. CF-only collections sealed to clients ──────────────────────────
 await deny('attendance: client create', () => addDoc(collection(db, 'attendance'), { staffName: 'x' }));

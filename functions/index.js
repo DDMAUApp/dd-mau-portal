@@ -25,7 +25,7 @@ const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const { logger } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue, FieldPath } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { GoogleAuth } = require("google-auth-library");
 // Attendance recorder helpers — safe to require here (it lazily resolves
@@ -4756,6 +4756,95 @@ exports.processRecipeImportJob = onDocumentCreated(
                 { status: "error", error: String(e?.message || e).slice(0, 300), finishedAt: FieldValue.serverTimestamp() },
             ).catch((err) => { if (err?.code !== 5 && !/NOT_FOUND/i.test(err?.message || "")) logger.warn("job error-write failed:", err?.message); });
         }
+    }
+);
+
+// ── 2026-08-18 — trainingAssignmentReminders: due-soon / overdue nudges ──
+// Admin assigns a training module with a due date (AdminPanel → Training /
+// chat "+" → Assign training; doc in /training_assignments, progress in
+// /training_v2 — same docs the client reads). Every day at 10am Central:
+// anyone on an OPEN assignment who hasn't passed the quiz gets a push when
+// the due time is within 24h or already past — at most one auto-nudge per
+// person per day, stamped on the assignment (autoReminders map) so the
+// admin roster can show it. forceDeliver pierces the off-shift gate (they
+// read training at home). The manual "Remind" button in the admin roster
+// sends a chat DM instead and is independent of this.
+exports.trainingAssignmentReminders = onSchedule(
+    {
+        schedule: "0 10 * * *",
+        timeZone: "America/Chicago",
+        region: "us-central1",
+        retryCount: 0,          // stamps land per assignment; a retry could double-push
+        timeoutSeconds: 300,
+        memory: "256MiB",
+        secrets: [SENTRY_DSN],
+    },
+    async () => {
+        const now = Date.now();
+        const DAY = 24 * 60 * 60_000;
+        const docIdFor = (name) => String(name || "unknown").toLowerCase().replace(/\s+/g, "_");
+        const fmtDue = (ms) => {
+            try { return new Date(ms).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+            catch { return ""; }
+        };
+        const snap = await db.collection("training_assignments").where("status", "==", "open").get();
+        if (snap.empty) { logger.info("trainingAssignmentReminders: no open assignments"); return; }
+        const progSnap = await db.collection("training_v2").get();
+        const progress = {};
+        progSnap.forEach((d) => { progress[d.id] = d.data() || {}; });
+        let nudged = 0;
+        for (const d of snap.docs) {
+            const a = d.data() || {};
+            const dueMs = a.dueAt?.toMillis ? a.dueAt.toMillis() : (typeof a.dueAt === "number" ? a.dueAt : 0);
+            if (!dueMs) continue;
+            const overdue = now > dueMs;
+            const dueSoon = !overdue && dueMs - now <= DAY;
+            if (!overdue && !dueSoon) continue;
+            // Stop nagging 14 days past due — the admin should close or re-send.
+            if (overdue && now - dueMs > 14 * DAY) continue;
+            const auto = a.autoReminders || {};
+            const patch = [];   // [FieldPath, value] pairs — FieldPath so a key with '.' stays one segment
+            for (const r of (a.recipients || [])) {
+                if (!r?.name) continue;
+                const key = docIdFor(r.name);
+                const st = progress[key]?.modules?.[a.moduleId] || {};
+                if (st.passed) continue;
+                const last = Date.parse(auto[key]?.lastAt || "") || 0;
+                const prior = auto[key]?.count || 0;
+                // Daily for the first three nudges, then every 3 days (mirrors the
+                // health-compliance cadence) — no endless daily nagging.
+                const minGapMs = prior >= 3 ? 72 * 60 * 60_000 : 20 * 60 * 60_000;
+                if (last && now - last < minGapMs) continue;
+                const title = overdue
+                    ? `⏰ Overdue training: ${a.moduleCode || ""} ${a.titleEn || ""}`.trim()
+                    : `📚 Training due soon: ${a.moduleCode || ""} ${a.titleEn || ""}`.trim();
+                const body = overdue
+                    ? `It was due ${fmtDue(dueMs)}. Please read the lessons and pass the quiz today. / Vencía el ${fmtDue(dueMs)} — lee las lecciones y aprueba el examen hoy.`
+                    : `Due ${fmtDue(dueMs)}. Read the lessons and pass the quiz in the Training tab. / Vence ${fmtDue(dueMs)} — lee las lecciones y aprueba el examen.`;
+                try {
+                    await db.collection("notifications").add({
+                        forStaff: r.name,
+                        type: "training_reminder",
+                        title, body,
+                        deepLink: `training:${a.moduleId}`,
+                        forceDeliver: true,
+                        createdAt: FieldValue.serverTimestamp(),
+                        read: false,
+                        createdBy: "system",
+                        tag: `training:${d.id}:${key}`,
+                    });
+                    patch.push([new FieldPath("autoReminders", key), { lastAt: new Date(now).toISOString(), count: (auto[key]?.count || 0) + 1, overdue }]);
+                    nudged++;
+                } catch (e) {
+                    logger.warn("trainingAssignmentReminders: notification add failed", { name: r.name, msg: e?.message });
+                }
+            }
+            if (patch.length) {
+                const [first, ...rest] = patch;
+                await d.ref.update(first[0], first[1], ...rest.flat()).catch((e) => logger.warn("autoReminders stamp failed", e?.message));
+            }
+        }
+        logger.info(`trainingAssignmentReminders: nudged ${nudged}`);
     }
 );
 

@@ -17,6 +17,7 @@ import { installFirestoreRevive } from './data/firestoreRevive';
 import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
 import { parseChatDeepLink, setPendingChatOpen } from './data/chatDeepLink';
+import { parseTrainingDeepLink, setPendingTrainingOpen } from './data/trainingDeepLink';
 // AppToast is mounted at root in main.jsx (not here) so it renders
 // across every code path including the lock screen and the public
 // onboarding/apply routes that bypass App's main shell.
@@ -1959,7 +1960,11 @@ export default function App() {
             // live via the ddmau:open-chat event), and the navigate event
             // carries the plain 'chat' tab so the required-task gate + tab
             // router see exactly what they always saw.
-            const { tab, chatId } = parseChatDeepLink(rawTab);
+            // 2026-08-18 — 'training:{moduleId}' (assignment DMs / reminder
+            // pushes) parks the module the same way; TrainingHub consumes it.
+            const tr = parseTrainingDeepLink(rawTab);
+            if (tr.moduleId) setPendingTrainingOpen(tr.moduleId);
+            const { tab, chatId } = parseChatDeepLink(tr.moduleId ? tr.tab : rawTab);
             if (chatId) setPendingChatOpen(chatId);
             if (tab) window.dispatchEvent(new CustomEvent('ddmau:navigate', { detail: { tab: String(tab) } }));
         };
@@ -2145,7 +2150,16 @@ export default function App() {
     // right below (tvMode etc.), and hooks after an early return break
     // rules-of-hooks. Setter-only bodies use functional updates so the
     // dep arrays stay empty (identity never churns).
-    const handleNavigate = useCallback((tab) => setActiveTab(tab), []);
+    // 2026-08-19 — the in-app bell drawer hands us the raw deepLink string
+    // ('training:m18', 'chat:abc'); split it the same way push taps do
+    // (see go() above) so a composite link never becomes a bogus tab.
+    const handleNavigate = useCallback((raw) => {
+        const tr = parseTrainingDeepLink(raw);
+        if (tr.moduleId) setPendingTrainingOpen(tr.moduleId);
+        const { tab, chatId } = parseChatDeepLink(tr.moduleId ? tr.tab : raw);
+        if (chatId) setPendingChatOpen(chatId);
+        if (tab) setActiveTab(tab);
+    }, []);
     const handleBellClick = useCallback(() => setActiveTab('schedule'), []);
     const handleForceRefresh = useCallback(() => forceRefresh(), []);
     const handleLanguageToggle = useCallback(

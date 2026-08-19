@@ -87,6 +87,9 @@ import { setStatusBarStyle, pushBackHandler } from '../capacitor-bridge';
 const ChatThread = lazy(() => import('./ChatThread').then(m => ({ default: m.default })));
 const ChatSettingsModal = lazy(() => import('./ChatSettingsModal').then(m => ({ default: m.default })));
 const ChatAnnouncementComposer = lazy(() => import('./ChatAnnouncementComposer').then(m => ({ default: m.default })));
+// 2026-08-18 — assign a training module (with due date) from the chat "+"
+// menu; sends one 📚 DM per person. Same audience as Announcement.
+const TrainingAssignForm = lazy(() => import('./TrainingAssignForm'));
 const ChatCoverageRequestModal = lazy(() => import('./ChatCoverageRequestModal').then(m => ({ default: m.default })));
 const ChatPhotoIssueModal = lazy(() => import('./ChatPhotoIssueModal').then(m => ({ default: m.default })));
 const ChatSearchPanel = lazy(() => import('./ChatSearchPanel').then(m => ({ default: m.default })));
@@ -640,6 +643,8 @@ export default function ChatCenter({
     const [showNewChat, setShowNewChat] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showAnnouncement, setShowAnnouncement] = useState(false);
+    const [showAssignTraining, setShowAssignTraining] = useState(false);
+    const [assignTrainingBusy, setAssignTrainingBusy] = useState(false);
     const [showCoverage, setShowCoverage] = useState(false);
     const [showIssue, setShowIssue] = useState(false);
     const [showSearchPanel, setShowSearchPanel] = useState(false);
@@ -1103,6 +1108,18 @@ export default function ChatCenter({
                                 </div>
                             </button>
                         )}
+                        {(isAdmin || isManager) && (
+                            <button
+                                onClick={() => { setShowActionMenu(false); setShowAssignTraining(true); }}
+                                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-dd-bg text-left"
+                            >
+                                <span className="text-2xl">📚</span>
+                                <div className="flex-1">
+                                    <div className="font-black text-dd-text">{tx('Assign training', 'Asignar capacitación')}</div>
+                                    <div className="text-xs text-dd-text-2">{tx('Send a lesson + quiz with a due date; track who finishes', 'Envía una lección + examen con fecha límite; rastrea quién termina')}</div>
+                                </div>
+                            </button>
+                        )}
                         {canCover && (
                             <button
                                 onClick={() => { setShowActionMenu(false); setShowCoverage(true); }}
@@ -1143,6 +1160,35 @@ export default function ChatCenter({
                         onClose={() => setShowAnnouncement(false)}
                         onPosted={() => setShowAnnouncement(false)}
                     />
+                </Suspense>
+            )}
+            {showAssignTraining && (
+                <Suspense fallback={null}>
+                    <ModalPortal>
+                        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center" onClick={() => { if (!assignTrainingBusy) setShowAssignTraining(false); }}>
+                            <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl shadow-xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between flex-shrink-0">
+                                    <div className="font-black text-dd-text">📚 {tx('Assign training', 'Asignar capacitación')}</div>
+                                    {!assignTrainingBusy && <button onClick={() => setShowAssignTraining(false)} aria-label="Close" className="w-8 h-8 rounded-full bg-dd-bg text-dd-text font-black">✕</button>}
+                                </div>
+                                <div className="overflow-y-auto">
+                                    <TrainingAssignForm
+                                        staffList={staffList}
+                                        language={language}
+                                        staffName={staffName}
+                                        staffId={viewer?.id ?? null}
+                                        isAdminUser={isAdmin}
+                                        compact
+                                        onBusyChange={setAssignTrainingBusy}
+                                        onSent={() => setShowAssignTraining(false)}
+                                    />
+                                </div>
+                                <div className="px-4 py-2 border-t border-dd-line text-[11px] text-dd-text-2 flex-shrink-0">
+                                    {tx('Progress (opened · lessons · quiz · completed) shows in Admin → Training.', 'El progreso (abrió · lecciones · examen · completado) se ve en Admin → Capacitación.')}
+                                </div>
+                            </div>
+                        </div>
+                    </ModalPortal>
                 </Suspense>
             )}
             {showCoverage && (

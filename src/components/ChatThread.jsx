@@ -98,6 +98,7 @@ import { claimCoverage, approveCoverage, denyCoverage, withdrawCoverage } from '
 import { toast } from '../toast';
 import { fixText as aiFixText } from '../data/aiFixText';
 import TranslatableText, { renderWithMentions } from './TranslatableText';
+import { openTrainingModule } from '../data/trainingDeepLink';
 import ModalPortal from './ModalPortal';
 
 // Lazy-load the heavier modals — keeps the chat-thread chunk small for
@@ -3126,6 +3127,14 @@ function MessageBubbleInner({
             </div>
         );
     }
+    if (message.type === 'training_assignment') {
+        return (
+            <div id={`msg-${message.id}`} className={`relative my-2 transition ${highlighted ? 'ring-2 ring-amber-400 rounded-2xl' : ''}`}>
+                <TrainingAssignmentCard message={message} isEs={isEs} />
+                {reactionsRow}
+            </div>
+        );
+    }
     if (message.type === 'task_handoff') {
         return (
             <div id={`msg-${message.id}`} className={`relative my-2 transition ${highlighted ? 'ring-2 ring-amber-400 rounded-2xl' : ''}`}>
@@ -4933,6 +4942,52 @@ function PhotoIssueCard({ message, chat, isEs, isManager, staffName, viewer, tar
                         </span>
                     )}
                 </div>
+            </div>
+        </div>
+    );
+}
+
+// 2026-08-18 — training assignment card. Admin assigned a module with a due
+// date (AdminPanel → Training assignments); tapping "Open lesson" parks the
+// module id + navigates to the Training tab (trainingDeepLink.js). The
+// message also carries `text` so older clients render a plain bubble.
+function TrainingAssignmentCard({ message, isEs }) {
+    const tx = (en, es) => isEs ? es : en;
+    const tr = message.training || {};
+    const title = isEs ? (tr.titleEs || tr.titleEn) : (tr.titleEn || tr.titleEs);
+    const dueMs = Number(tr.dueAtMs || 0);
+    const overdue = dueMs > 0 && Date.now() > dueMs;
+    let dueLabel = '';
+    try {
+        if (dueMs > 0) dueLabel = new Date(dueMs).toLocaleString(isEs ? 'es' : 'en', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    } catch { /* noop */ }
+    return (
+        <div className={`rounded-xl overflow-hidden border-2 shadow-card ${overdue ? 'border-red-300 bg-red-50/40' : 'border-emerald-300 bg-emerald-50/40'}`}>
+            <div className={`px-4 py-2 border-b flex items-center gap-2 ${overdue ? 'bg-red-200/50 border-red-300' : 'bg-emerald-200/50 border-emerald-300'}`}>
+                <span className="text-base">📚</span>
+                <span className={`text-[11px] font-black uppercase tracking-widest flex-1 ${overdue ? 'text-red-900' : 'text-emerald-900'}`}>
+                    {tr.reminder ? tx('Training reminder', 'Recordatorio de capacitación') : tx('Required training', 'Capacitación requerida')}
+                </span>
+            </div>
+            <div className="px-4 py-3">
+                <div className="text-sm font-black text-dd-text">{tr.moduleCode ? `${tr.moduleCode} · ` : ''}{title}</div>
+                {dueLabel && (
+                    <div className={`text-xs mt-1 font-bold ${overdue ? 'text-red-700' : 'text-dd-text-2'}`}>
+                        {overdue ? tx('⏰ Was due ', '⏰ Vencía el ') : tx('Due by ', 'Fecha límite: ')}{dueLabel}
+                    </div>
+                )}
+                <div className="text-xs text-dd-text-2 mt-1">
+                    {tx('Read the lessons, then pass the quiz. Your progress is tracked.', 'Lee las lecciones y aprueba el examen. Tu progreso queda registrado.')}
+                </div>
+                {tr.note ? <div className="text-xs text-dd-text mt-2 italic">“{tr.note}”</div> : null}
+                {tr.moduleId && (
+                    <button
+                        type="button"
+                        onClick={() => openTrainingModule(tr.moduleId)}
+                        className="mt-3 w-full py-2.5 rounded-xl bg-mint-700 text-white text-sm font-black hover:bg-mint-800 active:scale-[0.99] transition">
+                        {tx('Open lesson →', 'Abrir lección →')}
+                    </button>
+                )}
             </div>
         </div>
     );
