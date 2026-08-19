@@ -40,7 +40,7 @@
 //   Materialized /assigned_tasks/plan_{ruleId}_{date} — normal assignment
 //   fields + { planRuleId, planDate } so the planner can find its own.
 
-import { taskDueOnDay, normalizeRecurDays, normalizeRecurDates, cleanRecurrenceFields } from './checklistRecurrence';
+import { taskDueOnDay, normalizeRecurDays, normalizeRecurDates, cleanRecurrenceFields, normalizeAssignDays } from './checklistRecurrence';
 import { db } from '../firebase';
 import {
     collection, doc, getDoc, getDocs, onSnapshot, query, where, limit,
@@ -330,6 +330,7 @@ export function checklistTasksForDay(customTasks, checks, side, dateStr) {
                 // editors can show/edit who + by-when (Operations already
                 // renders + alarms on both fields).
                 assignTo: Array.isArray(t.assignTo) ? t.assignTo : (t.assignTo ? [t.assignTo] : []),
+                assignDays: (t.assignDays && typeof t.assignDays === 'object') ? t.assignDays : {},
                 completeBy: typeof t.completeBy === 'string' ? t.completeBy : '',
                 done, subCount: subs.length, subsDone,
             };
@@ -422,16 +423,26 @@ export async function updateOpsChecklistTask(location, taskId, patch) {
             : [];
         if (names.length) clean.assignTo = names; else dropAssign = true;
     }
+    let assignDaysPatch = null;   // sanitized against the FINAL assignTo inside mutate
+    if (patch && 'assignDays' in patch) assignDaysPatch = patch.assignDays || {};
     if (patch && 'completeBy' in patch) {
         const v = typeof patch.completeBy === 'string' ? patch.completeBy.trim() : '';
         if (/^\d{2}:\d{2}$/.test(v)) clean.completeBy = v; else dropTime = true;
     }
-    if (Object.keys(clean).length === 0 && !dropAssign && !dropTime) return;
+    if (Object.keys(clean).length === 0 && !dropAssign && !dropTime && assignDaysPatch === null) return;
     await _editOpsChecklistTask(location, taskId, t => {
-        const next = { ...t, ...clean };
+        let next = { ...t, ...clean };
         if (dropAssign) delete next.assignTo;
         if (dropTime) delete next.completeBy;
-        return ('recurrence' in clean || 'recurDays' in clean || 'recurDates' in clean) ? cleanRecurrenceFields(next) : next;
+        if ('recurrence' in clean || 'recurDays' in clean || 'recurDates' in clean) next = cleanRecurrenceFields(next);
+        // Per-person day schedules: sanitize against the FINAL assignee list
+        // (an explicit patch replaces the map; an assignTo change alone
+        // prunes the existing one).
+        const finalAssign = Array.isArray(next.assignTo) ? next.assignTo : [];
+        const source = assignDaysPatch !== null ? assignDaysPatch : next.assignDays;
+        const cleanedDays = normalizeAssignDays(source, finalAssign);
+        if (Object.keys(cleanedDays).length > 0) next.assignDays = cleanedDays; else delete next.assignDays;
+        return next;
     });
 }
 

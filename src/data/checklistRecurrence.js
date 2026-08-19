@@ -90,3 +90,46 @@ export function cleanRecurrenceFields(task) {
     if (!next.recurrence || next.recurrence === 'daily') delete next.recurrence;
     return next;
 }
+
+// ── Per-assignee day schedules (2026-08-19) ─────────────────────────────
+// Andrew: "for one item on the task list, if I add more than one person,
+// give me the option to change what day that person has that task —
+// without changing the whole task." Optional map on the task:
+//   assignDays: { [name]: { recurrence: 'days'|'dates', recurDays?, recurDates? } }
+// No entry (or recurrence 'daily') = that person has it every day the task
+// shows. The task's own recurrence still decides when the task appears at
+// all; assignDays only decides WHO carries it that day.
+
+export function personDueOnDay(sched, weekday, dateStr) {
+    if (!sched || !sched.recurrence || sched.recurrence === 'daily') return true;
+    if (sched.recurrence === 'days') return normalizeRecurDays(sched.recurDays).includes(weekday);
+    if (sched.recurrence === 'dates') return !!dateStr && normalizeRecurDates(sched.recurDates).includes(dateStr);
+    return true;
+}
+
+// The assignees who actually carry the task on a given day.
+export function assigneesOnDay(task, weekday, dateStr) {
+    const all = Array.isArray(task?.assignTo) ? task.assignTo : (task?.assignTo ? [task.assignTo] : []);
+    const ad = (task && typeof task.assignDays === 'object' && task.assignDays) || {};
+    return all.filter(n => personDueOnDay(ad[n], weekday, dateStr));
+}
+
+// Sanitize an assignDays map: only names in assignTo, only valid schedules;
+// 'daily'/empty entries are dropped (absence already means "every day").
+export function normalizeAssignDays(v, assignTo) {
+    const names = new Set(Array.isArray(assignTo) ? assignTo : []);
+    const out = {};
+    if (v && typeof v === 'object') {
+        for (const [name, sched] of Object.entries(v)) {
+            if (!names.has(name) || !sched || typeof sched !== 'object') continue;
+            if (sched.recurrence === 'days') {
+                const days = normalizeRecurDays(sched.recurDays);
+                if (days.length) out[name] = { recurrence: 'days', recurDays: days };
+            } else if (sched.recurrence === 'dates') {
+                const dates = normalizeRecurDates(sched.recurDates).slice(0, 120);
+                if (dates.length) out[name] = { recurrence: 'dates', recurDates: dates };
+            }
+        }
+    }
+    return out;
+}

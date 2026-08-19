@@ -20,7 +20,7 @@ import {
 // them. Writes → watchdogWrite (revive + SyncPill + escalation), reads →
 // watchdogRead (revive on hang only).
 import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
-import { taskDueOnDay, recurrenceLabelFor } from '../data/checklistRecurrence';
+import { taskDueOnDay, recurrenceLabelFor, assigneesOnDay } from '../data/checklistRecurrence';
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
@@ -2836,7 +2836,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             // Saturdays-only recurrence) used to warn/OVERDUE-push
                             // every day — for a row that isn't even rendered.
                             if (!taskShowsToday(item, now)) return;
-                            const itemAssignees = Array.isArray(item.assignTo) ? item.assignTo : [item.assignTo];
+                            const itemAssignees = assigneesOnDay(item, getBusinessDow(now), getTodayKey(now));
                             if (!itemAssignees.includes(staffName)) return;
                             // Check all lists for this side to find where task might be checked
                             let done = false;
@@ -3375,7 +3375,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // on-complete delivery path inside toggleCheckItem.
             const dispatchTaskMessage = async (task, message, kind /* 'now'|'on_complete' */) => {
                 if (!task || !message?.text) return;
-                const assignees = Array.isArray(task.assignTo) ? task.assignTo : (task.assignTo ? [task.assignTo] : []);
+                const assignees = assigneesOnDay(task, getBusinessDow(), getTodayKey());
                 const taskName = (task.task || '').split('\n')[0];
                 const titleEn = kind === 'on_complete' ? `✅ Task done: ${taskName}` : `📨 Task message: ${taskName}`;
                 const titleEs = kind === 'on_complete' ? `✅ Tarea hecha: ${taskName}` : `📨 Mensaje de tarea: ${taskName}`;
@@ -3600,6 +3600,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
                 const assignArr = Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : [];
                 if (assignArr.length > 0) { item.assignTo = assignArr; } else { delete item.assignTo; }
+                // Per-person day schedules only make sense for current assignees.
+                if (item.assignDays) {
+                    const keep = {};
+                    for (const [n, sc] of Object.entries(item.assignDays)) if (assignArr.includes(n)) keep[n] = sc;
+                    if (Object.keys(keep).length > 0) item.assignDays = keep; else delete item.assignDays;
+                }
                 if (editFollowUp && editFollowUp.question.trim()) {
                     item.followUp = { type: editFollowUp.type, question: editFollowUp.question.trim() };
                     if (editFollowUp.type === "dropdown" && editFollowUp.options.length > 0) {
@@ -5612,17 +5618,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             // Get tasks for current side + period
-            // Helper: check if a staff name is in a task's assignTo (supports string or array)
-            const isAssignedTo = (task, name) => {
-                if (!task.assignTo) return false;
-                if (Array.isArray(task.assignTo)) return task.assignTo.includes(name);
-                return task.assignTo === name;
-            };
-            // Helper: get assignees as array
+            // 2026-08-19: assignees are DAY-AWARE — a task can be assigned to
+            // several people with each person on their own days (assignDays,
+            // set in Admin → Planner). These helpers answer for TODAY, which
+            // is what the whole board / columns / alarms are about. The edit
+            // modal still reads item.assignTo raw (everyone on the task).
+            const isAssignedTo = (task, name) =>
+                assigneesOnDay(task, getBusinessDow(), getTodayKey()).includes(name);
+            // Helper: get TODAY's assignees as array
             const getAssignees = (task) => {
-                if (!task.assignTo) return [];
-                if (Array.isArray(task.assignTo)) return task.assignTo;
-                return [task.assignTo];
+                return assigneesOnDay(task, getBusinessDow(), getTodayKey());
             };
 
             // ── PER-ASSIGNEE COMPLETION ─────────────────────────────────

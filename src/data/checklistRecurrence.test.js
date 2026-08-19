@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { taskDueOnDay, recurrenceLabelFor, cleanRecurrenceFields, normalizeRecurDays, normalizeRecurDates } from './checklistRecurrence';
+import { taskDueOnDay, recurrenceLabelFor, cleanRecurrenceFields, normalizeRecurDays, normalizeRecurDates, personDueOnDay, assigneesOnDay, normalizeAssignDays } from './checklistRecurrence';
 
 describe('taskDueOnDay', () => {
     it('keeps every legacy preset working', () => {
@@ -42,5 +42,32 @@ describe('labels + cleanup', () => {
         expect(cleanRecurrenceFields({ id: 'a', recurrence: 'days', recurDays: [1] })).toEqual({ id: 'a', recurrence: 'days', recurDays: [1] });
         expect(normalizeRecurDays([5, 1, 1, 7])).toEqual([1, 5]);
         expect(normalizeRecurDates(['2026-08-20', '2026-08-19', 'nope', '2026-08-19'])).toEqual(['2026-08-19', '2026-08-20']);
+    });
+});
+
+describe('per-assignee schedules', () => {
+    const task = {
+        assignTo: ['Chris P', 'Dan Q', 'Eve R'],
+        assignDays: {
+            'Chris P': { recurrence: 'days', recurDays: [1] },            // Mondays
+            'Dan Q':   { recurrence: 'dates', recurDates: ['2026-08-20'] },
+        },
+    };
+    it('filters assignees by their personal days; no entry = always', () => {
+        expect(assigneesOnDay(task, 1, '2026-08-17')).toEqual(['Chris P', 'Eve R']);
+        expect(assigneesOnDay(task, 4, '2026-08-20')).toEqual(['Dan Q', 'Eve R']);
+        expect(assigneesOnDay(task, 2, '2026-08-18')).toEqual(['Eve R']);
+        expect(assigneesOnDay({ assignTo: 'Solo' }, 3, '2026-08-19')).toEqual(['Solo']);
+        expect(personDueOnDay({ recurrence: 'daily' }, 0, 'x')).toBe(true);
+        expect(personDueOnDay(undefined, 0, 'x')).toBe(true);
+    });
+    it('normalizeAssignDays prunes unknown names and empty/invalid schedules', () => {
+        const out = normalizeAssignDays({
+            'Chris P': { recurrence: 'days', recurDays: [9, 1, 1] },
+            'Gone':    { recurrence: 'days', recurDays: [2] },
+            'Dan Q':   { recurrence: 'daily' },
+            'Eve R':   { recurrence: 'dates', recurDates: ['bad'] },
+        }, ['Chris P', 'Dan Q', 'Eve R']);
+        expect(out).toEqual({ 'Chris P': { recurrence: 'days', recurDays: [1] } });
     });
 });
