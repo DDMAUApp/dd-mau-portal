@@ -4178,7 +4178,7 @@ export const MODULES = [
                     "Slips and falls are the most common injury in restaurants — for guests and for us. A wet spot the size of a dinner plate is enough to put someone on the floor, and a guest can walk through a puddle nobody is guarding before you finish saying \"wet floor\".",
                     "The DD Mau rule is simple: if you SEE a spill or a wet floor, or you CAUSE one, that spot is yours until it is safe. You do not walk away from it. Not to grab a sign while someone else can bring it, not to finish an order, not because it's \"just water\".",
                     "Safe means three things, in this order: people are warned, a yellow caution sign is standing on the spot, and the floor has been cleaned AND is completely dry. Until all three are done, somebody is standing guard — and that somebody is you.",
-                    "This counts everywhere: dining room, boba station, entrance, behind the register, the line, the dish pit, the walk-in door, the back hallway. Crew slip just as hard as guests do, and a fall next to the fryer is worse.",
+                    "This counts everywhere guests and front-of-house staff walk: dining room, boba station, entrance, behind the register, the hallway to the restrooms. The kitchen is different for plain water — everyone back there wears non-slip shoes (see Lesson 3) — but grease and broken glass follow the full rule anywhere, front or back.",
                     "It also counts for everything slick: water, ice, grease, sauce, broken glass, a leaking mop bucket, rain and snow that people bring in on their shoes. If a shoe could slide on it, it's a wet floor.",
                     "Why it matters beyond the injury: a guest who falls can mean a lawsuit that costs more than a year of profit, and a coworker who falls is out of work for weeks. Thirty seconds of standing guard is the cheapest insurance we have."
                 ],
@@ -4186,7 +4186,7 @@ export const MODULES = [
                     "Los resbalones y caídas son la lesión más común en los restaurantes — para los clientes y para nosotros. Una mancha mojada del tamaño de un plato basta para tirar a alguien al piso, y un cliente puede cruzar un charco que nadie está cuidando antes de que termines de decir \"piso mojado\".",
                     "La regla de DD Mau es simple: si VES un derrame o un piso mojado, o lo CAUSAS, ese lugar es tuyo hasta que esté seguro. No te alejas de ahí. Ni para ir por un letrero cuando otro lo puede traer, ni para terminar una orden, ni porque \"solo es agua\".",
                     "Seguro significa tres cosas, en este orden: la gente está avisada, hay un letrero amarillo de precaución parado en el lugar, y el piso está limpio Y completamente seco. Hasta que se cumplan las tres, alguien está montando guardia — y ese alguien eres tú.",
-                    "Esto aplica en todas partes: comedor, estación de boba, entrada, detrás de la caja, la línea, el área de lavado, la puerta del walk-in, el pasillo de atrás. El equipo se resbala igual que los clientes, y una caída junto a la freidora es peor.",
+                    "Esto aplica en todos los lugares por donde pasan los clientes y el personal del frente: comedor, estación de boba, entrada, detrás de la caja, el pasillo a los baños. La cocina es diferente para el agua sola — todos ahí atrás usan zapatos antiderrapantes (ver Lección 3) — pero la grasa y el vidrio roto siguen la regla completa en cualquier parte, al frente o atrás.",
                     "También aplica a todo lo resbaloso: agua, hielo, grasa, salsa, vidrio roto, una cubeta del trapeador que gotea, lluvia y nieve que la gente mete con los zapatos al entrar. Si un zapato puede deslizarse, es un piso mojado.",
                     "Por qué importa más allá de la lesión: un cliente que se cae puede significar una demanda que cuesta más que un año de ganancias, y un compañero que se cae pasa semanas sin poder trabajar. Treinta segundos montando guardia son el seguro más barato que tenemos."
                 ]
@@ -4222,7 +4222,7 @@ export const MODULES = [
                     "BOBA STATION AND ICE. Dropped ice is water in two minutes. Every piece gets picked up or swept now — not after the rush. On a busy shift, give the boba-station floor a dry-towel check every time you restock.",
                     "ENTRANCE ON RAIN AND SNOW DAYS. Mats go down before we open and a caution sign stands by the door all day. Whoever is on Dining Room or Cashier checks the floor just inside the door every 15 minutes and dries it — guests bring water in on their shoes with every visit.",
                     "WHILE YOU MOP. The mop bucket is a wet floor too. Put a sign at both ends of a mopped hallway, mop small sections so there's always a dry path, and never leave the bucket blocking a doorway.",
-                    "BEHIND THE LINE AND THE DISH PIT. Same rule, no shortcuts — the crew slip here more than guests do anywhere. Grease by the fryer gets soaked up and degreased right away; standing water by the dish machine gets squeegeed to the drain and a sign until it's dry.",
+                    "BACK OF HOUSE IS DIFFERENT FOR WATER. Everyone in the kitchen wears non-slip shoes and water on the kitchen floor is part of the job — squeegee it to the drain when you can and keep moving; no sign needed for plain water behind the line or in the dish pit. Two exceptions: GREASE (non-slip shoes don't hold on grease — grease by the fryer gets soaked up and degreased right away) and BROKEN GLASS (swept immediately). And the moment water reaches somewhere a guest or a front-of-house coworker in regular shoes walks — the hallway to the restrooms, the door into the dining room — it's back to the full rule.",
                     "BROKEN GLASS OR A DROPPED DRINK NEAR A GUEST'S TABLE. Apologize, guard, and don't rush the guest — they stay seated while you clean. Sweep, don't hand-pick. And if the glass broke near open food, ice, or a guest's bowl: anything it could have landed in gets thrown out — no checking, no picking pieces out. An ice bin gets dumped, washed, sanitized and refilled. A guest's food or drink near the break gets replaced (the Lead comps it).",
                     "IF SOMEONE SLIPS OR FALLS. Call for the Shift Lead immediately. Do not move anyone who is hurt. Keep guarding the spot so nobody else goes down. The Lead takes care of the guest and writes down what happened — your job is to stay calm and keep the area safe.",
                     "The short version you should be able to say in your sleep: see it → stay → warn → call for the sign → sign up first, clean, dry → wash hands → take the sign down → tell the Lead if it was serious."
@@ -4231,7 +4231,7 @@ export const MODULES = [
                     "ESTACIÓN DE BOBA Y HIELO. El hielo tirado es agua en dos minutos. Cada hielo se recoge o se barre ahora — no después del rush. En un turno ocupado, revisa el piso de la estación de boba con una toalla seca cada vez que surtes.",
                     "ENTRADA EN DÍAS DE LLUVIA Y NIEVE. Los tapetes se ponen antes de abrir y un letrero de precaución se queda junto a la puerta todo el día. Quien esté en Comedor o Caja revisa el piso justo adentro de la puerta cada 15 minutos y lo seca — los clientes meten agua con los zapatos cada vez que entran.",
                     "MIENTRAS TRAPEAS. La cubeta del trapeador también es un piso mojado. Pon letrero en los dos extremos de un pasillo trapeado, trapea por secciones pequeñas para que siempre haya un camino seco, y nunca dejes la cubeta atravesada en el paso de una puerta.",
-                    "DETRÁS DE LA LÍNEA Y EN EL ÁREA DE LAVADO. Misma regla, sin atajos — aquí el equipo se resbala más que los clientes en cualquier otro lado. A la grasa junto a la freidora se le absorbe y se le echa desengrasante de inmediato; el agua estancada junto a la máquina lavaplatos se empuja con el jalador hacia la coladera y lleva letrero hasta que esté seca.",
+                    "LA COCINA ES DIFERENTE PARA EL AGUA. Todos en la cocina usan zapatos antiderrapantes y el agua en el piso de la cocina es parte del trabajo — empújala con el jalador hacia la coladera cuando puedas y sigue; no hace falta letrero para agua sola detrás de la línea o en el área de lavado. Dos excepciones: la GRASA (los zapatos antiderrapantes no agarran en la grasa — la grasa junto a la freidora se absorbe y se desengrasa de inmediato) y el VIDRIO ROTO (se barre de inmediato). Y en cuanto el agua llega a un lugar por donde pasa un cliente o un compañero del frente con zapatos normales — el pasillo a los baños, la puerta al comedor — vuelve la regla completa.",
                     "VIDRIO ROTO O BEBIDA TIRADA JUNTO A LA MESA DE UN CLIENTE. Discúlpate, cuida el lugar y no apresures al cliente — que se quede sentado mientras limpias. Barre, no recojas con la mano. Y si el vidrio se rompió cerca de comida abierta, hielo o el tazón de un cliente: todo donde pudo haber caído se tira — sin revisar, sin sacar pedacitos. Un depósito de hielo se vacía, se lava, se sanitiza y se vuelve a llenar. La comida o bebida de un cliente cerca del vidrio se reemplaza (el líder la da de cortesía).",
                     "SI ALGUIEN SE RESBALA O SE CAE. Llama al líder de turno de inmediato. No muevas a nadie que esté lastimado. Sigue cuidando el lugar para que nadie más se caiga. El líder atiende al cliente y anota lo que pasó — tu trabajo es mantener la calma y el área segura.",
                     "La versión corta que debes poder decir hasta dormido: lo ves → te quedas → avisas → pides el letrero → pones el letrero, limpias, secas → te lavas las manos → quitas el letrero → avisas al líder si fue serio."
@@ -4315,15 +4315,15 @@ export const MODULES = [
                 },
                 {
                     id: "m18-q7",
-                    questionEn: "Which of these counts as a wet floor you have to guard?",
-                    questionEs: "¿Cuál de estos cuenta como un piso mojado que tienes que cuidar?",
+                    questionEn: "Which of these does NOT need the full guard-and-sign rule?",
+                    questionEs: "¿Cuál de estos NO necesita la regla completa de cuidar y poner letrero?",
                     options: [
-                        { id: "a", textEn: "Big spills in the dining room, not small ones", textEs: "Derrames grandes en el comedor, no los pequeños" },
-                        { id: "b", textEn: "Spots where guests walk, not behind the line", textEs: "Lugares por donde pasan los clientes, no detrás de la línea" },
-                        { id: "c", textEn: "Anything a shoe could slide on, front or back of house", textEs: "Cualquier cosa en la que un zapato se pueda resbalar, al frente o atrás" },
-                        { id: "d", textEn: "Spills during service, not during prep or close", textEs: "Derrames durante el servicio, no en prep ni en el cierre" }
+                        { id: "a", textEn: "Ice on the floor at the boba station", textEs: "Hielo en el piso de la estación de boba" },
+                        { id: "b", textEn: "Plain water behind the line, where everyone wears non-slip shoes", textEs: "Agua sola detrás de la línea, donde todos usan zapatos antiderrapantes" },
+                        { id: "c", textEn: "Grease on the kitchen floor by the fryer", textEs: "Grasa en el piso de la cocina junto a la freidora" },
+                        { id: "d", textEn: "Rain water inside the front door", textEs: "Agua de lluvia adentro de la puerta de entrada" }
                     ],
-                    correct: "c"
+                    correct: "b"
                 },
                 {
                     id: "m18-q8",
