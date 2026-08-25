@@ -291,6 +291,10 @@ async function recordCompletedSessions(location, before, after) {
 function _tcChanged(prev, e) {
     if (!prev) return true;
     if (prev.clockedInAt !== e.clockedInAt) return true;
+    // Name resolved (new hire showed as "Unknown" until the scraper's
+    // employee map caught up, 2026-08-24) — rewrite so the timecard and
+    // its staffKey join to the right person immediately.
+    if ((prev.employeeName || "") !== (e.employeeName || "")) return true;
     if ((prev.onBreakSince || null) !== (e.onBreakSince || null)) return true;
     const pb = Array.isArray(prev.breaksToday) ? prev.breaksToday.length : 0;
     const eb = Array.isArray(e.breaksToday) ? e.breaksToday.length : 0;

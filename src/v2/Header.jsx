@@ -24,6 +24,10 @@ const LOCATIONS = [
 
 export default function Header({
     language, staffName, storeLocation = 'webster',
+    // 2026-08-25 — admins + both-store staff can cycle the location; for
+    // everyone else the pill is a static badge (it used to LOOK tappable
+    // with a ▾ but silently ignored the tap).
+    canToggleLocation = false,
     staffList = [], setStaffList,
     onMenuClick, onLanguageToggle, onLogout, onLocationChange, onBellClick,
     // 2026-05-27 — Andrew: "as soon as you go in [chat] i want you to put
@@ -85,10 +89,10 @@ export default function Header({
                     </button>
                 ) : (
                     <button
-                        onClick={() => onLocationChange?.()}
-                        className="md:hidden flex items-center gap-1.5 min-h-[44px] px-2 -mx-1 rounded-lg active:bg-dd-bg transition group"
-                        aria-label={isEs ? 'Cambiar ubicación' : 'Switch location'}
-                        title={isEs ? 'Cambiar ubicación' : 'Switch location'}
+                        onClick={() => { if (canToggleLocation) onLocationChange?.(); }}
+                        className={`md:hidden flex items-center gap-1.5 min-h-[44px] px-2 -mx-1 rounded-lg transition group ${canToggleLocation ? 'active:bg-dd-bg' : 'cursor-default'}`}
+                        aria-label={canToggleLocation ? (isEs ? 'Cambiar ubicación' : 'Switch location') : (isEs ? 'Ubicación' : 'Location')}
+                        title={canToggleLocation ? (isEs ? 'Cambiar ubicación' : 'Switch location') : undefined}
                     >
                         <span className="relative flex h-2 w-2">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
@@ -98,7 +102,7 @@ export default function Header({
                             <span className="sm:hidden">{shortLabel}</span>
                             <span className="hidden sm:inline">{fullLabel}</span>
                         </span>
-                        <span className="text-dd-text-2/50 text-[10px] leading-none group-active:text-dd-text-2">▾</span>
+                        {canToggleLocation && <span className="text-dd-text-2/50 text-[10px] leading-none group-active:text-dd-text-2">▾</span>}
                     </button>
                 )}
 
@@ -113,14 +117,14 @@ export default function Header({
                     search ships. */}
                 <div className="hidden md:flex flex-1 justify-center items-center gap-2 max-w-3xl mx-auto">
                     <button
-                        onClick={() => onLocationChange?.()}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-dd-bg border border-dd-line text-sm font-semibold text-dd-text hover:bg-dd-sage-50 active:scale-95 transition">
+                        onClick={() => { if (canToggleLocation) onLocationChange?.(); }}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg bg-dd-bg border border-dd-line text-sm font-semibold text-dd-text transition ${canToggleLocation ? 'hover:bg-dd-sage-50 active:scale-95' : 'cursor-default'}`}>
                         <span className="relative flex h-2 w-2">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
                             <span className="relative inline-flex rounded-full h-2 w-2 bg-dd-green"></span>
                         </span>
                         <span>{fullLabel}</span>
-                        <span className="text-dd-text-2 text-xs">▾</span>
+                        {canToggleLocation && <span className="text-dd-text-2 text-xs">▾</span>}
                     </button>
                 </div>
 

@@ -1606,7 +1606,29 @@ export default function App() {
         // Onboarding holds PII — same defensive bounce if access removed.
         if (activeTab === "onboarding" && !hasOnboardingAccess) setActiveTab("home");
     }, [staffName, staffIsAdmin, isManager, canMoney, hasOpsAccess, hasRecipesAccess, hasOnboardingAccess, activeTab]);
-    const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
+    // 2026-08-25 (Yulissa) — staff ASSIGNED to both stores (staff record
+    // location 'both') get the same header toggle admins have, limited to
+    // webster ↔ maryland (never the 'both' view: page after page treats
+    // 'both' as "fall back to webster", which silently pointed her sticker
+    // prints at the WEBSTER printer while she stood in Maryland). Their
+    // effective location is the toggled one, clamped to a real store.
+    // Live-sync the assigned location: if an admin edits a staffer's
+    // location while they're signed in (single store → 'both' or back),
+    // pick it up from the live staff record instead of waiting for the
+    // next login (staffLocation is otherwise only set in handleSelectStaff).
+    const liveAssignedLocation = currentStaffRecord?.location;
+    useEffect(() => {
+        if (!liveAssignedLocation || liveAssignedLocation === staffLocation) return;
+        setStaffLocation(liveAssignedLocation);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [liveAssignedLocation]);
+    const staffWorksBoth = !staffIsAdmin && staffLocation === 'both';
+    const canToggleLocation = staffIsAdmin || staffWorksBoth;
+    const effectiveLocation = staffIsAdmin
+        ? activeLocation
+        : staffWorksBoth
+            ? (activeLocation === 'maryland' ? 'maryland' : 'webster')
+            : staffLocation;
 
     // ── Auto-start at the physical location (2026-07-15, Andrew: "whoever has
     // both locations available … start at the location it's at. the recipe tab
@@ -1621,12 +1643,12 @@ export default function App() {
     const geoStartAppliedRef = useRef(false);
     const manualLocationRef = useRef(false);
     useEffect(() => {
-        if (!staffName || !staffIsAdmin) return;
+        if (!staffName || !canToggleLocation) return;
         if (geoStartAppliedRef.current || manualLocationRef.current) return;
         if (geoNearestLocation !== 'webster' && geoNearestLocation !== 'maryland') return;
         geoStartAppliedRef.current = true;
         setActiveLocation(prev => (prev === geoNearestLocation ? prev : geoNearestLocation));
-    }, [staffName, staffIsAdmin, geoNearestLocation]);
+    }, [staffName, canToggleLocation, geoNearestLocation]);
 
     // ── Printer keep-awake (2026-07-14, Andrew: "build a keep awake during
     // 10am–8pm") ──────────────────────────────────────────────────────────────
@@ -2182,16 +2204,18 @@ export default function App() {
     // Functional update reads the CURRENT location so activeLocation can
     // stay out of the deps.
     const handleLocationChange = useCallback(() => {
-        if (!staffIsAdmin) return;
+        if (!canToggleLocation) return;
         // A deliberate toggle wins over the geofence auto-start
         // for the rest of this session.
         manualLocationRef.current = true;
-        const cycle = ['webster', 'maryland', 'both'];
+        // Admins can also view 'both'; both-store STAFF flip between the two
+        // real stores only (every page + the printers need a concrete store).
+        const cycle = staffIsAdmin ? ['webster', 'maryland', 'both'] : ['webster', 'maryland'];
         setActiveLocation(prev => {
             const idx = cycle.indexOf(prev);
-            return cycle[(idx + 1) % cycle.length];
+            return cycle[(idx + 1) % cycle.length];   // unknown prev (e.g. 'both' left over) → cycle[0] = webster
         });
-    }, [staffIsAdmin]);
+    }, [canToggleLocation, staffIsAdmin]);
 
     // TV / kiosk deep link (handled before auth):
     //   /?tv=webster   → Webster menu board (digital signage)
@@ -2524,6 +2548,7 @@ export default function App() {
                     language={language}
                     staffName={staffName}
                     storeLocation={effectiveLocation}
+                    canToggleLocation={canToggleLocation}
                     activeTab={activeTab}
                     onNavigate={handleNavigate}
                     hasOpsAccess={hasOpsAccess}

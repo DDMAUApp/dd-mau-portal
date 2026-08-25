@@ -30,6 +30,7 @@ export default function AppShellV2({
     language = 'en',
     staffName = '',
     storeLocation = 'webster',
+    canToggleLocation = false,
     activeTab = 'home',
     onNavigate,
     hasOpsAccess = true,
@@ -110,6 +111,7 @@ export default function AppShellV2({
                     onLanguageToggle={onLanguageToggle}
                     onLogout={onLogout}
                     onLocationChange={onLocationChange}
+                    canToggleLocation={canToggleLocation}
                     /* Prefer the local drawer; fall back to parent's
                        onBellClick (Schedule jump) only if no drawer wanted. */
                     onBellClick={() => setNotifOpen(true)}
