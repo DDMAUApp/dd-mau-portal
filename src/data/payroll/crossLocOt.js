@@ -12,7 +12,11 @@
 // rebuilds their combined per-week hours from the /timecards feed (daily,
 // per-store, Toast's own break-adjusted numbers via the scraper), computes
 // the OT the combined weeks actually owe, subtracts the OT the exports
-// already paid, and injects the shortfall as a pay-add:
+// already paid, and injects the shortfall as a pay-add. The netting is in
+// PREMIUM DOLLARS: each workweek's overage is priced at that week's FLSA
+// weighted regular rate, and the premium Toast already paid is valued at
+// each store's own rate (see the block comment at the netting code). With
+// one shared rate — the normal case — that reduces to:
 //
 //     top-up = missing OT hours × regular rate × 0.5
 //
@@ -152,9 +156,17 @@ export function computeCrossLocOt({ period, employees, masters, cards }) {
         };
         const paidOt = round2((Number(wg.ot_hours) || 0) + (Number(mh.ot_hours) || 0));
 
-        // Collect this person's period card-rows (either store's Toast name
-        // may be the staffKey; usually identical — dedupe by doc identity).
-        const staffKeys = [...new Set([normCardKey(wg.toast_name), normCardKey(mh.toast_name)])];
+        // Collect this person's period card-rows. The /timecards staffKey is
+        // normName("First Last") from the scraper, but the payroll export's
+        // raw toast_name is "Last, First" — keying off the raw name found
+        // ZERO cards and silently warn-skipped every person (caught by the
+        // 2026-08-26 synthetic end-to-end). Primary key = parsed first+last;
+        // raw names kept as fallback (extra keys are harmless: rows dedupe
+        // by doc id and the reconciliation guard still protects the money).
+        const staffKeys = [...new Set([
+            `${wg.first || ''} ${wg.last || ''}`, `${mh.first || ''} ${mh.last || ''}`,
+            wg.toast_name, mh.toast_name,
+        ].map(normCardKey).filter(Boolean))];
         const seen = new Set();
         const rows = [];
         for (const sk of staffKeys) {

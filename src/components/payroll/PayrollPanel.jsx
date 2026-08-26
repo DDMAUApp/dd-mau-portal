@@ -557,7 +557,12 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
         if (bothKeys.length === 0) { setCrossCards({ ready: true, byKey: {}, sig: 'none' }); return undefined; }
         const range = parsePeriodRange(period);
         if (!range) { setCrossCards({ ready: true, byKey: {}, sig: 'noperiod' }); return undefined; }
+        // MUST mirror crossLocOt's staffKeys derivation: /timecards keys are
+        // "first last", the raw toast_name is "Last, First" — parsed
+        // first+last is the primary key, raw names the fallback.
         const staffKeys = [...new Set(bothKeys.flatMap((k) => [
+            normCardKey(`${wg[k].first || ''} ${wg[k].last || ''}`),
+            normCardKey(`${mh[k].first || ''} ${mh[k].last || ''}`),
             normCardKey(wg[k].toast_name), normCardKey(mh[k].toast_name),
         ]).filter(Boolean))];
         let alive = true;

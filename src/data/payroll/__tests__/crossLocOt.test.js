@@ -170,6 +170,22 @@ describe('computeCrossLocOt', () => {
         expect(out.extras[0].hours).toBe(5);
     });
 
+    it('real Toast "Last, First" export names still find the clock data', () => {
+        // /timecards keys are normName("First Last"); the raw export name is
+        // "Last, First" — the module must key off parsed first/last (a raw-
+        // name key found zero cards and silently warn-skipped everyone;
+        // caught by the 2026-08-26 synthetic end-to-end).
+        const mk = (reg, ot) => ({ toast_name: 'Guzman, Yency', first: 'Yency', last: 'Guzman', reg_hours: reg, ot_hours: ot, toast_rate: 16 });
+        const args = base({ wgEmp: mk(40, 0), mhEmp: mk(10, 0) });
+        const cards = cardsFor('yency guzman', {
+            '2026-08-10': ['WG', 8], '2026-08-11': ['WG', 8], '2026-08-12': ['WG', 8],
+            '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.extras).toHaveLength(1);
+        expect(out.extras[0].amount_cents).toBe(8000);
+    });
+
     it('salaried at either store → warn, never computes (crash guard)', () => {
         const args = base({ wgEmp: emp('Sal A', 40, 0), mhEmp: emp('Sal A', 10, 0) });
         args.masters.MH.by_key.gz.section = 'SALARY';
@@ -209,5 +225,17 @@ describe('xot_premium through the engine', () => {
         expect(row.extra_cents).toBe(8000);
         expect(row.comp_cents).toBe(16 * 40 * 100 + 8000); // reg + premium
         expect(row.extras[0]).toMatch(/cross-store OT premium 10h @ \$16x0\.5 = \+\$80\.00/);
+    });
+});
+
+// validate() must reject a user-entered xot_premium (auto-generated only —
+// a fall-through returned no amount_cents → NaN pay; review 2026-08-26 #6).
+import { validate as validateExtra } from '../extras';
+describe('xot_premium is not user-enterable', () => {
+    it('validate() rejects it', () => {
+        const byKey = { gz: { first: 'Y', last: 'G', rate: 16, section: 'BOH' } };
+        const [x, err] = validateExtra({ type: 'xot_premium', key: 'gz', location: 'WG', name: 'Y G' }, byKey);
+        expect(x).toBeNull();
+        expect(err).toMatch(/auto-generated/);
     });
 });
