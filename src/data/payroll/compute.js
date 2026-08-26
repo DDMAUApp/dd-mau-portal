@@ -77,7 +77,7 @@ export function compute(inputs, period, cashTips, fohPct, periodExtras) {
             results[loc].checks.push({
                 id: 'crossloc', level: 'warn',
                 title: `${both.length} name(s) worked at BOTH locations — paid twice`,
-                detail: `${names.join(', ')} appear on both stores' exports and will receive a paycheck at EACH. Correct if they really split time between stores; if it's a duplicate, remove the extra and re-run.`,
+                detail: `${names.join(', ')} appear on both stores' exports and will receive a paycheck at EACH. Correct if they really split time between stores; if it's a duplicate, remove the extra and re-run. Their combined weekly overtime is checked separately — see the cross-store OT checks (any missing OT premium is added automatically as a pay-add).`,
             });
         }
     }

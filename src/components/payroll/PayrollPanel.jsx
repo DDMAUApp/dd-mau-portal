@@ -33,6 +33,10 @@ import {
     seedAdjustmentsFromQueue, requeueItem, validateQueueItem,
 } from '../../data/payroll/queuedAdds.js';
 import { logError } from '../../data/logger.js';
+import { db } from '../../firebase';
+import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { cardHours } from '../../data/timecards';
+import { computeCrossLocOt, normCardKey, parsePeriodRange } from '../../data/payroll/crossLocOt.js';
 
 const LOCS = ['WG', 'MH'];
 const LOC_NAMES = { WG: 'Webster Groves', MH: 'Maryland Heights' };
@@ -539,7 +543,61 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     // acknowledgment is stale and must be re-given, so a payroll can never ship
     // under an acknowledgment that referred to different figures. (Fails always
     // hard-block regardless of ack.)
-    const ackSig = `${rev}|${JSON.stringify(cash)}|${JSON.stringify(foh)}|${period}|${JSON.stringify(adjustments)}`;
+    // ── Cross-location overtime clock data (2026-08-26) ─────────────────
+    // For people on BOTH stores' exports, combined weekly hours come from
+    // the /timecards feed. null = fetch in flight (computeCrossLocOt emits a
+    // FAIL check, so a run can't generate while this is loading); {ready...}
+    // once resolved. Keyed by staffKey (normName of the Toast name).
+    const [crossCards, setCrossCards] = useState(null);
+    useEffect(() => {
+        if (!parsed) { setCrossCards(null); return undefined; }
+        const emps = (parsed.exports && parsed.exports.employees) || {};
+        const wg = emps.WG || {}; const mh = emps.MH || {};
+        const bothKeys = Object.keys(wg).filter((k) => k in mh);
+        if (bothKeys.length === 0) { setCrossCards({ ready: true, byKey: {}, sig: 'none' }); return undefined; }
+        const range = parsePeriodRange(period);
+        if (!range) { setCrossCards({ ready: true, byKey: {}, sig: 'noperiod' }); return undefined; }
+        const staffKeys = [...new Set(bothKeys.flatMap((k) => [
+            normCardKey(wg[k].toast_name), normCardKey(mh[k].toast_name),
+        ]).filter(Boolean))];
+        let alive = true;
+        setCrossCards(null);
+        (async () => {
+            try {
+                const byKey = {};
+                let rowCount = 0; let hourSum = 0;
+                for (const sk of staffKeys) {
+                    // orderBy desc rides the EXISTING (staffKey, date DESC)
+                    // composite index (same one subscribeMyTimecards uses) —
+                    // without it this range query needs a date-ASC composite
+                    // that doesn't exist and FAILED_PRECONDITIONs (found in
+                    // the 2026-08-26 dry run).
+                    const snap = await getDocs(query(
+                        collection(db, 'timecards'),
+                        where('staffKey', '==', sk),
+                        where('date', '>=', range.start),
+                        where('date', '<=', range.end),
+                        orderBy('date', 'desc'),
+                    ));
+                    byKey[sk] = snap.docs.map((d) => {
+                        const data = d.data();
+                        const hours = cardHours(data);
+                        rowCount += 1; hourSum += hours;
+                        return { id: d.id, date: data.date, location: data.location, hours };
+                    });
+                }
+                if (alive) setCrossCards({ ready: true, byKey, sig: `${rowCount}:${Math.round(hourSum * 100)}` });
+            } catch (e) {
+                console.warn('cross-location clock fetch failed:', e);
+                if (alive) setCrossCards({ ready: true, error: e?.message || 'load failed', byKey: {}, sig: 'error' });
+            }
+        })();
+        return () => { alive = false; };
+    }, [parsed, period]);
+
+    // `xot:` — the cross-location OT clock data arrives async AFTER import;
+    // its arrival can add pay, so it must stale any earlier acknowledgment.
+    const ackSig = `${rev}|${JSON.stringify(cash)}|${JSON.stringify(foh)}|${period}|${JSON.stringify(adjustments)}|xot:${crossCards ? crossCards.sig : 'pending'}`;
     const ackSigRef = useRef(ackSig);
     useEffect(() => {
         if (ackSigRef.current !== ackSig) { ackSigRef.current = ackSig; setAck(false); }
@@ -655,8 +713,23 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
         const fohPctVal = (v) => (v === '' || v == null || Number.isNaN(Number(v)))
             ? 50 : Math.min(100, Math.max(0, Number(v)));
         const fohNum = { WG: fohPctVal(foh.WG), MH: fohPctVal(foh.MH) };
-        const results = compute(inputs, period, cashNum, fohNum, periodExtras);
-        live = { inputs, results, extrasErrors, adjResults };
+        // Cross-location overtime (2026-08-26): people on BOTH stores'
+        // exports get their combined weekly hours checked against the clock
+        // data; any missing OT premium is injected as a pay-add with the
+        // full math in its note, and a warn check forces acknowledgment.
+        // While the clock data is loading it emits a FAIL check instead, so
+        // a payroll can never generate before the verification ran.
+        const crossOt = computeCrossLocOt({
+            period,
+            employees: (parsed.exports && parsed.exports.employees) || {},
+            masters: inputs.masters,
+            cards: crossCards,
+        });
+        const results = compute(inputs, period, cashNum, fohNum, [...periodExtras, ...crossOt.extras]);
+        for (const loc of LOCS) {
+            if (results[loc]) results[loc].checks.push(...(crossOt.checksByLoc[loc] || []));
+        }
+        live = { inputs, results, extrasErrors, adjResults, crossOt };
     }
 
     // People & Direct Deposit works WITHOUT a Toast import (Andrew 2026-07-23):

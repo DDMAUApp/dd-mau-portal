@@ -1,0 +1,213 @@
+// Cross-location overtime reconciliation — synthetic fixtures. The canonical
+// scenario is Andrew's own example (2026-08-26): "if yency works 40 hours a
+// week at webster and that same week she worked 10 hours at dorsett it still
+// gives her overtime."
+
+import { describe, it, expect } from 'vitest';
+import {
+    computeCrossLocOt, parsePeriodRange, mondayKey, isMonday, periodDayCount,
+} from '../crossLocOt';
+
+// One-week Monday-start period. 2026-08-10 is a Monday.
+const PERIOD = '8.10.26-8.16.26';
+
+function emp(name, reg, ot, rate = 16) {
+    return { toast_name: name, reg_hours: reg, ot_hours: ot, toast_rate: rate };
+}
+function master(first, last, rate = 16) {
+    return { first, last, section: 'BOH', rate };
+}
+// Spread `spec` = { 'YYYY-MM-DD': [locCode, hours] } into card rows.
+function cardsFor(name, spec) {
+    return Object.entries(spec).map(([date, [loc, hours]], i) => ({
+        id: `${loc}|${date}|${i}`, date, hours,
+        location: loc === 'WG' ? 'webster' : 'maryland',
+        staffKey: name.toLowerCase(),
+    }));
+}
+const ready = (byKey) => ({ ready: true, byKey });
+
+function base({ wgEmp, mhEmp, wgRate = 16, mhRate = 16 }) {
+    return {
+        period: PERIOD,
+        employees: { WG: { 'gz': wgEmp }, MH: { 'gz': mhEmp } },
+        masters: {
+            WG: { by_key: { 'gz': master('Yency', 'Guzman', wgRate) } },
+            MH: { by_key: { 'gz': master('Yency', 'Guzman', mhRate) } },
+        },
+    };
+}
+
+describe('period parsing / week math', () => {
+    it('parses the panel period label', () => {
+        expect(parsePeriodRange('8.10.26-8.23.26')).toEqual({ start: '2026-08-10', end: '2026-08-23' });
+        expect(parsePeriodRange('12.29.25-1.11.26')).toEqual({ start: '2025-12-29', end: '2026-01-11' });
+        expect(parsePeriodRange('8.10-8.23')).toBeNull();
+        expect(parsePeriodRange('')).toBeNull();
+    });
+    it('monday-start weeks', () => {
+        expect(isMonday('2026-08-10')).toBe(true);
+        expect(mondayKey('2026-08-10')).toBe('2026-08-10');
+        expect(mondayKey('2026-08-16')).toBe('2026-08-10'); // Sunday belongs to the prior Monday
+        expect(mondayKey('2026-08-17')).toBe('2026-08-17');
+        expect(periodDayCount({ start: '2026-08-10', end: '2026-08-23' })).toBe(14);
+    });
+});
+
+describe('computeCrossLocOt', () => {
+    it("Andrew's canonical case: 40h WG + 10h MH in one week → 10h × rate × 0.5 premium", () => {
+        const args = base({ wgEmp: emp('Yency Guzman', 40, 0), mhEmp: emp('Yency Guzman', 10, 0) });
+        const cards = cardsFor('yency guzman', {
+            '2026-08-10': ['WG', 8], '2026-08-11': ['WG', 8], '2026-08-12': ['WG', 8],
+            '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8],
+            '2026-08-15': ['MH', 10],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.extras).toHaveLength(1);
+        const x = out.extras[0];
+        expect(x.type).toBe('xot_premium');
+        expect(x.location).toBe('WG');           // lands where she worked more
+        expect(x.amount_cents).toBe(8000);       // 10h × $16 × 0.5
+        expect(x.note).toMatch(/50h combined → 10h OT/);
+        const warn = out.checksByLoc.WG.find((k) => k.id === 'xot:topup:gz');
+        expect(warn).toBeTruthy();
+        expect(warn.level).toBe('warn');
+    });
+
+    it('no combined OT → no extras, no checks', () => {
+        const args = base({ wgEmp: emp('Yency Guzman', 20, 0), mhEmp: emp('Yency Guzman', 10, 0) });
+        const cards = cardsFor('yency guzman', {
+            '2026-08-10': ['WG', 10], '2026-08-11': ['WG', 10], '2026-08-12': ['MH', 10],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.extras).toHaveLength(0);
+        expect(out.checksByLoc.WG).toHaveLength(0);
+        expect(out.checksByLoc.MH).toHaveLength(0);
+    });
+
+    it('OT Toast already paid is subtracted (single-store 45h + other-store 5h)', () => {
+        // WG export: 40 reg + 5 OT (Toast saw the 45h itself). MH adds 5h.
+        // Combined week = 50h → owes 10h; already paid 5h → top-up 5h only.
+        const args = base({ wgEmp: emp('Yency Guzman', 40, 5), mhEmp: emp('Yency Guzman', 5, 0) });
+        const cards = cardsFor('yency guzman', {
+            '2026-08-10': ['WG', 9], '2026-08-11': ['WG', 9], '2026-08-12': ['WG', 9],
+            '2026-08-13': ['WG', 9], '2026-08-14': ['WG', 9],
+            '2026-08-15': ['MH', 5],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.extras).toHaveLength(1);
+        expect(out.extras[0].amount_cents).toBe(4000); // 5h × $16 × 0.5
+    });
+
+    it('two-week period: each Toast week stands alone', () => {
+        // Week 1: 40 WG + 10 MH → 10h OT. Week 2: 20 WG only → none.
+        const args = {
+            period: '8.10.26-8.23.26',
+            employees: { WG: { gz: emp('Yency Guzman', 60, 0) }, MH: { gz: emp('Yency Guzman', 10, 0) } },
+            masters: base({ wgEmp: null, mhEmp: null }).masters,
+        };
+        const cards = cardsFor('yency guzman', {
+            '2026-08-10': ['WG', 8], '2026-08-11': ['WG', 8], '2026-08-12': ['WG', 8],
+            '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
+            '2026-08-17': ['WG', 10], '2026-08-18': ['WG', 10],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.extras).toHaveLength(1);
+        expect(out.extras[0].amount_cents).toBe(8000); // week 1 only
+    });
+
+    it('clock/export mismatch → warn, NO money added', () => {
+        const args = base({ wgEmp: emp('Yency Guzman', 40, 0), mhEmp: emp('Yency Guzman', 10, 0) });
+        const cards = cardsFor('yency guzman', { '2026-08-10': ['WG', 8] }); // scraper missed days
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.extras).toHaveLength(0);
+        const warn = out.checksByLoc.WG.find((k) => k.id === 'xot:mismatch:gz');
+        expect(warn).toBeTruthy();
+        expect(warn.level).toBe('warn');
+    });
+
+    it('cards still loading → FAIL check (blocks generation), no money', () => {
+        const args = base({ wgEmp: emp('Yency Guzman', 40, 0), mhEmp: emp('Yency Guzman', 10, 0) });
+        const out = computeCrossLocOt({ ...args, cards: null });
+        expect(out.extras).toHaveLength(0);
+        expect(out.checksByLoc.WG[0].level).toBe('fail');
+        expect(out.checksByLoc.MH[0].level).toBe('fail');
+    });
+
+    it('unparseable / non-Monday period → warn, no money', () => {
+        const args = { ...base({ wgEmp: emp('Y G', 40, 0), mhEmp: emp('Y G', 10, 0) }), period: '8.11.26-8.24.26' };
+        const out = computeCrossLocOt({ ...args, cards: ready({}) });
+        expect(out.extras).toHaveLength(0);
+        expect(out.checksByLoc.WG[0].id).toBe('xot:period');
+    });
+
+    it('different rates → FLSA weighted rate, disclosed', () => {
+        const args = base({ wgEmp: emp('Yency Guzman', 40, 0), mhEmp: emp('Yency Guzman', 10, 0), wgRate: 16, mhRate: 20 });
+        const cards = cardsFor('yency guzman', {
+            '2026-08-10': ['WG', 8], '2026-08-11': ['WG', 8], '2026-08-12': ['WG', 8],
+            '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.extras).toHaveLength(1);
+        // weighted: (40×16 + 10×20) / 50 = 16.8 → 10h × 16.8 × 0.5 = $84.00
+        expect(out.extras[0].amount_cents).toBe(8400);
+        expect(out.extras[0].note).toMatch(/weighted/);
+    });
+
+    it("verifier's example: differing rates WITH already-paid OT nets in dollars", () => {
+        // WG export 40reg+5ot @$16; MH 5reg @$20. Week: 45h WG + 5h MH = 50h.
+        // Owed: 10h @ weighted (45×16+5×20)/50 = $16.40 → $82.00 premium.
+        // Paid: 5h × $16 × 0.5 = $40.00. Missing = $42.00 (hour-netting at a
+        // blended rate said $41 — the review's $1-short case).
+        const args = base({ wgEmp: emp('Yency Guzman', 40, 5), mhEmp: emp('Yency Guzman', 5, 0), wgRate: 16, mhRate: 20 });
+        const cards = cardsFor('yency guzman', {
+            '2026-08-10': ['WG', 9], '2026-08-11': ['WG', 9], '2026-08-12': ['WG', 9],
+            '2026-08-13': ['WG', 9], '2026-08-14': ['WG', 9], '2026-08-15': ['MH', 5],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.extras).toHaveLength(1);
+        expect(out.extras[0].amount_cents).toBe(4200);
+        expect(out.extras[0].hours).toBe(5);
+    });
+
+    it('salaried at either store → warn, never computes (crash guard)', () => {
+        const args = base({ wgEmp: emp('Sal A', 40, 0), mhEmp: emp('Sal A', 10, 0) });
+        args.masters.MH.by_key.gz.section = 'SALARY';
+        args.masters.MH.by_key.gz.rate = 1500; // per-period salary dollars
+        const out = computeCrossLocOt({ ...args, cards: ready({}) });
+        expect(out.extras).toHaveLength(0);
+        const warn = out.checksByLoc.WG.find((k) => k.id === 'xot:salary:gz');
+        expect(warn).toBeTruthy();
+    });
+
+    it('nobody on both exports → completely inert', () => {
+        const out = computeCrossLocOt({
+            period: PERIOD,
+            employees: { WG: { a: emp('A', 40, 0) }, MH: { b: emp('B', 10, 0) } },
+            masters: { WG: { by_key: {} }, MH: { by_key: {} } },
+            cards: null,
+        });
+        expect(out.extras).toHaveLength(0);
+        expect(out.checksByLoc.WG).toHaveLength(0);
+        expect(out.sig).toBe('none');
+    });
+});
+
+// End-to-end: an xot_premium extra flows through runLocation onto the row.
+import { runLocation } from '../runLocation';
+describe('xot_premium through the engine', () => {
+    it('lands in extra_cents with a readable description', () => {
+        const masterData = {
+            employees: [{ key: 'gz', first: 'Yency', last: 'Guzman', section: 'BOH', rate: 16, no_tip: false, direct_deposit: true }],
+            salary: [], errors: [],
+            by_key: { gz: { key: 'gz', first: 'Yency', last: 'Guzman', section: 'BOH', rate: 16, no_tip: false, direct_deposit: true } },
+        };
+        const toastEmps = { gz: { toast_name: 'Yency Guzman', first: 'Yency', last: 'Guzman', reg_hours: 40, ot_hours: 0, toast_rate: 16, lines: [] } };
+        const extra = { type: 'xot_premium', key: 'gz', location: 'WG', name: 'Yency Guzman', note: 'test', hours: 10, rate: 16, amount_cents: 8000 };
+        const res = runLocation('WG', toastEmps, masterData, 0, 0, 50, [extra], null);
+        const row = res.sections.BOH.rows.find((r) => r.key === 'gz');
+        expect(row.extra_cents).toBe(8000);
+        expect(row.comp_cents).toBe(16 * 40 * 100 + 8000); // reg + premium
+        expect(row.extras[0]).toMatch(/cross-store OT premium 10h @ \$16x0\.5 = \+\$80\.00/);
+    });
+});

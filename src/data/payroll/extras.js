@@ -13,7 +13,11 @@
 
 import { c as cents, fmtG, money2 } from './cents.js';
 
-export const TYPES = ['vacation', 'holiday', 'reg_hours', 'ot_hours', 'backpay', 'bonus', 'advance', 'other'];
+// 'xot_premium' (2026-08-26, JS-only — additive over the Python port):
+// auto-generated cross-store overtime premium from crossLocOt.js. Never
+// user-entered (validate() has no branch for it); it arrives pre-computed
+// in final validated shape {hours, rate, amount_cents}.
+export const TYPES = ['vacation', 'holiday', 'reg_hours', 'ot_hours', 'backpay', 'bonus', 'advance', 'other', 'xot_premium'];
 
 // Mirror Python's `!r` repr for the small set of error strings (cosmetic).
 function repr(v) {
@@ -123,5 +127,6 @@ export function describe(extra) {
     if (t === 'bonus') return `bonus +$${money2(amt)}`;
     if (t === 'advance') return `advance already paid, deducted -$${money2(amt)}`;
     if (t === 'other') return `other pay +$${money2(amt)}`;
+    if (t === 'xot_premium') return `cross-store OT premium ${fmtG(extra.hours)}h @ $${fmtG(extra.rate)}x0.5 = +$${money2(amt)}`;
     return t;
 }
