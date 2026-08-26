@@ -964,8 +964,28 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
                             // the reader had already tapped Next, the late
                             // setActiveLessonId yanked them back a lesson.
                             const lessonId = activeLessonId;
-                            if (lIdx < m.lessons.length - 1) setActiveLessonId(m.lessons[lIdx + 1].id);
-                            else setView("module");
+                            if (lIdx < m.lessons.length - 1) {
+                                setActiveLessonId(m.lessons[lIdx + 1].id);
+                            } else {
+                                // 2026-08-26 (Andrew: "brandon said he finished
+                                // but its not showing") — after the LAST lesson
+                                // the old flow dropped people back on the module
+                                // page with no cue that the quiz still stands
+                                // between them and "finished". Six of the first
+                                // 22 M18 readers stopped exactly there. Go
+                                // STRAIGHT to the quiz instead (same setup as
+                                // the module page's Take-the-quiz button);
+                                // already-passed retakes and locked modules
+                                // still return to the module page.
+                                const stNow = moduleState(m.id);
+                                if (!stNow.passed && !stNow.locked) {
+                                    setQuizAnswers({});
+                                    setQuizSeed(Date.now());
+                                    setView("quiz");
+                                } else {
+                                    setView("module");
+                                }
+                            }
                             markLessonComplete(m.id, lessonId).catch(e => {
                                 console.error('lesson-complete save failed:', e);
                                 toast(tx('⚠ Could not save that lesson as read — check your connection.',
@@ -1031,6 +1051,19 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
                     <div className="mb-4 p-3 bg-green-50 border-2 border-green-300 rounded-xl text-sm text-green-800">
                         ✅ <strong>{tx("Passed.", "Aprobado.")}</strong> {tx("You can re-read lessons or retake the quiz any time.", "Puedes releer las lecciones o repetir el examen cuando quieras.")}
                     </div>
+                )}
+
+                {/* 2026-08-26 — "read everything but never took the quiz" trap.
+                    Reading all the lessons is NOT finishing: make that loud for
+                    anyone landing back on this page (e.g. from a reminder). */}
+                {progressReady && allLessonsRead && !st.passed && !st.locked && (
+                    <button
+                        onClick={() => { setQuizAnswers({}); setQuizSeed(Date.now()); setView("quiz"); }}
+                        className="w-full mb-4 p-3 bg-amber-50 border-2 border-amber-400 rounded-xl text-sm text-amber-900 text-left hover:border-amber-500 transition">
+                        📝 <strong>{tx("One more step —", "Un paso más —")}</strong>{' '}
+                        {tx("you've read all the lessons, but this training doesn't count as finished until you pass the quiz. Tap here to take it now.",
+                            "ya leíste todas las lecciones, pero este entrenamiento no cuenta como terminado hasta que apruebes el examen. Toca aquí para tomarlo ahora.")}
+                    </button>
                 )}
 
                 <h3 className="text-sm font-bold text-gray-600 uppercase tracking-wide mt-3 mb-2">{tx("Lessons", "Lecciones")}</h3>

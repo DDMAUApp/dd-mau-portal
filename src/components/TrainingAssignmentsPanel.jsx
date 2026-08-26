@@ -23,7 +23,11 @@ import TrainingAssignForm from './TrainingAssignForm';
 import { toast } from '../toast';
 
 const STATUS_META = {
-    done:        { en: 'Done',        es: 'Listo',       cls: 'bg-green-100 text-green-800' },
+    done:         { en: 'Done',          es: 'Listo',       cls: 'bg-green-100 text-green-800' },
+    // Read every lesson but hasn't passed the quiz — the "thinks they're
+    // finished" state (2026-08-26, Brandon/M18). Distinct so admins can
+    // nudge exactly these people to take the quiz.
+    quiz_pending: { en: '📝 Quiz pending', es: '📝 Falta examen', cls: 'bg-orange-100 text-orange-800' },
     in_progress: { en: 'In progress', es: 'En progreso', cls: 'bg-amber-100 text-amber-800' },
     opened:      { en: 'Opened',      es: 'Abrió',       cls: 'bg-sky-100 text-sky-800' },
     not_started: { en: 'Not started', es: 'Sin empezar', cls: 'bg-gray-100 text-gray-600' },
@@ -124,6 +128,7 @@ export default function TrainingAssignmentsPanel({ staffList = [], language = 'e
                     </div>
                     <div className="flex flex-wrap gap-1.5 mt-2 text-[10px] font-bold">
                         <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800">✅ {summary.done} {tx('done', 'listos')}</span>
+                        {summary.quizPending > 0 && <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-800">📝 {summary.quizPending} {tx('quiz pending', 'falta examen')}</span>}
                         <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">📖 {summary.inProgress} {tx('in progress', 'en progreso')}</span>
                         <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-800">👀 {summary.opened} {tx('opened', 'abrieron')}</span>
                         <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">⬜ {summary.notStarted} {tx('not started', 'sin empezar')}</span>

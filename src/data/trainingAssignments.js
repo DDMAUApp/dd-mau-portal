@@ -214,6 +214,11 @@ export function deriveAssignmentRows(assignment, trainingDocs, module, nowMs = D
         const failedAttempts = attempts.filter(a => !a.passed).length;
         let status = 'not_started';
         if (passed) status = 'done';
+        // 2026-08-26 — distinct "read everything, quiz not passed" state.
+        // Six of the first 22 M18 readers stopped exactly there and looked
+        // like generic "in progress"; admins couldn't tell "just needs the
+        // quiz" from "halfway through the lessons".
+        else if (lessonsTotal > 0 && done >= lessonsTotal) status = 'quiz_pending';
         else if (done > 0 || attempts.length > 0) status = 'in_progress';
         else if (openedAt) status = 'opened';
         const overdue = !passed && dueMs > 0 && nowMs > dueMs;
@@ -231,6 +236,7 @@ export function deriveAssignmentRows(assignment, trainingDocs, module, nowMs = D
         total: rows.length,
         done: rows.filter(r => r.status === 'done').length,
         inProgress: rows.filter(r => r.status === 'in_progress').length,
+        quizPending: rows.filter(r => r.status === 'quiz_pending').length,
         opened: rows.filter(r => r.status === 'opened').length,
         notStarted: rows.filter(r => r.status === 'not_started').length,
         overdue: rows.filter(r => r.overdue).length,
