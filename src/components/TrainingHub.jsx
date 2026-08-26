@@ -14,6 +14,7 @@ import { t } from "../data/translations";
 import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";
 import { toast } from "../toast";
+import { logError } from "../data/logger";
 import { pushBackHandler } from "../capacitor-bridge";
 import { ASSIGNMENTS, myOpenAssignments, stampAssignmentOpened, fmtDue } from "../data/trainingAssignments";
 import { consumePendingTrainingOpen } from "../data/trainingDeepLink";
@@ -99,6 +100,32 @@ export function parseYouTubeId(input) {
 
 // Doc id helper — staff name → safe Firestore doc id
 const staffDocId = (name) => (name || "unknown").toLowerCase().replace(/\s+/g, "_").replace(/\//g, "_"); // "/" would make an invalid doc path (crashes the tab for that person); keep in sync with renameStaff.trainingDocId + functions docIdFor
+
+// ── Quiz-attempt outbox (2026-08-26, Brandon/M18) ────────────────────
+// The quiz shows the result BEFORE the server write (deliberate — slow
+// store Wi-Fi). Brandon passed M18 on his screen and the write died on
+// his phone before syncing (the iOS wedge self-heal can even wipe the
+// SDK's queued writes), leaving zero server trace. The outbox makes
+// attempts unlosable: written to localStorage SYNCHRONOUSLY before the
+// server write, re-persisted on every Training open until the SERVER
+// copy of the doc confirms the attempt, then cleared. localStorage
+// survives IndexedDB wipes and process kills. Keyed per staff name so a
+// shared iPad never replays one person's attempt as another's.
+const QUIZ_OUTBOX_PREFIX = "ddmau:quizOutbox:";
+function readQuizOutbox(name) {
+    try {
+        const raw = localStorage.getItem(QUIZ_OUTBOX_PREFIX + staffDocId(name));
+        const list = raw ? JSON.parse(raw) : [];
+        return Array.isArray(list) ? list : [];
+    } catch { return []; }
+}
+function writeQuizOutbox(name, list) {
+    try {
+        const key = QUIZ_OUTBOX_PREFIX + staffDocId(name);
+        if (!list || list.length === 0) localStorage.removeItem(key);
+        else localStorage.setItem(key, JSON.stringify(list.slice(-10)));
+    } catch { /* private mode / quota — best-effort */ }
+}
 
 // Deterministic per-attempt shuffle of a question's answer options.
 // 2026-08-17 audit: several modules (M7, M9) had the correct answer at
@@ -400,6 +427,9 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
     // Progress for current user
     const [progress, setProgress] = useState(null); // { modules: { mX: { lessonsCompleted, attempts, passed, locked } } }
     const [loading, setLoading] = useState(true);
+    // True when the latest progress emission is confirmed server state
+    // (no pending writes, not from cache) — see the quiz-attempt outbox.
+    const progressIsServerRef = useRef(false);
 
     // Tracker (admin only)
     const [trackerOpen, setTrackerOpen] = useState(false);
@@ -522,7 +552,20 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
         }, 8000);
         const unsub = onSnapshot(
             doc(db, "training_v2", staffDocId(staffName)),
-            (snap) => { gotFirst = true; setProgress(snap.exists() ? snap.data() : { modules: {} }); setLoading(false); },
+            (snap) => {
+                gotFirst = true;
+                // Outbox reconcile needs to know whether this emission is
+                // CONFIRMED server state — a latency-compensated local echo
+                // must never clear an outbox entry (the queued write behind
+                // it can still be lost; that's the exact hole being closed).
+                // Missing metadata (test fakes) defaults to NOT-server — the
+                // safe direction (outbox entries are kept, never dropped).
+                progressIsServerRef.current = snap.metadata
+                    ? (!snap.metadata.hasPendingWrites && !snap.metadata.fromCache)
+                    : false;
+                setProgress(snap.exists() ? snap.data() : { modules: {} });
+                setLoading(false);
+            },
             // Error path must resolve progress too — leaving it null hid the
             // Required-training banner/DUE chips and gated the quiz behind a
             // misleading "Read all lessons first" for the whole session.
@@ -688,14 +731,73 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
         clearSavedQuiz(m.id);
         setLastResult({ score, correct, total: m.quiz.questions.length, passed, locked });
         setView("quiz-result");
+        // Outbox FIRST (synchronous localStorage) — if the app dies or the
+        // transport eats the write below, the reconcile effect re-delivers
+        // the attempt on the next Training open (2026-08-26, Brandon/M18).
+        writeQuizOutbox(staffName, [...readQuizOutbox(staffName), { mId: m.id, attempt }]);
         try {
             await persistModulePatch(m.id, patch);
+            // Server ACKed (updateDoc resolves on backend commit) — safe to
+            // drop the outbox copy.
+            writeQuizOutbox(staffName, readQuizOutbox(staffName)
+                .filter(e => !(e?.mId === m.id && e?.attempt?.at === attempt.at)));
         } catch (e) {
             console.error('quiz attempt save failed:', e);
-            toast(tx('⚠ Your quiz result could not be saved. Check your connection and tell your manager if this keeps happening.',
-                     '⚠ No se pudo guardar tu resultado. Revisa tu conexión y avisa a tu gerente si sigue pasando.'), { kind: 'warn', duration: 8000 });
+            // Now ALSO an error_logs row — this failure class previously left
+            // zero server-side trace (console+toast only).
+            logError({ error: e, feature: 'training-quiz-save', meta: { moduleId: m.id, passed, score } });
+            toast(tx('⚠ Your quiz result could not be saved yet — it will retry automatically next time you open Training.',
+                     '⚠ Tu resultado aún no se pudo guardar — se reintentará automáticamente la próxima vez que abras Entrenamiento.'), { kind: 'warn', duration: 8000 });
         }
     };
+
+    // ── Outbox reconcile ─────────────────────────────────────────────
+    // On every confirmed-server progress emission: re-deliver any outbox
+    // attempt the server doc doesn't hold, and clear entries the server
+    // has confirmed. arrayUnion with an identical attempt object is a
+    // server-side no-op, so re-delivery is idempotent even when passes
+    // overlap. Entries are only CLEARED against confirmed server state —
+    // a latency-compensated echo can't fool it (progressIsServerRef).
+    const outboxBusyRef = useRef(false);
+    useEffect(() => {
+        if (!staffName || !progress) return;
+        const entries = readQuizOutbox(staffName);
+        if (entries.length === 0 || outboxBusyRef.current) return;
+        const isServer = progressIsServerRef.current;
+        outboxBusyRef.current = true;
+        (async () => {
+            try {
+                const keep = [];
+                for (const e of entries) {
+                    const mId = e?.mId;
+                    const attempt = e?.attempt;
+                    if (!mId || !attempt || !attempt.at) continue; // malformed — drop
+                    const cur = progress?.modules?.[mId] || {};
+                    const present = (cur.attempts || []).some(a => a?.at === attempt.at);
+                    if (present) {
+                        if (isServer) continue;      // confirmed — drop from outbox
+                        keep.push(e);                // local echo only — keep until server confirms
+                        continue;
+                    }
+                    keep.push(e); // keep until a server emission shows it landed
+                    const patch = { attempts: arrayUnion(attempt) };
+                    if (attempt.passed && !cur.passed) {
+                        patch.passed = true;
+                        patch.passedAt = cur.passedAt || attempt.at;
+                    }
+                    // Deliberately never recomputes `locked` — a replayed
+                    // fail must not lock anyone retroactively.
+                    // eslint-disable-next-line no-await-in-loop
+                    await persistModulePatch(mId, patch);
+                }
+                writeQuizOutbox(staffName, keep);
+            } catch (err) {
+                console.warn('quiz outbox reconcile failed (will retry on next emission):', err);
+            } finally {
+                outboxBusyRef.current = false;
+            }
+        })();
+    }, [progress, staffName]);
 
     /* ───────── Tracker (admin) ───────── */
     const loadTracker = async () => {

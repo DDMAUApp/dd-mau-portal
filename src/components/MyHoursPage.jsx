@@ -109,6 +109,18 @@ export default function MyHoursPage({ staffName, language }) {
         return out;
     }, [cards]);
 
+    // Does this person's loaded history span BOTH stores? (e.g. Yency works
+    // Webster + MH.) When true, EVERY row gets its store tag — before
+    // 2026-08-26 the tag only appeared when one DAY had cards at both
+    // stores, so a Maryland-only day rendered identical to a Webster day
+    // and staff couldn't tell both stores were being counted (they are:
+    // the timecards query is location-blind, keyed on the shared name).
+    const multiLoc = useMemo(() => {
+        const locs = new Set();
+        for (const c of (cards || [])) locs.add(c.location || '');
+        return locs.size > 1;
+    }, [cards]);
+
     const totals = useMemo(() => {
         const now = new Date();
         const thisWeek = weekKey(toDateStrLocal(now));
@@ -147,7 +159,14 @@ export default function MyHoursPage({ staffName, language }) {
                     </span>
                     <div>
                         <h2 className="text-headline text-dd-text">{tx('My Hours', 'Mis Horas')}</h2>
-                        <p className="text-caption-md text-dd-text-2">{staffName}</p>
+                        <p className="text-caption-md text-dd-text-2">
+                            {staffName}
+                            {multiLoc && (
+                                <span className="ml-2 px-1.5 py-0.5 rounded-full bg-dd-sage-50 border border-dd-green/20 text-[10px] font-bold text-dd-green-700 align-middle">
+                                    {tx('Webster + MH included', 'Webster + MH incluidos')}
+                                </span>
+                            )}
+                        </p>
                     </div>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
@@ -199,7 +218,7 @@ export default function MyHoursPage({ staffName, language }) {
                                     <div className="mt-1 space-y-0.5">
                                         {r.cards.map((c) => (
                                             <div key={c.id} className="text-caption-md text-dd-text-2">
-                                                {r.cards.length > 1 && <span className="font-bold">{c.location === 'maryland' ? 'MH' : 'WG'} · </span>}
+                                                {(multiLoc || r.cards.length > 1) && <span className="font-bold">{c.location === 'maryland' ? 'MH' : 'WG'} · </span>}
                                                 {(c.sessions || []).map((s, i) => (
                                                     <span key={i}>{fmtTime(s.clockIn, isEs)} → {fmtTime(s.clockOut, isEs)}{'  '}</span>
                                                 ))}
@@ -231,6 +250,7 @@ export default function MyHoursPage({ staffName, language }) {
                     day={disputing}
                     staffName={staffName}
                     isEs={isEs}
+                    multiLoc={multiLoc}
                     onClose={() => setDisputing(null)}
                 />
             )}
@@ -239,7 +259,7 @@ export default function MyHoursPage({ staffName, language }) {
 }
 
 // ── Dispute modal — "this date's timecard is wrong" ─────────────────────────
-function DisputeModal({ day, staffName, isEs, onClose }) {
+function DisputeModal({ day, staffName, isEs, onClose, multiLoc = false }) {
     const tx = (en, es) => (isEs ? es : en);
     const [issues, setIssues] = useState([]);
     const [expectedClockIn, setExpectedClockIn] = useState('');
@@ -301,7 +321,7 @@ function DisputeModal({ day, staffName, isEs, onClose }) {
                             <div className="font-bold text-dd-text mb-1">{tx('Recorded in Toast:', 'Registrado en Toast:')}</div>
                             {day.cards.map((c) => (
                                 <div key={c.id}>
-                                    {day.cards.length > 1 && <b>{c.location === 'maryland' ? 'MH' : 'WG'} · </b>}
+                                    {(multiLoc || day.cards.length > 1) && <b>{c.location === 'maryland' ? 'MH' : 'WG'} · </b>}
                                     {(c.sessions || []).map((s, i) => (
                                         <span key={i}>{fmtTime(s.clockIn, isEs)} → {fmtTime(s.clockOut, isEs)}{'  '}</span>
                                     ))}
