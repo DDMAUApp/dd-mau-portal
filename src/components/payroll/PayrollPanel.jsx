@@ -36,7 +36,7 @@ import { logError } from '../../data/logger.js';
 import { db } from '../../firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { cardHours } from '../../data/timecards';
-import { computeCrossLocOt, normCardKey, parsePeriodRange } from '../../data/payroll/crossLocOt.js';
+import { computeCrossLocOt, applyOtReclass, normCardKey, parsePeriodRange } from '../../data/payroll/crossLocOt.js';
 
 const LOCS = ['WG', 'MH'];
 const LOC_NAMES = { WG: 'Webster Groves', MH: 'Maryland Heights' };
@@ -679,7 +679,8 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     let live = null;
     if (imported) {
         // (name aliases were already applied at parse time, in doImport)
-        const inputs = loadInputs(parsed.exports, parsed.salesByLoc, parsed.salesConflicts, roster);
+        // First pass — pristine imports (masters/rates don't depend on hours).
+        const inputs0 = loadInputs(parsed.exports, parsed.salesByLoc, parsed.salesConflicts, roster);
         // Pay-adds are discrete line items now (one row = one adjustment for one
         // person), not a sparse per-person grid. The engine (validateExtra) is
         // unchanged — it still computes the signed cents and enforces all-or-nothing
@@ -690,7 +691,7 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
         const adjResults = {}; // per-line preview: { [id]: { amount_cents, error } }
         for (const adj of adjustments) {
             if (!adj.key) continue; // person not chosen yet
-            const master = inputs.masters[adj.loc];
+            const master = inputs0.masters[adj.loc];
             const byKey = master ? master.by_key : {};
             const fields = {};
             if (adj.type === 'bonus' || adj.type === 'advance' || adj.type === 'other') {
@@ -727,9 +728,20 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
         const crossOt = computeCrossLocOt({
             period,
             employees: (parsed.exports && parsed.exports.employees) || {},
-            masters: inputs.masters,
+            masters: inputs0.masters,
             cards: crossCards,
         });
+        // Preferred display (Andrew 2026-08-26): missing cross-store OT is
+        // RECLASSIFIED reg → OT on the landing row so it reads like normal
+        // overtime. applyOtReclass works on a CLONE — parsed state stays
+        // pristine, so every render recomputes from scratch (no compounding).
+        // The extras path remains for the cases reclassification can't price
+        // exactly (differing store rates / thin landing row).
+        const inputs = crossOt.reclass.length
+            ? loadInputs(
+                { ...parsed.exports, employees: applyOtReclass(parsed.exports.employees, crossOt.reclass) },
+                parsed.salesByLoc, parsed.salesConflicts, roster)
+            : inputs0;
         const results = compute(inputs, period, cashNum, fohNum, [...periodExtras, ...crossOt.extras]);
         for (const loc of LOCS) {
             if (results[loc]) results[loc].checks.push(...(crossOt.checksByLoc[loc] || []));

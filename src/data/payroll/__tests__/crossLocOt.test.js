@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    computeCrossLocOt, parsePeriodRange, mondayKey, isMonday, periodDayCount,
+    computeCrossLocOt, applyOtReclass, parsePeriodRange, mondayKey, isMonday, periodDayCount,
 } from '../crossLocOt';
 
 // One-week Monday-start period. 2026-08-10 is a Monday.
@@ -63,15 +63,15 @@ describe('computeCrossLocOt', () => {
             '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        expect(out.extras).toHaveLength(1);
-        const x = out.extras[0];
-        expect(x.type).toBe('xot_premium');
-        expect(x.location).toBe('WG');           // lands where she worked more
-        expect(x.amount_cents).toBe(8000);       // 10h × $16 × 0.5
-        expect(x.note).toMatch(/50h combined → 10h OT/);
+        // Same-rate case shows as NORMAL OVERTIME: hours reclassified reg → OT
+        // on the landing row (Andrew 2026-08-26), no EXTRA PAY line.
+        expect(out.extras).toHaveLength(0);
+        expect(out.reclass).toEqual([{ key: 'gz', location: 'WG', hours: 10 }]);
         const warn = out.checksByLoc.WG.find((k) => k.id === 'xot:topup:gz');
         expect(warn).toBeTruthy();
         expect(warn.level).toBe('warn');
+        expect(warn.title).toMatch(/10h moved to the OT column/);
+        expect(warn.detail).toMatch(/50h combined → 10h OT/);
     });
 
     it('no combined OT → no extras, no checks', () => {
@@ -95,8 +95,8 @@ describe('computeCrossLocOt', () => {
             '2026-08-15': ['MH', 5],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        expect(out.extras).toHaveLength(1);
-        expect(out.extras[0].amount_cents).toBe(4000); // 5h × $16 × 0.5
+        expect(out.extras).toHaveLength(0);
+        expect(out.reclass).toEqual([{ key: 'gz', location: 'WG', hours: 5 }]); // net +$40
     });
 
     it('two-week period: each Toast week stands alone', () => {
@@ -112,8 +112,8 @@ describe('computeCrossLocOt', () => {
             '2026-08-17': ['WG', 10], '2026-08-18': ['WG', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        expect(out.extras).toHaveLength(1);
-        expect(out.extras[0].amount_cents).toBe(8000); // week 1 only
+        expect(out.extras).toHaveLength(0);
+        expect(out.reclass).toEqual([{ key: 'gz', location: 'WG', hours: 10 }]); // week 1 only
     });
 
     it('clock/export mismatch → warn, NO money added', () => {
@@ -148,9 +148,11 @@ describe('computeCrossLocOt', () => {
             '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.reclass).toHaveLength(0); // differing rates can't reclassify exactly
         expect(out.extras).toHaveLength(1);
         // weighted: (40×16 + 10×20) / 50 = 16.8 → 10h × 16.8 × 0.5 = $84.00
         expect(out.extras[0].amount_cents).toBe(8400);
+        expect(out.extras[0].note).toMatch(/different rates/);
         expect(out.extras[0].note).toMatch(/weighted/);
     });
 
@@ -182,8 +184,7 @@ describe('computeCrossLocOt', () => {
             '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        expect(out.extras).toHaveLength(1);
-        expect(out.extras[0].amount_cents).toBe(8000);
+        expect(out.reclass).toEqual([{ key: 'gz', location: 'WG', hours: 10 }]);
     });
 
     it('salaried at either store → warn, never computes (crash guard)', () => {
@@ -206,6 +207,19 @@ describe('computeCrossLocOt', () => {
         expect(out.extras).toHaveLength(0);
         expect(out.checksByLoc.WG).toHaveLength(0);
         expect(out.sig).toBe('none');
+    });
+});
+
+describe('applyOtReclass', () => {
+    it('moves reg → OT on a CLONE, never mutating the original', () => {
+        const employees = { WG: { gz: { toast_name: 'G, Y', reg_hours: 40, ot_hours: 0 } }, MH: {} };
+        const out = applyOtReclass(employees, [{ key: 'gz', location: 'WG', hours: 10 }]);
+        expect(out.WG.gz.reg_hours).toBe(30);
+        expect(out.WG.gz.ot_hours).toBe(10);
+        expect(out.WG.gz.xot_reclassified).toBe(10);
+        expect(employees.WG.gz.reg_hours).toBe(40); // pristine
+        expect(employees.WG.gz.ot_hours).toBe(0);
+        expect(applyOtReclass(employees, [])).toBe(employees); // no-op identity
     });
 });
 
@@ -237,5 +251,24 @@ describe('xot_premium is not user-enterable', () => {
         const [x, err] = validateExtra({ type: 'xot_premium', key: 'gz', location: 'WG', name: 'Y G' }, byKey);
         expect(x).toBeNull();
         expect(err).toMatch(/auto-generated/);
+    });
+});
+
+describe('reclass path through the engine (looks like normal OT)', () => {
+    it('OT column carries the hours at rate ×1.5; total pay = reg-only + premium', () => {
+        const masterData = {
+            employees: [{ key: 'gz', first: 'Yency', last: 'Guzman', section: 'BOH', rate: 16, no_tip: false, direct_deposit: true }],
+            salary: [], errors: [],
+            by_key: { gz: { key: 'gz', first: 'Yency', last: 'Guzman', section: 'BOH', rate: 16, no_tip: false, direct_deposit: true } },
+        };
+        const toastEmps = { gz: { toast_name: 'Guzman, Yency', first: 'Yency', last: 'Guzman', reg_hours: 40, ot_hours: 0, toast_rate: 16, lines: [] } };
+        const adjusted = applyOtReclass({ WG: toastEmps }, [{ key: 'gz', location: 'WG', hours: 10 }]).WG;
+        const res = runLocation('WG', adjusted, masterData, 0, 0, 50, [], null);
+        const row = res.sections.BOH.rows.find((r) => r.key === 'gz');
+        expect(row.reg_hours).toBe(30);
+        expect(row.ot_hours).toBe(10);
+        expect(row.ot_cents).toBe(10 * 16 * 1.5 * 100);      // $240 in the OT money
+        expect(row.comp_cents).toBe(30 * 16 * 100 + 24000);  // $480 + $240 = $720 = 40×16 + $80 premium
+        expect(row.total_hours).toBe(40);                    // hours conserved
     });
 });

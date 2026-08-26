@@ -87,6 +87,32 @@ const MIN_TOPUP_HOURS = 0.02;
 const check = (id, level, title, detail = '') => ({ id, level, title, detail });
 
 /**
+ * Apply reg→OT reclassifications to a parsed exports.employees map WITHOUT
+ * mutating the original (the panel recomputes from pristine parsed state on
+ * every render — in-place mutation would compound the move each render).
+ * Returns a new employees object; untouched people share references.
+ */
+export function applyOtReclass(employees, reclassOps) {
+    if (!reclassOps || reclassOps.length === 0) return employees;
+    const out = { ...employees };
+    for (const op of reclassOps) {
+        const locMap = { ...(out[op.location] || {}) };
+        const emp = locMap[op.key];
+        if (!emp) continue; // defensive — op derived from this same map
+        locMap[op.key] = {
+            ...emp,
+            reg_hours: round2((Number(emp.reg_hours) || 0) - op.hours),
+            ot_hours: round2((Number(emp.ot_hours) || 0) + op.hours),
+            // Flag for anything downstream that wants to know these OT hours
+            // were added by the cross-store reconciliation, not Toast.
+            xot_reclassified: op.hours,
+        };
+        out[op.location] = locMap;
+    }
+    return out;
+}
+
+/**
  * @param {object} args
  * @param {string} args.period            panel period label ('8.10.26-8.23.26')
  * @param {object} args.employees         parsed.exports.employees {WG:{key:emp}, MH:{...}}
@@ -98,10 +124,11 @@ const check = (id, level, title, detail = '') => ({ id, level, title, detail });
  */
 export function computeCrossLocOt({ period, employees, masters, cards }) {
     const checksByLoc = { WG: [], MH: [] };
-    const extras = [];
+    const extras = [];   // EXTRA-PAY fallback (differing rates / thin row)
+    const reclass = [];  // preferred: hours moved reg → OT on the landing row
     const both = Object.keys((employees && employees.WG) || {})
         .filter((k) => k in ((employees && employees.MH) || {}));
-    const done = (sig) => ({ extras, checksByLoc, sig });
+    const done = (sig) => ({ extras, reclass, checksByLoc, sig });
     if (both.length === 0) return done('none');
 
     const pushBoth = (k) => { checksByLoc.WG.push(k); checksByLoc.MH.push(k); };
@@ -259,21 +286,48 @@ export function computeCrossLocOt({ period, employees, masters, cards }) {
             continue;
         }
 
-        // Display rate for the pay-add line: exact when rates match; derived
-        // from the authoritative dollar amount otherwise (the note carries
-        // the precise per-week math either way).
-        const dispRate = ratesEqual ? rateWG : round2((amountCents / 100) / (missingHours * 0.5));
         const landLoc = exportHours.WG >= exportHours.MH ? 'WG' : 'MH';
-        const note = `Cross-store OT premium: ${fmtG(missingHours)}h ≈ $${money2(amountCents / 100)}. ` +
-            `${weekBits.join('; ')}` +
+        const landEmp = landLoc === 'WG' ? wg : mh;
+        const weekMath = `${weekBits.join('; ')}` +
             ` (WG ${fmtG(exportHours.WG)}h + MH ${fmtG(exportHours.MH)}h this period; exports already pay ${fmtG(paidOt)}h OT` +
-            (paidPremiumCents > 0 ? ` = $${money2(paidPremiumCents / 100)} premium, subtracted` : '') + `).` +
-            ` Straight time for these hours is already in regular pay — this is the missing ×0.5 premium only.`;
-        extras.push({ type: 'xot_premium', key, location: landLoc, name, note, hours: missingHours, rate: dispRate, amount_cents: amountCents });
-        checksByLoc[landLoc].push(check(`xot:topup:${key}`, 'warn',
-            `${name}: cross-store overtime added — $${money2(amountCents / 100)}`, note));
+            (paidPremiumCents > 0 ? ` = $${money2(paidPremiumCents / 100)} premium, subtracted` : '') + ')';
+
+        // PREFERRED PATH (Andrew 2026-08-26: "add the hours of overtime to
+        // the overtime column — make it look like what normal overtime looks
+        // like"): reclassify the missing hours from the landing row's REG
+        // into its OT column. Net pay change = hours × rate × 0.5 (those
+        // hours stop being paid at 1.0× and get paid at 1.5×) — the exact
+        // premium, now displayed the way Toast itself would have shown it.
+        // Only valid when both stores pay the SAME rate (a reclassified hour
+        // pays at the landing row's rate; with differing rates that misses
+        // the FLSA weighted amount) and the landing row has the regular
+        // hours to give up. Otherwise: EXTRA PAY fallback, disclosed.
+        const canReclass = ratesEqual
+            && (Number(landEmp.reg_hours) || 0) >= missingHours
+            && Math.abs(cents(missingHours * rateWG * 0.5) - amountCents) <= 2;
+        if (canReclass) {
+            reclass.push({ key, location: landLoc, hours: missingHours });
+            checksByLoc[landLoc].push(check(`xot:topup:${key}`, 'warn',
+                `${name}: cross-store overtime — ${fmtG(missingHours)}h moved to the OT column (+$${money2(amountCents / 100)})`,
+                `Combined weeks put them over 40h: ${weekMath}. ${fmtG(missingHours)}h moved from regular to overtime on the ${landLoc} check — ` +
+                `paid at $${fmtG(rateWG)} × 1.5 like normal overtime (net +$${money2(amountCents / 100)} vs. all-regular).`));
+        } else {
+            // Fallback: exact dollars as EXTRA PAY (differing rates, or a
+            // landing row too thin to reclassify).
+            const dispRate = ratesEqual ? rateWG : round2((amountCents / 100) / (missingHours * 0.5));
+            const note = `Cross-store OT premium: ${fmtG(missingHours)}h ≈ $${money2(amountCents / 100)}. ${weekMath}.` +
+                ` Shown as EXTRA PAY (not the OT column) because ` +
+                (ratesEqual ? `the ${landLoc} check doesn't have ${fmtG(missingHours)} regular hours to reclassify` : `the two stores pay different rates ($${fmtG(rateWG)} / $${fmtG(rateMH)}) and the FLSA amount is computed in dollars`) +
+                `. Straight time for these hours is already in regular pay — this is the missing ×0.5 premium only.`;
+            extras.push({ type: 'xot_premium', key, location: landLoc, name, note, hours: missingHours, rate: dispRate, amount_cents: amountCents });
+            checksByLoc[landLoc].push(check(`xot:topup:${key}`, 'warn',
+                `${name}: cross-store overtime added — $${money2(amountCents / 100)}`, note));
+        }
     }
 
-    const sig = extras.map((x) => `${x.key}:${x.amount_cents}`).sort().join(',') || 'clean';
+    const sig = [
+        ...extras.map((x) => `${x.key}:${x.amount_cents}`),
+        ...reclass.map((r) => `${r.key}:ot${Math.round(r.hours * 100)}`),
+    ].sort().join(',') || 'clean';
     return done(sig);
 }
