@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    computeCrossLocOt, applyOtReclass, parsePeriodRange, mondayKey, isMonday, periodDayCount,
+    computeCrossLocOt, applyCrossOt, parsePeriodRange, mondayKey, isMonday, periodDayCount,
 } from '../crossLocOt';
 
 // One-week Monday-start period. 2026-08-10 is a Monday.
@@ -63,14 +63,14 @@ describe('computeCrossLocOt', () => {
             '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        // Same-rate case shows as NORMAL OVERTIME: hours reclassified reg → OT
-        // on the landing row (Andrew 2026-08-26), no EXTRA PAY line.
+        // Shows in the dedicated CROSS OT column (Andrew 2026-08-26):
+        // straight time + premium, no EXTRA PAY line, Toast OT untouched.
         expect(out.extras).toHaveLength(0);
-        expect(out.reclass).toEqual([{ key: 'gz', location: 'WG', hours: 10 }]);
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]);
         const warn = out.checksByLoc.WG.find((k) => k.id === 'xot:topup:gz');
         expect(warn).toBeTruthy();
         expect(warn.level).toBe('warn');
-        expect(warn.title).toMatch(/10h moved to the OT column/);
+        expect(warn.title).toMatch(/10h CROSS OT/);
         expect(warn.detail).toMatch(/50h combined → 10h OT/);
     });
 
@@ -96,7 +96,7 @@ describe('computeCrossLocOt', () => {
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
         expect(out.extras).toHaveLength(0);
-        expect(out.reclass).toEqual([{ key: 'gz', location: 'WG', hours: 5 }]); // net +$40
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 5, straight_cents: 8000, premium_cents: 4000, total_cents: 12000 }]);
     });
 
     it('two-week period: each Toast week stands alone', () => {
@@ -113,7 +113,7 @@ describe('computeCrossLocOt', () => {
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
         expect(out.extras).toHaveLength(0);
-        expect(out.reclass).toEqual([{ key: 'gz', location: 'WG', hours: 10 }]); // week 1 only
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]); // week 1 only
     });
 
     it('clock/export mismatch → warn, NO money added', () => {
@@ -148,12 +148,13 @@ describe('computeCrossLocOt', () => {
             '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        expect(out.reclass).toHaveLength(0); // differing rates can't reclassify exactly
-        expect(out.extras).toHaveLength(1);
-        // weighted: (40×16 + 10×20) / 50 = 16.8 → 10h × 16.8 × 0.5 = $84.00
-        expect(out.extras[0].amount_cents).toBe(8400);
-        expect(out.extras[0].note).toMatch(/different rates/);
-        expect(out.extras[0].note).toMatch(/weighted/);
+        // Differing rates ALSO use the CROSS OT column: straight time at the
+        // landing row's rate + FLSA weighted premium — exact dollars.
+        expect(out.extras).toHaveLength(0);
+        // weighted premium: (40×16 + 10×20)/50 = 16.8 → 10h × 16.8 × 0.5 = $84
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 10, straight_cents: 16000, premium_cents: 8400, total_cents: 24400 }]);
+        const warn = out.checksByLoc.WG.find((k) => k.id === 'xot:topup:gz');
+        expect(warn.detail).toMatch(/different rates/);
     });
 
     it("verifier's example: differing rates WITH already-paid OT nets in dollars", () => {
@@ -167,9 +168,9 @@ describe('computeCrossLocOt', () => {
             '2026-08-13': ['WG', 9], '2026-08-14': ['WG', 9], '2026-08-15': ['MH', 5],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        expect(out.extras).toHaveLength(1);
-        expect(out.extras[0].amount_cents).toBe(4200);
-        expect(out.extras[0].hours).toBe(5);
+        expect(out.extras).toHaveLength(0);
+        // premium $42 (owed 10h @ $16.40 weighted = $82 − paid 5h × $16 × 0.5 = $40)
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 5, straight_cents: 8000, premium_cents: 4200, total_cents: 12200 }]);
     });
 
     it('real Toast "Last, First" export names still find the clock data', () => {
@@ -184,7 +185,7 @@ describe('computeCrossLocOt', () => {
             '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        expect(out.reclass).toEqual([{ key: 'gz', location: 'WG', hours: 10 }]);
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]);
     });
 
     it('salaried at either store → warn, never computes (crash guard)', () => {
@@ -210,16 +211,16 @@ describe('computeCrossLocOt', () => {
     });
 });
 
-describe('applyOtReclass', () => {
-    it('moves reg → OT on a CLONE, never mutating the original', () => {
+describe('applyCrossOt', () => {
+    it('moves reg → CROSS OT on a CLONE, never mutating the original', () => {
         const employees = { WG: { gz: { toast_name: 'G, Y', reg_hours: 40, ot_hours: 0 } }, MH: {} };
-        const out = applyOtReclass(employees, [{ key: 'gz', location: 'WG', hours: 10 }]);
+        const out = applyCrossOt(employees, [{ key: 'gz', location: 'WG', hours: 10, total_cents: 24000 }]);
         expect(out.WG.gz.reg_hours).toBe(30);
-        expect(out.WG.gz.ot_hours).toBe(10);
-        expect(out.WG.gz.xot_reclassified).toBe(10);
+        expect(out.WG.gz.ot_hours).toBe(0);       // Toast's OT column untouched
+        expect(out.WG.gz.xot_hours).toBe(10);
+        expect(out.WG.gz.xot_cents).toBe(24000);
         expect(employees.WG.gz.reg_hours).toBe(40); // pristine
-        expect(employees.WG.gz.ot_hours).toBe(0);
-        expect(applyOtReclass(employees, [])).toBe(employees); // no-op identity
+        expect(applyCrossOt(employees, [])).toBe(employees); // no-op identity
     });
 });
 
@@ -254,21 +255,25 @@ describe('xot_premium is not user-enterable', () => {
     });
 });
 
-describe('reclass path through the engine (looks like normal OT)', () => {
-    it('OT column carries the hours at rate ×1.5; total pay = reg-only + premium', () => {
+describe('CROSS OT through the engine', () => {
+    it('dedicated column carries hours + pay; total = reg-only + premium; Toast OT untouched', () => {
         const masterData = {
             employees: [{ key: 'gz', first: 'Yency', last: 'Guzman', section: 'BOH', rate: 16, no_tip: false, direct_deposit: true }],
             salary: [], errors: [],
             by_key: { gz: { key: 'gz', first: 'Yency', last: 'Guzman', section: 'BOH', rate: 16, no_tip: false, direct_deposit: true } },
         };
         const toastEmps = { gz: { toast_name: 'Guzman, Yency', first: 'Yency', last: 'Guzman', reg_hours: 40, ot_hours: 0, toast_rate: 16, lines: [] } };
-        const adjusted = applyOtReclass({ WG: toastEmps }, [{ key: 'gz', location: 'WG', hours: 10 }]).WG;
+        const adjusted = applyCrossOt({ WG: toastEmps }, [{ key: 'gz', location: 'WG', hours: 10, total_cents: 24000 }]).WG;
         const res = runLocation('WG', adjusted, masterData, 0, 0, 50, [], null);
         const row = res.sections.BOH.rows.find((r) => r.key === 'gz');
         expect(row.reg_hours).toBe(30);
-        expect(row.ot_hours).toBe(10);
-        expect(row.ot_cents).toBe(10 * 16 * 1.5 * 100);      // $240 in the OT money
-        expect(row.comp_cents).toBe(30 * 16 * 100 + 24000);  // $480 + $240 = $720 = 40×16 + $80 premium
+        expect(row.ot_hours).toBe(0);                        // Toast's OT column untouched
+        expect(row.xot_hours).toBe(10);
+        expect(row.xot_cents).toBe(24000);                   // straight $160 + premium $80
+        expect(row.comp_cents).toBe(30 * 16 * 100 + 24000);  // $720 = 40×16 + $80 premium
         expect(row.total_hours).toBe(40);                    // hours conserved
+        expect(res.sections.BOH.totals.xot_cents).toBe(24000);
+        const passCheck = res.checks.find((k) => k.id === 'hours');
+        expect(passCheck.level).toBe('pass');                // reconciliation counts CROSS OT hours
     });
 });

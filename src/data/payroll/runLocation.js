@@ -71,7 +71,13 @@ function newRow(m, t) {
         toast_rate: t ? t.toast_rate : null, // what Toast reported (for the "pay rate changed" flag)
         reg_hours: t ? t.reg_hours : 0.0,
         ot_hours: t ? t.ot_hours : 0.0,
-        total_hours: t ? round2(t.reg_hours + t.ot_hours) : 0.0,
+        // CROSS OT (2026-08-26): combined-across-stores overtime hours moved
+        // out of REG by crossLocOt.applyCrossOt. xot_cents arrives
+        // PRE-COMPUTED (straight time + FLSA-exact premium) — the money
+        // authority is crossLocOt; this engine only carries and sums it.
+        xot_hours: t ? (t.xot_hours || 0.0) : 0.0,
+        xot_cents: t ? (t.xot_cents || 0) : 0,
+        total_hours: t ? round2(t.reg_hours + t.ot_hours + (t.xot_hours || 0)) : 0.0,
         multi_line: !!(t && t.multi_line),
         lines: t ? t.lines : [],
         merge_detail: null,
@@ -87,6 +93,8 @@ function totals(rows) {
     return {
         reg_hours: round2(sum((r) => r.reg_hours)),
         ot_hours: round2(sum((r) => r.ot_hours)),
+        xot_hours: round2(sum((r) => r.xot_hours || 0)),
+        xot_cents: sum((r) => r.xot_cents || 0),
         total_hours: round2(sum((r) => r.total_hours)),
         tip_cents: sum((r) => r.tip_cents),
         reg_cents: sum((r) => r.reg_cents),
@@ -270,7 +278,7 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
             }
             r.reg_cents = c(r.rate * r.reg_hours);
             r.ot_cents = c(r.rate * OT_MULT * r.ot_hours);
-            r.comp_cents = r.tip_cents + r.reg_cents + r.ot_cents + r.extra_cents + r.hol_cents + r.vac_cents;
+            r.comp_cents = r.tip_cents + r.reg_cents + r.ot_cents + r.xot_cents + r.extra_cents + r.hol_cents + r.vac_cents;
             r.eff_rate = r.total_hours ? round2(r.comp_cents / 100.0 / r.total_hours) : null;
             // comp_cents must be a real number. NaN < 0 is false, so a NaN paycheck
             // would slip past the negative-pay check below — guard it explicitly.
@@ -312,10 +320,10 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
 
     // ---- invariant: every Toast hour is represented ------------------------
     let toastTotal = 0;
-    for (const t of Object.values(toastEmps)) toastTotal += t.reg_hours + t.ot_hours;
+    for (const t of Object.values(toastEmps)) toastTotal += t.reg_hours + t.ot_hours + (t.xot_hours || 0);
     toastTotal = round2(toastTotal);
     let outTotal = 0;
-    for (const sec of ['FOH', 'BOH']) for (const r of sections[sec]) outTotal += r.reg_hours + r.ot_hours;
+    for (const sec of ['FOH', 'BOH']) for (const r of sections[sec]) outTotal += r.reg_hours + r.ot_hours + (r.xot_hours || 0);
     for (const r of review) outTotal += r.reg_hours + r.ot_hours;
     outTotal = round2(outTotal);
     if (!Number.isFinite(toastTotal) || !Number.isFinite(outTotal) || Math.abs(toastTotal - outTotal) > 0.005) {

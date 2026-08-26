@@ -36,7 +36,7 @@ import { logError } from '../../data/logger.js';
 import { db } from '../../firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { cardHours } from '../../data/timecards';
-import { computeCrossLocOt, applyOtReclass, normCardKey, parsePeriodRange } from '../../data/payroll/crossLocOt.js';
+import { computeCrossLocOt, applyCrossOt, normCardKey, parsePeriodRange } from '../../data/payroll/crossLocOt.js';
 
 const LOCS = ['WG', 'MH'];
 const LOC_NAMES = { WG: 'Webster Groves', MH: 'Maryland Heights' };
@@ -731,15 +731,15 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
             masters: inputs0.masters,
             cards: crossCards,
         });
-        // Preferred display (Andrew 2026-08-26): missing cross-store OT is
-        // RECLASSIFIED reg → OT on the landing row so it reads like normal
-        // overtime. applyOtReclass works on a CLONE — parsed state stays
-        // pristine, so every render recomputes from scratch (no compounding).
-        // The extras path remains for the cases reclassification can't price
-        // exactly (differing store rates / thin landing row).
-        const inputs = crossOt.reclass.length
+        // Preferred display (Andrew 2026-08-26): missing cross-store OT
+        // moves REG → the dedicated CROSS OT column on the landing row.
+        // applyCrossOt works on a CLONE — parsed state stays pristine, so
+        // every render recomputes from scratch (no compounding). The EXTRA
+        // PAY path remains only when neither check has the regular hours
+        // to move (pathological).
+        const inputs = crossOt.crossOps.length
             ? loadInputs(
-                { ...parsed.exports, employees: applyOtReclass(parsed.exports.employees, crossOt.reclass) },
+                { ...parsed.exports, employees: applyCrossOt(parsed.exports.employees, crossOt.crossOps) },
                 parsed.salesByLoc, parsed.salesConflicts, roster)
             : inputs0;
         const results = compute(inputs, period, cashNum, fohNum, [...periodExtras, ...crossOt.extras]);
@@ -1451,7 +1451,7 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                     <div key={sec} className="mb-2 overflow-x-auto">
                                         <div className="text-[11px] font-bold text-dd-green">{sec} — pool {money(res.sections[sec].pool_cents)}</div>
                                         <table className="w-full text-[11px]">
-                                            <thead><tr className="text-left text-dd-text-2"><th className="pr-2">Person</th><th className="text-right px-1">Rate</th><th className="text-right px-1">Hrs</th><th className="text-right px-1">Tips</th><th className="text-right px-1">Reg</th><th className="text-right px-1">OT</th><th className="text-right px-1">Extra</th><th className="text-right px-1">TOTAL</th><th>DD</th></tr></thead>
+                                            <thead><tr className="text-left text-dd-text-2"><th className="pr-2">Person</th><th className="text-right px-1">Rate</th><th className="text-right px-1">Hrs</th><th className="text-right px-1">Tips</th><th className="text-right px-1">Reg</th><th className="text-right px-1">OT</th><th className="text-right px-1" title="Cross-store overtime — hours over 40/week combined across both stores (straight time + FLSA premium, ≈1.5×)">Cross OT</th><th className="text-right px-1">Extra</th><th className="text-right px-1">TOTAL</th><th>DD</th></tr></thead>
                                             <tbody>
                                                 {res.sections[sec].rows.map((r) => (
                                                     <tr key={r.key} className={(r.toast_rate != null && Math.abs(r.rate - r.toast_rate) > 0.005) ? 'bg-red-100' : (r.multi_line ? 'bg-amber-50' : '')}>
@@ -1461,6 +1461,7 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                                         <td className="text-right px-1">{money(r.tip_cents)}</td>
                                                         <td className="text-right px-1">{money(r.reg_cents)}</td>
                                                         <td className="text-right px-1">{money(r.ot_cents)}</td>
+                                                        <td className="text-right px-1 text-amber-800 font-bold">{r.xot_cents ? `${h2(r.xot_hours)}h · ${money(r.xot_cents)}` : ''}</td>
                                                         <td className={`text-right px-1 ${r.extra_cents < 0 ? 'text-red-600' : ''}`}>{r.extra_cents ? money(r.extra_cents) : ''}</td>
                                                         <td className="text-right px-1 font-bold">{money(r.comp_cents)}</td>
                                                         <td>{r.direct_deposit ? 'DD' : ''}</td>
@@ -1471,6 +1472,7 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                                     <td className="text-right px-1">{money(res.sections[sec].totals.tip_cents)}</td>
                                                     <td className="text-right px-1">{money(res.sections[sec].totals.reg_cents)}</td>
                                                     <td className="text-right px-1">{money(res.sections[sec].totals.ot_cents)}</td>
+                                                    <td className="text-right px-1 text-amber-800">{res.sections[sec].totals.xot_cents ? money(res.sections[sec].totals.xot_cents) : ''}</td>
                                                     <td className="text-right px-1">{money(res.sections[sec].totals.extra_cents)}</td>
                                                     <td className="text-right px-1">{money(res.sections[sec].totals.comp_cents)}</td><td></td>
                                                 </tr>

@@ -35,9 +35,14 @@ const MONEY = '#,##0.00';
 const HOURS = '0.00';
 const PCT = '0.0%';
 
+// CROSS OT (2026-08-26): appended as trailing columns 19-20 so every
+// hardcoded column index (1-18) stays untouched. Hours over 40/week
+// COMBINED across both stores, paid ≈1.5× (straight time + FLSA-exact
+// premium) — Toast's own OT column never includes them.
 const TIP_HEADERS = ['RATE', 'FIRST', 'LAST', 'REG HRS', 'OT HRS', 'TOTAL HRS', '% POOL',
     'TIP $', 'REG PAY', 'OT PAY', 'EXTRA PAY', 'HOL HRS', 'HOL PAY',
-    'VAC HRS', 'VAC PAY', 'TOTAL COMP', 'EFF RATE', 'DD'];
+    'VAC HRS', 'VAC PAY', 'TOTAL COMP', 'EFF RATE', 'DD',
+    'CROSS OT HRS', 'CROSS OT PAY'];
 
 function cell(ws, r, col) { return ws.getRow(r).getCell(col); }
 function setWidths(ws, widthsByCol) {
@@ -53,9 +58,9 @@ async function newWorkbook() {
 // ─────────────────────────────────── PayrollExport ───────────────────────────────────
 function writeExportSheet(ws, res) {
     const locName = LOCATION_NAMES[res.location];
-    ws.getCell('A1').value = `${locName} – PAYROLL EXPORT (hours exactly as on the Toast export)`;
+    ws.getCell('A1').value = `${locName} – PAYROLL EXPORT (REG/OT as on the Toast export; CROSS OT = combined-store overtime moved out of REGULAR)`;
     ws.getCell('A1').font = F_TITLE;
-    const hdrs = ['LOCATION', 'EMPLOYEE NAME', 'REGULAR HRS', 'OT HRS', 'JOBS (if merged)'];
+    const hdrs = ['LOCATION', 'EMPLOYEE NAME', 'REGULAR HRS', 'OT HRS', 'CROSS OT HRS', 'JOBS (if merged)'];
     hdrs.forEach((h, i) => {
         const c = cell(ws, 2, i + 1);
         c.value = h; c.font = F_HDR; c.fill = FILL_HDR; c.border = BORDER;
@@ -73,10 +78,11 @@ function writeExportSheet(ws, res) {
         cell(ws, r, 2).value = row.toast_name == null ? null : row.toast_name;
         const rc = cell(ws, r, 3); rc.value = row.reg_hours; rc.numFmt = HOURS;
         const oc = cell(ws, r, 4); oc.value = row.ot_hours; oc.numFmt = HOURS;
-        if (row.merge_detail) cell(ws, r, 5).value = row.merge_detail;
+        if (row.xot_hours) { const xc = cell(ws, r, 5); xc.value = row.xot_hours; xc.numFmt = HOURS; }
+        if (row.merge_detail) cell(ws, r, 6).value = row.merge_detail;
         r += 1;
     }
-    setWidths(ws, { 1: 20, 2: 28, 3: 13, 4: 10, 5: 50 });
+    setWidths(ws, { 1: 20, 2: 28, 3: 13, 4: 10, 5: 13, 6: 50 });
     ws.views = [{ state: 'frozen', ySplit: 2 }]; // freeze_panes 'A3'
 }
 
@@ -92,6 +98,8 @@ function tipRow(ws, r, row) {
         [row.vac_hours || null, HOURS], [row.vac_cents ? d(row.vac_cents) : null, MONEY],
         [d(row.comp_cents), MONEY], [row.eff_rate, MONEY],
         [row.direct_deposit ? 'DD' : null, null],
+        [row.xot_hours || null, HOURS],
+        [row.xot_cents ? d(row.xot_cents) : null, MONEY],
     ];
     vals.forEach(([val, fmt], i) => {
         const c = cell(ws, r, i + 1);
@@ -116,6 +124,11 @@ function tipRow(ws, r, row) {
         cell(ws, r, 16).note = row.extras.join('\n');
         if (row.extra_cents < 0) cell(ws, r, 11).font = F_RED;
     }
+    if (row.xot_cents) {
+        cell(ws, r, 20).note = 'Cross-store overtime: hours over 40/week COMBINED across both stores. '
+            + 'Paid straight time + the FLSA-exact premium (≈1.5×). These hours were moved out of '
+            + "REG HRS and are NOT in Toast's per-store OT column.";
+    }
 }
 
 function extraDetailRows(ws, r, row) {
@@ -136,6 +149,7 @@ function totalsRow(ws, r, label, tot) {
         [8, d(tot.tip_cents), MONEY], [9, d(tot.reg_cents), MONEY], [10, d(tot.ot_cents), MONEY],
         [11, d(tot.extra_cents), MONEY], [12, tot.hol_hours, HOURS], [13, d(tot.hol_cents), MONEY],
         [14, tot.vac_hours, HOURS], [15, d(tot.vac_cents), MONEY], [16, d(tot.comp_cents), MONEY],
+        [19, tot.xot_hours || 0, HOURS], [20, d(tot.xot_cents || 0), MONEY],
     ];
     for (const [ci, val, fmt] of cols) {
         const c = cell(ws, r, ci);
@@ -160,8 +174,10 @@ function writeTipSheet(ws, res) {
         ['BOH POOL $', d(tips.boh_pool_cents), MONEY],
     ];
     box.forEach(([label, val, fmt], i) => {
-        const lab = cell(ws, i + 1, 20); lab.value = label; lab.font = F_BOLD; // col T
-        const v = cell(ws, i + 1, 21); v.value = val; if (fmt) v.numFmt = fmt; v.fill = FILL_YEL; // col U
+        // cols V/W (22/23) — moved right 2026-08-26 so the CROSS OT columns
+        // (19-20) added to the table don't collide with this summary box.
+        const lab = cell(ws, i + 1, 22); lab.value = label; lab.font = F_BOLD; // col V
+        const v = cell(ws, i + 1, 23); v.value = val; if (fmt) v.numFmt = fmt; v.fill = FILL_YEL; // col W
     });
 
     let r = 4;
@@ -238,7 +254,9 @@ function writeTipSheet(ws, res) {
 
     setWidths(ws, {
         1: 9, 2: 14, 3: 16, 4: 9, 5: 8, 6: 10, 7: 8, 8: 10, 9: 10, 10: 9, 11: 10,
-        12: 8, 13: 9, 14: 8, 15: 9, 16: 12, 17: 9, 18: 5, 19: 2, 20: 12, 21: 14,
+        12: 8, 13: 9, 14: 8, 15: 9, 16: 12, 17: 9, 18: 5,
+        // 19-20: CROSS OT columns; 21: spacer; 22-23: tips summary box.
+        19: 12, 20: 12, 21: 2, 22: 12, 23: 14,
     });
     ws.views = [{ state: 'frozen', xSplit: 3, ySplit: 5 }]; // freeze_panes 'D6'
 }
