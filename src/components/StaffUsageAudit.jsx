@@ -51,6 +51,8 @@ import {
     Check, AlertTriangle, Clock, ChevronDown, MonitorSmartphone, Wifi, Globe,
     MessageSquare, Send, PhoneOff, Phone,
 } from 'lucide-react';
+import { db } from '../firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { composeSetupReminderSmsUrl, stampSetupReminderSent, sendSetupReminderSms } from '../data/notify';
 import { sendDirectMessage } from '../data/chatDm';
 import { IOS_APP_URL, ANDROID_APP_URL } from './InstallAppButton';
@@ -93,6 +95,22 @@ function fmtRelative(ms, isEs) {
 }
 
 export default function StaffUsageAudit({ staffList = [], language = 'en', currentManagerName = '', currentManagerId = null, onSetPhone = null, startExpanded = false }) {
+    // 2026-08-25 — own live data path. App's staffList shape-hash now
+    // excludes the lastSignIn* stamp fields (they were fanning a full
+    // heavy-tab re-render to every device on every sign-in), which means
+    // the PROP goes stale for exactly the fields this panel exists to
+    // show ("logged in today but says 5 days ago"). Owner-only tool, one
+    // doc — subscribe directly while mounted; fall back to the prop until
+    // the first snapshot lands.
+    const [liveStaffList, setLiveStaffList] = useState(null);
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, 'config', 'staff'), (snap) => {
+            const list = (snap.data() || {}).list;
+            if (Array.isArray(list)) setLiveStaffList(list);
+        }, (err) => console.warn('StaffUsageAudit roster snapshot failed:', err));
+        return unsub;
+    }, []);
+    const sourceStaffList = liveStaffList || staffList;
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     // 2026-07-29 — admin hub reorg: AdminPanel now opens each tool full-screen
@@ -221,7 +239,7 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
     // first (so actionable rows are visible without scrolling), then
     // by most-recent activity.
     const rows = useMemo(() => {
-        const active = (staffList || []).filter((s) => s && s.name && s.active !== false);
+        const active = (sourceStaffList || []).filter((s) => s && s.name && s.active !== false);
         return active.map((s) => {
             const tokens = Array.isArray(s.fcmTokens) ? s.fcmTokens : [];
             // Unique devices (some legacy entries pre-deviceId don't
@@ -279,7 +297,7 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
             if (a.ready !== b.ready) return a.ready ? 1 : -1;
             return (b.lastSeenMs || 0) - (a.lastSeenMs || 0);
         });
-    }, [staffList]);
+    }, [sourceStaffList]);
 
     const stats = useMemo(() => {
         const now = Date.now();

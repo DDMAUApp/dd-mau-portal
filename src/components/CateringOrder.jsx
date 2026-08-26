@@ -458,7 +458,7 @@ function CateringMenuItem({ item, language, onAdd, editData, onSaveEdit, onCance
                 </div>
             );
         }
-export default function CateringOrder({ language, staffName }) {
+export default function CateringOrder({ language, staffName, storeLocation }) {
             const [step, setStep] = useState(1);
             const [customer, setCustomer] = useState({
                 name: "", phone: "", email: "", date: "", time: "", guests: "", address: "",
@@ -1062,7 +1062,7 @@ export default function CateringOrder({ language, staffName }) {
                     </div>
 
                     {/* ── Orders Tab (daily takeout/delivery) ── */}
-                    {pageTab === "orders" && <ToastOrders language={language} staffName={staffName} />}
+                    {pageTab === "orders" && <ToastOrders language={language} staffName={staffName} storeLocation={storeLocation} />}
 
                     {/* ── Catering Invoices Tab ── */}
                     {pageTab === "invoices" && <ToastInvoices language={language} />}

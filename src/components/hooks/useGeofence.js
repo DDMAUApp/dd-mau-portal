@@ -57,7 +57,18 @@ export function nearestDDMauLocation(lat, lng) {
 //                'unknown', this triggers the native dialog. If permState
 //                is 'denied', this returns immediately with denied error
 //                and the UI shows the Settings hint.
-export default function useGeofence() {
+// 2026-08-25: `enabled` param — the watch used to run UNCONDITIONALLY for
+// every session: high-accuracy GPS on the locked (logged-out) screen all
+// day, on personal phones (battery/heat), and on public ?tv=/?pair= kiosk
+// pages that never use it. Callers now gate it (App passes
+// signed-in && !kiosk). While disabled: no watch, no getCurrentPosition,
+// and state is RESET — a stale frozen fix from before logout must not
+// satisfy the login auto-start latch (it fires on the FIRST truthy
+// nearestLocation and would pin the wrong store). The Permissions API
+// subscription stays unconditional — it never prompts and keeps permState
+// accurate for the Recipes gate at login. Default true preserves any other
+// caller's behavior.
+export default function useGeofence(enabled = true) {
     const [isAtDDMau, setIsAtDDMau] = useState(false);
     // Which store the device is at ('maryland' | 'webster' | null). Lets the
     // app auto-start a both-locations user at the location they're physically
@@ -67,6 +78,10 @@ export default function useGeofence() {
     const [error, setError] = useState(null);
     const [permState, setPermState] = useState('unknown');
     const watchIdRef = useRef(null);
+    // Guards the un-cancelable getCurrentPosition callback: a late fix
+    // arriving after disable must not repopulate state on the lock screen.
+    const enabledRef = useRef(enabled);
+    enabledRef.current = enabled;
 
     // Query the Permissions API on mount + subscribe to changes. Not every
     // browser supports it (iOS Safari only added geolocation support in
@@ -104,39 +119,50 @@ export default function useGeofence() {
         setError(null);
         // Also fire a one-shot getCurrentPosition so we get a fix faster
         // than waiting for watchPosition's first tick on cold start.
+        // Every callback checks enabledRef — getCurrentPosition can't be
+        // cancelled, and a late fix after disable must not touch state.
         const onFix = (pos) => {
+            if (!enabledRef.current) return;
             setIsAtDDMau(isWithinGeofence(pos.coords.latitude, pos.coords.longitude));
             setNearestLocation(nearestDDMauLocation(pos.coords.latitude, pos.coords.longitude));
             setChecking(false);
             setError(null);
         };
+        const onErr = (err) => {
+            if (!enabledRef.current) return;
+            setError(err.code === 1 ? "denied" : "unavailable");
+            setChecking(false);
+        };
         navigator.geolocation.getCurrentPosition(
-            onFix,
-            (err) => {
-                setError(err.code === 1 ? "denied" : "unavailable");
-                setChecking(false);
-            },
+            onFix, onErr,
             { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
         );
         watchIdRef.current = navigator.geolocation.watchPosition(
-            onFix,
-            (err) => {
-                setError(err.code === 1 ? "denied" : "unavailable");
-                setChecking(false);
-            },
+            onFix, onErr,
             { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
         );
     }, []);
 
     useEffect(() => {
-        start();
-        return () => {
+        const stopWatch = () => {
             if (watchIdRef.current != null) {
                 try { navigator.geolocation.clearWatch(watchIdRef.current); } catch {}
                 watchIdRef.current = null;
             }
         };
-    }, [start]);
+        if (!enabled) {
+            // Disabled (lock screen / kiosk): stop the watch AND reset
+            // state so nothing stale survives into the next login.
+            stopWatch();
+            setIsAtDDMau(false);
+            setNearestLocation(null);
+            setError(null);
+            setChecking(true);
+            return undefined;
+        }
+        start();
+        return stopWatch;
+    }, [start, enabled]);
 
     // Public retry — re-attempts the geolocation flow. If the browser
     // has remembered a denied permission, getCurrentPosition will return
@@ -144,6 +170,7 @@ export default function useGeofence() {
     // hint shown on the blocked screen. Either way, we re-run so the UI
     // updates state.
     const retry = useCallback(() => {
+        if (!enabledRef.current) return; // disabled (lock screen / kiosk)
         start();
     }, [start]);
 

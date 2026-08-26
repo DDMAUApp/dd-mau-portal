@@ -68,6 +68,26 @@ export default function EnableNotificationsHeaderButton({
     const [popoverOpen, setPopoverOpen] = useState(false);
     const popoverRef = useRef(null);
 
+    // 2026-08-25 — fcmTokens is excluded from App's staffList shape-hash
+    // (token writes must not re-render every heavy tab), so a successful
+    // registration never reaches the staffList prop this component reads:
+    // the pill stayed visible all session after a first-ever bind.
+    // messaging.js now fires 'ddmau:pushBound' on every confirmed persist;
+    // we hold that as a session override, reset when the user changes so it
+    // can't leak across a shared-device relock switch. The override is NOT
+    // persisted: after a reload the first roster snapshot always carries
+    // fresh fcmTokens (hash gate starts empty), and later token LOSS must
+    // still surface the pill.
+    const [boundOverride, setBoundOverride] = useState(false);
+    useEffect(() => { setBoundOverride(false); }, [staffName]);
+    useEffect(() => {
+        const onBound = (e) => {
+            if (e?.detail?.staffName && e.detail.staffName === staffName) setBoundOverride(true);
+        };
+        window.addEventListener('ddmau:pushBound', onBound);
+        return () => window.removeEventListener('ddmau:pushBound', onBound);
+    }, [staffName]);
+
     // Re-read permission on sign-in change + when the popover closes
     // (the user may have toggled the OS setting in iPhone Settings).
     useEffect(() => {
@@ -97,7 +117,7 @@ export default function EnableNotificationsHeaderButton({
     // Resolve the four-state status. `needsRefresh` is the new state
     // for the "permission granted, but FCM token is missing" gap.
     if (permission === 'unsupported') return null;
-    const hasToken = deviceHasToken(staffName, staffList);
+    const hasToken = boundOverride || deviceHasToken(staffName, staffList);
     const needsRefresh = permission === 'granted' && !hasToken;
     // Happy path — granted AND token registered. No UI.
     if (permission === 'granted' && hasToken) return null;

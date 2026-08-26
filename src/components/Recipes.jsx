@@ -539,7 +539,26 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
             const snap = await tx.get(recipesDocRef);
             const liveList = (snap.exists() && Array.isArray(snap.data()?.list)) ? snap.data().list : [];
             const next = transformer(liveList);
-            tx.set(recipesDocRef, { list: next, updatedAt: new Date().toISOString() });
+            // updatedAt must be MONOTONIC: firestore.rules requires the new
+            // stamp to compare > the live one (string compare on canonical
+            // ISO). Writing the raw device clock bricked every OTHER device
+            // once one device's clock ran fast — their saves failed with
+            // "insufficient permissions" until wall-clock caught up
+            // (2026-08-25 audit). Bump 1ms past the live stamp when needed.
+            // Computed INSIDE the callback so contention retries recompute.
+            const liveUpdatedAt = snap.exists() ? snap.data()?.updatedAt : null;
+            let stamp = new Date().toISOString();
+            if (typeof liveUpdatedAt === 'string' && !(stamp > liveUpdatedAt)) {
+                const parsed = Date.parse(liveUpdatedAt);
+                stamp = Number.isFinite(parsed)
+                    ? new Date(parsed + 1).toISOString()
+                    : stamp;
+                // Console-edited non-canonical stamps (e.g. no milliseconds)
+                // can compare greater than their own +1ms canonical form.
+                // Last resort: append a suffix that sorts above it.
+                if (!(stamp > liveUpdatedAt)) stamp = liveUpdatedAt + '.1';
+            }
+            tx.set(recipesDocRef, { list: next, updatedAt: stamp });
             return next;
         });
     // ID generation: Date.now() — collision-free at human edit cadence
@@ -1180,7 +1199,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                 <Suspense fallback={null}>
                     <PrintLabelModal
                         recipe={printingLabelFor}
-                        location={storeLocation}
+                        location={storeLocation === 'both' ? 'webster' : (storeLocation || 'webster')}
                         staffName={staffName}
                         language={language}
                         onClose={() => setPrintingLabelFor(null)}

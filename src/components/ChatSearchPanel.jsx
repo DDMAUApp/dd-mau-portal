@@ -67,9 +67,6 @@ export default function ChatSearchPanel({
         const targetIds = searchChatIdsKey ? searchChatIdsKey.split('\n') : [];
         if (targetIds.length === 0) return;
         let cancelled = false;
-        const cutoff = dateRange === '7d' ? Date.now() - 7 * 86400_000
-                     : dateRange === '30d' ? Date.now() - 30 * 86400_000
-                     : 0;
         setLoading(true);
         Promise.all(targetIds.map(async chatId => {
             try {
@@ -80,12 +77,10 @@ export default function ChatSearchPanel({
                 );
                 const snap = await getDocs(ref);
                 const list = [];
-                snap.forEach(d => {
-                    const data = { id: d.id, chatId, ...d.data() };
-                    const ms = data.createdAt?.toMillis ? data.createdAt.toMillis()
-                        : (data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0);
-                    if (!cutoff || ms >= cutoff) list.push(data);
-                });
+                // 2026-08-25: the date cutoff moved into the allResults memo —
+                // the fetch is date-independent (always newest 200/chat), so
+                // toggling 7d↔30d↔all must NOT refetch up to 5,000 docs.
+                snap.forEach(d => list.push({ id: d.id, chatId, ...d.data() }));
                 return [chatId, list];
             } catch (e) {
                 console.warn('search read failed for chat', chatId, e);
@@ -99,7 +94,7 @@ export default function ChatSearchPanel({
             setLoading(false);
         });
         return () => { cancelled = true; };
-    }, [searchChatIdsKey, dateRange]);
+    }, [searchChatIdsKey]);
 
     // Pre-expand the query into [{term, expansions:Set}] once per
     // query-input change. Each token must match SOME synonym in the
@@ -109,10 +104,19 @@ export default function ChatSearchPanel({
 
     const allResults = useMemo(() => {
         const out = [];
+        // Date cutoff applied here (client-side) — see the fetch effect note.
+        const cutoff = dateRange === '7d' ? Date.now() - 7 * 86400_000
+                     : dateRange === '30d' ? Date.now() - 30 * 86400_000
+                     : 0;
         for (const [chatId, list] of Object.entries(messagesByChat)) {
             const chat = chats.find(c => c.id === chatId);
             if (!chat) continue;
             for (const m of list) {
+                if (cutoff) {
+                    const ms = m.createdAt?.toMillis ? m.createdAt.toMillis()
+                        : (m.createdAt?.seconds ? m.createdAt.seconds * 1000 : 0);
+                    if (ms < cutoff) continue;
+                }
                 // Type filter
                 if (typeFilter !== 'any') {
                     if (typeFilter === 'announcement' && m.type !== 'announcement') continue;
@@ -143,7 +147,7 @@ export default function ChatSearchPanel({
             return bms - ams;
         });
         return out.slice(0, 200);
-    }, [messagesByChat, chats, expandedTokens, fromUser, hasMedia, typeFilter]);
+    }, [messagesByChat, chats, expandedTokens, fromUser, hasMedia, typeFilter, dateRange]);
 
     // Build the from-user dropdown from messages we've seen
     const senderOptions = useMemo(() => {

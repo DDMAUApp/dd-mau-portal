@@ -544,6 +544,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [editingShift, setEditingShift] = useState(null);
     const [movingShift, setMovingShift] = useState(null);
     const [takeTarget, setTakeTarget] = useState(null);
+    // 2026-08-25 audit — busy wiring for the offer/take composers. The
+    // runTransaction round-trip has no optimistic compensation, so without
+    // this the modal buttons stayed live mid-commit (double-tap → duplicate
+    // transferHistory entries / spurious "no longer open" toasts). Ref
+    // guards re-entry synchronously (setState is async); state drives the
+    // modals' disabled buttons + "Posting…/Taking…" labels.
+    const offerBusyRef = useRef(false);
+    const [offerBusy, setOfferBusy] = useState(false);
+    const takeBusyRef = useRef(false);
+    const [takeBusy, setTakeBusy] = useState(false);
     // Publish preview modal — opened by the "Publish drafts" button. Holds
     // the precomputed list of drafts + audit warnings so the manager can
     // SEE every shift before it goes live (vs the old native confirm()
@@ -1021,7 +1031,6 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     useEffect(() => {
         seenNotifIdsRef.current = new Set();
     }, [staffName]);
-    const seenNotifIds = seenNotifIdsRef.current;
     // Andrew 2026-05-30 — foreground browser-Notification toast now
     // watches the context-supplied notifications array directly. Same
     // semantics as before (fire once per fresh unread item, dedupe by
@@ -1032,6 +1041,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!staffName) return;
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
         const cutoff = Date.now() - 30 * 1000;
+        // Deref at USE time (2026-08-25 audit): a render-time
+        // `const seenNotifIds = seenNotifIdsRef.current` alias captured the
+        // Set from BEFORE the reset effect above swapped .current — marks
+        // written during that pass landed in the discarded Set, so every
+        // notification could re-fire once after a user switch. Reading
+        // .current here always hits the live Set.
+        const seenNotifIds = seenNotifIdsRef.current;
         for (const n of (ctxNotifications || [])) {
             if (n.read) continue;
             if (seenNotifIds.has(n.id)) continue;
@@ -2513,6 +2529,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         setOfferTarget(shift);
     };
     const commitOfferShift = async (shift, { note, urgent }) => {
+        if (offerBusyRef.current) return; // re-entry guard (double-tap)
+        offerBusyRef.current = true;
+        setOfferBusy(true);
         try {
             // Transaction (Phase F): re-offering resets the whole claim
             // cycle (pendingClaimBy/approvedBy cleared below). If someone
@@ -2606,6 +2625,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         } catch (e) {
             console.error('Offer shift failed:', e);
             toast(tx('Could not offer shift: ', 'No se pudo ofrecer: ') + e.message, { kind: 'error' });
+        } finally {
+            offerBusyRef.current = false;
+            setOfferBusy(false);
         }
     };
 
@@ -2658,6 +2680,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     offeredAt: serverTimestamp(),
                     pendingClaimBy: null,
                     claimedAt: null,
+                    // Start of a NEW offer cycle — clear the previous cycle's
+                    // double-approval guard (see commitOfferShift), or approving
+                    // this cover's claim fails forever with "Already approved by X".
+                    approvedBy: null,
                     updatedAt: serverTimestamp(),
                 });
             });
@@ -2831,7 +2857,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (ids.length === 0) return;
         const candidates = ids
             .map(id => shifts.find(s => s.id === id))
-            .filter(s => s && !s.offerStatus && (canEdit || s.staffName === staffName));
+            .filter(s => s && !s.offerStatus && !s.pendingClaimBy && (canEdit || s.staffName === staffName));
         if (candidates.length === 0) {
             toast(tx('No eligible shifts to offer (already offered, or not yours).',
                      'No hay turnos elegibles (ya ofrecidos o no son tuyos).'));
@@ -2856,6 +2882,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     offerStatus: 'open',
                     offeredBy: staffName,
                     offeredAt: serverTimestamp(),
+                    // New offer cycle — clear stale claim/approval leftovers so
+                    // a later approval can't die on "Already approved by X"
+                    // (see commitOfferShift). Null, not deleteField — codebase
+                    // convention for these fields.
+                    approvedBy: null,
+                    pendingClaimBy: null,
+                    claimedAt: null,
                     updatedAt: serverTimestamp(),
                 });
             }
@@ -2929,6 +2962,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         setTakeTarget(shift);
     };
     const commitTakeShift = async (shift, { partial } = {}) => {
+        if (takeBusyRef.current) return; // re-entry guard (double-tap)
+        takeBusyRef.current = true;
+        setTakeBusy(true);
         try {
             await runTransaction(db, async (txn) => {
                 const ref = doc(db, 'shifts', shift.id);
@@ -2989,6 +3025,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         } catch (e) {
             console.error('Take shift failed:', e);
             toast((tx('Could not take shift: ', 'No se pudo tomar: ')) + (e.message || e), { kind: 'error' });
+        } finally {
+            takeBusyRef.current = false;
+            setTakeBusy(false);
         }
     };
 
@@ -3493,6 +3532,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     `⚠️ CONFLICTO DE DISPONIBILIDAD\n\n${staffMember.name} solo está disponible ${formatTime12h(preConflict.from)}–${formatTime12h(preConflict.to)} este día.\nEl turno es ${formatTime12h(need.startTime)}–${formatTime12h(need.endTime)}.\n\n¿Programar de todos modos?`
                 );
             if (!confirm(msg)) return; // bail before any write
+        }
+        // 2026-08-25 audit — cross-store double-book guard. The Available-
+        // staff chooser hides hard-overlap rows, but grid-cell fill paths
+        // reach here WITHOUT that screen, and nothing else on this path
+        // checks time overlap at all. Scan the RAW both-store `shifts`
+        // state (no location filter — a person can't be in two stores at
+        // once) and confirm. Same bulletproof pre-create confirm() pattern
+        // as the availability check above: bail BEFORE any write on Cancel.
+        const overlapSh = (shifts || []).find(sh =>
+            sh && !sh.deleted &&
+            sh.staffName === staffMember.name &&
+            sh.date === need.date &&
+            sh.startTime && sh.endTime && need.startTime && need.endTime &&
+            !(sh.endTime <= need.startTime || sh.startTime >= need.endTime)
+        );
+        if (overlapSh) {
+            const locTag = LOCATION_ABBR[overlapSh.location] || (overlapSh.location ? String(overlapSh.location).slice(0, 2).toUpperCase() : '');
+            const okOverlap = confirm(tx(
+                `⚠️ ALREADY SCHEDULED\n\n${staffMember.name} already works ${formatTime12h(overlapSh.startTime)}–${formatTime12h(overlapSh.endTime)}${locTag ? ` (${locTag})` : ''} on ${need.date}.\nThis slot is ${formatTime12h(need.startTime)}–${formatTime12h(need.endTime)} — the times overlap.\n\nSchedule anyway?`,
+                `⚠️ YA PROGRAMADO\n\n${staffMember.name} ya trabaja ${formatTime12h(overlapSh.startTime)}–${formatTime12h(overlapSh.endTime)}${locTag ? ` (${locTag})` : ''} el ${need.date}.\nEste espacio es ${formatTime12h(need.startTime)}–${formatTime12h(need.endTime)} — los horarios se cruzan.\n\n¿Programar de todos modos?`
+            ));
+            if (!okOverlap) return; // bail before any write
         }
         try {
             // ONE atomic batch (Phase F, 2026-08-09): this used to be
@@ -5940,7 +6001,11 @@ ${dayBlocks}
         if (shift.staffName === newStaffName && shift.date === newDate) return; // no-op
         // Hard-reject guards (closed date / PTO) stay as toast — those
         // are not "are you sure?" questions, they're rejections.
-        if (dateClosed(newDate)) {
+        // 2026-08-25 (QA S2 parity with handleDropShift): pass the shift's
+        // OWN location so a single-store closure is enforced in "both" view
+        // — the no-arg form only blocked when BOTH stores were closed, so
+        // this confirm approved moves the inner handler then refused.
+        if (dateClosed(newDate, shift.location)) {
             toast(tx('Cannot drop on a closed date.', 'No puedes soltar en una fecha cerrada.'));
             return;
         }
@@ -7552,6 +7617,7 @@ ${dayBlocks}
                     locationLabel={LOCATION_LABELS[offerTarget.location] || offerTarget.location}
                     onClose={() => setOfferTarget(null)}
                     onSubmit={(payload) => commitOfferShift(offerTarget, payload)}
+                    busy={offerBusy}
                     language={language}
                 />
             )}
@@ -7596,6 +7662,7 @@ ${dayBlocks}
                     conflicts={computeConflictsFor(takeTarget)}
                     onClose={() => setTakeTarget(null)}
                     onSubmit={(payload) => commitTakeShift(takeTarget, payload)}
+                    busy={takeBusy}
                     language={language}
                 />
             )}
@@ -9469,10 +9536,20 @@ function shiftFieldsEqual(a, b) {
     if (a.published !== b.published) return false;
     if ((a.offerStatus || '') !== (b.offerStatus || '')) return false;
     if ((a.offeredBy || '') !== (b.offeredBy || '')) return false;
-    if ((a.coverStatus || '') !== (b.coverStatus || '')) return false;
-    if ((a.coverApprovedBy || '') !== (b.coverApprovedBy || '')) return false;
+    // 2026-08-25 audit fix: the old list compared fields that don't exist
+    // on shift docs (coverStatus / coverApprovedBy / doubleDay — always
+    // undefined === undefined, dead checks) while MISSING fields the cube
+    // actually renders: coverNeeded (red 🆘 cover ring + ribbon),
+    // pendingClaimBy ("⏳ → name" pill + ribbon tooltip), isDouble
+    // (⏱ badge + hours math), isShiftLead (🛡 badge). offerNote isn't
+    // painted on the cube itself but travels with the offer cycle —
+    // compared so a note-only change can never strand a stale cube.
+    if (!!a.coverNeeded !== !!b.coverNeeded) return false;
+    if ((a.pendingClaimBy || '') !== (b.pendingClaimBy || '')) return false;
+    if ((a.offerNote || '') !== (b.offerNote || '')) return false;
+    if (!!a.isDouble !== !!b.isDouble) return false;
+    if (!!a.isShiftLead !== !!b.isShiftLead) return false;
     if ((a.notes || '') !== (b.notes || '')) return false;
-    if ((a.doubleDay || false) !== (b.doubleDay || false)) return false;
     if ((a.role || '') !== (b.role || '')) return false;
     return true;
 }
@@ -12323,16 +12400,21 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
         if (weekStartLocal) {
             for (let i = 0; i < 7; i++) {
                 const d = toDateStr(addDays(weekStartLocal, i));
-                const myShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === d
-                    && (storeLocation === 'both' || sh.location === storeLocation));
+                // Cross-store ON PURPOSE (2026-08-25 audit): OT is per
+                // employee per FLSA week across BOTH stores (staffSummary
+                // and AddShiftModal already count this way) — filtering to
+                // the viewed store hid the other store's hours and made an
+                // OT pick look green.
+                const myShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === d);
                 // Per-day paid hours (auto-double deduction baked in).
                 weeklyHours += dayPaidHours(myShifts);
             }
         }
         // Same-day shifts (raw list) so we can distinguish "real conflict"
         // (overlapping time) from "double-shift opportunity" (non-overlapping).
-        const sameDayShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === dateStr
-            && (storeLocation === 'both' || sh.location === storeLocation));
+        // Cross-store ON PURPOSE — a person can't be in two stores at
+        // once, so overlap detection must see the other store's shifts.
+        const sameDayShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === dateStr);
         // Time overlap check — only meaningful if the slot has a time range.
         // No range (free day-header click) → we can't know, so don't treat
         // any existing shift as a hard conflict. Manager wants doubles to
@@ -12356,7 +12438,18 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
         let status = 'available';
         let reason = '';
         if (onPto) { status = 'pto'; reason = tx('on time-off', 'tiempo libre'); }
-        else if (hasOverlap) { status = 'scheduled'; reason = tx('time overlaps existing shift', 'choca con turno existente'); }
+        else if (hasOverlap) {
+            status = 'scheduled';
+            // Name the conflicting shift — with a store tag when it lives at
+            // the OTHER store (the filters above are cross-store on purpose)
+            // so the manager sees WHY a name is blocked from this view.
+            const conflictSh = sameDayShifts.find(sh => !(sh.endTime <= slotStart || sh.startTime >= slotEnd));
+            const conflictTag = conflictSh && conflictSh.location && storeLocation !== 'both' && conflictSh.location !== storeLocation
+                ? ` @${LOCATION_ABBR[conflictSh.location] || String(conflictSh.location).slice(0, 2).toUpperCase()}`
+                : '';
+            reason = tx('time overlaps existing shift', 'choca con turno existente')
+                + (conflictSh ? ` (${conflictSh.startTime}–${conflictSh.endTime}${conflictTag})` : '');
+        }
         else if (!availableThisDay) { status = 'unavailable'; reason = tx('marked off this day', 'marcado como no disponible'); }
 
         return { ...s, weeklyHours, status, reason, dayAvail, sameDayShifts, isDoubleDay };
@@ -12450,7 +12543,13 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                                                     : tx('Avail all day', 'Todo el día')}
                                                 {r.targetHours ? ` · ${tx('target', 'objetivo')} ${r.targetHours}h` : ''}
                                                 {r.isDoubleDay && r.sameDayShifts.length > 0 && (
-                                                    <> · {tx('has', 'tiene')} {r.sameDayShifts.map(sh => `${sh.startTime}–${sh.endTime}`).join(', ')}</>
+                                                    <> · {tx('has', 'tiene')} {r.sameDayShifts.map(sh => {
+                                                        // Store tag (WG/MH) on other-store shifts so
+                                                        // managers see why a double spans stores.
+                                                        const otherStore = sh.location && storeLocation !== 'both' && sh.location !== storeLocation;
+                                                        const stag = otherStore ? ` @${LOCATION_ABBR[sh.location] || String(sh.location).slice(0, 2).toUpperCase()}` : '';
+                                                        return `${sh.startTime}–${sh.endTime}${stag}`;
+                                                    }).join(', ')}</>
                                                 )}
                                             </div>
                                         </div>

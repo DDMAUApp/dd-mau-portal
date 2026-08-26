@@ -2351,21 +2351,30 @@ export async function printRecipeIngredients({
             });
         }
 
-        const cols = paperColumns(printer.paperWidthMm);
-        const body = renderRecipeIngredientsBody({ title, multLabel, lines: clean, cols, byName });
-        const xml = wrapSoapEnvelope(Array.from({ length: c }, () => body).join(''));
-        const res = await sendToPrinter(printer, xml, {
-            kind: 'label', source: 'recipe_ingredients',
-            title: String(title || 'Recipe').slice(0, 80), byName, copies: c,
+        // Epson path — run through the same per-device serialization chain
+        // every other Epson print uses (printFreeText / printPrepLabel), so
+        // a fast second tap can't interleave envelopes and pendingPrintCount()
+        // sees this job too (2026-08 audit P3: this path bypassed both). The
+        // Brother branch above returns printFreeText, which serializes ITSELF
+        // — wrapping this whole function instead would nest serializePrint
+        // inside the running chain and deadlock it.
+        return await serializePrint(async () => {
+            const cols = paperColumns(printer.paperWidthMm);
+            const body = renderRecipeIngredientsBody({ title, multLabel, lines: clean, cols, byName });
+            const xml = wrapSoapEnvelope(Array.from({ length: c }, () => body).join(''));
+            const res = await sendToPrinter(printer, xml, {
+                kind: 'label', source: 'recipe_ingredients',
+                title: String(title || 'Recipe').slice(0, 80), byName, copies: c,
+            });
+            recordAudit({
+                action: 'print.recipe_ingredients',
+                actorName: byName || 'unknown',
+                targetType: 'recipe',
+                targetId: String(title || 'unknown').slice(0, 80),
+                details: { location, slot, multiplier, lineCount: clean.length, copies: c, printerOk: res.ok },
+            });
+            return res.ok ? { ok: true } : { ok: false, error: 'printer_rejected' };
         });
-        recordAudit({
-            action: 'print.recipe_ingredients',
-            actorName: byName || 'unknown',
-            targetType: 'recipe',
-            targetId: String(title || 'unknown').slice(0, 80),
-            details: { location, slot, multiplier, lineCount: clean.length, copies: c, printerOk: res.ok },
-        });
-        return res.ok ? { ok: true } : { ok: false, error: 'printer_rejected' };
     } catch (e) {
         console.warn('printRecipeIngredients failed:', e);
         return { ok: false, error: e?.message || 'print_failed' };
@@ -2473,6 +2482,7 @@ async function _printFreeTextImpl({
             if (stampSignature && signature) {
                 lines.push({ text: `— ${signature}`, scale: 0.55, bold: false });
             }
+            const startedAt = Date.now();
             const r = await printBrotherDirect({
                 ip: printer.brotherIp,
                 lines,
@@ -2483,6 +2493,15 @@ async function _printFreeTextImpl({
             });
             res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error };
             transport = 'brother_ipp_direct';
+            logBrotherDirectAttempt({
+                printer,
+                meta: {
+                    kind: 'free_text', source: 'free_text',
+                    title: trimmed.slice(0, 80),
+                    byName, copies: c, location, slot,
+                },
+                res, durationMs: Date.now() - startedAt,
+            });
         } else if (type === PRINTER_TYPES.BROTHER_QL) {
             // 1. Try the Pi print bridge first. Free-text goes through
             //    its own bridge endpoint (POST /print/free-text) so the
@@ -2543,7 +2562,13 @@ async function _printFreeTextImpl({
         // Preserve a transport-timeout code so PrintCenter shows the friendly
         // "printer did not respond — powered on + same Wi-Fi?" guidance rather
         // than collapsing every failure to a generic "printer rejected".
-        if (!res.ok) return { ok: false, error: res.error === 'printer timeout' ? 'printer timeout' : 'printer_rejected' };
+        // 'cancelled' (share-sheet dismissed / Cancel between Brother copies)
+        // passes through too — the callers' silent-cancel handling keys on it,
+        // and collapsing it used to show a false "check paper/cover" error.
+        if (!res.ok) {
+            if (res.error === 'cancelled') return { ok: false, error: 'cancelled' };
+            return { ok: false, error: res.error === 'printer timeout' ? 'printer timeout' : 'printer_rejected' };
+        }
         return { ok: true };
     } catch (e) {
         console.warn('printFreeText failed:', e);
@@ -2560,6 +2585,13 @@ async function _printFreeTextImpl({
 // from a plain web browser it fails on HTTPS→HTTP mixed content
 // (the TM-L100 has no CORS setting — that was never the blocker).
 // Failure = network/fetch error, surfaced to the caller for a toast.
+//
+// Per-IP preflight-failure cache (2026-08 audit P2 perf): when the cold-wake
+// probe fails, remember it so the next 10s of jobs to the same IP fail fast
+// instead of each paying its own ~11.2s failed preflight through the
+// serialized print chain. Cleared by any successful probe or print.
+const PROBE_FAIL_TTL_MS = 10_000;
+const _probeFailedAt = new Map();   // 'ip:port' → Date.now() of last failed preflight
 export async function sendToPrinter(printer, eposXml, meta = {}) {
     // Capture the start time so the print job log records latency.
     // Useful when diagnosing "is the printer slow today?" — Pi bridges
@@ -2602,6 +2634,7 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     const copyCount = Math.max(1, Math.floor(Number(meta?.copies) || 1));
     const deviceTimeoutMs = Math.min(DEFAULT_TIMEOUT_MS + 3_000 * (copyCount - 1), 60_000);
     const url = `http://${printer.ip}:${port}/cgi-bin/epos/service.cgi?devid=${encodeURIComponent(devId)}&timeout=${deviceTimeoutMs}`;
+    const reachKey = `${printer.ip}:${port}`;
 
     // Transport split (2026-06-06):
     //   • Native (iOS/Android) → CapacitorHttp.post — the request goes through
@@ -2643,6 +2676,23 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
             // print (jobs require a POST body). One retry after 1.2s covers
             // cold-wake; printer truly off → fails here in ~11s without
             // ever risking a duplicate job.
+            // Probe-failure fast path (2026-08 audit P2 perf): a failed
+            // preflight costs ~11.2s (5s probe + 1.2s sleep + 5s retry),
+            // and the serialized print chain made EVERY queued job to an
+            // offline printer pay it back-to-back. If a preflight to this
+            // IP failed within the last 10s, fail this job fast with the
+            // same error — no probe at all. A later successful probe (or
+            // print — every job POST is preceded by a probe) clears the
+            // entry. Jobs are still sent at most once; nothing is retried.
+            if (Date.now() - (_probeFailedAt.get(reachKey) || 0) < PROBE_FAIL_TTL_MS) {
+                _epsonWarmAt.set(reachKey, Date.now());
+                _epsonReachable.set(reachKey, false);
+                if (printer.id && printer.slot) {
+                    _setWarm(`${printer.id}_${printer.slot}`, 'offline');
+                }
+                finalize({ ok: false, error: 'timeout' });
+                throw new Error('printer timeout');
+            }
             let probeOk = false;
             for (let attempt = 0; attempt < 2; attempt++) {
                 try {
@@ -2657,13 +2707,14 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
                 // eslint-disable-next-line no-await-in-loop
                 if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
             }
+            if (probeOk) _probeFailedAt.delete(reachKey);
+            else _probeFailedAt.set(reachKey, Date.now());
             // Either way, tell the warm-state machinery what the probe just
             // learned (2026-07-26 audit): a failed probe used to leave the
             // status strip GREEN (warm state was only ever written by the
             // keep-alive), so an asleep printer showed "ready", the ~11s
             // silent failure repeated on every re-tap, and the offline
             // confirm guard never engaged.
-            const reachKey = `${printer.ip}:${port}`;
             _epsonWarmAt.set(reachKey, Date.now());
             _epsonReachable.set(reachKey, probeOk);
             if (printer.id && printer.slot) {
@@ -2730,6 +2781,7 @@ export async function sendToPrinter(printer, eposXml, meta = {}) {
     const successMatch = /success\s*=\s*"(true|false|1|0)"/i.exec(body);
     const okToken = successMatch ? successMatch[1].toLowerCase() : '';
     const ok = okToken === 'true' || okToken === '1';
+    if (ok) _probeFailedAt.delete(reachKey);   // a good print proves reachability
     finalize({
         ok,
         status: httpStatus,
@@ -2785,6 +2837,32 @@ async function logPrintAttempt({ printer, meta, outcome, durationMs }) {
     } catch (e) {
         console.warn('logPrintAttempt failed:', e);
     }
+}
+
+// 2026-08 audit P2 — Brother direct-IPP prints were invisible to the
+// /print_jobs feed (logPrintAttempt only ran inside sendToPrinter, the
+// Epson transport). Log the brother_ipp_direct transport with the same doc
+// shape, ONCE per print call (not per copy). The PDF/share-sheet path stays
+// unlogged on purpose — it's user-mediated, not a transport outcome.
+function logBrotherDirectAttempt({ printer, meta, res, durationMs }) {
+    try {
+        logPrintAttempt({
+            // Shape logPrintAttempt expects. The wire IP for this transport
+            // is the Brother's, and the type tag says WHICH transport
+            // carried the job (the slot's own type is usually 'epson').
+            printer: {
+                ...printer,
+                ip: printer?.brotherIp || printer?.ip || null,
+                type: 'brother_ipp_direct',
+            },
+            meta,
+            outcome: {
+                ok: res?.ok === true,
+                error: res?.ok === true ? null : (res?.error || 'print_failed'),
+            },
+            durationMs,
+        });
+    } catch { /* logging is best-effort */ }
 }
 
 // Live subscription for the Label Printing Center. Newest first,
@@ -2925,6 +3003,7 @@ async function _printPrepLabelImpl({
         // Epson + legacy-Brother branches below are untouched.
         if (useBrotherDirect) {
             const bf = payloadToBridgeFormat(payload, { copies: c });
+            const startedAt = Date.now();
             const r = await printBrotherDirect({
                 ip: printer.brotherIp,
                 lines: bf.lines,
@@ -2939,6 +3018,16 @@ async function _printPrepLabelImpl({
             });
             res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error };
             transport = 'brother_ipp_direct';
+            logBrotherDirectAttempt({
+                printer,
+                meta: {
+                    kind: source === 'datestickers' ? 'date' : 'label',
+                    source,
+                    title: String(recipe?.titleEn || 'Label').slice(0, 80),
+                    byName, copies: c, location, slot,
+                },
+                res, durationMs: Date.now() - startedAt,
+            });
         } else if (type === PRINTER_TYPES.BROTHER_QL) {
             // 1. Try the Pi print bridge first (Andrew 2026-05-22).
             //    Fully automatic, prints to Brother in ~2s, correct
@@ -3003,6 +3092,12 @@ async function _printPrepLabelImpl({
             },
         });
         if (!res.ok) {
+            // Silent cancel (Cancel hit between Brother copies, or the
+            // share-sheet dismissed) must reach the modal AS 'cancelled' —
+            // PrintLabelModal handles that code with no toast at all;
+            // collapsing it below used to show a false "check paper/cover"
+            // error for a print the user deliberately stopped.
+            if (res.error === 'cancelled') return { ok: false, error: 'cancelled' };
             // Keep a transport-timeout distinct from a genuine printer reject so
             // the modal shows "printer did not respond — powered on + Wi-Fi?"
             // (asleep / off / drifted IP) instead of "check paper/cover".

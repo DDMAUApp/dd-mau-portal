@@ -20,7 +20,7 @@ import { db } from '../firebase';
 // 2026-07-13 audit: setDoc is CALLED below (chats_purged tombstone, line
 // ~328) but was missing from this import — the purge flow threw
 // "setDoc is not defined" at runtime. Same class as the 07-11 addDoc bug.
-import { doc, setDoc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, query, limit } from 'firebase/firestore';
 import { canEditChat, SEEN_VISIBILITY_OPTIONS, getSeenByVisibility } from '../data/chat';
 import { canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';
@@ -290,35 +290,30 @@ export default function ChatSettingsModal({
             // 1. Purge messages in batches of 400 (Firestore batch cap is 500;
             //    leave room for the parent delete + acks/pins/typing/reads).
             //    We loop because a single batch can't hold an arbitrary count.
-            const messagesRef = collection(db, 'chats', chat.id, 'messages');
-            // We re-fetch each iteration because batched deletes don't shrink
-            // the unread snapshot we already have in memory.
-            // eslint-disable-next-line no-constant-condition
-            while (true) {
-                const snap = await getDocs(messagesRef);
-                if (snap.empty) break;
-                const batch = writeBatch(db);
-                let count = 0;
-                snap.forEach(d => {
-                    if (count >= 400) return;
-                    batch.delete(d.ref);
-                    count++;
-                });
-                await batch.commit();
-                if (snap.size <= 400) break;
-            }
-            // 2. Purge subcollections (acks, pins, typing markers). Best-effort.
-            for (const sub of ['acks', 'pins', 'typing']) {
-                try {
-                    const ref = collection(db, 'chats', chat.id, sub);
-                    const snap = await getDocs(ref);
-                    if (!snap.empty) {
-                        const batch = writeBatch(db);
-                        snap.forEach(d => batch.delete(d.ref));
-                        await batch.commit();
-                    }
-                } catch (e) { /* sub may not exist — ignore */ }
-            }
+            // 2026-08-25: fetch only what each batch will delete. The old
+            // loop re-downloaded the ENTIRE shrinking collection every
+            // iteration (a 4,000-message chat cost ~20k reads), and the
+            // acks purge used ONE batch for the whole subcollection —
+            // past 500 docs commit() threw and the catch silently
+            // orphaned the rest. Both now page with limit(400).
+            const purgeCollection = async (ref) => {
+                // eslint-disable-next-line no-constant-condition
+                while (true) {
+                    const snap = await getDocs(query(ref, limit(400)));
+                    if (snap.empty) break;
+                    const batch = writeBatch(db);
+                    snap.forEach(d => batch.delete(d.ref));
+                    await batch.commit();
+                    if (snap.size < 400) break;
+                }
+            };
+            await purgeCollection(collection(db, 'chats', chat.id, 'messages'));
+            // 2. Purge the acks subcollection. Best-effort. (The old
+            //    'pins'/'typing' entries were dead code — pins are message
+            //    fields and typing is a map on the chat doc.)
+            try {
+                await purgeCollection(collection(db, 'chats', chat.id, 'acks'));
+            } catch (e) { /* sub may not exist — ignore */ }
             // 3. Delete the chat doc itself.
             await deleteDoc(doc(db, 'chats', chat.id));
             // 4. Tombstone — without this the AppDataContext / ChatCenter

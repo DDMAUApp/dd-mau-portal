@@ -160,7 +160,14 @@ await deny('training_assignments: create closed', () => addDoc(collection(db, 't
 await allow('training_assignments: stamp opened', () => updateDoc(doc(db, 'training_assignments', 'ta1'), new FieldPath('opened', 'alice'), '2026-08-19T00:00:00Z'));
 await allow('training_assignments: close', () => updateDoc(doc(db, 'training_assignments', 'ta1'), { status: 'closed', closedAt: serverTimestamp(), closedBy: 'Alice' }));
 await deny('training_assignments: move dueAt', () => updateDoc(doc(db, 'training_assignments', 'ta1'), { dueAt: new Date(2030, 0, 1) }));
-await deny('training_assignments: edit recipients', () => updateDoc(doc(db, 'training_assignments', 'ta1'), { recipients: [] }));
+await deny('training_assignments: shrink recipients', () => updateDoc(doc(db, 'training_assignments', 'ta1'), { recipients: [] }));
+// 2026-08-25 — same-size recipients rewrite is ALLOWED (staff-rename fan-out
+// rewrites recipients[].name + moves the name-keyed map entries); size
+// changes stay blocked (a staffer must not add/drop people).
+await allow('training_assignments: rename rewrite (same size + map move)', () => updateDoc(doc(db, 'training_assignments', 'ta1'),
+    'recipients', [{ name: 'Alicia' }],
+    new FieldPath('sent', 'alicia'), '2026-08-19T00:00:00Z'));
+await deny('training_assignments: grow recipients', () => updateDoc(doc(db, 'training_assignments', 'ta1'), { recipients: [{ name: 'Alicia' }, { name: 'Bob' }] }));
 await deny('training_assignments: delete', () => deleteDoc(doc(db, 'training_assignments', 'ta1')));
 await deny('notifications: client mints training_reminder', () => addDoc(collection(db, 'notifications'), { forStaff: 'Alice', type: 'training_reminder', forceDeliver: true }));
 

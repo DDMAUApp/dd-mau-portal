@@ -34,16 +34,24 @@ export default function ExpiringPanel({ location = 'webster', staffName, languag
 
     const todayS = dayStr(new Date());
     const tomorrowS = dayStr(new Date(Date.now() + 86400000));
+    // 30-day lower bound (2026-08-25 audit): with no floor, a heavy print
+    // week pushed rows expired days ago out of the newest-N window and the
+    // EXPIRED section silently under-reported. Both range ends are on the
+    // same field, so the existing (location ASC, useByDay DESC) composite
+    // index still serves — no new index needed.
+    const windowStartS = dayStr(new Date(Date.now() - 30 * 86400000));
 
     useEffect(() => {
-        // Everything printed with a use-by up to tomorrow, newest first.
+        // Everything printed with a use-by from 30 days back through
+        // tomorrow, newest first.
         // Composite index: sticker_prints (location ASC, useByDay DESC).
         const q1 = query(
             collection(db, 'sticker_prints'),
             where('location', '==', loc),
+            where('useByDay', '>=', windowStartS),
             where('useByDay', '<=', tomorrowS),
             orderBy('useByDay', 'desc'),
-            limit(200),
+            limit(400),
         );
         const un1 = onSnapshot(q1, (snap) => {
             const out = [];
@@ -73,7 +81,7 @@ export default function ExpiringPanel({ location = 'webster', staffName, languag
             setWaste(out);
         }, () => setWaste([]));
         return () => { un1(); un2(); };
-    }, [loc, tomorrowS]);
+    }, [loc, windowStartS, tomorrowS]);
 
     const groups = useMemo(() => {
         const g = { expired: [], today: [], tomorrow: [] };
@@ -187,6 +195,12 @@ export default function ExpiringPanel({ location = 'webster', staffName, languag
                                 <Section title={tx('Dies today', 'Caduca hoy')} tone="text-amber-700" items={groups.today} />
                                 <Section title={tx('Tomorrow', 'Mañana')} tone="text-dd-text-2" items={groups.tomorrow} />
                             </>
+                        )}
+                        {(rows || []).length >= 400 && (
+                            <p className="text-[11px] font-bold text-amber-700 px-1 pb-1 leading-snug">
+                                {tx('Showing the newest 400 stickers — older items are not shown.',
+                                    'Mostrando las 400 etiquetas más recientes — las más antiguas no se muestran.')}
+                            </p>
                         )}
                         <p className="text-[11px] text-dd-text-2 px-1 pb-2 leading-snug">
                             {tx('Only stickers printed after this feature went live appear here.',

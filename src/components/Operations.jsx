@@ -21,6 +21,12 @@ import {
 // watchdogRead (revive on hang only).
 import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
 import { taskDueOnDay, recurrenceLabelFor, assigneesOnDay } from '../data/checklistRecurrence';
+// 2026-08-25 audit — per-task transactional checklist writers (see the
+// block comment above mutateOpsChecklistTask in taskPlan.js). The nine
+// Tasks-tab writers below use these instead of whole-array
+// writeChecklistPatch({ customTasks }) rewrites, which were last-writer-
+// wins races between devices.
+import { mutateOpsChecklistTask, appendOpsChecklistTask, swapOpsChecklistTasks } from '../data/taskPlan';
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
@@ -3143,21 +3149,53 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 await writeChecklistPatch({ assignmentsPatch: { [key]: staffMemberName }, lists: updatedLists, listsSide: side });
             };
 
-            // Per-task assignment: toggle a staff member on/off a task's assignTo array
+            // Drop assignDays entries for people no longer in assignTo —
+            // otherwise a stale per-person day schedule silently reactivates
+            // when that person is re-added later (2026-08-25 audit P2; same
+            // rule as saveChecklistEdit and taskPlan's normalizeAssignDays).
+            // Mutates taskObj in place.
+            const pruneAssignDaysFor = (taskObj, assignArr) => {
+                if (!taskObj.assignDays) return;
+                const keep = {};
+                for (const [n, sc] of Object.entries(taskObj.assignDays)) {
+                    if (assignArr.includes(n)) keep[n] = sc;
+                }
+                if (Object.keys(keep).length > 0) taskObj.assignDays = keep;
+                else delete taskObj.assignDays;
+            };
+
+            // Per-task assignment: toggle a staff member on/off a task's assignTo array.
+            // 2026-08-25 audit: was a whole-array writeChecklistPatch (last-
+            // writer-wins clobber against the other 8 checklist writers).
+            // Now: capture the task ID at call time (array indexes go stale
+            // under concurrent reorders), optimistic local update first (house
+            // pattern — runTransaction has no latency compensation), then a
+            // per-task transaction that toggles on the LIVE task. The sameDoc-
+            // guarded listener reconciles after commit.
             const toggleTaskAssignee = async (taskIdx, staffMemberName) => {
+                const preSideArr = (customTasksRef.current?.[checklistSide]?.[PERIOD_KEY]) || [];
+                const liveTaskId = preSideArr[taskIdx]?.id;
+                if (!liveTaskId) return; // guard: a remote snapshot may have removed this task while the picker was open (correctness audit P3)
+                const toggleName = (taskObj) => {
+                    const t = { ...taskObj };
+                    let current = [];
+                    if (t.assignTo) {
+                        current = Array.isArray(t.assignTo) ? [...t.assignTo] : [t.assignTo];
+                    }
+                    const i = current.indexOf(staffMemberName);
+                    if (i >= 0) { current.splice(i, 1); } else { current.push(staffMemberName); }
+                    if (current.length > 0) { t.assignTo = current; } else { delete t.assignTo; }
+                    pruneAssignDaysFor(t, current);
+                    return t;
+                };
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 const item = updated[checklistSide][PERIOD_KEY][taskIdx];
-                if (!item) return; // guard: a remote snapshot may have removed this task while the picker was open (correctness audit P3)
-                let current = [];
-                if (item.assignTo) {
-                    current = Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo];
-                }
-                const idx = current.indexOf(staffMemberName);
-                if (idx >= 0) { current.splice(idx, 1); } else { current.push(staffMemberName); }
-                if (current.length > 0) { item.assignTo = current; } else { delete item.assignTo; }
+                if (!item) return;
+                updated[checklistSide][PERIOD_KEY][taskIdx] = toggleName(item);
                 setCustomTasks(updated);
-                // Only customTasks changed.
-                await writeChecklistPatch({ customTasks: updated });
+                try {
+                    await mutateOpsChecklistTask(storeLocation, checklistSide, liveTaskId, toggleName, { fallbackSideArr: preSideArr });
+                } catch (e) { console.error('toggleTaskAssignee transaction failed:', e); }
             };
 
             // 2026-05-24 — Andrew: "make it easier to assign a staff to
@@ -3165,15 +3203,29 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // bottom sheet: writes the FULL new assignTo array for one
             // task in a single Firestore round-trip (vs the per-name
             // toggleTaskAssignee above which writes once per click).
+            // 2026-08-25 audit: per-task transaction, ID captured at call
+            // time — a concurrent reorder between tap and commit can no
+            // longer redirect the assignment onto the wrong task.
             const setTaskAssignees = async (taskIdx, names) => {
+                const preSideArr = (customTasksRef.current?.[checklistSide]?.[PERIOD_KEY]) || [];
+                const liveTaskId = preSideArr[taskIdx]?.id;
+                if (!liveTaskId) return;
+                const cleaned = Array.isArray(names) ? names.filter(Boolean) : [];
+                const applyNames = (taskObj) => {
+                    const t = { ...taskObj };
+                    if (cleaned.length > 0) t.assignTo = cleaned;
+                    else delete t.assignTo;
+                    pruneAssignDaysFor(t, cleaned);
+                    return t;
+                };
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 const item = updated[checklistSide][PERIOD_KEY][taskIdx];
                 if (!item) return;
-                const cleaned = Array.isArray(names) ? names.filter(Boolean) : [];
-                if (cleaned.length > 0) item.assignTo = cleaned;
-                else delete item.assignTo;
+                updated[checklistSide][PERIOD_KEY][taskIdx] = applyNames(item);
                 setCustomTasks(updated);
-                await writeChecklistPatch({ customTasks: updated });
+                try {
+                    await mutateOpsChecklistTask(storeLocation, checklistSide, liveTaskId, applyNames, { fallbackSideArr: preSideArr });
+                } catch (e) { console.error('setTaskAssignees transaction failed:', e); }
             };
 
             const addChecklistList = async (side) => {
@@ -3440,18 +3492,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             // Mark these messages as delivered so re-checking the
                             // task tomorrow doesn't re-fire them.
                             if (queued.length > 0) {
+                                const deliveredAtIso = new Date().toISOString();
+                                const markDelivered = (t) => ({
+                                    ...t,
+                                    messages: (t.messages || []).map(m =>
+                                        m.deliverWhen === 'on_complete' && !m.delivered ? { ...m, delivered: true, deliveredAt: deliveredAtIso } : m
+                                    ),
+                                });
+                                const preSideArr = (customTasksRef.current?.[checklistSide]?.[PERIOD_KEY]) || [];
                                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                                 const list = updated[checklistSide][PERIOD_KEY] || [];
                                 const tIdx = list.findIndex(t => t.id === taskObj.id);
                                 if (tIdx >= 0) {
-                                    list[tIdx].messages = (list[tIdx].messages || []).map(m =>
-                                        m.deliverWhen === 'on_complete' && !m.delivered ? { ...m, delivered: true, deliveredAt: new Date().toISOString() } : m
-                                    );
+                                    list[tIdx] = markDelivered(list[tIdx]);
                                     setCustomTasks(updated);
                                     // checks were already written by writeCheckPatch in the parent
-                                    // toggleCheckItem path — only customTasks needs persisting here
-                                    // (the delivered: true flag on the messages array).
-                                    await writeChecklistPatch({ customTasks: updated });
+                                    // toggleCheckItem path — only this task's messages[] delivered
+                                    // flags need persisting, via the per-task transaction (the old
+                                    // whole-array write raced every other checklist writer).
+                                    try {
+                                        await mutateOpsChecklistTask(storeLocation, checklistSide, taskObj.id, markDelivered, { fallbackSideArr: preSideArr });
+                                    } catch (e) { console.error('mark task messages delivered failed:', e); }
                                 }
                             }
                         }
@@ -3555,7 +3616,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!updated[checklistSide][PERIOD_KEY]) updated[checklistSide][PERIOD_KEY] = [];
                 updated[checklistSide][PERIOD_KEY].push(item);
                 setCustomTasks(updated);
-                await writeChecklistPatch({ customTasks: updated });
+                // Transactional append (2026-08-25 audit): reads the LIVE
+                // array and appends, so a concurrent add/edit on another
+                // device survives (the old whole-array write clobbered it).
+                try {
+                    await appendOpsChecklistTask(storeLocation, checklistSide, item);
+                } catch (e) { console.error('quickAddTask append failed:', e); }
                 setQuickAddText("");
             };
 
@@ -3581,41 +3647,62 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!updated[checklistSide][PERIOD_KEY]) updated[checklistSide][PERIOD_KEY] = [];
                 updated[checklistSide][PERIOD_KEY].push(item);
                 setCustomTasks(updated);
-                await writeChecklistPatch({ customTasks: updated });
+                // Transactional append (2026-08-25 audit) — see quickAddTask.
+                try {
+                    await appendOpsChecklistTask(storeLocation, checklistSide, item);
+                } catch (e) { console.error('addChecklistTask append failed:', e); }
                 setNewTask(""); setNewCategory("other"); setNewRecurrence("daily"); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
                 if (!editTask.trim()) return;
+                // 2026-08-25 audit: per-task transaction; the ID is captured at
+                // call time so a concurrent reorder can't redirect the edit.
+                const preSideArr = (customTasksRef.current?.[checklistSide]?.[PERIOD_KEY]) || [];
+                const liveTaskId = preSideArr[idx]?.id;
+                if (!liveTaskId) return; // guard: a remote snapshot may have removed this task while the inline editor was open (correctness audit P3)
+                // Mint/reconcile subtask ids ONCE, outside the mutate fn — the
+                // transaction can retry, and the optimistic row below must end
+                // up with the SAME ids the server commits (check keys anchor
+                // to subtask ids).
+                const cleanSubs = editSubtasks.filter(s => s.task.trim());
+                const nextSubs = cleanSubs.length > 0 ? reconcileSubtasks(cleanSubs) : null;
+                const assignArr = Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : [];
+                // MERGE: spread the LIVE task first and overwrite only the
+                // editor-owned fields (with explicit deletes where the editor
+                // cleared one) — a plain replacement would still clobber
+                // concurrent non-editor changes on the same task (queued
+                // messages[], delivered flags).
+                const applyEdit = (taskObj) => {
+                    const item = { ...taskObj };
+                    item.task = editTask.trim();
+                    if (editCategory && editCategory !== "other") { item.category = editCategory; } else { delete item.category; }
+                    if (editRecurrence && editRecurrence !== "daily") { item.recurrence = editRecurrence; } else { delete item.recurrence; }
+                    // Planner-authored custom sets ride along only with their own id.
+                    if (item.recurrence !== 'days') delete item.recurDays;
+                    if (item.recurrence !== 'dates') delete item.recurDates;
+                    item.requirePhoto = editRequirePhoto;
+                    if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
+                    if (assignArr.length > 0) { item.assignTo = assignArr; } else { delete item.assignTo; }
+                    // Per-person day schedules only make sense for current assignees.
+                    pruneAssignDaysFor(item, assignArr);
+                    if (editFollowUp && editFollowUp.question.trim()) {
+                        item.followUp = { type: editFollowUp.type, question: editFollowUp.question.trim() };
+                        if (editFollowUp.type === "dropdown" && editFollowUp.options.length > 0) {
+                            item.followUp.options = editFollowUp.options.filter(o => o.trim());
+                        }
+                    } else { delete item.followUp; }
+                    if (nextSubs) { item.subtasks = nextSubs; } else { delete item.subtasks; }
+                    return item;
+                };
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 const item = updated[checklistSide][PERIOD_KEY][idx];
-                if (!item) return; // guard: a remote snapshot may have removed this task while the inline editor was open (correctness audit P3)
-                item.task = editTask.trim();
-                if (editCategory && editCategory !== "other") { item.category = editCategory; } else { delete item.category; }
-                if (editRecurrence && editRecurrence !== "daily") { item.recurrence = editRecurrence; } else { delete item.recurrence; }
-                // Planner-authored custom sets ride along only with their own id.
-                if (item.recurrence !== 'days') delete item.recurDays;
-                if (item.recurrence !== 'dates') delete item.recurDates;
-                item.requirePhoto = editRequirePhoto;
-                if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
-                const assignArr = Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : [];
-                if (assignArr.length > 0) { item.assignTo = assignArr; } else { delete item.assignTo; }
-                // Per-person day schedules only make sense for current assignees.
-                if (item.assignDays) {
-                    const keep = {};
-                    for (const [n, sc] of Object.entries(item.assignDays)) if (assignArr.includes(n)) keep[n] = sc;
-                    if (Object.keys(keep).length > 0) item.assignDays = keep; else delete item.assignDays;
-                }
-                if (editFollowUp && editFollowUp.question.trim()) {
-                    item.followUp = { type: editFollowUp.type, question: editFollowUp.question.trim() };
-                    if (editFollowUp.type === "dropdown" && editFollowUp.options.length > 0) {
-                        item.followUp.options = editFollowUp.options.filter(o => o.trim());
-                    }
-                } else { delete item.followUp; }
-                const cleanSubs = editSubtasks.filter(s => s.task.trim());
-                if (cleanSubs.length > 0) { item.subtasks = reconcileSubtasks(cleanSubs); } else { delete item.subtasks; }
+                if (!item) return;
+                updated[checklistSide][PERIOD_KEY][idx] = applyEdit(item);
                 setCustomTasks(updated);
-                await writeChecklistPatch({ customTasks: updated });
+                try {
+                    await mutateOpsChecklistTask(storeLocation, checklistSide, liveTaskId, applyEdit, { fallbackSideArr: preSideArr });
+                } catch (e) { console.error('saveChecklistEdit transaction failed:', e); }
                 setEditingIdx(null); setEditTask(""); setEditCategory("other"); setEditRecurrence("daily"); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
             };
 
@@ -3697,9 +3784,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const updated = JSON.parse(JSON.stringify(tasks));
                 const arr = updated[checklistSide][PERIOD_KEY];
                 if (fromIdx < 0 || toIdx < 0 || fromIdx >= arr.length || toIdx >= arr.length) return;
+                // 2026-08-25 audit: capture BOTH task ids at tap time and swap
+                // them by id inside a transaction — the old whole-array write
+                // clobbered every concurrent edit elsewhere in the list.
+                const idA = arr[fromIdx]?.id;
+                const idB = arr[toIdx]?.id;
+                if (!idA || !idB || idA === idB) return;
                 [arr[fromIdx], arr[toIdx]] = [arr[toIdx], arr[fromIdx]];
                 setCustomTasks(updated);
-                await writeChecklistPatch({ customTasks: updated });
+                try {
+                    await swapOpsChecklistTasks(storeLocation, idA, idB);
+                } catch (e) { console.error('moveChecklistTask swap failed:', e); }
             };
 
             // Andrew 2026-05-21: "the arrow button when pressed the
@@ -3804,10 +3899,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (Object.keys(checkDeletions).length > 0) {
                         await writeCheckPatch(checkDeletions);
                     }
-                    await writeChecklistPatch({ customTasks: updated });
-                } else {
-                    await writeChecklistPatch({ customTasks: updated });
+                    // 2026-08-25 audit: per-task transactional delete (mutateFn
+                    // → null removes the task from the LIVE array) instead of
+                    // the whole-array write, which raced every other writer.
+                    // The check-key cleanup above already dual-wrote live +
+                    // history via writeCheckPatch's dotted deleteField paths.
+                    try {
+                        await mutateOpsChecklistTask(storeLocation, checklistSide, removed.id, () => null, {
+                            // Pre-splice local array — the create-branch seed
+                            // must still contain the task being deleted.
+                            fallbackSideArr: tasks?.[checklistSide]?.[PERIOD_KEY],
+                        });
+                    } catch (e) { console.error('deleteChecklistTask transaction failed:', e); }
                 }
+                // No `removed` (index raced out of range): the optimistic
+                // splice was a no-op and there is nothing to delete server-
+                // side — the old whole-array write here was an effective no-op.
             };
 
             const resetAllChecklists = async () => {
@@ -4019,28 +4126,38 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // (2026-07-27 audit O5: the 'saving' flip moved BELOW the
                 // decrement-at-zero skip guard — see note there.)
 
-                // Capture prev/next inside the functional setter so rapid
-                // taps don't read stale closure state. These vars are
-                // populated synchronously by the setState callback —
-                // they're ready to use right after setInventory returns.
-                let prevCount = 0;
-                let nextCount = count;
-                let skipped = false;
-                setInventory(prev => {
-                    prevCount = prev[itemId] || 0;
-                    if (isDelta) nextCount = prevCount + delta;
-                    else nextCount = count;
-                    // Decrement guard: if user is decrementing and the
-                    // latest state says 0, no-op. (Moved inside the
-                    // functional setter so the check sees fresh state,
-                    // not stale closure inventory.)
-                    if (delta === -1 && prevCount <= 0) {
-                        skipped = true;
-                        return prev;
-                    }
-                    return { ...prev, [itemId]: nextCount };
-                });
+                // ── prev/next come from the REF, not the setState updater ──
+                // (2026-08-25 audit P1.) The old code assigned prevCount /
+                // nextCount / skipped INSIDE the setInventory functional
+                // updater and assumed they were "populated synchronously".
+                // React 18 defers functional updaters while other updates are
+                // pending — the 2026-08-01 crab-meat tally bug (comment below)
+                // was production proof — so every consumer downstream could
+                // read prevCount=0: low-stock pushes silently skipped (delta
+                // computed from 0) and audit rows recorded previous:0.
+                // inventoryRef is the last COMMITTED state (synced by the
+                // useEffect([inventory]) beside its declaration), advanced
+                // synchronously below so rapid taps in one commit window see
+                // each other.
+                const prevCount = Number(inventoryRef.current?.[itemId]) || 0;
+                const nextCount = isDelta ? prevCount + delta : count;
+                // Decrement guard: a "−" tap on a 0-count item is a no-op.
+                // Checked BEFORE the ref is advanced so a skip never moves it.
+                const skipped = delta === -1 && prevCount <= 0;
                 if (skipped) return;
+                // Advance the ref synchronously IN THE HANDLER — never inside
+                // the updater (updaters must stay pure; StrictMode double-
+                // invokes them). Committed state stays authoritative: the
+                // functional updater below recomputes from its own prev with
+                // the same clamp, and the useEffect([inventory]) re-syncs the
+                // ref on every commit (snapshot reconciles + clear paths
+                // included), so any drift self-heals.
+                inventoryRef.current = { ...inventoryRef.current, [itemId]: nextCount };
+                setInventory(prev => {
+                    const p = prev[itemId] || 0;
+                    if (delta === -1 && p <= 0) return prev;
+                    return { ...prev, [itemId]: isDelta ? p + delta : count };
+                });
 
                 // 2026-07-27 (audit O5) — set 'saving' only AFTER the skip
                 // guard. It used to fire before it, so a "−" tap on a 0-count
@@ -4059,21 +4176,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 };
 
                 // ── Contribution accounting inputs ────────────────────────
-                // These deliberately do NOT reuse prevCount/nextCount above.
-                // Those are populated by a functional setState updater, and
-                // when that updater hadn't run yet, prevCount was still 0 — so
-                // a "−1" tap computed nextCount − prevCount = +1 and
-                // INCREMENTED the tapper's tally instead of decrementing it.
-                // Andrew 2026-08-01: crab meat sat at a count of 1 while his
-                // personal tally had climbed to 4, one per tap in either
-                // direction. The item COUNT stayed correct the whole time
-                // (decrements write a clamped absolute), which is why this hid.
-                //
-                // For the +/- buttons the contribution is simply `delta` — no
-                // state timing involved. inventoryRef.current is the last
-                // committed count, so the seed amount is trustworthy too.
-                const contribPrev = Number(inventoryRef.current?.[itemId]) || 0;
-                const contribNext = isDelta ? contribPrev + delta : count;
+                // Historical note (Andrew 2026-08-01): these used to be a
+                // SEPARATE ref-derived pair (contribPrev/contribNext) because
+                // prevCount/nextCount came from the deferred setState updater
+                // and read 0 mid-burst — crab meat sat at a count of 1 while
+                // his personal tally climbed to 4, one per tap in either
+                // direction. prevCount/nextCount are now ref-derived
+                // themselves (captured above, BEFORE the ref advance), so the
+                // contribution math simply reuses them — contributionWrites
+                // (src/data/inventoryStamp.js) needs their difference plus
+                // the pre-tap value for the legacy seed, which they satisfy.
 
                 setInvCountMeta(prev => {
                     if (nextCount === 0) {
@@ -4093,7 +4205,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const priorWho = priorMeta.who || {};
                     const nextWho = { ...priorWho };
                     for (const w of contributionWrites(priorMeta, {
-                        staffName, prevCount: contribPrev, nextCount: contribNext, nowIso,
+                        staffName, prevCount, nextCount, nowIso,
                     })) {
                         const priorQty = Number(priorWho[w.key]?.q) || 0;
                         nextWho[w.key] = {
@@ -4188,7 +4300,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // land); `absolute` entries are the one-time seed, where
                     // there is no prior value to increment.
                     for (const w of contributionWrites(invCountMeta[itemId], {
-                        staffName, prevCount: contribPrev, nextCount: contribNext, nowIso,
+                        staffName, prevCount, nextCount, nowIso,
                     })) {
                         update[`countMeta.${itemId}.who.${w.key}.n`] = w.name;
                         update[`countMeta.${itemId}.who.${w.key}.q`] =
@@ -4235,12 +4347,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // Doc may not exist yet on first write to a fresh location.
                     if (err?.code === "not-found") {
                         try {
-                            // Rebuild the full counts/meta map from the latest
-                            // local state (read via the functional setter
-                            // pattern so we don't snapshot stale closure).
-                            let fullCounts = {};
+                            // Rebuild the full counts map from the ref mirror —
+                            // it already carries this tap's value (advanced
+                            // synchronously above). The old no-op functional-
+                            // setter read had the same React 18 deferral bug as
+                            // prevCount: the updater may not have run yet, so
+                            // fullCounts could snapshot {} and seed an empty doc.
+                            const fullCounts = { ...inventoryRef.current };
+                            // invCountMeta has NO ref mirror — keep the no-op
+                            // updater read for it (best-effort: it can lag one
+                            // commit under the same deferral, which for a fresh
+                            // location's very first write means at worst a
+                            // missing by/at stamp, never a wrong count).
                             let fullMeta = {};
-                            setInventory(prev => { fullCounts = prev; return prev; });
                             setInvCountMeta(prev => { fullMeta = prev; return prev; });
                             await setDoc(ref, { counts: fullCounts, countMeta: fullMeta, customInventory, date: new Date().toISOString() });
                             setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'saved' }));
@@ -5659,8 +5778,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 `${currentPrefix}${taskId}__doneBy__${sanitizeForKey(name)}`;
             const isDoneForAssignee = (task, name) =>
                 !!checks[assigneeDoneKey(task.id, name)];
-            const getAssigneeProgress = (task) => {
-                const list = getAssignees(task);
+            // `precomputedAssignees` (optional): renderChecklist builds a
+            // per-render Map(taskId → today's assignees) so per-row calls
+            // don't re-run the Intl-heavy assigneesOnDay matcher (2026-08-25
+            // perf audit). Behavior is identical when omitted.
+            const getAssigneeProgress = (task, precomputedAssignees) => {
+                const list = precomputedAssignees || getAssignees(task);
                 if (list.length === 0) return { done: 0, total: 0 };
                 const done = list.filter(n => !!checks[assigneeDoneKey(task.id, n)]).length;
                 return { done, total: list.length };
@@ -5902,6 +6025,22 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                 const periodStats = getPeriodStats(checklistSide, PERIOD_KEY);
                 const overallStats = getCompletionStats(checklistSide);
 
+                // PERF (2026-08-25 audit): the day-matchers (taskShowsToday /
+                // assigneesOnDay, both Intl-formatter-backed) and
+                // getBusinessMinutesNow (Intl formatToParts) used to run
+                // several times PER ROW per render. Compute each ONCE per
+                // invocation; per-row code reads these locals/maps instead.
+                // Same inputs, same outputs — behavior is identical.
+                const minutesNow = getBusinessMinutesNow();
+                const todayDowNow = getBusinessDow();
+                const todayKeyNow = getTodayKey();
+                const assigneesTodayById = new Map();
+                const dueTodayById = new Map();
+                for (const t of allTasks) {
+                    assigneesTodayById.set(t.id, assigneesOnDay(t, todayDowNow, todayKeyNow));
+                    dueTodayById.set(t.id, taskShowsToday(t));
+                }
+
                 // Per-assignee columns — Andrew 2026-05-28: "the
                 // current list ... is the master list ... when i
                 // assign a staff ... right next to it it starts a new
@@ -5918,8 +6057,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                     // (and flashed overdue on days it wasn't even due). Match the
                     // master list's recurrence filtering.
                     for (const t of allTasks) {
-                        if (!taskShowsToday(t)) continue;
-                        const names = getAssignees(t);
+                        if (!dueTodayById.get(t.id)) continue;
+                        const names = assigneesTodayById.get(t.id) || [];
                         for (const n of names) {
                             if (!n) continue;
                             if (!map.has(n)) map.set(n, []);
@@ -6124,13 +6263,13 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                             const taskComplete = isTaskComplete(item);
                             const photoUrl = checks[currentPrefix + item.id + "_photo"];
                             const photoNeeded = item.requirePhoto && !photoUrl;
-                            const assignees = getAssignees(item);
+                            const assignees = assigneesTodayById.get(item.id) || [];
 
                             // Compute urgency for flashing: "warning" (30 min before), "overdue" (past time)
                             // Anchored to Chicago wall-clock (BUSINESS_TZ).
                             let taskUrgency = null;
                             if (item.completeBy && !taskComplete) {
-                                const curMin = getBusinessMinutesNow();
+                                const curMin = minutesNow;
                                 const [dh, dm] = item.completeBy.split(":").map(Number);
                                 const deadMin = dh * 60 + dm;
                                 if (curMin >= deadMin) taskUrgency = "overdue";
@@ -6334,7 +6473,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         Only renders when 2+ assignees so single-assignee
                                                         tasks keep the simple checkbox UX. */}
                                                     {assignees.length > 1 && (() => {
-                                                        const prog = getAssigneeProgress(item);
+                                                        const prog = getAssigneeProgress(item, assignees);
                                                         const full = prog.done >= prog.total;
                                                         return (
                                                             <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
@@ -6423,13 +6562,21 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                 <div key={mi} className="flex items-start justify-between gap-2">
                                                                                     <span>"{typeof m.text === 'object' ? (m.text.en || m.text.es) : m.text}"</span>
                                                                                     <button onClick={async () => {
+                                                                                        // 2026-08-25 audit: per-task transaction, not a whole-array write.
+                                                                                        const dropQueued = (t) => ({
+                                                                                            ...t,
+                                                                                            messages: (t.messages || []).filter(x => !(x.deliverWhen === m.deliverWhen && x.text === m.text && !x.delivered)),
+                                                                                        });
+                                                                                        const preSideArr = (customTasksRef.current?.[checklistSide]?.[PERIOD_KEY]) || [];
                                                                                         const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                                                                                         const list = updated[checklistSide][PERIOD_KEY] || [];
                                                                                         const tIdx = list.findIndex(t => t.id === item.id);
                                                                                         if (tIdx >= 0) {
-                                                                                            list[tIdx].messages = (list[tIdx].messages || []).filter(x => !(x.deliverWhen === m.deliverWhen && x.text === m.text && !x.delivered));
+                                                                                            list[tIdx] = dropQueued(list[tIdx]);
                                                                                             setCustomTasks(updated);
-                                                                                            await writeChecklistPatch({ customTasks: updated });
+                                                                                            try {
+                                                                                                await mutateOpsChecklistTask(storeLocation, checklistSide, item.id, dropQueued, { fallbackSideArr: preSideArr });
+                                                                                            } catch (e) { console.error('unqueue task message failed:', e); }
                                                                                         }
                                                                                     }} className="text-red-500 text-xs">×</button>
                                                                                 </div>
@@ -6457,15 +6604,22 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             await dispatchTaskMessage(item, { text }, 'now');
                                                                             toast(language === 'es' ? '✓ Mensaje enviado' : '✓ Message sent');
                                                                         } else {
-                                                                            // Queue on the task itself for later delivery.
+                                                                            // Queue on the task itself for later delivery — via the
+                                                                            // per-task transaction (2026-08-25 audit: the old whole-
+                                                                            // array write raced every other checklist writer).
+                                                                            const msgObj = { text, deliverWhen: 'on_complete', queuedBy: staffName, queuedAt: new Date().toISOString(), delivered: false };
+                                                                            const addQueued = (t) => ({ ...t, messages: [...(t.messages || []), msgObj] });
+                                                                            const preSideArr = (customTasksRef.current?.[checklistSide]?.[PERIOD_KEY]) || [];
                                                                             const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                                                                             const list = updated[checklistSide][PERIOD_KEY] || [];
                                                                             const tIdx = list.findIndex(t => t.id === item.id);
                                                                             if (tIdx >= 0) {
-                                                                                list[tIdx].messages = [...(list[tIdx].messages || []), { text, deliverWhen: 'on_complete', queuedBy: staffName, queuedAt: new Date().toISOString(), delivered: false }];
+                                                                                list[tIdx] = addQueued(list[tIdx]);
                                                                                 setCustomTasks(updated);
-                                                                                await writeChecklistPatch({ customTasks: updated });
-                                                                                toast(language === 'es' ? '✓ Mensaje en cola para entrega al completar' : '✓ Queued for completion delivery');
+                                                                                try {
+                                                                                    await mutateOpsChecklistTask(storeLocation, checklistSide, item.id, addQueued, { fallbackSideArr: preSideArr });
+                                                                                    toast(language === 'es' ? '✓ Mensaje en cola para entrega al completar' : '✓ Queued for completion delivery');
+                                                                                } catch (e) { console.error('queue task message failed:', e); }
                                                                             }
                                                                         }
                                                                         setMsgDraft(""); setOpenMsgTask(null);
@@ -6826,7 +6980,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         // who completed it.
                                         const done = isDoneForAssignee(t, name);
                                         const cat = getCategoryFor(t);
-                                        const tAssignees = getAssignees(t);
+                                        const tAssignees = assigneesTodayById.get(t.id) || [];
                                         const hasSubs = t.subtasks && t.subtasks.length > 0;
                                         const subsTotal = hasSubs ? t.subtasks.length : 0;
                                         const subsDone = hasSubs ? t.subtasks.filter(s => checks[currentPrefix + s.id]).length : 0;
@@ -6839,11 +6993,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         // assignee-chip strip so each col
                                         // shows how many other slots are
                                         // also done.
-                                        const _prog = getAssigneeProgress(t);
+                                        const _prog = getAssigneeProgress(t, tAssignees);
                                         // Deadline urgency colors mirror master row.
                                         let tUrg = null;
                                         if (t.completeBy && !done) {
-                                            const curMin = getBusinessMinutesNow();
+                                            const curMin = minutesNow;
                                             const [dh, dm] = t.completeBy.split(":").map(Number);
                                             const deadMin = dh * 60 + dm;
                                             if (curMin >= deadMin) tUrg = "overdue";
@@ -8662,7 +8816,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                     <PrintLabelModal
                                         editable={true}
                                         recipe={{ titleEn: '', titleEs: '', allergens: [], ingredientsEn: [] }}
-                                        location={storeLocation}
+                                        location={storeLocation === 'both' ? 'webster' : (storeLocation || 'webster')}
                                         staffName={staffName}
                                         language={language}
                                         onClose={() => setShowQuickLabel(false)}
@@ -8675,8 +8829,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 back to it during their inventory session. */}
                             {showPrintCenter && (
                                 <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                                    {/* 'both' (admin view) must normalize — printers_both_* docs
+                                        don't exist and the lookup dead-ends (2026-08-25). Same
+                                        webster fallback as DateStickerPrinter printLoc. */}
                                     <PrintCenter
-                                        location={storeLocation}
+                                        location={storeLocation === 'both' ? 'webster' : (storeLocation || 'webster')}
                                         staffName={staffName}
                                         language={language}
                                         isAdmin={currentIsAdmin}
@@ -8853,6 +9010,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                     {subGroup.items.map((item) => {
                                                         const itemIdx = itemIdxByIdInCat.get(item.id) ?? -1;
                                                         const count = inventory[item.id] || 0;
+                                                        // PERF (2026-08-25 audit): the who/when stamp used to be
+                                                        // formatted TWICE per row (guard + display). Once.
+                                                        const stampLines = count > 0 ? formatCountStampLines(invCountMeta[item.id]) : null;
                                                         // Bug fix (Andrew 2026-05-17 — "edit button on every
                                                         // item isnt working"): previously this required
                                                         // `invEditMode && ...` which meant clicking the per-row
@@ -9156,8 +9316,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                     </>
                                                                                 )}
                                                                             </div>
-                                                                            {count > 0 && formatCountStampLines(invCountMeta[item.id]) && (
-                                                                                <p className="text-xs text-mint-700 mt-0.5 whitespace-pre-line">{"\u{2713}"} {formatCountStampLines(invCountMeta[item.id])}</p>
+                                                                            {stampLines && (
+                                                                                <p className="text-xs text-mint-700 mt-0.5 whitespace-pre-line">{"\u{2713}"} {stampLines}</p>
                                                                             )}
                                                                             {/* Low-stock indicator. Renders when:
                                                                                   • item has a `min` threshold set
@@ -9651,6 +9811,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                 <div className="divide-y divide-gray-100">
                                                     {vItems.map(item => {
                                                         const count = inventory[item.id] || 0;
+                                                        // PERF (2026-08-25 audit): format the who/when stamp once
+                                                        // per row, not twice (guard + display).
+                                                        const stampLines = count > 0 ? formatCountStampLines(invCountMeta[item.id]) : null;
                                                         const isEditing = invEditingIdx && invEditingIdx.catIdx === item.catIdx && invEditingIdx.itemIdx === item.itemIdx;
                                                         return (
                                                             <div key={item.id} className={`${isEditing ? "" : "ddmau-inv-cv"} px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
@@ -9729,9 +9892,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                 className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                         </div>
-                                                                        {count > 0 && formatCountStampLines(invCountMeta[item.id]) && (
+                                                                        {stampLines && (
                                                                             <p className="text-[10px] text-mint-700 leading-tight text-right whitespace-pre-line">
-                                                                                {"\u{2713}"} {formatCountStampLines(invCountMeta[item.id])}
+                                                                                {"\u{2713}"} {stampLines}
                                                                             </p>
                                                                         )}
                                                                     </div>

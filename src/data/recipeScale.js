@@ -97,6 +97,23 @@ function isProtected(match, offset, full) {
     if (/^-[A-Za-z]/.test(after)) return true;
     // Per-unit pack size — "2 cans (5 lb each)" keeps "5 lb each"
     if (/^(\s+[A-Za-z.]+)?\s+each\b/i.test(after)) return true;
+    // Parenthesized pack size WITHOUT "each" — "1 (2 lb) bag noodles",
+    // "1 can (28 oz) tomatoes": the pack size describes the container and
+    // must never scale (only the count outside the parens does). Protect a
+    // number inside parens followed by unit+")" ONLY when the "(" directly
+    // follows a counted item (a number, optionally + one word) — that's
+    // what distinguishes a pack size from an equivalent-amount note like
+    // "32 oz sugar (2½ cups)", which SHOULD scale.
+    // (2026-08-25 — "1 (2 lb) bag" ×3 was producing "3 (6 lb) bag".)
+    {
+        const beforeParen = full.slice(Math.max(0, offset - 24), offset);
+        if (/\d[\d.,/½¼¾⅓⅔⅛]*\s*(?:[A-Za-z.]+\s+)?\(\s*$/.test(beforeParen)
+            && /^\s*[A-Za-z.#]+\s*[)]/.test(after)) return true;
+    }
+    // Proportion fractions — "fill 3/4 full", "leave ½ empty", "fill ¾ of
+    // the way" describe how full a container is, not an amount ("fill 1½
+    // full" is impossible). Includes Spanish "lleno/vacío".
+    if (/^\s*(?:full|empty|of the way|way\b|lleno|vac[ií]o)/i.test(after)) return true;
     // Time / temperature / percentage — also when this number is the low
     // end of a range ("3–7 days": the "3" is followed by "–7 days")
     if (NON_SCALING_UNIT_RE.test(after)) return true;

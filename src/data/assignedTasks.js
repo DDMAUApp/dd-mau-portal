@@ -35,16 +35,19 @@
 // global avoids forking it. If a location-specific library is needed
 // later, suffix the doc key.
 //
-// ── Why one batched write on assign ────────────────────────────────────
+// ── Why one transaction on assign ──────────────────────────────────────
 // Library bumps + assignment creates must be atomic — if only half
 // commits we either lose the library entry (next manager has to retype)
-// or lose the assignment (staff doesn't see it). One writeBatch =
-// all-or-nothing.
+// or lose the assignment (staff doesn't see it). One runTransaction =
+// all-or-nothing, AND (2026-08-25 audit) the library read happens INSIDE
+// it: the old getDoc→mutate→write shape meant two concurrent writers
+// (or one writer on a stale cached getDoc) clobbered each other's
+// library rows. Transactions read from the server and retry on conflict.
 
 import { db } from '../firebase';
 import {
-    collection, doc, getDoc, onSnapshot, query, where, limit,
-    writeBatch, updateDoc, deleteDoc, serverTimestamp,
+    collection, doc, onSnapshot, query, where, limit,
+    updateDoc, deleteDoc, serverTimestamp, runTransaction,
 } from 'firebase/firestore';
 
 // ── SUBSCRIPTIONS ──────────────────────────────────────────────────────
@@ -175,64 +178,67 @@ export async function assignTasksToStaff({ tasks, staff, manager, side }) {
         deduped.push(t);
     }
 
-    // Read current library doc so we can compute the new items array
-    // client-side. getDoc is one read; the writeBatch below makes it
-    // atomic with the assignment creates.
+    // Read + upsert the library INSIDE a transaction (2026-08-25 audit —
+    // was getDoc + writeBatch: a concurrent assign from another manager,
+    // or a stale cached getDoc, clobbered the live items array). The
+    // assignment creates ride in the same transaction so atomicity is
+    // unchanged. Auto-id refs are pre-minted OUTSIDE the transaction so
+    // a retry reuses the same ids and can't create duplicates.
     const libRef = doc(db, 'config', `task_library_${side}`);
-    const libSnap = await getDoc(libRef);
-    const libData = libSnap.exists() ? libSnap.data() : null;
-    const libItems = Array.isArray(libData?.items) ? [...libData.items] : [];
+    const assignmentsCol = collection(db, 'assigned_tasks');
+    const assignmentRefs = deduped.map(() => doc(assignmentsCol)); // auto-ids
 
-    const nowMs = Date.now();
-    for (const t of deduped) {
-        const idx = findLibraryItemIdx(libItems, t.task);
-        if (idx >= 0) {
-            libItems[idx] = {
-                ...libItems[idx],
-                // Preserve task text as originally written (so casing the
-                // library was created with sticks); just bump counters.
-                useCount: (libItems[idx].useCount || 0) + 1,
-                lastUsedAt: nowMs,
-                // Patch category if the previous entry didn't have one.
-                category: libItems[idx].category || t.category,
-            };
-        } else {
-            libItems.push({
-                id: makeLibraryId(t.task),
+    await runTransaction(db, async (tx) => {
+        const libSnap = await tx.get(libRef);
+        const libData = libSnap.exists() ? libSnap.data() : null;
+        const libItems = Array.isArray(libData?.items) ? [...libData.items] : [];
+
+        const nowMs = Date.now();
+        for (const t of deduped) {
+            const idx = findLibraryItemIdx(libItems, t.task);
+            if (idx >= 0) {
+                libItems[idx] = {
+                    ...libItems[idx],
+                    // Preserve task text as originally written (so casing the
+                    // library was created with sticks); just bump counters.
+                    useCount: (libItems[idx].useCount || 0) + 1,
+                    lastUsedAt: nowMs,
+                    // Patch category if the previous entry didn't have one.
+                    category: libItems[idx].category || t.category,
+                };
+            } else {
+                libItems.push({
+                    id: makeLibraryId(t.task),
+                    task: t.task,
+                    category: t.category,
+                    useCount: 1,
+                    lastUsedAt: nowMs,
+                });
+            }
+        }
+
+        tx.set(libRef, {
+            items: libItems,
+            side,
+            updatedAt: serverTimestamp(),
+        }, { merge: true });
+
+        deduped.forEach((t, i) => {
+            tx.set(assignmentRefs[i], {
+                staffId: staff.id,
+                staffName: staff.name,
+                side,
                 task: t.task,
                 category: t.category,
-                useCount: 1,
-                lastUsedAt: nowMs,
+                assignedBy: manager?.name || 'system',
+                assignedById: manager?.id ?? null,
+                assignedAt: serverTimestamp(),
+                done: false,
+                doneAt: null,
+                doneBy: null,
             });
-        }
-    }
-
-    const batch = writeBatch(db);
-    batch.set(libRef, {
-        items: libItems,
-        side,
-        updatedAt: serverTimestamp(),
-    }, { merge: true });
-
-    const assignmentsCol = collection(db, 'assigned_tasks');
-    for (const t of deduped) {
-        const ref = doc(assignmentsCol); // auto-id
-        batch.set(ref, {
-            staffId: staff.id,
-            staffName: staff.name,
-            side,
-            task: t.task,
-            category: t.category,
-            assignedBy: manager?.name || 'system',
-            assignedById: manager?.id ?? null,
-            assignedAt: serverTimestamp(),
-            done: false,
-            doneAt: null,
-            doneBy: null,
         });
-    }
-
-    await batch.commit();
+    });
     return { writes: deduped.length };
 }
 
@@ -247,39 +253,35 @@ export async function assignTasksToStaff({ tasks, staff, manager, side }) {
 export async function addLibraryEntry(side, taskText, category = 'other') {
     const norm = (taskText || '').trim();
     if (!norm || !side) return { added: false };
+    // 2026-08-25 audit: getDoc→push→write whole array lost concurrent
+    // adds (and a stale cached getDoc could clobber the live library).
+    // The transaction reads the live doc, appends, and retries on
+    // conflict; set-merge doubles as the doc-doesn't-exist-yet fallback.
     const libRef = doc(db, 'config', `task_library_${side}`);
-    const libSnap = await getDoc(libRef);
-    const libData = libSnap.exists() ? libSnap.data() : null;
-    const libItems = Array.isArray(libData?.items) ? [...libData.items] : [];
-    const idx = findLibraryItemIdx(libItems, norm);
-    const nowMs = Date.now();
-    if (idx >= 0) {
-        // Already in the library — leave the row alone (don't bump
-        // useCount; that counter is for assignment frequency, not
-        // "added to library" frequency). Signal duplicate to caller.
-        return { added: false };
-    }
-    libItems.push({
-        id: makeLibraryId(norm),
-        task: norm,
-        category: (category || 'other').trim() || 'other',
-        useCount: 0,  // hasn't been assigned yet
-        lastUsedAt: nowMs,
-    });
-    await updateDoc(libRef, {
-        items: libItems,
-        side,
-        updatedAt: serverTimestamp(),
-    }).catch(async () => {
-        // Doc may not exist yet (first time the side gets any task).
-        // Fall back to setDoc-merge via the writeBatch path.
-        const batch = writeBatch(db);
-        batch.set(libRef, {
-            items: libItems, side, updatedAt: serverTimestamp(),
+    return await runTransaction(db, async (tx) => {
+        const libSnap = await tx.get(libRef);
+        const libData = libSnap.exists() ? libSnap.data() : null;
+        const libItems = Array.isArray(libData?.items) ? [...libData.items] : [];
+        if (findLibraryItemIdx(libItems, norm) >= 0) {
+            // Already in the library — leave the row alone (don't bump
+            // useCount; that counter is for assignment frequency, not
+            // "added to library" frequency). Signal duplicate to caller.
+            return { added: false };
+        }
+        libItems.push({
+            id: makeLibraryId(norm),
+            task: norm,
+            category: (category || 'other').trim() || 'other',
+            useCount: 0,  // hasn't been assigned yet
+            lastUsedAt: Date.now(),
+        });
+        tx.set(libRef, {
+            items: libItems,
+            side,
+            updatedAt: serverTimestamp(),
         }, { merge: true });
-        await batch.commit();
+        return { added: true };
     });
-    return { added: true };
 }
 
 // Toggle done on an assignment (staff action). Writes done + doneAt + doneBy.
@@ -316,11 +318,16 @@ export async function deleteAssignment(assignmentId) {
 // Does NOT touch any existing /assigned_tasks/ rows for that text.
 export async function deleteLibraryEntry(side, libId) {
     if (!side || !libId) return;
+    // 2026-08-25 audit: transactional read-modify-write so a concurrent
+    // add/rename isn't lost with the whole-array rewrite.
     const libRef = doc(db, 'config', `task_library_${side}`);
-    const snap = await getDoc(libRef);
-    const items = Array.isArray(snap.data()?.items) ? [...snap.data().items] : [];
-    const next = items.filter((it) => it.id !== libId);
-    await updateDoc(libRef, { items: next, updatedAt: serverTimestamp() });
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(libRef);
+        if (!snap.exists()) return; // nothing to delete
+        const items = Array.isArray(snap.data()?.items) ? snap.data().items : [];
+        const next = items.filter((it) => it.id !== libId);
+        tx.update(libRef, { items: next, updatedAt: serverTimestamp() });
+    });
 }
 
 // Rename a library entry (admin/manager inline edit on the master list).
@@ -344,20 +351,25 @@ export async function renameLibraryEntry(side, libId, newText) {
     const norm = (newText || '').trim();
     if (!side || !libId) return { renamed: false, reason: 'not_found' };
     if (!norm) return { renamed: false, reason: 'empty' };
+    // 2026-08-25 audit: transactional — the locate-by-id, the duplicate
+    // check, and the write all see the same live array, so a concurrent
+    // add/delete can't be clobbered (and the dup check can't race).
     const libRef = doc(db, 'config', `task_library_${side}`);
-    const snap = await getDoc(libRef);
-    const items = Array.isArray(snap.data()?.items) ? [...snap.data().items] : [];
-    const idx = items.findIndex((it) => it.id === libId);
-    if (idx < 0) return { renamed: false, reason: 'not_found' };
-    // Collision check against OTHER rows.
-    const otherDupIdx = items.findIndex(
-        (it, i) => i !== idx && (it.task || '').trim().toLowerCase() === norm.toLowerCase(),
-    );
-    if (otherDupIdx >= 0) return { renamed: false, reason: 'duplicate' };
-    const next = items.slice();
-    next[idx] = { ...next[idx], task: norm };
-    await updateDoc(libRef, { items: next, updatedAt: serverTimestamp() });
-    return { renamed: true };
+    return await runTransaction(db, async (tx) => {
+        const snap = await tx.get(libRef);
+        const items = Array.isArray(snap.data()?.items) ? [...snap.data().items] : [];
+        const idx = items.findIndex((it) => it.id === libId);
+        if (idx < 0) return { renamed: false, reason: 'not_found' };
+        // Collision check against OTHER rows.
+        const otherDupIdx = items.findIndex(
+            (it, i) => i !== idx && (it.task || '').trim().toLowerCase() === norm.toLowerCase(),
+        );
+        if (otherDupIdx >= 0) return { renamed: false, reason: 'duplicate' };
+        const next = items.slice();
+        next[idx] = { ...next[idx], task: norm };
+        tx.update(libRef, { items: next, updatedAt: serverTimestamp() });
+        return { renamed: true };
+    });
 }
 
 // ── SEARCH ─────────────────────────────────────────────────────────────

@@ -213,73 +213,91 @@ export function mergeWithDefaults(saved) {
     return merged;
 }
 
-// Sanitize a kindFormats map — only known kinds/fields, clamped.
+// ── Per-kind field whitelist (single source of truth) ────────────────
+// Every field a kindFormats entry may carry, each with its sanitizer.
+// ONE table drives BOTH the read-side cleaner (cleanKindFormats) and the
+// save-side deleteField() sentinels in saveLabelFormat — by construction,
+// any field that can be saved can also be REVERTED (2026-08 audit P1: the
+// sentinel list used to be absent entirely, so a per-kind field removed
+// from the editor's draft survived Firestore's merge:true deep-merge
+// forever).
+// A sanitizer returns the cleaned value, or undefined to drop the field.
+const numClamp = (lo, hi) => (v) =>
+    (Number.isFinite(Number(v)) ? Math.max(lo, Math.min(hi, Number(v))) : undefined);
+// Boolean both ways, not only-true (audit 2026-07-27 #5): a per-kind
+// bold:false / show:false must be able to override a global ON.
+const boolAny = (v) => (typeof v === 'boolean' ? v : undefined);
+const strMax = (n) => (v) => (typeof v === 'string' ? v.slice(0, n) : undefined);
+const KIND_FIELD_SPECS = {
+    layout:          (v) => (v === 'nameFirst' ? 'nameFirst' : undefined),
+    titleScale:      numClamp(1, 8),
+    dateNumberScale: numClamp(2, 8),
+    useByBandScale:  numClamp(2, 8),
+    timeScale:       numClamp(1, 4),
+    metaScale:       numClamp(1, 3),
+    titleBold:       boolAny,
+    showTitleTranslation: boolAny,
+    title2Scale:     numClamp(1, 6),
+    // Per-kind giant use-by band control (weekday / discard-time line) —
+    // only-false, as always (a per-kind entry can hide it, never force it).
+    showUseByBand:   (v) => (v === false ? false : undefined),
+    // 2026-08-11 (catering, customer-facing kind) — per-kind visibility
+    // toggles + footer text. resolveLabelFormatForKind shallow-merges the
+    // kind entry over the WHOLE format, so these override the globals for
+    // that kind only.
+    showDate:         boolAny,
+    showPreppedLabel: boolAny,
+    showTime:         boolAny,
+    showByName:       boolAny,
+    showLocation:     boolAny,
+    showAllergens:    boolAny,
+    showIngredients:  boolAny,
+    showNotes:        boolAny,
+    showFooter:       boolAny,
+    showUseBy:        boolAny,
+    showTitle:        boolAny,
+    footerText:       strMax(60),
+    // Brand band (black bar, white text, top of label) — catering et al.
+    showBrandBand:    boolAny,
+    brandBandText:    strMax(24),
+    // Framed-premium elements (2026-08-11, bottles Look 2).
+    showFrame:        boolAny,
+    showOrnament:     boolAny,
+    showItemDesc:     boolAny,
+    showAddress:      boolAny,
+    headerText:       strMax(24),
+    // 2026-07-27 "every text editable" — per-kind bold + size for the
+    // remaining blocks.
+    dateBold:         boolAny,
+    timeBold:         boolAny,
+    metaBold:         boolAny,
+    title2Bold:       boolAny,
+    bandBold:         boolAny,
+    allergensBold:    boolAny,
+    ingredientsBold:  boolAny,
+    notesBold:        boolAny,
+    footerBold:       boolAny,
+    allergensScale:   numClamp(1, 3),
+    ingredientsScale: numClamp(1, 3),
+    notesScale:       numClamp(1, 3),
+    footerScale:      numClamp(1, 3),
+};
+export const KIND_FORMAT_FIELDS = Object.freeze(Object.keys(KIND_FIELD_SPECS));
+
+// Sanitize a kindFormats map — only known fields, clamped.
 export function cleanKindFormats(raw) {
     const out = {};
     if (!raw || typeof raw !== 'object') return out;
     for (const [k, v] of Object.entries(raw)) {
         if (!v || typeof v !== 'object') continue;
         const entry = {};
-        if (v.layout === 'nameFirst') entry.layout = 'nameFirst';
-        if (Number.isFinite(Number(v.titleScale))) {
-            entry.titleScale = Math.max(1, Math.min(8, Number(v.titleScale)));
-        }
-        if (Number.isFinite(Number(v.dateNumberScale))) {
-            entry.dateNumberScale = Math.max(2, Math.min(8, Number(v.dateNumberScale)));
-        }
-        if (Number.isFinite(Number(v.useByBandScale))) {
-            entry.useByBandScale = Math.max(2, Math.min(8, Number(v.useByBandScale)));
-        }
-        if (Number.isFinite(Number(v.timeScale))) {
-            entry.timeScale = Math.max(1, Math.min(4, Number(v.timeScale)));
-        }
-        if (Number.isFinite(Number(v.metaScale))) {
-            entry.metaScale = Math.max(1, Math.min(3, Number(v.metaScale)));
-        }
-        // Boolean, not only-true (audit 2026-07-27 #5): a per-kind
-        // titleBold:false must be able to override a global bold ON.
-        if (typeof v.titleBold === 'boolean') entry.titleBold = v.titleBold;
-        if (typeof v.showTitleTranslation === 'boolean') entry.showTitleTranslation = v.showTitleTranslation;
-        if (Number.isFinite(Number(v.title2Scale))) {
-            entry.title2Scale = Math.max(1, Math.min(6, Number(v.title2Scale)));
-        }
-        // Per-kind giant use-by band control (weekday / discard-time line).
-        if (v.showUseByBand === false) entry.showUseByBand = false;
-        // 2026-08-11 (catering, customer-facing kind) — per-kind visibility
-        // toggles + footer text. resolveLabelFormatForKind shallow-merges the
-        // kind entry over the WHOLE format, so these override the globals for
-        // that kind only. Booleans both ways (a per-kind ON must be able to
-        // override a global OFF and vice versa).
-        for (const sk of ['showDate', 'showPreppedLabel', 'showTime', 'showByName',
-            'showLocation', 'showAllergens', 'showIngredients', 'showNotes',
-            'showFooter', 'showUseBy', 'showTitle']) {
-            if (typeof v[sk] === 'boolean') entry[sk] = v[sk];
-        }
-        if (typeof v.footerText === 'string') entry.footerText = v.footerText.slice(0, 60);
-        // Brand band (black bar, white text, top of label) — catering et al.
-        if (typeof v.showBrandBand === 'boolean') entry.showBrandBand = v.showBrandBand;
-        if (typeof v.brandBandText === 'string') entry.brandBandText = v.brandBandText.slice(0, 24);
-        // Framed-premium elements (2026-08-11, bottles Look 2).
-        for (const bk of ['showFrame', 'showOrnament', 'showItemDesc', 'showAddress']) {
-            if (typeof v[bk] === 'boolean') entry[bk] = v[bk];
-        }
-        if (typeof v.headerText === 'string') entry.headerText = v.headerText.slice(0, 24);
-        // 2026-07-27 "every text editable" — per-kind bold + size for the
-        // remaining blocks. Booleans (not only-true) so a per-kind OFF can
-        // override a global ON, same as titleBold above.
-        for (const bk of ['dateBold', 'timeBold', 'metaBold', 'title2Bold',
-            'bandBold', 'allergensBold', 'ingredientsBold', 'notesBold',
-            'footerBold']) {
-            if (typeof v[bk] === 'boolean') entry[bk] = v[bk];
-        }
-        for (const nk of ['allergensScale', 'ingredientsScale',
-            'notesScale', 'footerScale']) {
-            if (Number.isFinite(Number(v[nk]))) {
-                entry[nk] = Math.max(1, Math.min(3, Number(v[nk])));
-            }
+        for (const field of KIND_FORMAT_FIELDS) {
+            const clean = KIND_FIELD_SPECS[field](v[field]);
+            if (clean !== undefined) entry[field] = clean;
         }
         // (rotate90 dropped 2026-07-27 — the TM-L100 ignored ePOS text
-        // rotation on hardware; stale saved values are stripped here.)
+        // rotation on hardware; stale saved values are stripped here and
+        // cleared server-side by saveLabelFormat's sentinels.)
         if (Object.keys(entry).length) out[String(k).slice(0, 24)] = entry;
     }
     return out;
@@ -444,19 +462,42 @@ export async function saveLabelFormat({ format, byName, printer = 'epson' }) {
         }
     }
     if ('kindFormats' in format) {
-        // merge:true deep-merges maps, so a kind override the admin
-        // REMOVED would silently survive in the doc forever. Solve it
-        // with explicit deleteField() sentinels for every known kind
-        // that has no override — inside a merged map, the sentinel
-        // deletes that key. (2026-07-27: replaced a mergeFields-based
-        // whole-field replace that failed on device — this keeps the
-        // battle-tested merge:true path every other save uses.)
+        // merge:true deep-merges maps, so anything the admin REMOVED
+        // would silently survive in the doc forever — both a whole kind
+        // override AND a single field reverted to default inside a kind
+        // (2026-08 audit P1: the per-FIELD case had no sentinels at all,
+        // so "revert to default" never persisted). Solve both with
+        // explicit deleteField() sentinels — inside a merged map, the
+        // sentinel deletes that key at its depth. (2026-07-27: replaced
+        // a mergeFields-based whole-field replace that failed on device —
+        // this keeps the battle-tested merge:true path every other save
+        // uses.)
         const cleaned = cleanKindFormats(format.kindFormats);
+        // Every kind a sticker section can carry — must stay a superset of
+        // VALID_SECTION_KINDS in stickerListsOverride.js (not importable
+        // without exporting it there; keep the two lists in sync).
         const KNOWN_KINDS = ['chemical', 'status', 'drink', 'protein',
-            'topping', 'sauce', 'broth', 'base', 'side', 'other'];
-        const out = { ...cleaned };
-        for (const k of KNOWN_KINDS) {
-            if (!(k in out)) out[k] = deleteField();
+            'topping', 'sauce', 'broth', 'base', 'side', 'other',
+            'catering', 'bottles', 'garnish', 'note'];
+        const out = {};
+        for (const k of new Set([...KNOWN_KINDS, ...Object.keys(cleaned)])) {
+            if (k in cleaned) {
+                // Kind PRESENT in the draft: write its fields, and emit a
+                // per-field delete sentinel for every whitelisted field the
+                // draft no longer carries. NEVER mixed with the whole-kind
+                // sentinel below — present/absent stay disjoint.
+                const entry = { ...cleaned[k] };
+                for (const f of KIND_FORMAT_FIELDS) {
+                    if (!(f in entry)) entry[f] = deleteField();
+                }
+                // Legacy field, stripped on read since 2026-07-27 — clear
+                // any stale saved value server-side too.
+                entry.rotate90 = deleteField();
+                out[k] = entry;
+            } else {
+                // Kind ABSENT from the draft: delete the whole map entry.
+                out[k] = deleteField();
+            }
         }
         safe.kindFormats = out;
     }

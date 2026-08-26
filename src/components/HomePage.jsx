@@ -788,7 +788,7 @@ function RecoverInviteModal({ language, onClose }) {
                         <p className="text-xs text-gray-600 text-center leading-snug">
                             {tx(
                                 "Request received — a manager has been notified and will send you a fresh onboarding link soon (usually by text or email).",
-                                "Si ese correo coincide con un nuevo empleado, enviaremos un enlace nuevo a esa dirección pronto. Revisa tu bandeja de entrada (y spam) en los próximos minutos.",
+                                "Solicitud recibida — un gerente ha sido notificado y te enviará un enlace nuevo pronto (normalmente por mensaje de texto o correo).",
                             )}
                         </p>
                         <button

@@ -11,7 +11,7 @@
 // joined live from /training_v2 (the exact doc the Training Hub writes).
 // Reminders DM only the people who aren't done.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { MODULES } from '../data/training';
@@ -84,9 +84,22 @@ export default function TrainingAssignmentsPanel({ staffList = [], language = 'e
     const openList = assignments.filter(a => a.status !== 'closed');
     const closedList = assignments.filter(a => a.status === 'closed');
 
+    // Per-assignment roster derivation, computed ONCE per data change
+    // (2026-08-25 audit): deriveAssignmentRows used to re-run for EVERY
+    // assignment — collapsed cards included — on every render (each
+    // expand/collapse tap, remind/resend state flip, form keystroke).
+    // Collapsed cards read only the summary; the map hands both back.
+    const derivedById = useMemo(() => {
+        const map = new Map();
+        for (const a of assignments) {
+            const mod = MODULES.find(x => x.id === a.moduleId);
+            map.set(a.id, { module: mod, ...deriveAssignmentRows(a, trainingDocs, mod) });
+        }
+        return map;
+    }, [assignments, trainingDocs]);
+
     const renderAssignment = (a) => {
-        const m = MODULES.find(x => x.id === a.moduleId);
-        const { rows, summary } = deriveAssignmentRows(a, trainingDocs, m);
+        const { module: m, rows, summary } = derivedById.get(a.id);
         const isOpen = !!expanded[a.id];
         const pct = summary.total ? Math.round(summary.done / summary.total * 100) : 0;
         const closed = a.status === 'closed';

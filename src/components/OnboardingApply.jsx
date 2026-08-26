@@ -269,20 +269,48 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     // submit to applications/{appId}/resume_{ts}.{ext}.
     const [resumeFile, setResumeFile] = useState(null);
 
-    // Auto-save on every change. Localstorage write is synchronous +
-    // cheap. New shape stores `{ values, step, started }` so a refresh
-    // restores both fields, current section position, and whether the
-    // intro card has been dismissed. Legacy drafts (just-values shape)
-    // still load via fallback in the restore code.
-    useEffect(() => {
+    // Auto-save on change — DEBOUNCED 800ms trailing (2026-08-25 audit).
+    // The draft includes the drawn-signature base64 (tens of KB), and the
+    // old effect re-serialized + wrote ALL of it to localStorage on EVERY
+    // keystroke. Same key + shape: `{ values, step, started, savedAt }`
+    // (legacy just-values drafts still load via the restore fallback).
+    // The pending write is flushed on beforeunload/pagehide (and unmount)
+    // so a quick tab close still keeps the last keystrokes; the submit
+    // path cancels the pending write so a late flush can't resurrect the
+    // draft it just cleared.
+    const saveTimerRef = useRef(null);
+    const pendingDraftRef = useRef(null);
+    const cancelPendingDraftSave = () => {
+        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+        pendingDraftRef.current = null;
+    };
+    const flushDraft = () => {
+        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+        const draft = pendingDraftRef.current;
+        if (!draft) return;
+        pendingDraftRef.current = null;
         try {
             // savedAt stamps the draft for the 7-day TTL check on restore.
-            localStorage.setItem(DRAFT_KEY, JSON.stringify({
-                values, step, started: !showIntro,
-                savedAt: Date.now(),
-            }));
+            localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...draft, savedAt: Date.now() }));
         } catch {}
+    };
+    useEffect(() => {
+        pendingDraftRef.current = { values, step, started: !showIntro };
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(flushDraft, 800);
+        // flushDraft only touches refs — stable across renders.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [values, step, showIntro]);
+    useEffect(() => {
+        window.addEventListener('beforeunload', flushDraft);
+        window.addEventListener('pagehide', flushDraft);
+        return () => {
+            window.removeEventListener('beforeunload', flushDraft);
+            window.removeEventListener('pagehide', flushDraft);
+            flushDraft();   // unmount — don't drop the last <800ms of typing
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Lock the body scroll completely while the apply form is mounted.
     // This is the only fix that consistently kills iOS Safari's
@@ -529,6 +557,9 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                 localStorage.setItem(COOLDOWN_KEY, String(Date.now()));
                 localStorage.removeItem(DRAFT_KEY);
             } catch {}
+            // An autosave debounced just before submit must not resurrect
+            // the draft we just cleared.
+            cancelPendingDraftSave();
             setAppId(appRef.id);
             setDone(true);
             onSubmitted?.(appRef.id);

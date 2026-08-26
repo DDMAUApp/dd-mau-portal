@@ -199,7 +199,47 @@ function buildCommonContext() {
 //     degrades gracefully (guards + try/catch); these are expected on the
 //     current binary and only pollute the report (2026-06-30, Andrew — the log
 //     was ~240 of these drowning real errors, incl. the biometric one).
-const NOISE_PATTERN_LOG = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module|^Script error\.?$|internal error was encountered in the Indexed Database server|Attempt to iterate a cursor that doesn't exist|is not implemented on (ios|android)/i;
+//   • ResizeObserver loop notifications — benign browser noise (the observer
+//     callback triggered layout past one frame). Universally non-actionable;
+//     it was the #1 error_logs row source in the 2026-08-25 telemetry sweep
+//     (28 rows across 6 staff in 3 weeks, zero user impact).
+const NOISE_PATTERN_LOG = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module|^Script error\.?$|internal error was encountered in the Indexed Database server|Attempt to iterate a cursor that doesn't exist|is not implemented on (ios|android)|ResizeObserver loop/i;
+
+// ── client-side flood control ───────────────────────────────────────
+//
+// 2026-08-25: one iPhone on /?onboard hit Firebase's "refusing to open
+// IndexedDB database due to potential corruption" in a tight retry loop
+// and logError wrote 2,000+ IDENTICAL rows in 82 seconds (~24 writes/s)
+// — real Firestore cost, and it buries the report. Server-side dedupe
+// can't stop the writes, so cap them here:
+//   • identical (name + message-prefix) errors → 1 row per DEDUPE_MS,
+//     with a `repeats` count folded into the NEXT write so no signal
+//     is lost.
+//   • hard per-session ceiling SESSION_MAX — after that, nothing writes
+//     (Sentry still captures; its SDK has its own transport dedupe).
+// Both are in-memory only — a reload resets them, which is fine: the
+// point is stopping runaway loops, not perfect global accounting.
+const DEDUPE_MS = 60_000;
+const SESSION_MAX = 40;
+const _recentErrorWrites = new Map(); // key -> { lastWrite, suppressed }
+let _sessionErrorWrites = 0;
+
+function floodCheck(errObj) {
+    const key = `${errObj.name || 'Error'}|${String(errObj.message || '').slice(0, 120)}`;
+    const now = Date.now();
+    if (_sessionErrorWrites >= SESSION_MAX) return { drop: true };
+    const seen = _recentErrorWrites.get(key);
+    if (seen && now - seen.lastWrite < DEDUPE_MS) {
+        seen.suppressed += 1;
+        return { drop: true };
+    }
+    // Cap the map so a pathological stream of unique messages can't leak.
+    if (_recentErrorWrites.size > 200) _recentErrorWrites.clear();
+    const suppressed = seen ? seen.suppressed : 0;
+    _recentErrorWrites.set(key, { lastWrite: now, suppressed: 0 });
+    _sessionErrorWrites += 1;
+    return { drop: false, suppressed };
+}
 
 export async function logError({ error, severity = 'error', feature, meta } = {}) {
     const errObj = error instanceof Error ? error : new Error(String(error ?? 'unknown error'));
@@ -237,12 +277,20 @@ export async function logError({ error, severity = 'error', feature, meta } = {}
         });
     } catch {}
 
+    // Flood control AFTER the Sentry capture (Sentry keeps full fidelity;
+    // Firestore gets at most 1 row/min per identical error, ≤40/session).
+    const flood = floodCheck(errObj);
+    if (flood.drop) return null;
+
     try {
         const ctx = buildCommonContext();
         const row = {
             ...ctx,
             severity,
             source: 'frontend',
+            // How many identical rows were suppressed by flood control since
+            // the previous write of this error (0 in the common case).
+            suppressedRepeats: flood.suppressed || 0,
             feature: feature ? String(feature).slice(0, 60) : 'unknown',
             errorName: (errObj.name || 'Error').slice(0, 80),
             errorMessage: redactString(String(errObj.message || '')).slice(0, 2000),

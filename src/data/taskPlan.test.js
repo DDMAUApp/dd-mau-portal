@@ -7,17 +7,21 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../firebase', () => ({ db: {} }));
 vi.mock('firebase/firestore', () => ({
-    collection: vi.fn(), doc: vi.fn(), getDoc: vi.fn(), getDocs: vi.fn(), onSnapshot: vi.fn(),
+    // doc() returns { path } so the per-task-writer tests below can tell
+    // the live checklist ref from the history-mirror ref.
+    collection: vi.fn(), doc: vi.fn((_db, ...segs) => ({ path: segs.join('/') })), getDoc: vi.fn(), getDocs: vi.fn(), onSnapshot: vi.fn(),
     query: vi.fn(), where: vi.fn(), limit: vi.fn(), addDoc: vi.fn(),
     updateDoc: vi.fn(), setDoc: vi.fn(), deleteDoc: vi.fn(),
     serverTimestamp: vi.fn(() => ({})), arrayUnion: vi.fn((...a) => a),
+    runTransaction: vi.fn(),
 }));
 
 import {
     isRuleDueOn, rulesDueOn, addDaysStr, dayDiff, weekdayOf,
     checklistTasksForDay, moveOccurrence, moveInArray,
+    mutateOpsChecklistTask, appendOpsChecklistTask, swapOpsChecklistTasks,
 } from './taskPlan';
-import { getDoc, updateDoc } from 'firebase/firestore';
+import { getDoc, updateDoc, runTransaction } from 'firebase/firestore';
 
 const rule = (recurrence, extra = {}) => ({
     id: 'r1', task: 'Clean table bases', side: 'FOH', active: true,
@@ -193,5 +197,109 @@ describe('checklistTasksForDay (day-sheet Daily Ops list)', () => {
         const out = checklistTasksForDay(legacy, { m1: true }, 'BOH', '2026-07-27');
         expect(out.map(t => [t.id, t.done])).toEqual([['m1', true], ['p1', false]]);
         expect(checklistTasksForDay(legacy, {}, 'FOH', '2026-07-27')).toEqual([]);
+    });
+});
+
+// ── Per-task transactional writers (2026-08-25 audit) ───────────────────
+// mutateOpsChecklistTask / appendOpsChecklistTask / swapOpsChecklistTasks
+// replaced Operations' whole-array checklist writes. The transaction is
+// mocked with a fake tx; these tests pin the load-bearing behavior:
+// locate BY ID (not index), touch only the owning period's dot-path,
+// mirror the final array to the history doc, null-mutate = delete,
+// non-adjacent two-id swap, and append idempotence under a retry.
+describe('per-task checklist transactions', () => {
+    const liveDoc = (customTasks) => ({ customTasks });
+    // Wire runTransaction to run the callback against a fake tx whose
+    // get() serves `docData` (null = doc doesn't exist).
+    const arm = (docData) => {
+        const tx = {
+            get: vi.fn(async () => ({ exists: () => docData !== null, data: () => docData })),
+            update: vi.fn(),
+            set: vi.fn(),
+        };
+        runTransaction.mockImplementation(async (_db, fn) => await fn(tx));
+        return tx;
+    };
+    const a = { id: 'a', task: 'A' };
+    const b = { id: 'b', task: 'B' };
+    const c = { id: 'c', task: 'C' };
+    const d = { id: 'd', task: 'D' };
+
+    it('mutates ONLY the target task, via the owning period dot-path, and mirrors history', async () => {
+        const tx = arm(liveDoc({ FOH: { all: [a, b] } }));
+        await mutateOpsChecklistTask('webster', 'FOH', 'b', t => ({ ...t, task: 'B2' }));
+        expect(tx.update).toHaveBeenCalledTimes(1);
+        const [ref, patch] = tx.update.mock.calls[0];
+        expect(ref.path).toBe('ops/checklists2_webster');
+        expect(patch['customTasks.FOH.all']).toEqual([a, { id: 'b', task: 'B2' }]);
+        // History mirror: nested set-merge on today's history row.
+        expect(tx.set).toHaveBeenCalledTimes(1);
+        const [href, hdata, hopts] = tx.set.mock.calls[0];
+        expect(href.path).toMatch(/^checklistHistory_webster\/\d{4}-\d{2}-\d{2}$/);
+        expect(hdata.customTasks.FOH.all).toEqual([a, { id: 'b', task: 'B2' }]);
+        expect(hopts).toEqual({ merge: true });
+    });
+
+    it('mutateFn returning null deletes the task', async () => {
+        const tx = arm(liveDoc({ FOH: { all: [a, b, c] } }));
+        await mutateOpsChecklistTask('webster', 'FOH', 'b', () => null);
+        expect(tx.update.mock.calls[0][1]['customTasks.FOH.all']).toEqual([a, c]);
+    });
+
+    it('finds tasks in the legacy morning/afternoon periods', async () => {
+        const tx = arm(liveDoc({ BOH: { morning: [a], afternoon: [b] } }));
+        await mutateOpsChecklistTask('maryland', 'BOH', 'b', t => ({ ...t, task: 'B2' }));
+        const patch = tx.update.mock.calls[0][1];
+        expect(patch['customTasks.BOH.afternoon']).toEqual([{ id: 'b', task: 'B2' }]);
+        expect(patch['customTasks.BOH.morning']).toBeUndefined();
+    });
+
+    it('throws (aborting the tx) when the task id is not in the live doc', async () => {
+        arm(liveDoc({ FOH: { all: [a] } }));
+        await expect(mutateOpsChecklistTask('webster', 'FOH', 'zzz', t => t))
+            .rejects.toThrow('task not found');
+    });
+
+    it('create branch: seeds a missing doc from fallbackSideArr with the mutation applied', async () => {
+        const tx = arm(null);
+        await mutateOpsChecklistTask('webster', 'FOH', 'a', t => ({ ...t, task: 'A2' }), { fallbackSideArr: [a, b] });
+        expect(tx.update).not.toHaveBeenCalled();
+        const liveSet = tx.set.mock.calls.find(([r]) => r.path === 'ops/checklists2_webster');
+        expect(liveSet[1].customTasks.FOH.all).toEqual([{ id: 'a', task: 'A2' }, b]);
+        expect(liveSet[2]).toEqual({ merge: true });
+    });
+
+    it('swap exchanges two NON-adjacent tasks in place and leaves the rest untouched', async () => {
+        const tx = arm(liveDoc({ FOH: { all: [a, b, c, d] } }));
+        await swapOpsChecklistTasks('webster', 'a', 'd');
+        expect(tx.update.mock.calls[0][1]['customTasks.FOH.all']).toEqual([d, b, c, a]);
+    });
+
+    it('swap aborts when the partner id vanished (concurrent delete)', async () => {
+        arm(liveDoc({ FOH: { all: [a, b] } }));
+        await expect(swapOpsChecklistTasks('webster', 'a', 'zzz')).rejects.toThrow('swap partner not found');
+    });
+
+    it('append adds to the live array; a retry with the same id cannot double-append', async () => {
+        const tx = arm(liveDoc({ FOH: { all: [a] } }));
+        await appendOpsChecklistTask('webster', 'FOH', b);
+        expect(tx.update.mock.calls[0][1]['customTasks.FOH.all']).toEqual([a, b]);
+        const tx2 = arm(liveDoc({ FOH: { all: [a, b] } }));
+        await appendOpsChecklistTask('webster', 'FOH', b); // id already present
+        expect(tx2.update.mock.calls[0][1]['customTasks.FOH.all']).toEqual([a, b]);
+    });
+
+    it('append merges a legacy morning/afternoon side into `all` (same as the old listener-migrated write)', async () => {
+        const tx = arm(liveDoc({ FOH: { morning: [a], afternoon: [b] } }));
+        await appendOpsChecklistTask('webster', 'FOH', c);
+        expect(tx.update.mock.calls[0][1]['customTasks.FOH.all']).toEqual([a, b, c]);
+    });
+
+    it('append creates the doc when it does not exist yet', async () => {
+        const tx = arm(null);
+        await appendOpsChecklistTask('webster', 'BOH', a);
+        const liveSet = tx.set.mock.calls.find(([r]) => r.path === 'ops/checklists2_webster');
+        expect(liveSet[1].customTasks.BOH.all).toEqual([a]);
+        expect(liveSet[2]).toEqual({ merge: true });
     });
 });

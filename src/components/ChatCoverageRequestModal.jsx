@@ -36,7 +36,10 @@ export default function ChatCoverageRequestModal({
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
 
-    const [myShifts, setMyShifts] = useState([]);
+    // null = still loading (first snapshot hasn't landed). Rendering the
+    // "No upcoming shifts" terminal screen off the initial [] made every
+    // open flash a false "you have no shifts" on slow Wi-Fi (2026-08-25).
+    const [myShifts, setMyShifts] = useState(null);
     const [pickedShiftId, setPickedShiftId] = useState('');
     const [note, setNote] = useState('');
     const [channelKey, setChannelKey] = useState('');
@@ -61,12 +64,16 @@ export default function ChatCoverageRequestModal({
             list.sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
             // Only published, non-deleted shifts.
             setMyShifts(list.filter(s => s.published !== false && !s.deleted));
-        }, (err) => console.warn('coverage: my-shifts snapshot failed:', err));
+        }, (err) => {
+            console.warn('coverage: my-shifts snapshot failed:', err);
+            // Resolve the loading state so the modal doesn't spin forever.
+            setMyShifts([]);
+        });
         return () => unsub();
     }, [staffName]);
 
     const pickedShift = useMemo(
-        () => myShifts.find(s => s.id === pickedShiftId) || null,
+        () => (myShifts || []).find(s => s.id === pickedShiftId) || null,
         [myShifts, pickedShiftId]
     );
 
@@ -76,6 +83,20 @@ export default function ChatCoverageRequestModal({
         const side = pickedShift.side === 'boh' ? 'boh' : 'foh';
         setChannelKey(side);
     }, [pickedShift]);
+
+    if (myShifts === null) {
+        // Query still in flight — show a small loading card, never the
+        // terminal "no shifts" message.
+        return (
+            <ModalPortal>
+            <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={onClose}>
+                <div className="bg-white rounded-xl p-6 max-w-sm" onClick={(e) => e.stopPropagation()}>
+                    <p className="text-sm text-dd-text-2 animate-pulse">{tx('Loading your shifts…', 'Cargando tus turnos…')}</p>
+                </div>
+            </div>
+            </ModalPortal>
+        );
+    }
 
     if (myShifts.length === 0) {
         return (

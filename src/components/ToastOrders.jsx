@@ -6,10 +6,21 @@ import { escapeHtml as esc } from '../data/htmlEscape';
 import { subscribePrinterConfig, printFreeText } from '../data/labelPrinting';
 import { printViaNative } from '../capacitor-bridge';
 
-export default function ToastOrders({ language, staffName = '' }) {
+export default function ToastOrders({ language, staffName = '', storeLocation }) {
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [location, setLocation] = useState("webster");
+    // Default to the device's store (2026-08 audit P2: this hardcoded
+    // "webster", so Maryland devices saw — and printed labels for — the
+    // wrong store's orders until someone noticed the toggle). The in-page
+    // toggle stays a manual override; the effect below only re-follows the
+    // header location when THAT changes.
+    const [location, setLocation] = useState(() =>
+        (storeLocation === 'maryland' ? 'maryland' : 'webster'));
+    useEffect(() => {
+        if (storeLocation === 'webster' || storeLocation === 'maryland') {
+            setLocation(storeLocation);
+        }
+    }, [storeLocation]);
     const [expandedOrder, setExpandedOrder] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
     const [lastSync, setLastSync] = useState(null);

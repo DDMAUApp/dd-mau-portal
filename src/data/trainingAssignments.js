@@ -134,7 +134,7 @@ export async function sendAssignmentDMs({ assignmentId, assignment, fromName, fr
             res = { ok: true, chatId: null, self: true };   // can't DM yourself; count as delivered
         } else {
             // eslint-disable-next-line no-await-in-loop
-            res = await sendDirectMessage({ fromName, fromId, toName: r.name, text, extra: { type: 'training_assignment', training }, knownChatId: dmMap.get(r.name) || null });
+            res = await sendDirectMessage({ fromName, fromId, toName: r.name, text, extra: { type: 'training_assignment', training }, knownChatId: dmMap ? (dmMap.get(r.name) ?? false) : null });
         }
         if (res.ok) ok += 1; else failed += 1;
         pending.push([new FieldPath('sent', key), { name: r.name, at: new Date().toISOString(), chatId: res.chatId || null, error: res.ok ? null : (res.error || 'send_failed') }]);
@@ -180,7 +180,7 @@ export async function sendAssignmentReminders({ assignmentId, assignment, rows, 
     for (let i = 0; i < todo.length; i++) {
         const r = todo[i];
         // eslint-disable-next-line no-await-in-loop
-        const res = await sendDirectMessage({ fromName, fromId, toName: r.name, text, extra: { type: 'training_assignment', training }, knownChatId: dmMap.get(r.name) || null });
+        const res = await sendDirectMessage({ fromName, fromId, toName: r.name, text, extra: { type: 'training_assignment', training }, knownChatId: dmMap ? (dmMap.get(r.name) ?? false) : null });
         if (res.ok) ok += 1; else failed += 1;
         // eslint-disable-next-line no-await-in-loop
         await updateDoc(ref, new FieldPath('reminders', r.docId),

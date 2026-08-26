@@ -77,6 +77,21 @@ import {
 //   • Browser localStorage disabled (quota, private mode) → cache
 //     reads/writes silently fail; behavior degrades to pre-fix.
 
+// 2026-08-25: the Menu Screens admin dashboard renders each configured TV
+// inside an <iframe src="?tv=<id>"> — a FULL MenuDisplay instance. Without
+// this guard those previews wrote /tv_heartbeats under the REAL TV's id,
+// so an unplugged TV showed "Live" on the very dashboard an admin opened
+// to check on it (and preview crashes were attributed to the physical TV
+// in /tv_crash_logs). Previews must render but never impersonate the TV.
+// Same-origin iframe, so window.top is readable; try/catch for safety.
+const IS_EMBEDDED_PREVIEW = (() => {
+    try {
+        return typeof window !== 'undefined' && window.self !== window.top;
+    } catch {
+        return true; // cross-origin frame — definitely not a real TV
+    }
+})();
+
 const CACHE_PREFIX = 'ddmau:tv_cache:';
 // 7 days — old enough to cover a long weekend reboot, young enough
 // that a forgotten Pi pulled out of storage doesn't paint a customer-
@@ -193,18 +208,23 @@ class TvErrorBoundary extends Component {
         // Best-effort Firestore log — wrapped in try so a Firestore
         // failure doesn't itself crash the boundary.
         try {
-            const tvId = this.props.tvId || 'unknown';
-            const docId = `${tvId}_${Date.now()}`;
-            setDoc(doc(db, 'tv_crash_logs', docId), {
-                tvId,
-                message: String(error?.message || error).slice(0, 500),
-                stack: String(error?.stack || '').slice(0, 2000),
-                componentStack: String(info?.componentStack || '').slice(0, 2000),
-                userAgent: typeof navigator !== 'undefined'
-                    ? navigator.userAgent.slice(0, 200) : null,
-                url: typeof location !== 'undefined' ? location.href.slice(0, 300) : null,
-                crashedAt: serverTimestamp(),
-            }).catch(err => console.warn('crash log write failed:', err));
+            // Preview iframes must not attribute their crashes to the
+            // physical TV (see IS_EMBEDDED_PREVIEW above). The auto-
+            // recover reload below still runs so the preview un-sticks.
+            if (!IS_EMBEDDED_PREVIEW) {
+                const tvId = this.props.tvId || 'unknown';
+                const docId = `${tvId}_${Date.now()}`;
+                setDoc(doc(db, 'tv_crash_logs', docId), {
+                    tvId,
+                    message: String(error?.message || error).slice(0, 500),
+                    stack: String(error?.stack || '').slice(0, 2000),
+                    componentStack: String(info?.componentStack || '').slice(0, 2000),
+                    userAgent: typeof navigator !== 'undefined'
+                        ? navigator.userAgent.slice(0, 200) : null,
+                    url: typeof location !== 'undefined' ? location.href.slice(0, 300) : null,
+                    crashedAt: serverTimestamp(),
+                }).catch(err => console.warn('crash log write failed:', err));
+            }
         } catch (e) {
             console.warn('crash log try-block failed:', e);
         }
@@ -521,7 +541,7 @@ function MenuDisplayInner({ tvId = 'webster' }) {
     // offline" alerts. Ours is integrated into the existing FCM/SMS
     // notification dispatcher.
     useEffect(() => {
-        if (!tvId) return;
+        if (!tvId || IS_EMBEDDED_PREVIEW) return;
         const write = () => {
             setDoc(doc(db, 'tv_heartbeats', tvId), {
                 tvId,

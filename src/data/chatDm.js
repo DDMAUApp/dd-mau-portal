@@ -88,6 +88,10 @@ import { dmDocId } from './chat';
 // instead of re-running the array-contains query per recipient.
 // One query → { otherName: chatId } for every live 2-person DM this sender is
 // in (latest activity wins on duplicates). For bulk sends.
+// Returns a Map on SUCCESS (a miss then means "this sender provably has no
+// live DM with that person" — callers may pass knownChatId:false to skip the
+// per-recipient fallback query, 2026-08-25). Returns NULL on failure so
+// callers know to fall back to per-recipient lookup (knownChatId:null).
 export async function liveDmMapFor(myName) {
     const map = new Map();
     try {
@@ -107,6 +111,7 @@ export async function liveDmMapFor(myName) {
         });
     } catch (e) {
         console.warn('liveDmMapFor failed (per-recipient lookup will be used):', e);
+        return null;
     }
     return map;
 }
@@ -118,8 +123,14 @@ export async function sendDirectMessage({ fromName, fromId = null, toName, text,
     }
     try {
         // C6 — reuse a live DM for this pair under ANY id (rename-safe)
-        // before minting the deterministic one.
-        const id = knownChatId || (await findLiveDmId(fromName, toName)) || dmDocId(fromName, toName);
+        // before minting the deterministic one. knownChatId === false is the
+        // bulk-sender sentinel for "the pre-resolved map PROVED there is no
+        // live DM" — skip the (guaranteed-empty) 300-doc fallback query and
+        // mint the deterministic id directly. On a 66-person first-time
+        // assignment that saves ~66 full chat-list reads (2026-08-25).
+        const id = knownChatId
+            || (knownChatId === false ? null : await findLiveDmId(fromName, toName))
+            || dmDocId(fromName, toName);
         const ref = doc(db, 'chats', id);
         const snap = await getDoc(ref);
         // Resurrect a soft-deleted DM (2026-07-26 platform audit H4): the

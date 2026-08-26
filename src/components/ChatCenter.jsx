@@ -275,6 +275,8 @@ export default function ChatCenter({
     // value-equal (chatDocEqual, Timestamp-aware) lets unchanged rows
     // bail in React.memo. Same trick as the activeChat stabilization below.
     const chatObjsRef = useRef(new Map());
+    // Debounce timer for the localStorage chat-list mirror (see below).
+    const cacheWriteTimerRef = useRef(null);
     useEffect(() => {
         if (!staffName) return;
         if (!staffListReady) return;
@@ -342,7 +344,13 @@ export default function ChatCenter({
             setChatsLoading(false);
             setChatsError(null);
             // Keep the warm-paint mirror fresh (best-effort, ~20KB).
-            saveChatListCache(staffName, list);
+            // 2026-08-25: debounced 3s trailing — this handler fires on
+            // every typing heartbeat (~2s) in ANY of ~100 chats, and the
+            // synchronous stringify+setItem on each fan-out was a steady
+            // main-thread tax. The mirror only needs to be *eventually*
+            // fresh (it seeds the next cold open).
+            clearTimeout(cacheWriteTimerRef.current);
+            cacheWriteTimerRef.current = setTimeout(() => saveChatListCache(staffName, list), 3000);
         }, (err) => {
             clearTimeout(timeoutId);
             console.warn('chats snapshot failed:', err);
@@ -351,6 +359,7 @@ export default function ChatCenter({
         });
         return () => {
             clearTimeout(timeoutId);
+            clearTimeout(cacheWriteTimerRef.current);
             unsub();
         };
     }, [staffName, chatsSubGen, staffListReady]);
@@ -591,19 +600,22 @@ export default function ChatCenter({
                 // at 500 ops and THREW, so NONE were marked read (caught
                 // silently → the unread badge never cleared). Cap the read and
                 // commit in ≤450-op chunks.
+                // 2026-08-25: filter by type SERVER-side. The old query read
+                // every unread notification of ALL types (schedule, 86,
+                // announcements…) up to 1,500 docs on every Chat-tab entry,
+                // then kept only the 3 chat types client-side. `in` +
+                // equality filters need no composite index.
                 const q = query(
                     collection(db, 'notifications'),
                     where('forStaff', '==', staffName),
                     where('read', '==', false),
+                    where('type', 'in', ['chat_message', 'chat_mention', 'chat_reply']),
                     limit(1500),
                 );
                 const snap = await getDocs(q);
                 if (cancelled) return;
                 const chatDocs = [];
-                snap.forEach(d => {
-                    const t = d.data().type;
-                    if (t === 'chat_message' || t === 'chat_mention' || t === 'chat_reply') chatDocs.push(d.id);
-                });
+                snap.forEach(d => chatDocs.push(d.id));
                 if (chatDocs.length === 0) return;
                 for (let i = 0; i < chatDocs.length; i += 450) {
                     if (cancelled) return;
@@ -680,6 +692,28 @@ export default function ChatCenter({
     useEffect(() => {
         if (activeChatId) setMobileShowList(false);
     }, [activeChatId]);
+
+    // 2026-08-25 — remote delete/removal recovery. If the open chat is
+    // soft-deleted by someone else or the viewer is removed from members[],
+    // the doc drops out of the array-contains query and activeChat becomes
+    // null while activeChatId stays set: on mobile that stranded the user on
+    // a dead pane (list hidden, bottom nav hidden, no back affordance on
+    // iOS). Clear the id and return to the list. Two guards: !chatsLoading
+    // (initial empty snapshot can't bounce an open) and present→gone edge
+    // only (we clear only a chat we actually SAW in the list this session,
+    // so a just-created chat racing its first snapshot can't be bounced).
+    const seenActiveChatRef = useRef(null);
+    useEffect(() => {
+        if (activeChat) seenActiveChatRef.current = activeChat.id;
+    }, [activeChat]);
+    useEffect(() => {
+        if (!activeChatId || chatsLoading || activeChat) return;
+        if (seenActiveChatRef.current === activeChatId) {
+            seenActiveChatRef.current = null;
+            setActiveChatId(null);
+            setMobileShowList(true);
+        }
+    }, [activeChatId, activeChat, chatsLoading]);
 
     // ── Conversation-level push deep link (2026-08-11, chat forensics C4) ──
     // A chat push tap parks its chatId in the chatDeepLink store (it can

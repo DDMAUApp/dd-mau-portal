@@ -196,6 +196,9 @@ export default function PrintCenter({
                 toast(tx(`✓ Printed ${capturedCopies} ${word}`, `✓ ${capturedCopies} ${word} impresas`), { kind: 'success' });
                 // Don't auto-close — staff often want to print multiple
                 // different things in one session. They close manually.
+            } else if (res.error === 'cancelled') {
+                // User cancelled (share-sheet dismiss / Brother batch abort)
+                // — silent, matching PrintLabelModal (2026-08-25).
             } else {
                 toast(tx('Print failed: ', 'Impresión falló: ') + errorToHuman(res.error, isEs), { kind: 'error' });
             }

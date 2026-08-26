@@ -203,6 +203,20 @@ const DEVICE_ID_KEY = "ddmau:fcmDeviceId";
 // install + tab + private window) would each get their own token and
 // every push would fire N times on the device. With deviceId dedup, the
 // staff record holds at most one token per browser.
+// 2026-08-25 — tell the UI "this device's token is persisted for <staffName>".
+// fcmTokens is deliberately EXCLUDED from App's staffList shape-hash (so token
+// writes don't re-render every heavy tab), which meant the components that
+// read me.fcmTokens off React state (EnableNotificationsHeaderButton pill,
+// EnableNotificationsBanner) never saw a successful first-ever registration
+// and kept showing "Refresh notifications" all session. They now listen for
+// this event. Fired ONLY on confirmed persistence (transaction wrote, or the
+// token was already in Firestore) — never on failure.
+function notifyPushBound(staffName) {
+    try {
+        window.dispatchEvent(new CustomEvent('ddmau:pushBound', { detail: { staffName } }));
+    } catch { /* non-browser env */ }
+}
+
 function getOrCreateDeviceId() {
     try {
         let id = localStorage.getItem(DEVICE_ID_KEY);
@@ -342,8 +356,14 @@ async function enableNativePush(staffName, staffList, setStaffList) {
 
     if (staffName) {
         const deviceId = getOrCreateDeviceId();
+        // Outcome of the transaction body: 'wrote' | 'already-bound' |
+        // 'skipped' (doc missing / staff not in roster). A transaction can
+        // "succeed" without persisting anything — callers must not latch
+        // those as bound (2026-08-25).
+        let persistOutcome = 'skipped';
         try {
             await runTransaction(db, async (tx) => {
+                persistOutcome = 'skipped'; // reset — retries re-run the body
                 const ref = doc(db, "config", "staff");
                 const snap = await tx.get(ref);
                 if (!snap.exists()) {
@@ -396,19 +416,26 @@ async function enableNativePush(staffName, staffList, setStaffList) {
                 const myOwnSame = existing.length === nextTokens.length &&
                     existing.every((t, i) => t.token === nextTokens[i].token);
                 if (myOwnSame && tokenDeviceSweepCount === 0) {
+                    persistOutcome = 'already-bound';
                     return;
                 }
                 if (tokenDeviceSweepCount > 0) {
                     console.log(`[push][native] swept ${tokenDeviceSweepCount} cross-staff token entries for device ${deviceId.slice(0, 8)}…`);
                 }
                 tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
+                persistOutcome = 'wrote';
             });
             // 2026-07-27: no post-commit setStaffList mirror here — App's
-            // /config/staff onSnapshot already delivers the committed write
-            // through its shape-hash dedupe, and no UI reads fcmTokens off
-            // React state; a raw setStaffList bypassed the dedupe and
-            // re-rendered every heavy tab on each login/token refresh.
-            console.log('[push][native] persist OK');
+            // /config/staff onSnapshot delivers the committed write through
+            // its shape-hash dedupe (fcmTokens excluded). UI that reads
+            // fcmTokens (notification pill/banner) is told via the
+            // ddmau:pushBound event instead (2026-08-25).
+            if (persistOutcome === 'skipped') {
+                console.warn('[push][native] persist transaction was a no-op (staff not found)');
+                return { ok: true, token, platform, tokenKind, persisted: false, reason: 'staff-not-found' };
+            }
+            console.log('[push][native] persist OK (' + persistOutcome + ')');
+            notifyPushBound(staffName);
             return { ok: true, token, platform, tokenKind, persisted: true };
         } catch (e) {
             console.warn("[push][native] persist (transactional) failed:", e?.message, e?.stack);
@@ -606,8 +633,15 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     // values. This was the 2026-05-09 PIN-corruption root cause.
     if (staffName) {
         const deviceId = getOrCreateDeviceId();
+        // Mirror the native path's outcome tracking (2026-08-25): a
+        // transaction can "succeed" without persisting (staff missing), and
+        // the old code returned a bare {ok:true} even when the CATCH ran —
+        // App latched that as bound and never retried.
+        let persistOutcome = 'skipped';
+        let persistError = null;
         try {
             await runTransaction(db, async (tx) => {
+                persistOutcome = 'skipped'; // reset — retries re-run the body
                 const ref = doc(db, "config", "staff");
                 const snap = await tx.get(ref);
                 if (!snap.exists()) {
@@ -703,24 +737,32 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
                 const myOwnSame = existing.length === nextTokens.length &&
                     existing.every((t, i) => t.token === nextTokens[i].token);
                 if (myOwnSame && tokenDeviceSweepCount === 0) {
+                    persistOutcome = 'already-bound';
                     return;
                 }
                 if (tokenDeviceSweepCount > 0) {
                     console.log(`[FCM] swept ${tokenDeviceSweepCount} cross-staff token entries for device ${deviceId.slice(0, 8)}…`);
                 }
                 tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
+                persistOutcome = 'wrote';
             });
             // 2026-07-27: no post-commit setStaffList mirror here — App's
-            // /config/staff onSnapshot already delivers the committed write
-            // through its shape-hash dedupe, and no UI reads fcmTokens off
-            // React state; a raw setStaffList bypassed the dedupe and
-            // re-rendered every heavy tab on each login/token refresh.
+            // /config/staff onSnapshot delivers the committed write through
+            // its shape-hash dedupe (fcmTokens excluded). UI that reads
+            // fcmTokens (notification pill/banner) is told via the
+            // ddmau:pushBound event instead (2026-08-25).
         } catch (e) {
             console.warn("FCM token persist (transactional) failed:", e);
+            persistError = e?.message || String(e);
         }
+        if (persistOutcome === 'wrote' || persistOutcome === 'already-bound') {
+            notifyPushBound(staffName);
+            return { ok: true, token, persisted: true };
+        }
+        return { ok: true, token, persisted: false, ...(persistError ? { persistError } : { reason: 'staff-not-found' }) };
     }
 
-    return { ok: true, token };
+    return { ok: true, token, persisted: false, reason: 'no-staffName' };
 }
 
 /**

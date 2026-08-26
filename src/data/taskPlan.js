@@ -490,3 +490,140 @@ export async function moveOpsChecklistTask(location, taskId, beforeTaskId = null
 export async function deleteOpsChecklistTask(location, taskId) {
     await _editOpsChecklistTask(location, taskId, null);
 }
+
+// ── Per-task transactional writers for the Operations Tasks tab ─────────
+// (2026-08-25 audit.) Operations' nine checklist writers used to rewrite
+// the WHOLE customTasks.<side>.all array from a local ref snapshot
+// (writeChecklistPatch), so two devices editing different tasks in the
+// same window were last-writer-wins — one edit silently vanished. These
+// three helpers replace that path with transactions on the LIVE
+// ops/checklists2_{loc} doc that touch exactly one (or two, for the
+// swap) tasks, located BY ID — array indexes go stale under concurrent
+// reorders.
+//
+// History mirror: writeChecklistPatch dual-wrote the side array to
+// checklistHistory_<loc>/<todayKey>, and fetchOpsChecklistDay +
+// ChecklistHistory read those rows — so every helper mirrors the final
+// side array there too. The mirror is a nested tx.set(..., {merge:true})
+// (merge only touches customTasks.<side>.<period>), which works whether
+// or not today's history doc exists yet. The old path's date/version
+// stamps are intentionally dropped — rollover owns `date`.
+
+// Shared: apply mutateFn to the task with `taskId` inside `arr`.
+// Returns the new array, or null when the task isn't there.
+// mutateFn(liveTask) → replacement task; returning null deletes it.
+function _applyTaskMutation(arr, taskId, mutateFn) {
+    if (!Array.isArray(arr)) return null;
+    if (!arr.some(t => t?.id === taskId)) return null;
+    const out = [];
+    for (const t of arr) {
+        if (t?.id !== taskId) { out.push(t); continue; }
+        const next = mutateFn(t);
+        if (next != null) out.push(next);
+    }
+    return out;
+}
+
+// Generic single-task mutation. `side` scopes the search (the caller
+// always knows it); within the side the task is looked up across the
+// migrated `all` array and the legacy morning/afternoon arrays, same as
+// _editOpsChecklistTask. `fallbackSideArr` (optional): when the live doc
+// doesn't exist yet (fresh location), seed it from the caller's local
+// side array with the mutation applied — the create-branch equivalent of
+// writeChecklistPatch's setDoc-merge fallback.
+export async function mutateOpsChecklistTask(location, side, taskId, mutateFn, { fallbackSideArr } = {}) {
+    if (!location || !side || !taskId || typeof mutateFn !== 'function') {
+        throw new Error('missing location/side/taskId/mutateFn');
+    }
+    const liveRef = doc(db, 'ops', 'checklists2_' + location);
+    const histRef = doc(db, 'checklistHistory_' + location, toDateStr());
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(liveRef);
+        const nowIso = new Date().toISOString();
+        if (!snap.exists()) {
+            const next = _applyTaskMutation(Array.isArray(fallbackSideArr) ? fallbackSideArr : [], taskId, mutateFn);
+            if (!next) throw new Error('task not found');
+            tx.set(liveRef, {
+                customTasks: { [side]: { all: next } },
+                date: toDateStr(), updatedAt: nowIso,
+            }, { merge: true });
+            tx.set(histRef, { customTasks: { [side]: { all: next } }, updatedAt: nowIso }, { merge: true });
+            return;
+        }
+        const customTasks = snap.data()?.customTasks || {};
+        for (const period of ['all', 'morning', 'afternoon']) {
+            const next = _applyTaskMutation(customTasks?.[side]?.[period], taskId, mutateFn);
+            if (!next) continue;
+            tx.update(liveRef, {
+                [`customTasks.${side}.${period}`]: next,
+                updatedAt: nowIso,
+            });
+            tx.set(histRef, { customTasks: { [side]: { [period]: next } }, updatedAt: nowIso }, { merge: true });
+            return;
+        }
+        throw new Error('task not found');
+    });
+}
+
+// Transactional append for the two "add task" writers (quick-add + full
+// form) — read the live side array, append the new task, write. No id
+// lookup needed; the task's own id makes a transaction retry idempotent.
+export async function appendOpsChecklistTask(location, side, task) {
+    if (!location || !side || !task?.id) throw new Error('missing location/side/task');
+    const liveRef = doc(db, 'ops', 'checklists2_' + location);
+    const histRef = doc(db, 'checklistHistory_' + location, toDateStr());
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(liveRef);
+        const s = (snap.exists() ? snap.data()?.customTasks?.[side] : null) || {};
+        // Live docs were migrated to a single `all` period; a doc still on
+        // the legacy morning/afternoon shape gets the same merge the
+        // Operations listener applies (and the old whole-array write wrote).
+        const base = Array.isArray(s.all) ? s.all : [...(s.morning || []), ...(s.afternoon || [])];
+        const next = base.some(t => t?.id === task.id) ? base : [...base, task];
+        const nowIso = new Date().toISOString();
+        if (snap.exists()) {
+            tx.update(liveRef, { [`customTasks.${side}.all`]: next, updatedAt: nowIso });
+        } else {
+            tx.set(liveRef, { customTasks: { [side]: { all: next } }, date: toDateStr(), updatedAt: nowIso }, { merge: true });
+        }
+        tx.set(histRef, { customTasks: { [side]: { all: next } }, updatedAt: nowIso }, { merge: true });
+    });
+}
+
+// Transactional two-ID swap for the Tasks tab's ▲▼ reorder arrows.
+// Operations' moveChecklistTask is a SWAP of two possibly NON-adjacent
+// positions (the visible list is filtered, so the tapped rows' _origIdx
+// values need not be neighbors) — deliberately NOT built on
+// moveOpsChecklistTask, whose move-before semantics would be a visible
+// reorder regression. Both ids are captured by the caller at tap time;
+// the transaction re-locates them by id so a concurrent reorder can't
+// redirect the swap onto the wrong rows.
+export async function swapOpsChecklistTasks(location, taskIdA, taskIdB) {
+    if (!location || !taskIdA || !taskIdB || taskIdA === taskIdB) throw new Error('missing/equal task ids');
+    const liveRef = doc(db, 'ops', 'checklists2_' + location);
+    const histRef = doc(db, 'checklistHistory_' + location, toDateStr());
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(liveRef);
+        if (!snap.exists()) throw new Error('checklist not found');
+        const customTasks = snap.data()?.customTasks || {};
+        for (const side of ['FOH', 'BOH']) {
+            for (const period of ['all', 'morning', 'afternoon']) {
+                const arr = customTasks?.[side]?.[period];
+                if (!Array.isArray(arr)) continue;
+                const ia = arr.findIndex(t => t?.id === taskIdA);
+                if (ia === -1) continue;
+                const ib = arr.findIndex(t => t?.id === taskIdB);
+                // Both tasks must live in the same array — if the partner
+                // vanished (concurrent delete), abort rather than guess.
+                if (ib === -1) throw new Error('swap partner not found');
+                const next = arr.slice();
+                [next[ia], next[ib]] = [next[ib], next[ia]];
+                const nowIso = new Date().toISOString();
+                tx.update(liveRef, { [`customTasks.${side}.${period}`]: next, updatedAt: nowIso });
+                tx.set(histRef, { customTasks: { [side]: { [period]: next } }, updatedAt: nowIso }, { merge: true });
+                return;
+            }
+        }
+        throw new Error('task not found');
+    });
+}

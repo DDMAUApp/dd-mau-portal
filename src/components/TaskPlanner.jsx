@@ -158,6 +158,24 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
         return out;
     }, [monthAnchor]);
 
+    // Map(dateStr → [{name, count}]) for the visible month, computed ONCE
+    // per data change (2026-08-25 audit): countsForDay used to run inside
+    // the cells map — ~31 cells × every render (each state flip: move-arm,
+    // day-sheet open, month nav press-state…). Deps are the actual inputs:
+    // the checklist tasks (calTasks/calAllTasks), the active rules, and the
+    // month's cells. Empty map while calTasks === null preserves the old
+    // "render nothing until the checklist doc lands" behavior.
+    const countsByDay = useMemo(() => {
+        const map = new Map();
+        if (calTasks === null) return map;
+        for (const dateStr of cells) {
+            if (!dateStr) continue;
+            map.set(dateStr, countsForDay(dateStr, rulesDueOn(activeRules, dateStr)));
+        }
+        return map;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cells, activeRules, calAllTasks, calTasks]);
+
     const monthTitle = useMemo(() => {
         const [y, m] = monthAnchor.split('-').map(Number);
         return `${(isEs ? MONTHS_ES : MONTHS_EN)[m - 1]} ${y}`;
@@ -267,7 +285,6 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
                     <div className="grid grid-cols-7 gap-1">
                         {cells.map((dateStr, i) => {
                             if (!dateStr) return <div key={`b${i}`} />;
-                            const due = rulesDueOn(activeRules, dateStr);
                             const isToday = dateStr === today;
                             const isPast = dateStr < today;
                             return (
@@ -281,7 +298,7 @@ export default function TaskPlanner({ language = 'en', staffName, staffList = []
                                     </div>
                                     <div className="space-y-0.5 mt-0.5">
                                         {(() => {
-                                            const counts = calTasks === null ? [] : countsForDay(dateStr, due);
+                                            const counts = countsByDay.get(dateStr) || [];
                                             const named = counts.filter(c => c.name !== '📥');
                                             const unassigned = counts.find(c => c.name === '📥');
                                             const shown = named.slice(0, 3);

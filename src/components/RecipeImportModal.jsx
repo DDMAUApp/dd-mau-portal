@@ -62,8 +62,16 @@ export default function RecipeImportModal({
                 onProgress: setProgress,
             });
             const next = (res.recipes || []).map((draft) => {
-                const dup = existingByTitle.get(normTitle(draft.titleEn));
-                return { draft, checked: true, mode: dup ? 'replace' : 'add', existingId: dup ? dup.id : null, existingTitle: dup ? dup.titleEn : '' };
+                const norm = normTitle(draft.titleEn);
+                // Guard: a title that normalizes to nothing (symbols/non-Latin)
+                // must never "match" a blank-titled existing recipe.
+                const dup = norm ? existingByTitle.get(norm) : null;
+                // 2026-08-25: duplicates default to UNCHECKED. "Replace
+                // existing" pre-checked meant one hasty "Save N" could
+                // overwrite live book recipes with AI extractions (including
+                // low-confidence ones) — replacing now requires an explicit
+                // tick per duplicate.
+                return { draft, checked: !dup, mode: dup ? 'replace' : 'add', existingId: dup ? dup.id : null, existingTitle: dup ? dup.titleEn : '' };
             });
             setItems(next);
             setWarnings(res.warnings || []);

@@ -71,9 +71,27 @@ export default function ChatAckDashboard({
     const ackedNames = useMemo(() => new Set(acks.map(a => a.userName)), [acks]);
     const pending = useMemo(() => audience.filter(n => !ackedNames.has(n)), [audience, ackedNames]);
 
+    // 2026-08-25 — dedupe by UNIQUE NAME, and de-duplicate the visible list
+    // too. The thread ack path and the announcement-popup mirror write acks
+    // under DIFFERENT doc ids, so one person acking via both produced two
+    // docs — `acks.length` overcounted and the bar could exceed 100%.
+    // Newest doc per name wins for display. Sorted here (new array), not
+    // in-render on the state array (that was a state mutation).
+    const uniqueAcks = useMemo(() => {
+        const byName = new Map();
+        for (const a of acks) {
+            const key = a.userName || a.id;
+            const prev = byName.get(key);
+            const ms = a.ackedAt?.toMillis?.() || 0;
+            if (!prev || ms > (prev.ackedAt?.toMillis?.() || 0)) byName.set(key, a);
+        }
+        return [...byName.values()].sort((a, b) =>
+            (b.ackedAt?.toMillis?.() || 0) - (a.ackedAt?.toMillis?.() || 0));
+    }, [acks]);
+
     const total = audience.length;
-    const done = acks.length;
-    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    const done = ackedNames.size;
+    const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
     const deadlineMs = message?.ackDeadline ? Date.parse(message.ackDeadline) : null;
     const deadlineLabel = deadlineMs
@@ -200,15 +218,10 @@ export default function ChatAckDashboard({
                         <div>
                             <div className="px-4 py-2 bg-dd-sage-50 border-b border-dd-line">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-dd-green-700">
-                                    {tx('Acknowledged', 'Confirmados')} · {acks.length}
+                                    {tx('Acknowledged', 'Confirmados')} · {uniqueAcks.length}
                                 </span>
                             </div>
-                            {acks
-                                .sort((a, b) => {
-                                    const am = a.ackedAt?.toMillis?.() || 0;
-                                    const bm = b.ackedAt?.toMillis?.() || 0;
-                                    return bm - am;
-                                })
+                            {uniqueAcks
                                 .map(a => (
                                     <div key={a.id} className="flex items-center gap-3 px-4 py-2 border-b border-dd-line/60">
                                         <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-dd-green/15 text-dd-green-700 text-[11px] font-black">

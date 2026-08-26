@@ -99,9 +99,9 @@ describe('hoursBetween', () => {
         expect(hoursBetween('10:00', '15:00')).toBe(5);
         expect(hoursBetween('10:30', '15:00')).toBe(4.5);
     });
-    it('wraps overnight (end <= start) forward 24h — documented behavior', () => {
+    it('wraps overnight (end < start) forward 24h; equal times = 0', () => {
         expect(hoursBetween('22:00', '02:00')).toBe(4);
-        expect(hoursBetween('10:00', '10:00')).toBe(24); // degenerate equal treated as full wrap
+        expect(hoursBetween('10:00', '10:00')).toBe(0); // zero-length shift, NOT a 24h wrap (2026-08-25 fix)
     });
     it('deducts the 1h unpaid break on isDouble, floored at 0', () => {
         expect(hoursBetween('10:00', '20:00', true)).toBe(9);

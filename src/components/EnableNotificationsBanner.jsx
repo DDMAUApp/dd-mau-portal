@@ -61,6 +61,19 @@ export default function EnableNotificationsBanner({
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState(null);
 
+    // 2026-08-25 — session override from messaging.js's 'ddmau:pushBound'
+    // event (fcmTokens is shape-hash-excluded, so the prop never refreshes
+    // after a successful bind — see EnableNotificationsHeaderButton).
+    const [boundOverride, setBoundOverride] = useState(false);
+    useEffect(() => { setBoundOverride(false); }, [staffName]);
+    useEffect(() => {
+        const onBound = (e) => {
+            if (e?.detail?.staffName && e.detail.staffName === staffName) setBoundOverride(true);
+        };
+        window.addEventListener('ddmau:pushBound', onBound);
+        return () => window.removeEventListener('ddmau:pushBound', onBound);
+    }, [staffName]);
+
     // Re-check permission whenever the staff name changes (sign-in /
     // sign-out cycle). Also catches the case where the OS-level setting
     // was changed in a different tab.
@@ -79,7 +92,7 @@ export default function EnableNotificationsBanner({
     //     push, so nudging staff to enable it would be a dead end.
     if (isSharedDeviceModeEnabled()) return null;
     if (permission === 'unsupported') return null;
-    const hasToken = deviceHasToken(staffName, staffList);
+    const hasToken = boundOverride || deviceHasToken(staffName, staffList);
     const needsRefresh = permission === 'granted' && !hasToken;
     if (permission === 'granted' && hasToken) return null;
 

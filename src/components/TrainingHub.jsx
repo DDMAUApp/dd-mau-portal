@@ -98,7 +98,7 @@ export function parseYouTubeId(input) {
 }
 
 // Doc id helper — staff name → safe Firestore doc id
-const staffDocId = (name) => (name || "unknown").toLowerCase().replace(/\s+/g, "_");
+const staffDocId = (name) => (name || "unknown").toLowerCase().replace(/\s+/g, "_").replace(/\//g, "_"); // "/" would make an invalid doc path (crashes the tab for that person); keep in sync with renameStaff.trainingDocId + functions docIdFor
 
 // Deterministic per-attempt shuffle of a question's answer options.
 // 2026-08-17 audit: several modules (M7, M9) had the correct answer at
@@ -523,7 +523,10 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
         const unsub = onSnapshot(
             doc(db, "training_v2", staffDocId(staffName)),
             (snap) => { gotFirst = true; setProgress(snap.exists() ? snap.data() : { modules: {} }); setLoading(false); },
-            (e) => { gotFirst = true; console.warn('training progress snapshot error:', e); setLoading(false); },
+            // Error path must resolve progress too — leaving it null hid the
+            // Required-training banner/DUE chips and gated the quiz behind a
+            // misleading "Read all lessons first" for the whole session.
+            (e) => { gotFirst = true; console.warn('training progress snapshot error:', e); setProgress((p) => p || { modules: {} }); setLoading(false); },
         );
         return () => { clearTimeout(wd); unsub(); };
     }, [staffName]);

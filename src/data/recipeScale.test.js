@@ -103,3 +103,26 @@ describe('lineScales', () => {
         expect(lineScales('')).toBe(false);
     });
 });
+
+// 2026-08-25 audit — parenthesized pack sizes and proportion fractions
+// must not scale (verified live-bug shapes).
+import { scaleIngredient as _si25 } from './recipeScale';
+describe('pack-size and proportion guards (2026-08-25)', () => {
+    it('does not scale a parenthesized pack size without "each"', () => {
+        expect(_si25('1 (2 lb) bag noodles', 3)).toBe('3 (2 lb) bag noodles');
+        expect(_si25('add 1 can (28 oz) tomatoes', 2)).toBe('add 2 can (28 oz) tomatoes');
+    });
+    it('still scales per-each pack counts correctly', () => {
+        expect(_si25('2 cans (5 lb each)', 2)).toBe('4 cans (5 lb each)');
+    });
+    it('does not scale proportion fractions', () => {
+        // "5-gallon" is a fixed container size (existing hyphen guard).
+        expect(_si25('5-gallon bucket, fill 3/4 full', 2)).toBe('5-gallon bucket, fill 3/4 full');
+        expect(_si25('fill ¾ of the way with water', 2)).toBe('fill ¾ of the way with water');
+        expect(_si25('leave 1/2 empty', 3)).toBe('leave 1/2 empty');
+    });
+    it('still scales normal parenthesized yields', () => {
+        // A number in parens NOT followed by unit+")" keeps scaling.
+        expect(_si25('12 egg yolks', 5)).toBe('60 egg yolks');
+    });
+});

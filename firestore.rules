@@ -417,9 +417,22 @@ service cloud.firestore {
                     && request.resource.data.moduleId is string
                     && request.resource.data.recipients is list
                     && request.resource.data.status == 'open';
+      // 'recipients' is allowed ONLY as a same-size list rewrite — that
+      // supports the staff-rename fan-out (renameStaff.js rewrites
+      // recipients[].name + moves the name-keyed map entries) while still
+      // blocking a staffer from adding/dropping people off an assignment
+      // (the original freeze rationale, 2026-08-25).
       allow update: if request.resource.data is map
                     && request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['sent', 'opened', 'reminders', 'autoReminders', 'status', 'closedAt', 'closedBy', 'note']);
+                         .hasOnly(['sent', 'opened', 'reminders', 'autoReminders', 'status', 'closedAt', 'closedBy', 'note', 'recipients'])
+                    && (
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['recipients'])
+                         || (
+                              request.resource.data.recipients is list
+                              && request.resource.data.recipients.size() > 0
+                              && request.resource.data.recipients.size() == resource.data.recipients.size()
+                            )
+                       );
       allow delete: if false;
     }
 

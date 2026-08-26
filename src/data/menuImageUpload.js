@@ -36,24 +36,49 @@ export async function renderPdfPagesToBlobs(file, opts = {}) {
     const maxPages = opts.maxPages || 12;   // safety cap; designer menus rarely exceed 2-4 pages
     const buf = await file.arrayBuffer();
     const pdfjs = await loadPdfJs();
+    // NOTE: pdfjs takes ownership of (and transfers/neuters) the buffer we
+    // hand it, hence the copy. new Uint8Array(buf) — a view, no second copy
+    // of a possibly-100MB book — is enough; getDocument clones internally
+    // when given transferable data it must keep.
     const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
     const blobs = [];
     const pageCount = Math.min(pdf.numPages, maxPages);
-    for (let i = 1; i <= pageCount; i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext('2d');
-        // White background — PDFs are often transparent and would
-        // render black on the TV's white chrome.
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        const blob = await new Promise((resolve) =>
-            canvas.toBlob((b) => resolve(b), 'image/png', 0.92));
-        if (blob) blobs.push(blob);
+    // 2026-08-25 memory hardening for whole-book imports on iPad WebView:
+    // Safari frees canvas backing stores lazily and enforces a total canvas
+    // budget — 30 un-freed scale-2 canvases (~8MB each) could kill the tab.
+    // One canvas is now REUSED across pages, zeroed at the end, and each
+    // page's pdfjs resources are released (page.cleanup / pdf.destroy).
+    // Also cap the rendered viewport's long edge (a poster-sized PDF page at
+    // scale 2 is 70+ MB of canvas otherwise).
+    const MAX_RENDER_EDGE = 4400;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    try {
+        for (let i = 1; i <= pageCount; i++) {
+            const page = await pdf.getPage(i);
+            let viewport = page.getViewport({ scale });
+            const longEdge = Math.max(viewport.width, viewport.height);
+            if (longEdge > MAX_RENDER_EDGE) {
+                viewport = page.getViewport({ scale: scale * (MAX_RENDER_EDGE / longEdge) });
+            }
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            // White background — PDFs are often transparent and would
+            // render black on the TV's white chrome.
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            await page.render({ canvasContext: ctx, viewport }).promise;
+            const blob = await new Promise((resolve) =>
+                canvas.toBlob((b) => resolve(b), 'image/png', 0.92));
+            if (blob) blobs.push(blob);
+            try { page.cleanup(); } catch { /* best-effort */ }
+        }
+    } finally {
+        // Release the canvas backing store immediately (Safari holds it
+        // until GC otherwise) and tear down pdfjs worker-side resources.
+        canvas.width = 0;
+        canvas.height = 0;
+        try { await pdf.destroy(); } catch { /* best-effort */ }
     }
     return blobs;
 }

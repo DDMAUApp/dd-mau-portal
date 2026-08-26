@@ -14,7 +14,7 @@
 // under health/{staffId}/. Records are never deleted (rules-enforced).
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { canManageHealth } from '../data/staff';
 import {
@@ -442,16 +442,34 @@ function StaffRecordModal({ person, record, docsConfig, language, byName, onClos
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const rec = record || {};
-    const [hired, setHired] = useState(rec.hiredDate || '');
-    const [s1, setS1] = useState(rec.hepA?.shot1Date || '');
-    const [s2, setS2] = useState(rec.hepA?.shot2Date || '');
-    const [exempt, setExempt] = useState(rec.hepA?.exempt === true);
+    // Dirty-overlay edits (2026-08-25 audit) — same semantics as
+    // HealthBulkEditor: a field is written on save ONLY if the manager
+    // touched it ('field' in edits); a dirty-and-blank field DOES write ''
+    // (deliberate deletion). Untouched fields render straight from the live
+    // record prop, so opening the modal before the snapshot delivers (or
+    // while an AI-upload fill lands concurrently) can no longer clobber
+    // real server dates with stale mount-time blanks — and the inputs
+    // self-fill once the snapshot arrives instead of staying blank.
+    const [edits, setEdits] = useState({});   // {hiredDate?, shot1Date?, shot2Date?, exempt?}
+    const fieldValue = (field) => {
+        if (field in edits) return edits[field];
+        if (field === 'hiredDate') return rec.hiredDate || '';
+        if (field === 'exempt') return rec.hepA?.exempt === true;
+        return rec.hepA?.[field] || '';
+    };
+    const setField = (field, value) => setEdits((prev) => ({ ...prev, [field]: value }));
     const saveDates = async () => {
         try {
             await upsertHealthRecord(person.id, person.name, (r) => {
-                r.hiredDate = hired || '';
-                r.hepA = { ...(r.hepA || {}), shot1Date: s1 || '', shot2Date: s2 || '', exempt,
-                    verifiedBy: byName, verifiedAt: new Date().toISOString() };
+                if ('hiredDate' in edits) r.hiredDate = edits.hiredDate || '';
+                r.hepA = { ...(r.hepA || {}) };
+                if ('shot1Date' in edits) r.hepA.shot1Date = edits.shot1Date || '';
+                if ('shot2Date' in edits) r.hepA.shot2Date = edits.shot2Date || '';
+                if ('exempt' in edits) r.hepA.exempt = edits.exempt === true;
+                // Verified stamp is unconditional — saving with zero dirty
+                // fields still marks the record reviewed.
+                r.hepA.verifiedBy = byName;
+                r.hepA.verifiedAt = new Date().toISOString();
                 return r;
             }, byName);
             toast(tx('✅ Saved & verified', '✅ Guardado y verificado'));
@@ -482,13 +500,13 @@ function StaffRecordModal({ person, record, docsConfig, language, byName, onClos
 
                     <div className="grid grid-cols-2 gap-2 mb-3">
                         <label className="text-xs text-dd-text-2">{tx('Date hired', 'Fecha de contratación')}
-                            <input type="date" value={hired} onChange={(e) => setHired(e.target.value)} className="glass-input w-full mt-0.5 text-base" /></label>
+                            <input type="date" value={fieldValue('hiredDate')} onChange={(e) => setField('hiredDate', e.target.value)} className="glass-input w-full mt-0.5 text-base" /></label>
                         <label className="text-xs text-dd-text-2">{tx('Hep A shot 1', 'Hep A dosis 1')}
-                            <input type="date" value={s1} onChange={(e) => setS1(e.target.value)} className="glass-input w-full mt-0.5 text-base" /></label>
+                            <input type="date" value={fieldValue('shot1Date')} onChange={(e) => setField('shot1Date', e.target.value)} className="glass-input w-full mt-0.5 text-base" /></label>
                         <label className="text-xs text-dd-text-2">{tx('Hep A shot 2', 'Hep A dosis 2')}
-                            <input type="date" value={s2} onChange={(e) => setS2(e.target.value)} className="glass-input w-full mt-0.5 text-base" /></label>
+                            <input type="date" value={fieldValue('shot2Date')} onChange={(e) => setField('shot2Date', e.target.value)} className="glass-input w-full mt-0.5 text-base" /></label>
                         <label className="text-xs text-dd-text-2 flex items-end gap-1.5 pb-1.5">
-                            <input type="checkbox" checked={exempt} onChange={(e) => setExempt(e.target.checked)} className="w-4 h-4" />
+                            <input type="checkbox" checked={fieldValue('exempt')} onChange={(e) => setField('exempt', e.target.checked)} className="w-4 h-4" />
                             {tx('Exempt (titer / medical)', 'Exento (títulos / médico)')}</label>
                     </div>
                     {rec.hepA?.exemption?.signedAt && (
@@ -556,15 +574,27 @@ export default function HealthDepartment({ language = 'en', staffName = '', staf
     const [refreshTick, setRefreshTick] = useState(0);
     const refresh = () => setRefreshTick(t => t + 1);
 
-    // Live records subscription (whole collection — 64 staff, tiny docs).
+    // Live records subscription (2026-08-25 audit). Managers stream the
+    // whole collection (the roster genuinely joins across staff — 64 staff,
+    // tiny docs); everyone else subscribes ONLY to their own record so a
+    // non-manager's client never receives every employee's vaccination
+    // data + file URLs.
+    const myStaffId = me?.id != null ? String(me.id) : '';
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'health_records'), (snap) => {
-            const map = {};
-            snap.forEach((d) => { map[d.id] = d.data(); });
-            setRecords(map);
+        if (canManage) {
+            const unsub = onSnapshot(collection(db, 'health_records'), (snap) => {
+                const map = {};
+                snap.forEach((d) => { map[d.id] = d.data(); });
+                setRecords(map);
+            }, (err) => console.warn('health_records listener:', err?.code));
+            return () => unsub();
+        }
+        if (!myStaffId) { setRecords({}); return undefined; }
+        const unsub = onSnapshot(doc(db, 'health_records', myStaffId), (snap) => {
+            setRecords(snap.exists() ? { [snap.id]: snap.data() } : {});
         }, (err) => console.warn('health_records listener:', err?.code));
         return () => unsub();
-    }, []);
+    }, [canManage, myStaffId]);
 
     // Docs config (managers seed defaults on first visit).
     useEffect(() => {

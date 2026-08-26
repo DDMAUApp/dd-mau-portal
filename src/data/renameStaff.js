@@ -350,7 +350,10 @@ async function renameInsuranceIndex(oldName, newName) {
 // started", locks gone) and the admin Tracker listed both names. Copy
 // old → new (merge, so a doc the new name already has keeps its own
 // fields) and delete the old one in a single batch.
-export const trainingDocId = (name) => (name || 'unknown').toLowerCase().replace(/\s+/g, '_');
+// NOTE: '/' must be replaced too — a name like "Ana/Luis" would otherwise
+// produce an invalid doc path and crash the Training tab for that person.
+// Keep in sync with TrainingHub.staffDocId and functions/index.js docIdFor.
+export const trainingDocId = (name) => (name || 'unknown').toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
 async function renameTrainingProgress(oldName, newName) {
     const oldId = trainingDocId(oldName);
     const newId = trainingDocId(newName);
@@ -369,6 +372,49 @@ async function renameTrainingProgress(oldName, newName) {
     batch.delete(oldRef);
     await batch.commit();
     return 1;
+}
+
+// /training_assignments — assignment docs freeze recipients[].name and key
+// the sent/opened/reminders/autoReminders maps by trainingDocId(name).
+// Before 2026-08-25 a rename silently broke every assignment touching the
+// person: the admin roster showed them "not started" forever (deriveAssignment
+// Rows joins live /training_v2 by the NEW doc id, which renameTrainingProgress
+// moved), their Required-training banner vanished (myOpenAssignments matches
+// by name), and the daily reminder CF pushed to the dead old name until the
+// 14-day cutoff. Covers ALL statuses (closed rosters join live training_v2
+// too). Case-only renames still rewrite recipients[].name (the CF's forStaff
+// and manual-DM toName use the exact string) but skip the map-key moves
+// (same trainingDocId). Rules note: the training_assignments update whitelist
+// explicitly allows 'recipients' for SAME-SIZE rewrites (see firestore.rules).
+async function renameTrainingAssignments(oldName, newName) {
+    const oldId = trainingDocId(oldName);
+    const newId = trainingDocId(newName);
+    const snap = await getDocs(collection(db, 'training_assignments'));
+    let writes = 0;
+    for (const d of snap.docs) {
+        const data = d.data() || {};
+        const recipients = Array.isArray(data.recipients) ? data.recipients : [];
+        const touchesOld = recipients.some((r) => r && r.name === oldName);
+        if (!touchesOld) continue;
+        const nextRecipients = recipients.map((r) =>
+            (r && r.name === oldName) ? { ...r, name: newName } : r);
+        // updateDoc varargs: alternating field/value pairs. recipients via
+        // string path (top-level), map moves via FieldPath segments — names
+        // can contain dots, so dotted strings are forbidden here.
+        const args = ['recipients', nextRecipients];
+        if (oldId !== newId) {
+            for (const mapField of ['sent', 'opened', 'reminders', 'autoReminders']) {
+                const m = data[mapField];
+                if (m && typeof m === 'object' && Object.prototype.hasOwnProperty.call(m, oldId)) {
+                    args.push(new FieldPath(mapField, newId), m[oldId]);
+                    args.push(new FieldPath(mapField, oldId), deleteField());
+                }
+            }
+        }
+        await updateDoc(doc(db, 'training_assignments', d.id), ...args);
+        writes += 1;
+    }
+    return writes;
 }
 
 export async function renameStaffEverywhere({ oldName, newName, staffId, by } = {}) {
@@ -409,6 +455,7 @@ export async function renameStaffEverywhere({ oldName, newName, staffId, by } = 
         ['chats',           () => renameChats(o, n)],
         ['insurance_index', () => renameInsuranceIndex(o, n)],
         ['training_v2',     () => renameTrainingProgress(o, n)],
+        ['training_assignments', () => renameTrainingAssignments(o, n)],
     ];
 
     for (const [label, run] of tasks) {

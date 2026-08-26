@@ -114,6 +114,9 @@ export async function normalizeRecipeImage(file) {
     ctx.drawImage(img, 0, 0, cw, ch);
     if (typeof img.close === 'function') { try { img.close(); } catch { /* noop */ } }
     const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', JPEG_Q));
+    // Free the canvas backing store now — Safari holds it until GC and
+    // enforces a total canvas budget (30-page book imports were at risk).
+    canvas.width = 0; canvas.height = 0;
     return blob || file;
 }
 
@@ -142,8 +145,10 @@ export async function prepareRecipeFiles(files, { onProgress } = {}) {
     for (const file of Array.from(files || [])) {
         if (isPdf(file)) {
             onProgress?.(`Rendering ${file.name}…`);
+            const remaining = MAX_PAGES - imageBlobs.length;
+            if (remaining <= 0) { notes.push(`${file.name}: beyond the ${MAX_PAGES}-page cap — not read`); continue; }
             const { renderPdfPagesToBlobs } = await import('./menuImageUpload');
-            const pages = await renderPdfPagesToBlobs(file, { scale: 2, maxPages: MAX_PAGES });
+            const pages = await renderPdfPagesToBlobs(file, { scale: 2, maxPages: remaining });
             if (pages.length === 0) { notes.push(`${file.name}: no readable pages`); continue; }
             // Re-encode each page as JPEG (a scanned page can be a multi-MB
             // PNG; the AI vendor caps images at 5 MB per image).
@@ -153,6 +158,9 @@ export async function prepareRecipeFiles(files, { onProgress } = {}) {
                 imageBlobs.push(await normalizeRecipeImage(pages[i]));
             }
         } else if (isImage(file)) {
+            // Skip (don't normalize) photos beyond the page cap — they'd be
+            // truncated after the work anyway.
+            if (imageBlobs.length >= MAX_PAGES) { notes.push(`${file.name || 'photo'}: beyond the ${MAX_PAGES}-page cap — not read`); continue; }
             onProgress?.(`Preparing ${file.name || 'photo'}…`);
             imageBlobs.push(await normalizeRecipeImage(file));
         } else if (isDocx(file)) {

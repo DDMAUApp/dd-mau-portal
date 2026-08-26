@@ -1568,6 +1568,12 @@ const SECTION_KIND_CHOICES = [
     ['other', 'Gray'], ['protein', 'Red'], ['topping', 'Green'], ['base', 'Tan'],
     ['sauce', 'Orange'], ['broth', 'Yellow'], ['side', 'Purple'], ['drink', 'Blue'],
     ['chemical', 'Pink'], ['status', 'Bright yellow'],
+    // Customer-facing kinds (2026-08 audit P2): these were MISSING, so the
+    // 🎉 Catering / 🍾 Bottles sections rendered a BLANK select here — and
+    // one accidental pick silently destroyed their customer-facing label
+    // format + search visibility (CUSTOMER_FACING_KINDS gates both).
+    ['catering', '🎉 Catering (customer-facing)'],
+    ['bottles', '🍾 Bottles (customer-facing)'],
 ];
 function CategoryEditor({ sections, stickerLists, staffName, isEs, tx }) {
     const [draft, setDraft] = useState(() => sections.map(s => ({ ...s })));
@@ -1639,7 +1645,28 @@ function CategoryEditor({ sections, stickerLists, staffName, isEs, tx }) {
                                 onChange={(e) => update(s.key, { titleEs: e.target.value })}
                                 placeholder={tx('Title (Spanish)', 'Título (Español)')}
                                 className="flex-1 min-w-[9rem] px-2 py-1.5 text-xs border border-dd-line rounded bg-white" />
-                            <select value={s.kind} onChange={(e) => update(s.key, { kind: e.target.value })}
+                            <select value={s.kind}
+                                onChange={(e) => {
+                                    const nextKind = e.target.value;
+                                    // Leaving a customer-facing kind flips the
+                                    // section back to the internal prep label
+                                    // format AND puts its items into prep
+                                    // search — destructive enough to confirm.
+                                    if (CUSTOMER_FACING_KINDS.has(s.kind) && !CUSTOMER_FACING_KINDS.has(nextKind)) {
+                                        const ok = window.confirm(tx(
+                                            'This category prints CUSTOMER-FACING labels and is hidden from prep search. Changing its color/kind switches it to the internal prep label format and shows its items in prep search. Continue?',
+                                            'Esta categoría imprime etiquetas PARA CLIENTES y está oculta de la búsqueda de prep. Cambiar su color/tipo usará el formato interno de prep y mostrará sus artículos en la búsqueda. ¿Continuar?',
+                                        ));
+                                        if (!ok) {
+                                            // Controlled select: without a state
+                                            // change React won't repaint, so put
+                                            // the DOM back explicitly.
+                                            e.target.value = s.kind;
+                                            return;
+                                        }
+                                    }
+                                    update(s.key, { kind: nextKind });
+                                }}
                                 title={tx('Sticker color', 'Color de etiqueta')}
                                 className="flex-shrink-0 px-1 py-1.5 text-[11px] border border-dd-line rounded bg-white">
                                 {SECTION_KIND_CHOICES.map(([k, label]) => (

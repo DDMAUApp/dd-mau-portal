@@ -296,7 +296,10 @@ export const hoursBetween = (start, end, isDouble = false) => {
     const [sH, sM] = start.split(':').map(Number);
     const [eH, eM] = end.split(':').map(Number);
     let mins = (eH * 60 + eM) - (sH * 60 + sM);
-    if (mins <= 0) mins += 24 * 60; // overnight wrap
+    // Strictly negative = genuine overnight wrap (22:00→02:00 = 4h).
+    // Exactly-equal times are a zero-length shift, NOT a 24h wrap
+    // (2026-08-25 fix: `mins <= 0` turned start === end into 24 paid hours).
+    if (mins < 0) mins += 24 * 60; // overnight wrap
     let hrs = mins / 60;
     // Double-shift = 1 hr unpaid break (matches M2 L2 policy).
     if (isDouble) hrs = Math.max(0, hrs - 1);

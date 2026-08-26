@@ -770,7 +770,22 @@ function computeStaffListShapeHash(list) {
             // route. Also drop `lastSeen` (every app-open bumps it)
             // and `smsLastSentAt` (every SMS-status callback bumps
             // it) for the same reason.
-            const { lastSeen, fcmTokens, smsLastSentAt, ...rest } = s;
+            // 2026-08-25 perf audit: also drop the sign-in stamp fields.
+            // The lastSignInAt effect writes six of these on every sign-in
+            // (30-min debounce per staffer), and hashing them meant every
+            // sign-in ANYWHERE fanned a full setStaffList → active-heavy-tab
+            // re-render to every connected device, all day. StaffUsageAudit
+            // (the only reader) now has its own /config/staff subscription.
+            // NOTE: the boolean `pwaInstalled` stays HASHED on purpose — the
+            // install_pwa required-task auto-complete relies on its one-time
+            // false→true shape change reaching React state.
+            const {
+                lastSeen, fcmTokens, smsLastSentAt,
+                lastSignInAt, lastSignInPlatform, lastSignInStandalone,
+                lastSignInNative, lastSignInVersion, lastSignInShared,
+                pwaInstalledAt, pwaInstalledMethod,
+                ...rest
+            } = s;
             return rest;
         }));
     } catch {
@@ -1245,7 +1260,14 @@ export default function App() {
         };
     }, [staffName]);
 
-    const { isAtDDMau, nearestLocation: geoNearestLocation, checking: geoChecking, error: geoError, retry: geoRetry, permState: geoPermState } = useGeofence();
+    // 2026-08-25: gate the GPS watch — it used to run high-accuracy
+    // watchPosition unconditionally on the LOCKED screen all day, and on
+    // public ?tv=/?pair=/task-display kiosks (hooks run before those early
+    // returns). Consumers (Recipes gate + login location auto-start) only
+    // need it while someone is signed in. staffName persists in localStorage,
+    // so a kiosk URL on a once-logged-in device still needs the kiosk checks.
+    const geofenceEnabled = !!staffName && !tvMode && !pairMode && !taskDisplayMode;
+    const { isAtDDMau, nearestLocation: geoNearestLocation, checking: geoChecking, error: geoError, retry: geoRetry, permState: geoPermState } = useGeofence(geofenceEnabled);
     // Mobile pull-down-to-refresh lives in <PullToRefreshOverlay> (module
     // scope above) — NOT here. 2026-07-27: the hook's setPullDistance fires
     // per touchmove frame, so hosting it in App re-rendered the whole app
@@ -1389,7 +1411,13 @@ export default function App() {
             cancelled = true;
             if (typeof unsubForeground === "function") unsubForeground();
         };
-    }, [staffName, staffList?.length]);
+        // 2026-08-25: dep is the staffList IDENTITY, not its length. With
+        // `?.length` the persist-failure retry was dead code — a roster emit
+        // almost never changes the count, so after a transient token-bind
+        // failure during a user switch the PREVIOUS user's push binding
+        // stayed live all session. Every shape-hash-passing emit now retries;
+        // pushRegisteredForRef keeps the happy path to one registration.
+    }, [staffName, staffList]);
     // Load staff list from Firestore.
     //
     // ⚠ DISABLED 2026-05-09: legacy migration block was silently rewriting
@@ -2138,6 +2166,18 @@ export default function App() {
                     if (!snap.exists()) return;
                     const data = snap.data() || {};
                     const list = data.list || [];
+                    // 2026-08-25: re-check the 30-min debounce against the
+                    // SERVER record. The pre-check above reads React state,
+                    // but lastSignIn* is now excluded from the staffList
+                    // shape-hash, so this client never sees its own stamp —
+                    // a shared-iPad sign-out/sign-in within one session
+                    // would otherwise double-write this large doc.
+                    const meLive = list.find(s => s && s.name === staffName);
+                    const livePrev = meLive?.lastSignInAt;
+                    if (livePrev) {
+                        const liveMs = typeof livePrev === 'number' ? livePrev : Date.parse(livePrev);
+                        if (Number.isFinite(liveMs) && Date.now() - liveMs < 30 * 60 * 1000) return;
+                    }
                     const next = list.map(s => s && s.name === staffName
                         ? {
                             ...s,
@@ -2193,6 +2233,11 @@ export default function App() {
     const handleLogout = useCallback(() => {
         // 2026-05-24 audit fix: same FCM cleanup as onSignOut.
         try { disableFcmPush(staffName); } catch {}
+        // 2026-08-25 — the Recipes first-paint cache held the ENTIRE
+        // confidential recipe book in plaintext localStorage after logout
+        // (readable via devtools with no PIN). Clear it on sign-out; the
+        // next signed-in open re-seeds it from the live doc.
+        try { localStorage.removeItem('ddmau:recipes:v1'); } catch {}
         setStaffName(null);
         setActiveTab('home');
         // (2026-06-24: reload-on-logout workaround removed — the
@@ -2463,7 +2508,7 @@ export default function App() {
             // 2026-06-01 — Needs Board. Admin + manager only. Same pool that
             // sees Operations + AdminPanel — staff cannot reach this tab.
             if (activeTab === 'needs' && (staffIsAdmin || isManager)) return <PageErrorBoundary tabName="Needs Board" language={language}><NeedsBoard language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
-            if (activeTab === 'catering' && canSeePage(currentStaffRecord, 'catering')) return <PageErrorBoundary tabName="Catering" language={language}><CateringOrder language={language} staffName={staffName} /></PageErrorBoundary>;
+            if (activeTab === 'catering' && canSeePage(currentStaffRecord, 'catering')) return <PageErrorBoundary tabName="Catering" language={language}><CateringOrder language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             // My Hours — ALL staff, strictly self-scoped: the page queries only
             // the signed-in name's own timecards (staffKey == normName(me));
             // there is no prop or UI path to another person's cards.

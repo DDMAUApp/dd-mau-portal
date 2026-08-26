@@ -35,6 +35,17 @@ function ctDateKey(d) {
     }).format(d);
 }
 
+// Central calendar date+hour key for a Date — used by the attendance
+// recorder's hourly-reconcile gate (2026-08-25). Includes the date so the
+// midnight boundary also counts as an hour change.
+function ctHourKey(d) {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Chicago",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", hour12: false,
+    }).format(d);
+}
+
 // A shift's scheduled start as UTC ms, from its 'YYYY-MM-DD' date + 'HH:MM'
 // local (Central) time — DST-aware via the same Intl offset trick as
 // sendShiftReminders (functions/index.js).
@@ -94,10 +105,64 @@ async function todaysShiftsByName(db, dateKey, location) {
 
 // Called on each clocked_in_{location} write. Records on_time/late for every
 // clock-in that matches a scheduled shift. Returns how many docs it wrote.
-async function recordClockedInAttendance(location, data) {
-    const entries = Array.isArray(data?.entries) ? data.entries : [];
+//
+// 2026-08-25 audit — CHANGE GATE. The scraper rewrites the roster doc every
+// ~90s even when nothing changed, and this recorder used to re-query today's
+// shifts + batch.set every attendance doc on every tick (~20k writes/day of
+// pure no-ops). Now each entry is diffed before→after on ONLY employeeName +
+// clockedInAt (everything else — hoursToday, breaks, overtimeRisk — jitters
+// every tick), and the shifts read is skipped entirely on a quiet tick.
+// A person DISAPPEARING from the roster (clock-out) needs no attendance
+// write — punctuality was already recorded at clock-in.
+//
+// HOLE-CLOSER: once per America/Chicago HOUR (detected by the roster doc's
+// own updatedAt crossing an hour boundary) a full unconditional pass runs
+// anyway. This self-heals shifts published/edited AFTER someone clocked in,
+// swallowed trigger errors, and the midnight date-key boundary.
+async function recordClockedInAttendance(location, before, after) {
+    const entries = Array.isArray(after?.entries) ? after.entries : [];
     if (!entries.length) return 0; // closed / nobody on — nothing to do (also skips the shifts read)
     const db = getFirestore();
+
+    // ── Change gate — computed BEFORE the shifts query so quiet ticks
+    // skip those reads too. Key by toastEmployeeId when present, else
+    // normalized name (this feed can carry entries without an id).
+    const keyOf = (e) => (e && e.toastEmployeeId
+        ? `id:${e.toastEmployeeId}`
+        : `nm:${normName(e && e.employeeName)}`);
+    const beforeEntries = Array.isArray(before?.entries) ? before.entries : [];
+    const beforeByKey = new Map();
+    for (const e of beforeEntries) {
+        if (e && (e.toastEmployeeId || e.employeeName)) beforeByKey.set(keyOf(e), e);
+    }
+
+    // Hourly reconcile: full pass when before.updatedAt and after.updatedAt
+    // fall in different Central hours (updatedAt = the scraper's own ISO
+    // write stamp on the roster doc). Unparseable/missing stamps → full
+    // pass (fail open: correctness over the saved writes).
+    const hourChanged = (() => {
+        const bRaw = before && before.updatedAt ? new Date(before.updatedAt) : null;
+        const aRaw = after && after.updatedAt ? new Date(after.updatedAt) : null;
+        if (!aRaw || Number.isNaN(aRaw.getTime())) return true;
+        if (!bRaw || Number.isNaN(bRaw.getTime())) return true;
+        return ctHourKey(bRaw) !== ctHourKey(aRaw);
+    })();
+
+    let toProcess;
+    if (!before || hourChanged) {
+        toProcess = entries; // before doc absent, or hourly reconcile — process everyone
+    } else {
+        toProcess = entries.filter((e) => {
+            if (!e || !e.employeeName || !e.clockedInAt) return false; // skipped below anyway
+            const prev = beforeByKey.get(keyOf(e));
+            if (!prev) return true;                                    // new clock-in this tick
+            if (prev.clockedInAt !== e.clockedInAt) return true;       // re-clock-in (new session)
+            if ((prev.employeeName || "") !== (e.employeeName || "")) return true; // name resolved
+            return false;
+        });
+        if (!toProcess.length) return 0; // quiet tick — no shifts read, no writes
+    }
+
     const dateKey = ctDateKey(new Date());
     // Match by NAME across BOTH stores (no location filter) — staff cover
     // cross-location, so someone scheduled at Maryland who clocks in at Webster
@@ -109,7 +174,7 @@ async function recordClockedInAttendance(location, data) {
 
     let wrote = 0;
     const batch = db.batch();
-    for (const e of entries) {
+    for (const e of toProcess) {
         if (!e || !e.employeeName || !e.clockedInAt) continue;
         const clockInMs = new Date(e.clockedInAt).getTime();
         if (!clockInMs) continue;

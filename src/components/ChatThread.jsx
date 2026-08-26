@@ -266,12 +266,22 @@ function _loadPersistedMessages(chatId) {
         return Array.isArray(list) ? list : [];
     } catch { return []; }
 }
+// 2026-08-25: debounce the localStorage mirror 2s trailing. _cacheMessages
+// runs on EVERY messages emission (new message, reaction, pending→ack flip,
+// read-marker echo), and the synchronous stringify+setItem of 30 full docs
+// per event was a steady main-thread tax while a busy thread is open. The
+// in-memory cache stays instant; only the disk mirror trails.
+const _persistTimers = new Map(); // chatId -> timer id
 function _cacheMessages(chatId, list) {
     if (!chatId) return;
     _msgCache.delete(chatId);           // re-insert to mark most-recent (LRU)
     _msgCache.set(chatId, list);
     if (_msgCache.size > 25) _msgCache.delete(_msgCache.keys().next().value);
-    _persistMessages(chatId, list);
+    clearTimeout(_persistTimers.get(chatId));
+    _persistTimers.set(chatId, setTimeout(() => {
+        _persistTimers.delete(chatId);
+        _persistMessages(chatId, list);
+    }, 2000));
 }
 
 function ChatThreadInner({
@@ -711,7 +721,16 @@ function ChatThreadInner({
     }, [atBottom]);
 
     // ── Composer state ────────────────────────────────────────────
-    const [draft, setDraft] = useState('');
+    // 2026-08-25 perf — the draft text now lives INSIDE <Composer> (every
+    // keystroke used to re-render this whole component). The parent reaches
+    // it through this bridge: getDraft() for reads in send/schedule/caption
+    // handlers, setDraft(valueOrFn) for clears/recovers. The bridge is
+    // registered by Composer on mount; before that (or when the composer is
+    // locked) get returns '' and set is a no-op — both are safe because all
+    // callers are user-initiated from the composer itself.
+    const draftApiRef = useRef(null);
+    const getDraft = () => draftApiRef.current?.get?.() ?? '';
+    const setDraft = (v) => { draftApiRef.current?.set?.(v); };
     const [sending, setSending] = useState(false);
     const [recording, setRecording] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(null); // { kind, pct }
@@ -1061,7 +1080,7 @@ function ChatThreadInner({
     useEffect(() => { setFailedSends([]); }, [chat?.id]);
 
     async function handleSendText() {
-        const body = draft.trim();
+        const body = getDraft().trim();
         if (!body) return;
         if (sendingRef.current) return;
         sendingRef.current = true;
@@ -1294,7 +1313,10 @@ function ChatThreadInner({
                     const pct = snap.totalBytes > 0
                         ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100)
                         : 0;
-                    setUploadProgress({ kind: att.kind, pct });
+                    // Only setState when the rounded pct actually moved —
+                    // resumable uploads fire per chunk, and a 250MB video
+                    // was re-rendering the whole thread ~1,000×.
+                    setUploadProgress((prev) => (prev && prev.pct === pct && prev.kind === att.kind) ? prev : { kind: att.kind, pct });
                 }, reject, resolve);
             });
             uploadTaskRef.current = null;
@@ -1302,7 +1324,7 @@ function ChatThreadInner({
             await sendMessage({
                 chat, staffName, viewer, staffList,
                 type: att.kind,
-                text: draft.trim(),  // optional caption (photos/videos);
+                text: getDraft().trim(),  // optional caption (photos/videos);
                                      //   voice memos pre-2026-05-27 always
                                      //   sent text:'' — we now allow a
                                      //   caption on voice too, since the
@@ -2228,7 +2250,7 @@ function ChatThreadInner({
     // Function does the actual delivery so closing the app doesn't
     // strand the message.
     async function handleScheduleSend(sendAt) {
-        const body = draft.trim();
+        const body = getDraft().trim();
         if (!body) return;
         // 2026-07-21 (chat audit, bug #3) — re-entry guard. Unlike the live-send
         // path (sendingRef), this had none, so a double-tap of the schedule
@@ -2777,8 +2799,8 @@ function ChatThreadInner({
             ) : (
             <Composer
                 isEs={isEs}
-                draft={draft}
-                setDraft={(v) => { setDraft(v); if (v) maybeSendTyping(); }}
+                draftApiRef={draftApiRef}
+                onTyping={maybeSendTyping}
                 sending={sending}
                 recording={recording}
                 replyTarget={replyTarget}
@@ -3457,7 +3479,12 @@ function msgFieldsEqual(a, b) {
     if (a.pinned !== b.pinned) return false;
     if ((a.coverageStatus || '') !== (b.coverageStatus || '')) return false;
     if ((a.coverageClaimedBy || '') !== (b.coverageClaimedBy || '')) return false;
-    if ((a.resolvedAt || null) !== (b.resolvedAt || null)) return false;
+    // Timestamps must compare by value — Firestore rebuilds Timestamp
+    // instances per snapshot, so identity compare would fail every emission
+    // and permanently defeat the bubble memo (scroll-freeze class).
+    const arMs = a.resolvedAt?.toMillis?.() ?? a.resolvedAt?.seconds ?? a.resolvedAt ?? null;
+    const brMs = b.resolvedAt?.toMillis?.() ?? b.resolvedAt?.seconds ?? b.resolvedAt ?? null;
+    if (arMs !== brMs) return false;
     // Reactions, mentions, poll, eightySixData are objects/arrays —
     // a JSON compare catches value changes without false positives
     // from Firestore ref churn. jsonEq short-circuits when BOTH sides are
@@ -3678,8 +3705,13 @@ function AudioPlayer({ src, duration, isMine }) {
 
 
 // ── Composer ─────────────────────────────────────────────────────
+// 2026-08-25 perf — draft state moved INSIDE the composer. It used to live
+// in ChatThreadInner, so EVERY keystroke re-rendered the whole ~5.7k-line
+// thread tree (all bubbles' memo comparators, ~1,000 fresh handler
+// closures). The parent now reaches the draft through `draftApiRef`
+// ({ get, set } registered here) and gets typing signals via `onTyping`.
 function Composer({
-    isEs, draft, setDraft, sending, recording,
+    isEs, draftApiRef, onTyping, sending, recording,
     replyTarget, onClearReply,
     onSendText, onPickImage, onPickVideo, onPickFile,
     onStartRecording, onStopRecording, onCancelRecording,
@@ -3694,6 +3726,27 @@ function Composer({
     // discards the staged file (parent revokes its object URL).
     pendingAttachment, onClearAttachment,
 }) {
+    // Draft state lives HERE (2026-08-25 — see component comment). The
+    // parent reads/writes through draftApiRef. `_liveDraftRef` mirrors the
+    // committed-or-pending value synchronously so a parent handler firing
+    // in the same tick as a keystroke reads the fresh text.
+    const [draft, _setDraft] = useState('');
+    const _liveDraftRef = useRef('');
+    const setDraft = useCallback((v) => {
+        _setDraft((prev) => {
+            const next = typeof v === 'function' ? v(prev) : String(v ?? '');
+            _liveDraftRef.current = next; // idempotent — safe under StrictMode double-invoke
+            return next;
+        });
+    }, []);
+    useEffect(() => {
+        if (!draftApiRef) return undefined;
+        draftApiRef.current = {
+            get: () => _liveDraftRef.current,
+            set: setDraft,
+        };
+        return () => { if (draftApiRef.current?.set === setDraft) draftApiRef.current = null; };
+    }, [draftApiRef, setDraft]);
     const imageInputRef = useRef(null);
     const videoInputRef = useRef(null);
     const fileInputRef = useRef(null);   // C8 — document attachments
@@ -4287,7 +4340,13 @@ function Composer({
                     ref={textareaRef}
                     rows={1}
                     value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    onChange={(e) => {
+                        setDraft(e.target.value);
+                        // Typing heartbeat — the parent used to wrap
+                        // setDraft to send this; the wrapper died with the
+                        // state lift-down (2026-08-25).
+                        if (e.target.value) onTyping?.();
+                    }}
                     onKeyDown={onKeyDown}
                     onFocus={() => setShowAttachMenu(false)}
                     // Placeholder swaps to "Add a caption…" when a

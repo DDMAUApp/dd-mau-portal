@@ -31,7 +31,7 @@ import { db } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot, getCountFromServer,
 } from 'firebase/firestore';
-import { subscribePrinterConfig, PRINTER_SLOTS } from '../data/labelPrinting';
+import { subscribePrinterConfig } from '../data/labelPrinting';
 // 2026-05-27 Batch B — Apple-HIG page header. Visual only.
 import { HeartPulse } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
@@ -196,20 +196,23 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
     }, []);
 
     // ── Printer configs ──────────────────────────────────────────
-    // We subscribe to /config/printers_{location}_{slot} for both
-    // stores × both slots so the dashboard surfaces all 4 printers
-    // (Webster kitchen, Webster office, Maryland kitchen, Maryland
-    // office). For each we record whether the doc exists + whether
-    // it's enabled. Network-reachability checks would need a live
-    // probe to the printer's HTTP endpoint, which is blocked by
-    // mixed-content rules in browsers (https app, http printer).
-    // The Pi bridge handles the actual print job; here we're just
-    // reporting "is the printer registered + enabled?".
+    // We subscribe to /config/printers_{location}_kitchen for both
+    // stores. The 'office' slot was dropped from the product in May
+    // 2026 ("only the kitchen section for each location") — counting
+    // it here made the card permanently read "2 / 4 configured",
+    // which looked half-broken (fixed 2026-08-25). For each printer
+    // we record whether the doc exists + whether it's enabled.
+    // Network-reachability checks would need a live probe to the
+    // printer's HTTP endpoint, which is blocked by mixed-content
+    // rules in browsers (https app, http printer). Actual prints go
+    // DIRECT over Wi-Fi (Epson ePOS / Brother IPP — there is no Pi
+    // bridge); here we're just reporting "registered + enabled?".
+    const HEALTH_PRINTER_SLOTS = ['kitchen'];
     const [printers, setPrinters] = useState({});
     useEffect(() => {
         const unsubs = [];
         for (const loc of ['webster', 'maryland']) {
-            for (const slot of PRINTER_SLOTS) {
+            for (const slot of HEALTH_PRINTER_SLOTS) {
                 const key = `${loc}/${slot}`;
                 const u = subscribePrinterConfig(loc, (cfg) => {
                     setPrinters(prev => ({ ...prev, [key]: cfg }));
@@ -227,7 +230,7 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
             configured++;
             if (cfg.enabled !== false) enabled++;
         }
-        return { total: entries.length || 4, configured, enabled };
+        return { total: entries.length || 2, configured, enabled };
     }, [printers]);
 
     // ── Quick counts: staff, chats, shifts (current week) ────────
@@ -320,7 +323,7 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {['webster', 'maryland'].map(loc => (
-                        PRINTER_SLOTS.map(slot => {
+                        HEALTH_PRINTER_SLOTS.map(slot => {
                             const cfg  = printers[`${loc}/${slot}`];
                             const locLabel = loc === 'webster' ? 'Webster' : 'MD Heights';
                             const slotLabel = slot === 'kitchen' ? tx('Kitchen', 'Cocina') : tx('Office', 'Oficina');
@@ -353,8 +356,8 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
                 </div>
                 <p className="text-[10px] text-dd-text-2 mt-2 italic">
                     {tx(
-                        'Status reflects /config/printers_{loc}_{slot} doc presence. Actual reachability is checked at print time by the Pi bridge.',
-                        'El estado refleja la presencia del doc /config/printers_{loc}_{slot}. La accesibilidad real se verifica en tiempo de impresión por el puente Pi.',
+                        'Status reflects /config/printers_{loc}_{slot} doc presence. Actual reachability is probed at print time, direct over the store Wi-Fi.',
+                        'El estado refleja la presencia del doc /config/printers_{loc}_{slot}. La accesibilidad real se verifica al imprimir, directo por el Wi-Fi de la tienda.',
                     )}
                 </p>
             </div>

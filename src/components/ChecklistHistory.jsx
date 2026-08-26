@@ -1,8 +1,27 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { getDoc, doc } from 'firebase/firestore';
+// 2026-08-25 audit: archived tasks RETAIN their recurrence fields, so a
+// Saturdays-only task used to paint ❌ on every other weekday and inflate
+// done/total. Filter with the same shared matcher the live Tasks page and
+// taskPlan's checklistTasksForDay use on these very docs. weekdayOf is
+// taskPlan's UTC-noon day-of-week (DST-safe on a bare YYYY-MM-DD string).
+import { taskDueOnDay } from '../data/checklistRecurrence';
+import { weekdayOf } from '../data/taskPlan';
 
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
+
+// Skip-with-reason labels — small local copy of Operations.jsx's
+// SKIP_REASONS (same ids; keep in sync if a reason is ever added there).
+// A skipped task is RESOLVED, not forgotten: history renders it ⏭ neutral
+// (with the reason) instead of ❌, and counts it as satisfied.
+const SKIP_REASON_LABELS = {
+    out_of_stock:     { emoji: "🚫", en: "Out of stock",     es: "Sin existencia" },
+    equipment_broken: { emoji: "🔧", en: "Equipment broken", es: "Equipo dañado" },
+    no_time:          { emoji: "⏰", en: "Ran out of time",  es: "Sin tiempo" },
+    not_needed:       { emoji: "✋", en: "Not needed today", es: "No se necesita hoy" },
+    other:            { emoji: "❓", en: "Skipped",          es: "Omitida" },
+};
 
 // Number of calendar days back to probe for history. 30 is plenty for
 // the manager flipping back through "what got done last week" while
@@ -113,20 +132,30 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
 
     const renderHistoryPeriod = (period) => {
         if (!dayData || !dayData.customTasks) return null;
-        const tasks = dayData.customTasks[historySide]?.[period.id] || [];
+        // Only the tasks actually DUE on the selected day (see the import
+        // comment above) — the archive keeps the whole list, recurrence and
+        // all, so unfiltered rendering marked not-due tasks as missed.
+        const wd = weekdayOf(selectedDate);
+        const tasks = (dayData.customTasks[historySide]?.[period.id] || [])
+            .filter(t => taskDueOnDay(t, wd, selectedDate));
         if (tasks.length === 0) return null;
         const checks = dayData.checks || {};
+        // Skip keys (Operations skipTask): `${id}_skipped` holds the reason
+        // id. History reads list-0 keys (prefix ''), and subtasks can be
+        // skipped individually under their own ids.
+        const isSkipped = (id) => !!checks[id + "_skipped"];
 
         let totalItems = 0, doneItems = 0;
         tasks.forEach(task => {
+            const taskSkipped = isSkipped(task.id);
             if (task.subtasks && task.subtasks.length > 0) {
                 totalItems += task.subtasks.length;
-                doneItems += task.subtasks.filter(s => checks[s.id]).length;
+                doneItems += task.subtasks.filter(s => checks[s.id] || isSkipped(s.id) || taskSkipped).length;
             } else {
                 totalItems += 1;
-                doneItems += checks[task.id] ? 1 : 0;
+                doneItems += (checks[task.id] || taskSkipped) ? 1 : 0;
             }
-            if (task.requirePhoto) { totalItems += 1; doneItems += checks[task.id + "_photo"] ? 1 : 0; }
+            if (task.requirePhoto) { totalItems += 1; doneItems += (checks[task.id + "_photo"] || taskSkipped) ? 1 : 0; }
         });
 
         const allDone = totalItems > 0 && doneItems === totalItems;
@@ -147,18 +176,32 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
                             : !!checks[task.id];
                         const photoDone = task.requirePhoto ? !!checks[task.id + "_photo"] : true;
                         const fullyDone = taskDone && photoDone;
+                        // Skipped-with-reason (and not otherwise complete) —
+                        // neutral ⏭ rendering, never the red ❌.
+                        const taskSkipped = isSkipped(task.id) && !fullyDone;
+                        const skipReason = taskSkipped
+                            ? (SKIP_REASON_LABELS[checks[task.id + "_skipped"]] || SKIP_REASON_LABELS.other)
+                            : null;
                         const photoUrl = checks[task.id + "_photo"];
 
                         return (
-                            <div key={idx} className={`p-2 rounded-lg text-sm ${fullyDone ? "bg-green-50" : "bg-red-50"}`}>
+                            <div key={idx} className={`p-2 rounded-lg text-sm ${fullyDone ? "bg-green-50" : taskSkipped ? "bg-gray-50" : "bg-red-50"}`}>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-base">{fullyDone ? "✅" : "❌"}</span>
-                                    <span className={fullyDone ? "text-gray-700" : "text-red-700 font-medium"}>
+                                    <span className="text-base">{fullyDone ? "✅" : taskSkipped ? "⏭" : "❌"}</span>
+                                    <span className={fullyDone ? "text-gray-700" : taskSkipped ? "text-gray-600" : "text-red-700 font-medium"}>
                                         {task.task.includes("\n") ? task.task.split("\n").map((line, li) => (
                                             <span key={li}>{li === 0 ? line : <><br/><span className="font-normal text-xs text-gray-500">{line}</span></>}</span>
                                         )) : task.task}
                                     </span>
                                 </div>
+                                {/* Skip reason + who/when + optional note */}
+                                {taskSkipped && (
+                                    <p className="text-[11px] text-gray-500 ml-7 mt-0.5">
+                                        {skipReason.emoji} {language === "es" ? skipReason.es : skipReason.en}
+                                        {checks[task.id + "_by"] ? ` · ${checks[task.id + "_by"]}${checks[task.id + "_at"] ? " — " + checks[task.id + "_at"] : ""}` : ""}
+                                        {checks[task.id + "_skipNote"] ? ` · "${checks[task.id + "_skipNote"]}"` : ""}
+                                    </p>
+                                )}
                                 {/* Top-level (no-subtasks) timestamp */}
                                 {!hasSubtasks && checks[task.id] && checks[task.id + "_by"] && (
                                     <p className="text-[11px] text-green-700 ml-7 mt-0.5">
@@ -167,11 +210,13 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
                                 )}
                                 {hasSubtasks && (
                                     <div className="ml-7 mt-1 space-y-0.5">
-                                        {task.subtasks.map((sub, si) => (
+                                        {task.subtasks.map((sub, si) => {
+                                            const subSkipped = !checks[sub.id] && (isSkipped(sub.id) || taskSkipped);
+                                            return (
                                             <div key={si} className="text-xs">
                                                 <div className="flex items-center gap-1.5">
-                                                    <span>{checks[sub.id] ? "✅" : "⬜"}</span>
-                                                    <span className={checks[sub.id] ? "text-gray-600" : "text-red-600"}>{sub.task}</span>
+                                                    <span>{checks[sub.id] ? "✅" : subSkipped ? "⏭" : "⬜"}</span>
+                                                    <span className={checks[sub.id] ? "text-gray-600" : subSkipped ? "text-gray-500" : "text-red-600"}>{sub.task}</span>
                                                 </div>
                                                 {checks[sub.id] && checks[sub.id + "_by"] && (
                                                     <p className="text-[10px] text-green-700 ml-5">
@@ -179,7 +224,8 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
                                                     </p>
                                                 )}
                                             </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
                                 {task.requirePhoto && (
@@ -192,7 +238,7 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
                                                     : (language === "es" ? "Ver foto" : "View photo")}
                                             </button>
                                         ) : (
-                                            <span className="text-xs text-red-400 font-medium">📸 {language === "es" ? "Foto no tomada" : "Photo not taken"}</span>
+                                            <span className={taskSkipped ? "text-xs text-gray-400" : "text-xs text-red-400 font-medium"}>📸 {language === "es" ? "Foto no tomada" : "Photo not taken"}</span>
                                         )}
                                         {expandedPhoto === task.id && photoUrl && (
                                             <img src={photoUrl} alt="Task photo" className="mt-1 rounded-lg border border-gray-200 max-w-full" style={{ maxHeight: "200px" }} />
@@ -252,7 +298,12 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
                     </p>
                     {periods.map(p => renderHistoryPeriod(p))}
                     {periods.every(p => {
-                        const tasks = dayData.customTasks?.[historySide]?.[p.id] || [];
+                        // Same due-that-day filter as renderHistoryPeriod, so a
+                        // day whose archived tasks were all not-due reads as
+                        // "no tasks" instead of rendering an empty shell.
+                        const wd = weekdayOf(selectedDate);
+                        const tasks = (dayData.customTasks?.[historySide]?.[p.id] || [])
+                            .filter(t => taskDueOnDay(t, wd, selectedDate));
                         return tasks.length === 0;
                     }) && (
                         <p className="text-center text-gray-400 text-sm py-4">{language === "es" ? "Sin tareas para este lado" : "No tasks for this side"}</p>

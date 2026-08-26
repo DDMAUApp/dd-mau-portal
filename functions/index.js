@@ -51,17 +51,6 @@ const TWILIO_FROM_NUMBER = defineSecret("TWILIO_FROM_NUMBER");
 // roughly $0.0015 each at restaurant-scale inventory size.
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 
-// Gmail OAuth — powers pollGmail (owner inbox triage). Three secrets:
-//   - GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET: from the
-//     OAuth 2.0 client created in Google Cloud Console (Desktop app type).
-//   - GMAIL_OAUTH_REFRESH_TOKEN: minted once via the local helper at
-//     scripts/gmail-oauth-setup.mjs after Andrew/Julie complete the
-//     consent flow.
-// Set with: firebase functions:secrets:set GMAIL_OAUTH_CLIENT_ID (etc.)
-const GMAIL_OAUTH_CLIENT_ID = defineSecret("GMAIL_OAUTH_CLIENT_ID");
-const GMAIL_OAUTH_CLIENT_SECRET = defineSecret("GMAIL_OAUTH_CLIENT_SECRET");
-const GMAIL_OAUTH_REFRESH_TOKEN = defineSecret("GMAIL_OAUTH_REFRESH_TOKEN");
-
 // Sentry — Andrew 2026-05-26. Backend-side init. The DSN lives as a
 // Firebase secret so the deployed bundle never embeds it as plaintext.
 // Set with: firebase functions:secrets:set SENTRY_DSN
@@ -1339,18 +1328,37 @@ exports.twilioStatusCallback = onRequest(
     },
     async (req, res) => {
         // Signature verification — same protection as inbound.
+        //
+        // 2026-08-25 audit: same gen-2 URL mismatch twilioInbound was fixed
+        // for — Cloud Run's internal req.hostname/originalUrl never equal
+        // the public URL Twilio signed (dispatchSms passes the
+        // cloudfunctions.net statusCallback URL on every send), so the
+        // single reconstructed URL 403'd every real callback and delivery
+        // statuses never landed. Validate against ALL plausible public
+        // URLs; the HMAC must still match exactly, so this stays secure.
         try {
             const twilio = require("twilio");
             const sig = req.header("X-Twilio-Signature") || "";
-            const url = `https://${req.hostname}${req.originalUrl}`;
-            const valid = twilio.validateRequest(
-                TWILIO_AUTH_TOKEN.value(),
-                sig,
-                url,
-                req.body || {},
-            );
+            const token = TWILIO_AUTH_TOKEN.value();
+            const params = req.body || {};
+            const fwdHost = req.headers["x-forwarded-host"];
+            const path = req.originalUrl || "/";
+            const candidates = [
+                fwdHost ? `https://${fwdHost}${path}` : null,
+                `https://${req.hostname}${path}`,
+                "https://us-central1-dd-mau-staff-app.cloudfunctions.net/twilioStatusCallback",
+                "https://twiliostatuscallback-ccavtlnt7a-uc.a.run.app/twilioStatusCallback",
+                "https://twiliostatuscallback-ccavtlnt7a-uc.a.run.app/",
+                "https://twiliostatuscallback-ccavtlnt7a-uc.a.run.app",
+            ].filter(Boolean);
+            const valid = candidates.some((u) => {
+                try { return twilio.validateRequest(token, sig, u, params); }
+                catch { return false; }
+            });
             if (!valid) {
-                logger.warn("twilioStatusCallback: invalid signature");
+                logger.warn("twilioStatusCallback: invalid signature, rejecting", {
+                    host: req.hostname, fwdHost, path,
+                });
                 res.status(403).send("forbidden");
                 return;
             }
@@ -1479,17 +1487,28 @@ exports.sendShiftReminders = onSchedule(
 
             // Write the notification doc — dispatchNotification will pick it up
             // and fan out to FCM tokens.
-            await db.collection("notifications").add({
+            //
+            // 2026-08-25 audit: notification add + reminderSent stamp land in
+            // ONE writeBatch (atomic). Previously they were two separate
+            // awaits — if the stamp failed after the add succeeded, the next
+            // tick re-added the notification and the staffer got a duplicate
+            // push. The stable `tag` (shift_reminder_<shiftId>) additionally
+            // lets the OS collapse any duplicate that still slips through
+            // (dispatchNotification already forwards notif.tag for that).
+            const batch = db.batch();
+            batch.set(db.collection("notifications").doc(), {
                 forStaff: sh.staffName,
                 type: "shift_reminder_1h",
                 title: "DD Mau — Shift in 1 hour",
                 body: `Your shift starts at ${formatTime12h(sh.startTime)} · ${sh.location || ""}`.trim(),
                 deepLink: "schedule",
+                tag: `shift_reminder_${sDoc.id}`,
                 createdAt: FieldValue.serverTimestamp(),
                 read: false,
                 createdBy: "system",
             });
-            await sDoc.ref.update({ reminderSent: true, reminderSentAt: FieldValue.serverTimestamp() });
+            batch.update(sDoc.ref, { reminderSent: true, reminderSentAt: FieldValue.serverTimestamp() });
+            await batch.commit();
             reminded++;
         }
 
@@ -1531,49 +1550,14 @@ exports.sendScheduledChatMessages = onSchedule(
             .get();
 
         let delivered = 0;
-        for (const sDoc of snap.docs) {
-            const data = sDoc.data();
+
+        // Shared delivery path (2026-08-25 audit) — used by the pending loop
+        // below AND by the stuck-'delivering' reclaim pass after it. The
+        // caller must have already CLAIMED the doc (status flipped off
+        // 'pending', or claimedAt re-stamped by the reclaim transaction)
+        // before invoking this.
+        const deliverOne = async (sDoc, data) => {
             const { chatId, createdBy, createdById, payload } = data;
-            if (!chatId || !createdBy || !payload || !payload.type) {
-                // Malformed doc — mark error so it doesn't retry forever.
-                await sDoc.ref.update({ status: "error", error: "missing fields", deliveredAt: FieldValue.serverTimestamp() }).catch(() => {});
-                continue;
-            }
-
-            // 2026-05-24 audit fix — at-least-once duplicate-delivery guard.
-            //
-            // Without this: the function flipped status to 'sent' only AFTER
-            // appending the message, denormalizing the chat preview, AND
-            // fanning out N notifications. If the function instance crashed
-            // / timed out / got cut at a deploy boundary anywhere in the
-            // middle, the doc kept status='pending' and the next tick re-
-            // ran it from the start — duplicate bubble in the thread,
-            // duplicate FCM push to every recipient.
-            //
-            // CAS-style claim: transactionally flip status 'pending' →
-            // 'delivering' BEFORE doing any side-effects. If another
-            // instance got here first, the CAS fails (status is no
-            // longer 'pending') and we skip the doc.
-            try {
-                const claimed = await db.runTransaction(async (txn) => {
-                    const fresh = await txn.get(sDoc.ref);
-                    if (!fresh.exists) return false;
-                    if ((fresh.data() || {}).status !== "pending") return false;
-                    txn.update(sDoc.ref, {
-                        status: "delivering",
-                        claimedAt: FieldValue.serverTimestamp(),
-                    });
-                    return true;
-                });
-                if (!claimed) {
-                    logger.info(`scheduled ${sDoc.id} already claimed/sent — skipping`);
-                    continue;
-                }
-            } catch (e) {
-                logger.warn(`scheduled ${sDoc.id} claim failed:`, e?.message);
-                continue;
-            }
-
             try {
                 // 1) Re-parse mentions against the CURRENT staff list so a
                 //    rename / new hire between scheduling and delivery
@@ -1687,9 +1671,162 @@ exports.sendScheduledChatMessages = onSchedule(
                     deliveredAt: FieldValue.serverTimestamp(),
                 }).catch(() => {});
             }
+        };
+
+        for (const sDoc of snap.docs) {
+            const data = sDoc.data();
+            const { chatId, createdBy, createdById, payload } = data;
+            if (!chatId || !createdBy || !payload || !payload.type) {
+                // Malformed doc — mark error so it doesn't retry forever.
+                await sDoc.ref.update({ status: "error", error: "missing fields", deliveredAt: FieldValue.serverTimestamp() }).catch(() => {});
+                continue;
+            }
+
+            // 2026-05-24 audit fix — at-least-once duplicate-delivery guard.
+            //
+            // Without this: the function flipped status to 'sent' only AFTER
+            // appending the message, denormalizing the chat preview, AND
+            // fanning out N notifications. If the function instance crashed
+            // / timed out / got cut at a deploy boundary anywhere in the
+            // middle, the doc kept status='pending' and the next tick re-
+            // ran it from the start — duplicate bubble in the thread,
+            // duplicate FCM push to every recipient.
+            //
+            // CAS-style claim: transactionally flip status 'pending' →
+            // 'delivering' BEFORE doing any side-effects. If another
+            // instance got here first, the CAS fails (status is no
+            // longer 'pending') and we skip the doc.
+            try {
+                const claimed = await db.runTransaction(async (txn) => {
+                    const fresh = await txn.get(sDoc.ref);
+                    if (!fresh.exists) return false;
+                    if ((fresh.data() || {}).status !== "pending") return false;
+                    txn.update(sDoc.ref, {
+                        status: "delivering",
+                        claimedAt: FieldValue.serverTimestamp(),
+                    });
+                    return true;
+                });
+                if (!claimed) {
+                    logger.info(`scheduled ${sDoc.id} already claimed/sent — skipping`);
+                    continue;
+                }
+            } catch (e) {
+                logger.warn(`scheduled ${sDoc.id} claim failed:`, e?.message);
+                continue;
+            }
+
+            await deliverOne(sDoc, data);
         }
 
-        logger.info(`scheduled chat messages: ${delivered} delivered (out of ${snap.size} due)`);
+        // ── Reclaim stuck-'delivering' docs (2026-08-25 audit) ──────────
+        // The CAS claim above flips pending → delivering BEFORE any side-
+        // effects; if the instance dies mid-delivery the doc never reaches
+        // 'sent'/'error' and the cron (which only queries status=='pending')
+        // ignores it forever — the message silently never sends. Each tick
+        // also sweeps 'delivering' docs whose claim went stale (>5 min) and
+        // retries them, at most 3 total attempts, with an idempotency probe
+        // so a crash AFTER the message write never duplicates the bubble.
+        //
+        // The query REUSES the existing (status, sendAt) composite index —
+        // claimedAt staleness is filtered in memory ON PURPOSE (a claimedAt
+        // range clause would require a new index). claimedAt is always
+        // present on 'delivering' docs: the claim transaction stamps it.
+        const RECLAIM_STALE_MS = 5 * 60_000;
+        let reclaimed = 0;
+        try {
+            const staleSnap = await db
+                .collection("scheduled_messages")
+                .where("status", "==", "delivering")
+                .where("sendAt", "<=", now)
+                .orderBy("sendAt", "asc")
+                .limit(50)
+                .get();
+            for (const sDoc of staleSnap.docs) {
+                const data = sDoc.data();
+                const claimedMs = data.claimedAt?.toMillis ? data.claimedAt.toMillis() : 0;
+                // Fresh claim (or unreadable) — another instance is (or may
+                // be) mid-delivery right now. Leave it alone.
+                if (!claimedMs || Date.now() - claimedMs < RECLAIM_STALE_MS) continue;
+
+                // Transactional re-claim: re-read the LIVE doc, verify it is
+                // still stuck, then either bump to a fresh claim (attempts+1)
+                // or — poison-doc backstop — give up after 3 total attempts.
+                let action = null;
+                try {
+                    action = await db.runTransaction(async (txn) => {
+                        const fresh = await txn.get(sDoc.ref);
+                        if (!fresh.exists) return null;
+                        const cur = fresh.data() || {};
+                        if (cur.status !== "delivering") return null;
+                        const curMs = cur.claimedAt?.toMillis ? cur.claimedAt.toMillis() : 0;
+                        if (!curMs || Date.now() - curMs < RECLAIM_STALE_MS) return null;
+                        const attempts = Number(cur.attempts) || 1; // the original claim was attempt 1
+                        if (attempts + 1 > 3) {
+                            txn.update(sDoc.ref, {
+                                status: "error",
+                                error: `gave up after ${attempts} delivery attempts (instance died mid-delivery)`,
+                                deliveredAt: FieldValue.serverTimestamp(),
+                            });
+                            return "poisoned";
+                        }
+                        txn.update(sDoc.ref, {
+                            claimedAt: FieldValue.serverTimestamp(),
+                            attempts: attempts + 1,
+                        });
+                        return "deliver";
+                    });
+                } catch (e) {
+                    logger.warn(`scheduled reclaim txn failed for ${sDoc.id}:`, e?.message);
+                    continue;
+                }
+                if (action === "poisoned") {
+                    logger.warn(`scheduled ${sDoc.id} poisoned — marked error after repeated stuck deliveries`);
+                    continue;
+                }
+                if (action !== "deliver") continue;
+
+                // Idempotency probe: the prior attempt may have died AFTER
+                // appending the chat message (it carries scheduledSourceId =
+                // this doc's id — single-field auto-index). If it exists,
+                // just stamp success instead of re-sending.
+                try {
+                    const dupe = await db.collection("chats").doc(String(data.chatId))
+                        .collection("messages")
+                        .where("scheduledSourceId", "==", sDoc.id)
+                        .limit(1)
+                        .get();
+                    if (!dupe.empty) {
+                        await sDoc.ref.update({
+                            status: "sent",
+                            deliveredAt: FieldValue.serverTimestamp(),
+                            deliveredMessageId: dupe.docs[0].id,
+                            note: "recovered — message was already delivered by a prior attempt",
+                        });
+                        reclaimed++;
+                        continue;
+                    }
+                } catch (e) {
+                    // Probe failed — do NOT redeliver blind (risk of a
+                    // duplicate bubble). The fresh claim above means the
+                    // next tick after the stale window retries the probe.
+                    logger.warn(`scheduled idempotency probe failed for ${sDoc.id}:`, e?.message);
+                    continue;
+                }
+
+                // Malformed guard (mirrors the pending loop).
+                if (!data.chatId || !data.createdBy || !data.payload || !data.payload.type) {
+                    await sDoc.ref.update({ status: "error", error: "missing fields", deliveredAt: FieldValue.serverTimestamp() }).catch(() => {});
+                    continue;
+                }
+                await deliverOne(sDoc, data);
+                reclaimed++;
+            }
+        } catch (e) {
+            logger.warn("scheduled reclaim pass failed:", e?.message || e);
+        }
+
+        logger.info(`scheduled chat messages: ${delivered} delivered (out of ${snap.size} due), ${reclaimed} reclaimed`);
     }
 );
 
@@ -2384,7 +2521,7 @@ function makeAttendanceRecorder(location) {
         const after = event.data?.after?.data();
         if (!after) return; // doc deleted — nothing to record
         try {
-            const n = await attendanceLib.recordClockedInAttendance(location, after);
+            const n = await attendanceLib.recordClockedInAttendance(location, before, after);
             if (n) logger.info(`recordAttendance(${location}): wrote ${n} attendance rows`);
         } catch (e) {
             logger.warn(`recordAttendance(${location}) failed:`, e?.message || e);
@@ -4038,15 +4175,23 @@ exports.aiExtractMenu = onCall(
         // use it as a free proxy to exfiltrate data via the response
         // bytes being sent to Anthropic. SSRF is the standard term.
         //
-        // Allowlist: ONLY this project's Storage bucket. Menu PDFs the
-        // admin uploads land there via the existing aiExtractMenu UI;
+        // Allowlist: ONLY this project's Storage bucket. Menu pages the
+        // admin uploads stage under menu_imports/ in this bucket via the
+        // existing aiExtractMenu UI (MenuImportModal → uploadMenuFile);
         // no legitimate caller needs to point this function elsewhere.
-        const STORAGE_HOST_ALLOWLIST = new Set([
-            "firebasestorage.googleapis.com",
-            "storage.googleapis.com",
-            "dd-mau-staff-app.firebasestorage.app",
-            "dd-mau-staff-app.appspot.com",
-        ]);
+        //
+        // 2026-08-25 audit — host AND path check (backported from the
+        // recipe-import allowlist, recipeImportUrlAllowed). The old
+        // host-only set let bare storage.googleapis.com through with ANY
+        // path, i.e. this function could proxy ANY public GCS bucket.
+        const storageUrlAllowed = (u) => {
+            const host = u.hostname.toLowerCase();
+            const pth = u.pathname;
+            if (host === "firebasestorage.googleapis.com") return /^\/v0\/b\/dd-mau-staff-app(\.firebasestorage\.app|\.appspot\.com)?\/o\//.test(pth);
+            if (host === "storage.googleapis.com") return /^\/dd-mau-staff-app(\.firebasestorage\.app|\.appspot\.com)?\//.test(pth);
+            if (host === "dd-mau-staff-app.firebasestorage.app" || host === "dd-mau-staff-app.appspot.com") return true;
+            return false;
+        };
 
         // Fetch each image and base64-encode. We fetch from Storage
         // server-side rather than expecting the client to send raw
@@ -4057,12 +4202,12 @@ exports.aiExtractMenu = onCall(
             if (typeof url !== "string" || !/^https:\/\//.test(url)) {
                 throw new HttpsError("invalid-argument", "imageUrls must be https URLs");
             }
-            // SSRF check — host must be on the allowlist.
+            // SSRF check — host AND path must point at this project's bucket.
             try {
-                const host = new URL(url).hostname.toLowerCase();
-                if (!STORAGE_HOST_ALLOWLIST.has(host)) {
+                const u = new URL(url);
+                if (!storageUrlAllowed(u)) {
                     throw new HttpsError("permission-denied",
-                        `imageUrls host not allowed: ${host}. Only the project's Firebase Storage is permitted.`);
+                        `imageUrls host/path not allowed: ${u.hostname}. Only the project's Firebase Storage is permitted.`);
                 }
             } catch (e) {
                 if (e instanceof HttpsError) throw e;
@@ -4252,21 +4397,30 @@ async function runHealthDocExtraction(imageUrlsIn) {
         if (imageUrls.length === 0 || imageUrls.length > 4) {
             throw new HttpsError("invalid-argument", "1-4 imageUrls required");
         }
-        const STORAGE_HOST_ALLOWLIST = new Set([
-            "firebasestorage.googleapis.com",
-            "storage.googleapis.com",
-            "dd-mau-staff-app.firebasestorage.app",
-            "dd-mau-staff-app.appspot.com",
-        ]);
+        // SSRF allowlist (2026-08-25 audit) — host AND path must point at
+        // THIS project's Storage bucket (backported from the recipe-import
+        // pattern, recipeImportUrlAllowed): the old host-only set let bare
+        // storage.googleapis.com proxy ANY public GCS bucket. Legit callers
+        // stage under health/{staffId}/, health/_import/ (bulk editor) and
+        // onboarding/{hireId}/hep_a_record (hepAHealthSync) — all in this
+        // bucket, so a bucket-level path check breaks nothing.
+        const storageUrlAllowed = (u) => {
+            const host = u.hostname.toLowerCase();
+            const pth = u.pathname;
+            if (host === "firebasestorage.googleapis.com") return /^\/v0\/b\/dd-mau-staff-app(\.firebasestorage\.app|\.appspot\.com)?\/o\//.test(pth);
+            if (host === "storage.googleapis.com") return /^\/dd-mau-staff-app(\.firebasestorage\.app|\.appspot\.com)?\//.test(pth);
+            if (host === "dd-mau-staff-app.firebasestorage.app" || host === "dd-mau-staff-app.appspot.com") return true;
+            return false;
+        };
         const imageBlocks = [];
         for (const url of imageUrls) {
             if (typeof url !== "string" || !/^https:\/\//.test(url)) {
                 throw new HttpsError("invalid-argument", "imageUrls must be https URLs");
             }
             try {
-                const host = new URL(url).hostname.toLowerCase();
-                if (!STORAGE_HOST_ALLOWLIST.has(host)) {
-                    throw new HttpsError("permission-denied", `imageUrls host not allowed: ${host}`);
+                const u = new URL(url);
+                if (!storageUrlAllowed(u)) {
+                    throw new HttpsError("permission-denied", `imageUrls host/path not allowed: ${u.hostname}`);
                 }
             } catch (e) {
                 if (e instanceof HttpsError) throw e;
@@ -4440,6 +4594,27 @@ exports.processHealthImportJob = onDocumentCreated(
         if (!snap) return;
         const d = snap.data() || {};
         if (d.status && d.status !== "pending") return; // already handled
+        // Transactional claim (2026-08-25 audit): the guard above only sees
+        // the trigger's EVENT PAYLOAD — a duplicate trigger delivery (at-
+        // least-once semantics) carries the same 'pending' snapshot, so two
+        // instances both pass it and double-spend a paid vision call. CAS on
+        // the live doc: the first instance flips pending → processing; the
+        // loser sees 'processing' and aborts. Completion/failure writes
+        // below overwrite the claim with done/error as before.
+        try {
+            const claimed = await db.runTransaction(async (txn) => {
+                const fresh = await txn.get(snap.ref);
+                if (!fresh.exists) return false; // client gave up + deleted the job
+                const cur = (fresh.data() || {}).status;
+                if (cur && cur !== "pending") return false;
+                txn.update(snap.ref, { status: "processing", claimedAt: FieldValue.serverTimestamp() });
+                return true;
+            });
+            if (!claimed) { logger.info("processHealthImportJob: job already claimed — skipping duplicate trigger"); return; }
+        } catch (e) {
+            logger.warn("processHealthImportJob: claim txn failed — skipping:", e?.message || e);
+            return;
+        }
         const t0 = Date.now();
         try {
             // Global rate limit (2026-07-13): the collection is writable with
@@ -4735,6 +4910,24 @@ exports.processRecipeImportJob = onDocumentCreated(
         if (!snap) return;
         const d = snap.data() || {};
         if (d.status && d.status !== "pending") return;
+        // Transactional claim (2026-08-25 audit) — same reasoning as
+        // processHealthImportJob above: the payload guard can't see another
+        // instance's claim, so a duplicate trigger delivery double-spends a
+        // Sonnet call. CAS pending → processing on the LIVE doc.
+        try {
+            const claimed = await db.runTransaction(async (txn) => {
+                const fresh = await txn.get(snap.ref);
+                if (!fresh.exists) return false; // client gave up + deleted the job
+                const cur = (fresh.data() || {}).status;
+                if (cur && cur !== "pending") return false;
+                txn.update(snap.ref, { status: "processing", claimedAt: FieldValue.serverTimestamp() });
+                return true;
+            });
+            if (!claimed) { logger.info("processRecipeImportJob: job already claimed — skipping duplicate trigger"); return; }
+        } catch (e) {
+            logger.warn("processRecipeImportJob: claim txn failed — skipping:", e?.message || e);
+            return;
+        }
         const t0 = Date.now();
         try {
             // Global bucket — the collection is client-writable with the public
@@ -4782,19 +4975,36 @@ exports.trainingAssignmentReminders = onSchedule(
     async () => {
         const now = Date.now();
         const DAY = 24 * 60 * 60_000;
-        const docIdFor = (name) => String(name || "unknown").toLowerCase().replace(/\s+/g, "_");
+        // "/" must be replaced too — keep in sync with the client (renameStaff.trainingDocId,
+        // TrainingHub.staffDocId): a name containing "/" would otherwise desync the join.
+        const docIdFor = (name) => String(name || "unknown").toLowerCase().replace(/\s+/g, "_").replace(/\//g, "_");
         const fmtDue = (ms) => {
             try { return new Date(ms).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
             catch { return ""; }
         };
         const snap = await db.collection("training_assignments").where("status", "==", "open").get();
         if (snap.empty) { logger.info("trainingAssignmentReminders: no open assignments"); return; }
+        // Hidden-module gate (2026-08-25 audit): the module catalog lives in
+        // src/data/training.js (client-side) so this CF can't see draft /
+        // removed modules — but the client HIDES them, so a reminder about
+        // one nags the recipient toward a module they cannot even open.
+        // Closed assignments already stop reminding via the status=='open'
+        // query above; this adds an OPTIONAL config escape hatch: list
+        // moduleIds in config/training.hiddenModuleIds (array) to silence
+        // reminders for them. Doc/field absent → nothing is filtered.
+        let hiddenModuleIds = new Set();
+        try {
+            const tcfg = await db.doc("config/training").get();
+            const arr = tcfg.exists ? (tcfg.data() || {}).hiddenModuleIds : null;
+            if (Array.isArray(arr)) hiddenModuleIds = new Set(arr.map(String));
+        } catch { /* optional gate — absence/failure means nothing is hidden */ }
         const progSnap = await db.collection("training_v2").get();
         const progress = {};
         progSnap.forEach((d) => { progress[d.id] = d.data() || {}; });
         let nudged = 0;
         for (const d of snap.docs) {
             const a = d.data() || {};
+            if (a.moduleId && hiddenModuleIds.has(String(a.moduleId))) continue; // module hidden from the client — don't nag
             const dueMs = a.dueAt?.toMillis ? a.dueAt.toMillis() : (typeof a.dueAt === "number" ? a.dueAt : 0);
             if (!dueMs) continue;
             const overdue = now > dueMs;
@@ -5444,6 +5654,18 @@ exports.healthCheckScheduled = onSchedule(
 exports.healthCheck = onRequest(
     { region: "us-central1", cors: true },
     async (req, res) => {
+        // Global rate limit (2026-08-25 audit): every hit writes ~5 docs
+        // (health_checks / health_check_runs / deploys) on a public,
+        // unauthenticated endpoint — an idle curl loop could pump writes
+        // forever. One GLOBAL bucket (constant key, like the AI job
+        // triggers): 30 hits / 5 min is far above the deploy verifier +
+        // uptime monitors polling a few times an hour.
+        try {
+            await enforceRateLimit({ ip: "healthcheck-global", namespace: "healthCheck", limit: 30, windowMs: 5 * 60_000 });
+        } catch (e) {
+            res.status(429).send("rate limit exceeded — try again in a few minutes");
+            return;
+        }
         try {
             const version = (req.query.version || "").toString().slice(0, 40) || null;
             const sha = (req.query.sha || "").toString().slice(0, 40) || null;
@@ -5470,6 +5692,16 @@ exports.healthCheck = onRequest(
 exports.getDebugQueue = onRequest(
     { region: "us-central1", cors: true },
     async (req, res) => {
+        // Global rate limit (2026-08-25 audit): each hit costs ~570 reads
+        // (error_logs + health checks + deploys fan-in) on a public
+        // endpoint. 20 hits / 5 min is generous — the debug-agent cron
+        // curls this once a day.
+        try {
+            await enforceRateLimit({ ip: "debugqueue-global", namespace: "getDebugQueue", limit: 20, windowMs: 5 * 60_000 });
+        } catch (e) {
+            res.status(429).send("rate limit exceeded — try again in a few minutes");
+            return;
+        }
         try {
             const hours = Math.max(1, Math.min(168, parseInt(req.query.hours, 10) || 48));
             const q = await buildDebugQueue(db, { sinceHours: hours });
@@ -6164,15 +6396,26 @@ exports.pruneNotifications = onSchedule(
         const cut90 = new Date(now - 90 * 86400_000);
         let deleted = 0;
         try {
-            // Up to 10 passes × 400 docs per run (≤4,000 deletes/night).
-            // Single-field index on createdAt only — the read/age split is
-            // decided in code so no composite index is needed.
-            for (let pass = 0; pass < 10; pass++) {
-                const snap = await db.collection("notifications")
+            // Up to 40 pages × 400 docs per run — hard cap keeps a run
+            // bounded (≤16k scans/deletes a night). Single-field index on
+            // createdAt only — the read/age split is decided in code so no
+            // composite index is needed.
+            //
+            // 2026-08-25 audit: this pager used to `break` when a page
+            // yielded zero deletes. A wall of KEEPERS (unread docs aged
+            // 30-90d) at the front of the createdAt ordering then stalled
+            // the ENTIRE run every night — read>30d cleanup behind the
+            // wall never happened and the backlog only grew. Now we page
+            // PAST keepers with a startAfter cursor on the last doc of
+            // each page instead of stopping.
+            let cursor = null;
+            for (let pass = 0; pass < 40; pass++) {
+                let q = db.collection("notifications")
                     .where("createdAt", "<", cut30)
                     .orderBy("createdAt", "asc")
-                    .limit(400)
-                    .get();
+                    .limit(400);
+                if (cursor) q = q.startAfter(cursor);
+                const snap = await q.get();
                 if (snap.empty) break;
                 const batch = db.batch();
                 let inBatch = 0;
@@ -6187,11 +6430,8 @@ exports.pruneNotifications = onSchedule(
                 });
                 if (inBatch > 0) await batch.commit();
                 deleted += inBatch;
-                // A full page of keepers (unread, 30-90d old) means the
-                // oldest slice is all keepers — later passes would re-read
-                // the same page forever. Stop; tomorrow's run re-evaluates.
-                if (inBatch === 0) break;
-                if (snap.size < 400) break;
+                if (snap.size < 400) break; // reached the end of the <30d window
+                cursor = snap.docs[snap.docs.length - 1];
             }
             logger.info(`pruneNotifications: deleted ${deleted} (read>30d or any>90d).`);
         } catch (e) {
