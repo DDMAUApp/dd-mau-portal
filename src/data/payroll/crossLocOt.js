@@ -11,20 +11,15 @@
 // WHAT IT DOES: for every person on BOTH stores' exports in one run, it
 // rebuilds their combined per-week hours from the /timecards feed (daily,
 // per-store, Toast's own break-adjusted numbers via the scraper), computes
-// the OT the combined weeks actually owe, subtracts the OT the exports
-// already paid, and injects the shortfall as a pay-add. The netting is in
-// PREMIUM DOLLARS: each workweek's overage is priced at that week's FLSA
-// weighted regular rate, and the premium Toast already paid is valued at
-// each store's own rate (see the block comment at the netting code). With
-// one shared rate — the normal case — that reduces to:
-//
-//     top-up = missing OT hours × regular rate × 0.5
-//
-// ×0.5, NOT ×1.5 — the straight-time for those hours was already paid at
-// 1.0× inside one store's regular hours; only the overtime PREMIUM is
-// missing. The pay-add lands on the store where they worked more hours
-// this period, with the full math in its note, and a warn-level check
-// makes the owner acknowledge it before generating.
+// the OT the combined weeks actually owe, and moves the shortfall into a
+// dedicated CROSS OT column. Attribution is CHRONOLOGICAL per Sun–Sat week
+// (owner's rule, 2026-08-26): the first 40 hours are regular; every hour
+// after belongs to the store where it was worked and pays THAT store's
+// rate × 1.5 (the FLSA "rate in effect" method for two-rate overtime) —
+// e.g. 40h Webster Mon–Fri + 10h Dorsett Saturday = 10h OT at Dorsett's
+// rate on the Dorsett check. OT a store's export already pays is netted
+// per store, never cross-netted. Warn-level checks carry the full math
+// and force acknowledgment before generating.
 //
 // ENGINE PHILOSOPHY (never guess — surface it): anything this module can't
 // verify makes it REFUSE to add money and emit a check instead:
@@ -34,8 +29,7 @@
 //   • period label unparseable → WARN, no auto-add. Weeks run SUN–SAT
 //     (owner-confirmed 2026-08-26); each week's OT settles in the period
 //     containing its Saturday, so misaligned Monday-start periods work.
-//   • the two stores pay different rates → FLSA weighted regular rate,
-//     spelled out in the note (that's the legal rule, not a guess)
+//   • a store owed OT hours has no valid rate → WARN, no auto-add
 //
 // Pure module — no Firestore imports. The panel fetches the timecards and
 // passes them in, so everything here is unit-testable.
@@ -229,10 +223,11 @@ export function computeCrossLocOt({ period, employees, masters, cards }) {
             }
         }
 
-        // Per-location clock totals (period days only) + per-week
-        // per-location hours (Sun–Sat weeks, extended window).
+        // Per-location clock totals (period days only) + per-week DAY LISTS
+        // (Sun–Sat weeks, extended window). Day-level detail is needed
+        // because OT attribution is CHRONOLOGICAL (see below).
         const clockByLoc = { WG: 0, MH: 0 };
-        const weekLocHours = new Map(); // sundayKey -> { WG, MH }
+        const weekDays = new Map(); // sundayKey -> [{date, loc, hours, firstIn}]
         let unknownLoc = false;
         for (const r of rows) {
             const loc = LOC_OF_CARD[r.location];
@@ -244,9 +239,9 @@ export function computeCrossLocOt({ period, employees, masters, cards }) {
             // count toward this run — a trailing partial week is the next
             // period's business.
             if (saturdayOf(r.date) > range.end) continue;
-            const w = weekLocHours.get(wk) || { WG: 0, MH: 0 };
-            w[loc] += h;
-            weekLocHours.set(wk, w);
+            const list = weekDays.get(wk) || [];
+            list.push({ date: r.date, loc, hours: h, firstIn: r.firstIn || '' });
+            weekDays.set(wk, list);
         }
         clockByLoc.WG = round2(clockByLoc.WG);
         clockByLoc.MH = round2(clockByLoc.MH);
@@ -265,92 +260,101 @@ export function computeCrossLocOt({ period, employees, masters, cards }) {
             continue;
         }
 
-        // Rates — must be valid before any money math.
-        const rateWG = Number((masters.WG.by_key[key] || {}).rate);
-        const rateMH = Number((masters.MH.by_key[key] || {}).rate);
-        const ratesOk = Number.isFinite(rateWG) && rateWG > 0 && Number.isFinite(rateMH) && rateMH > 0;
-        const ratesEqual = ratesOk && Math.abs(rateWG - rateMH) <= 0.005;
+        // Rates per store.
+        const rateOf = { WG: Number((masters.WG.by_key[key] || {}).rate), MH: Number((masters.MH.by_key[key] || {}).rate) };
+        const rateOk = (l) => Number.isFinite(rateOf[l]) && rateOf[l] > 0;
 
-        // OT the combined weeks owe vs OT the exports already paid — netted
-        // in PREMIUM DOLLARS, not hours (2026-08-26 adversarial review #2:
-        // hour-netting at a blended rate mis-priced already-paid OT by
-        // Δrate × paidOT × 0.5 when the stores pay different rates). Each
-        // workweek prices its overtime at THAT week's FLSA weighted regular
-        // rate; the premium Toast already paid is valued at each store's own
-        // rate. Same-rate people (the norm) reduce to the simple formula.
-        let owedOt = 0;            // hours (display + dust gate)
-        let owedPremiumCents = 0;  // authoritative money
+        // CHRONOLOGICAL OT attribution (Andrew 2026-08-26: "where the staff
+        // has the overtime at — which is usually later in the week — that's
+        // the pay we follow"; his example: 40h Webster Mon–Fri + 10h Dorsett
+        // Saturday → 10h of overtime at Dorsett's rate). Within each Sun–Sat
+        // week the days run in worked order (date, then first clock-in for
+        // two-store days); the first 40 hours are regular, every hour after
+        // belongs to the store where it was worked and pays THAT store's
+        // rate — the FLSA "rate in effect" method for two-rate overtime. A
+        // day straddling the 40-hour mark splits.
+        let owedOt = 0;
+        const owedByLoc = { WG: 0, MH: 0 };
         const weekBits = [];
-        for (const [wk, w] of [...weekLocHours.entries()].sort()) {
-            const combined = round2(w.WG + w.MH);
+        for (const [wk, days] of [...weekDays.entries()].sort()) {
+            days.sort((a, b) => (a.date === b.date
+                ? String(a.firstIn).localeCompare(String(b.firstIn))
+                : (a.date < b.date ? -1 : 1)));
+            const combined = round2(days.reduce((s, d) => s + d.hours, 0));
             const over = Math.max(0, round2(combined - OT_WEEK_HOURS));
             if (over <= 0) continue;
             owedOt = round2(owedOt + over);
-            if (!ratesOk) { weekBits.push(`week of ${wk}: ${fmtG(combined)}h combined → ${fmtG(over)}h OT`); continue; }
-            const wkRate = ratesEqual ? rateWG
-                : round2((w.WG * rateWG + w.MH * rateMH) / combined);
-            owedPremiumCents += cents(over * wkRate * 0.5);
-            weekBits.push(`week of ${wk}: ${fmtG(combined)}h combined → ${fmtG(over)}h OT` +
-                (ratesEqual ? '' : ` @ $${fmtG(wkRate)} weighted (WG ${fmtG(round2(w.WG))}h × $${fmtG(rateWG)} + MH ${fmtG(round2(w.MH))}h × $${fmtG(rateMH)})`));
+            let cum = 0;
+            const wkByLoc = { WG: 0, MH: 0 };
+            for (const d of days) {
+                const before = cum;
+                cum = round2(cum + d.hours);
+                // This day's share of the over-40 span.
+                const otPart = Math.max(0, round2(Math.min(cum, combined) - Math.max(before, OT_WEEK_HOURS)));
+                if (otPart > 0) wkByLoc[d.loc] = round2(wkByLoc[d.loc] + otPart);
+            }
+            owedByLoc.WG = round2(owedByLoc.WG + wkByLoc.WG);
+            owedByLoc.MH = round2(owedByLoc.MH + wkByLoc.MH);
+            const bits = ['WG', 'MH'].filter((l) => wkByLoc[l] > 0)
+                .map((l) => `${fmtG(wkByLoc[l])}h at ${l}`).join(' + ');
+            weekBits.push(`week of ${wk}: ${fmtG(combined)}h combined → ${fmtG(over)}h OT (${bits})`);
         }
-        const missingHours = round2(owedOt - paidOt);
-        if (owedOt > 0 && !ratesOk) {
-            pushBoth(check(`xot:norate:${key}`, 'warn', `${name}: cross-store overtime needs a rate`,
-                `Their combined weeks owe ${fmtG(owedOt)}h of overtime (exports pay ${fmtG(paidOt)}h), but a valid pay rate ` +
-                `couldn't be resolved (WG $${fmtG(Number.isFinite(rateWG) ? rateWG : 0)} / MH $${fmtG(Number.isFinite(rateMH) ? rateMH : 0)}). ` +
-                `Fix their rate on the People step and re-run.`));
-            continue;
-        }
-        const paidPremiumCents = ratesOk
-            ? cents((Number(wg.ot_hours) || 0) * rateWG * 0.5) + cents((Number(mh.ot_hours) || 0) * rateMH * 0.5)
-            : 0;
-        const amountCents = owedPremiumCents - paidPremiumCents;
-        if (missingHours <= MIN_TOPUP_HOURS || amountCents <= 0) {
+
+        // Net per store against the OT that store's export already pays —
+        // never cross-netted (one store's overpaid OT is never clawed back
+        // or used to cancel the other store's shortfall).
+        const paidOtOf = { WG: round2(Number(wg.ot_hours) || 0), MH: round2(Number(mh.ot_hours) || 0) };
+        const missingOf = {
+            WG: Math.max(0, round2(owedByLoc.WG - paidOtOf.WG)),
+            MH: Math.max(0, round2(owedByLoc.MH - paidOtOf.MH)),
+        };
+        const missingHours = round2(missingOf.WG + missingOf.MH);
+        if (missingHours <= MIN_TOPUP_HOURS) {
             if (owedOt > 0) {
                 pushBoth(check(`xot:ok:${key}`, 'info', `${name}: cross-store overtime already covered`,
-                    `Combined weeks owe ${fmtG(owedOt)}h OT ($${money2(owedPremiumCents / 100)} premium); ` +
-                    `the exports already pay ${fmtG(paidOt)}h ($${money2(paidPremiumCents / 100)}).`));
+                    `Combined weeks owe ${fmtG(owedOt)}h OT (WG ${fmtG(owedByLoc.WG)}h / MH ${fmtG(owedByLoc.MH)}h); ` +
+                    `the exports already pay ${fmtG(paidOt)}h.`));
             }
             continue;
         }
+        const needLocs = ['WG', 'MH'].filter((l) => missingOf[l] > MIN_TOPUP_HOURS);
+        if (needLocs.some((l) => !rateOk(l))) {
+            pushBoth(check(`xot:norate:${key}`, 'warn', `${name}: cross-store overtime needs a rate`,
+                `Their combined weeks owe ${fmtG(missingHours)}h of overtime, but a valid pay rate ` +
+                `couldn't be resolved (WG $${fmtG(rateOk('WG') ? rateOf.WG : 0)} / MH $${fmtG(rateOk('MH') ? rateOf.MH : 0)}). ` +
+                `Fix their rate on the People step and re-run.`));
+            continue;
+        }
 
-        // CROSS OT column (Andrew 2026-08-26: "we can add a new column …
-        // called cross OT"): the missing hours leave the landing row's
-        // REGULAR column and land in a dedicated CROSS OT column, paid
-        // straight time (exactly what left REG, at that row's own rate)
-        // PLUS the FLSA-exact premium — net ≈1.5×, exact legal dollars in
-        // EVERY case including differing store rates. Toast's own OT
-        // column is never touched, so it always matches the raw export.
-        const landPref = exportHours.WG >= exportHours.MH ? 'WG' : 'MH';
-        const otherLoc = landPref === 'WG' ? 'MH' : 'WG';
+        // CROSS OT column, one op per store that holds over-40 hours: the
+        // hours leave that store's REGULAR column and land in its CROSS OT
+        // column at that store's own rate × 1.5 (straight time + premium).
+        // Toast's own OT column is never touched.
         const empOf = { WG: wg, MH: mh };
-        const rateOf = { WG: rateWG, MH: rateMH };
-        const landLoc = (Number(empOf[landPref].reg_hours) || 0) >= missingHours ? landPref
-            : (Number(empOf[otherLoc].reg_hours) || 0) >= missingHours ? otherLoc
-            : null;
-        const weekMath = `${weekBits.join('; ')}` +
-            ` (WG ${fmtG(exportHours.WG)}h + MH ${fmtG(exportHours.MH)}h this period; exports already pay ${fmtG(paidOt)}h OT` +
-            (paidPremiumCents > 0 ? ` = $${money2(paidPremiumCents / 100)} premium, subtracted` : '') + ')';
-        if (landLoc) {
-            const straightCents = cents(missingHours * rateOf[landLoc]);
-            const totalCents = straightCents + amountCents;
-            crossOps.push({ key, location: landLoc, hours: missingHours, straight_cents: straightCents, premium_cents: amountCents, total_cents: totalCents });
-            checksByLoc[landLoc].push(check(`xot:topup:${key}`, 'warn',
-                `${name}: ${fmtG(missingHours)}h CROSS OT (+$${money2(amountCents / 100)} over regular)`,
-                `Combined weeks put them over 40h: ${weekMath}. ${fmtG(missingHours)}h moved from REGULAR to the CROSS OT column on the ${landLoc} check — ` +
-                `$${money2(totalCents / 100)} there (straight time $${money2(straightCents / 100)} + overtime premium $${money2(amountCents / 100)}` +
-                (ratesEqual ? `, ≈ $${fmtG(rateOf[landLoc])} × 1.5` : ` — stores pay different rates, so the premium uses the FLSA weighted rate`) + `).`));
-        } else {
-            // Neither store's check has enough regular hours to move
-            // (pathological) — exact dollars as EXTRA PAY so the money
-            // still lands.
-            const dispRate = ratesEqual ? rateWG : round2((amountCents / 100) / (missingHours * 0.5));
-            const note = `Cross-store OT premium: ${fmtG(missingHours)}h ≈ $${money2(amountCents / 100)}. ${weekMath}.` +
-                ` Shown as EXTRA PAY because neither store's check has ${fmtG(missingHours)} regular hours to move to CROSS OT.` +
-                ` Straight time for these hours is already in regular pay — this is the missing ×0.5 premium only.`;
-            extras.push({ type: 'xot_premium', key, location: landPref, name, note, hours: missingHours, rate: dispRate, amount_cents: amountCents });
-            checksByLoc[landPref].push(check(`xot:topup:${key}`, 'warn',
-                `${name}: cross-store overtime added — $${money2(amountCents / 100)}`, note));
+        const weekMath = `${weekBits.join('; ')} (WG ${fmtG(exportHours.WG)}h + MH ${fmtG(exportHours.MH)}h this period` +
+            (paidOt > 0 ? `; exports already pay ${fmtG(paidOt)}h OT, subtracted per store` : '') + ')';
+        for (const loc of needLocs) {
+            const hrs = missingOf[loc];
+            const straightCents = cents(hrs * rateOf[loc]);
+            const premiumCents = cents(hrs * rateOf[loc] * 0.5);
+            const totalCents = straightCents + premiumCents;
+            if ((Number(empOf[loc].reg_hours) || 0) >= hrs) {
+                crossOps.push({ key, location: loc, hours: hrs, straight_cents: straightCents, premium_cents: premiumCents, total_cents: totalCents });
+                checksByLoc[loc].push(check(`xot:topup:${key}:${loc}`, 'warn',
+                    `${name}: ${fmtG(hrs)}h CROSS OT at ${loc} (+$${money2(premiumCents / 100)} over regular)`,
+                    `Combined weeks put them over 40h: ${weekMath}. The over-40 hours worked at ${loc} pay ${loc}'s own rate — ` +
+                    `${fmtG(hrs)}h moved from REGULAR to the CROSS OT column: $${money2(totalCents / 100)} ($${fmtG(rateOf[loc])} × 1.5).`));
+            } else {
+                // That store's check doesn't have the regular hours to move
+                // (pathological) — exact premium as EXTRA PAY so the money
+                // still lands.
+                const note = `Cross-store OT premium: ${fmtG(hrs)}h at ${loc} ≈ $${money2(premiumCents / 100)}. ${weekMath}. ` +
+                    `Shown as EXTRA PAY because the ${loc} check doesn't have ${fmtG(hrs)} regular hours to move to CROSS OT. ` +
+                    `Straight time for these hours is already in regular pay — this is the missing ×0.5 premium only.`;
+                extras.push({ type: 'xot_premium', key, location: loc, name, note, hours: hrs, rate: rateOf[loc], amount_cents: premiumCents });
+                checksByLoc[loc].push(check(`xot:topup:${key}:${loc}`, 'warn',
+                    `${name}: cross-store overtime added — $${money2(premiumCents / 100)}`, note));
+            }
         }
     }
 

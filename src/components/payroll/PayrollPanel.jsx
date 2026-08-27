@@ -592,7 +592,10 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                         const data = d.data();
                         const hours = cardHours(data);
                         rowCount += 1; hourSum += hours;
-                        return { id: d.id, date: data.date, location: data.location, hours };
+                        // firstIn orders same-day two-store cards for the
+                        // chronological OT attribution (crossLocOt.js).
+                        const firstIn = (Array.isArray(data.sessions) && data.sessions[0] && data.sessions[0].clockIn) || data.openClockIn || '';
+                        return { id: d.id, date: data.date, location: data.location, hours, firstIn };
                     });
                 }
                 if (alive) setCrossCards({ ready: true, byKey, sig: `${rowCount}:${Math.round(hourSum * 100)}` });

@@ -69,14 +69,15 @@ describe('computeCrossLocOt', () => {
             '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        // Shows in the dedicated CROSS OT column (Andrew 2026-08-26):
-        // straight time + premium, no EXTRA PAY line, Toast OT untouched.
+        // Chronological attribution (Andrew's example verbatim): the over-40
+        // hours are Saturday's 10h at MH → CROSS OT on the MH check at MH's
+        // rate. No EXTRA PAY line, Toast OT untouched.
         expect(out.extras).toHaveLength(0);
-        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]);
-        const warn = out.checksByLoc.WG.find((k) => k.id === 'xot:topup:gz');
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'MH', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]);
+        const warn = out.checksByLoc.MH.find((k) => k.id === 'xot:topup:gz:MH');
         expect(warn).toBeTruthy();
         expect(warn.level).toBe('warn');
-        expect(warn.title).toMatch(/10h CROSS OT/);
+        expect(warn.title).toMatch(/10h CROSS OT at MH/);
         expect(warn.detail).toMatch(/50h combined → 10h OT/);
     });
 
@@ -102,7 +103,9 @@ describe('computeCrossLocOt', () => {
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
         expect(out.extras).toHaveLength(0);
-        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 5, straight_cents: 8000, premium_cents: 4000, total_cents: 12000 }]);
+        // Chronological: Friday's last 5h (WG) + Saturday's 5h (MH) are the
+        // over-40 span; WG's export already pays its 5h → only MH's 5h remain.
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'MH', hours: 5, straight_cents: 8000, premium_cents: 4000, total_cents: 12000 }]);
     });
 
     it('two-week period: each Toast week stands alone', () => {
@@ -119,7 +122,7 @@ describe('computeCrossLocOt', () => {
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
         expect(out.extras).toHaveLength(0);
-        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]); // week 1 only
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'MH', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]); // week 1 only, Saturday at MH
     });
 
     it('clock/export mismatch → warn, NO money added', () => {
@@ -160,6 +163,9 @@ describe('computeCrossLocOt', () => {
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
         expect(out.crossOps).toHaveLength(1);
+        // Chronological: the Sunday came FIRST, so the over-40 span is the
+        // END of Friday's WG shift → 4h at WG's rate on the WG check.
+        expect(out.crossOps[0].location).toBe('WG');
         expect(out.crossOps[0].hours).toBe(4);
         expect(out.crossOps[0].total_cents).toBe(4 * 16 * 1.5 * 100); // $96
     });
@@ -176,8 +182,10 @@ describe('computeCrossLocOt', () => {
             '2026-08-15': ['MH', 10], '2026-08-16': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        // Only week of 8/9 settles: 40 WG + 10 MH (Sat) = 50h → 10h OT.
+        // Only week of 8/9 settles: 40 WG + 10 MH (Sat) = 50h → 10h OT,
+        // chronologically the Saturday MH hours.
         expect(out.crossOps).toHaveLength(1);
+        expect(out.crossOps[0].location).toBe('MH');
         expect(out.crossOps[0].hours).toBe(10);
     });
 
@@ -188,13 +196,12 @@ describe('computeCrossLocOt', () => {
             '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        // Differing rates ALSO use the CROSS OT column: straight time at the
-        // landing row's rate + FLSA weighted premium — exact dollars.
+        // Owner's rule: the over-40 hours are Saturday's at MH → they pay
+        // MH's $20 rate on the MH check. 10h × $20 × 1.5 = $300.
         expect(out.extras).toHaveLength(0);
-        // weighted premium: (40×16 + 10×20)/50 = 16.8 → 10h × 16.8 × 0.5 = $84
-        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 10, straight_cents: 16000, premium_cents: 8400, total_cents: 24400 }]);
-        const warn = out.checksByLoc.WG.find((k) => k.id === 'xot:topup:gz');
-        expect(warn.detail).toMatch(/different rates/);
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'MH', hours: 10, straight_cents: 20000, premium_cents: 10000, total_cents: 30000 }]);
+        const warn = out.checksByLoc.MH.find((k) => k.id === 'xot:topup:gz:MH');
+        expect(warn.detail).toMatch(/pay MH's own rate/);
     });
 
     it("verifier's example: differing rates WITH already-paid OT nets in dollars", () => {
@@ -209,8 +216,9 @@ describe('computeCrossLocOt', () => {
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
         expect(out.extras).toHaveLength(0);
-        // premium $42 (owed 10h @ $16.40 weighted = $82 − paid 5h × $16 × 0.5 = $40)
-        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 5, straight_cents: 8000, premium_cents: 4200, total_cents: 12200 }]);
+        // Chronological: WG's Friday excess (5h) is covered by WG's paid OT;
+        // Saturday's 5h at MH pays MH's $20: 5h × $20 × 1.5 = $150.
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'MH', hours: 5, straight_cents: 10000, premium_cents: 5000, total_cents: 15000 }]);
     });
 
     it('real Toast "Last, First" export names still find the clock data', () => {
@@ -225,7 +233,27 @@ describe('computeCrossLocOt', () => {
             '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8], '2026-08-15': ['MH', 10],
         });
         const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
-        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]);
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'MH', hours: 10, straight_cents: 16000, premium_cents: 8000, total_cents: 24000 }]);
+    });
+
+    it('a day straddling the 40h mark splits, and same-day two-store cards order by first clock-in', () => {
+        // Sun–Thu WG 7h×5 = 35h; Friday: MH 3h (morning) then WG 4h (evening).
+        // Cumulative: 35 → MH takes 38 → WG takes 42. Over-40 span = last 2h
+        // of the WG evening shift → 2h CROSS OT at WG only.
+        // Exports cover PERIOD days only (Mon 8/10+): WG 28h Mon–Thu + 4h
+        // Fri evening = 32h; MH 3h Fri morning. The leading Sunday (8/9,
+        // prior period) still counts toward the WEEK's 40h threshold.
+        const args = base({ wgEmp: emp('Yency Guzman', 32, 0), mhEmp: emp('Yency Guzman', 3, 0) });
+        const cards = [
+            ...cardsFor('yency guzman', {
+                '2026-08-09': ['WG', 7], '2026-08-10': ['WG', 7], '2026-08-11': ['WG', 7],
+                '2026-08-12': ['WG', 7], '2026-08-13': ['WG', 7],
+            }),
+            { id: 'fri-mh', date: '2026-08-14', location: 'maryland', hours: 3, staffKey: 'yency guzman', firstIn: '2026-08-14T14:00:00.000Z' },
+            { id: 'fri-wg', date: '2026-08-14', location: 'webster', hours: 4, staffKey: 'yency guzman', firstIn: '2026-08-14T22:00:00.000Z' },
+        ];
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.crossOps).toEqual([{ key: 'gz', location: 'WG', hours: 2, straight_cents: 3200, premium_cents: 1600, total_cents: 4800 }]);
     });
 
     it('salaried at either store → warn, never computes (crash guard)', () => {
