@@ -5,10 +5,12 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    computeCrossLocOt, applyCrossOt, parsePeriodRange, mondayKey, isMonday, periodDayCount,
+    computeCrossLocOt, applyCrossOt, parsePeriodRange, sundayKey, saturdayOf, clockFetchRange, periodDayCount,
 } from '../crossLocOt';
 
-// One-week Monday-start period. 2026-08-10 is a Monday.
+// One-week-ish period. 2026-08-10 is a Monday; weeks run SUN–SAT, so this
+// period's days all fall in the week of Sun 2026-08-09 (Sat 8/15 settles it)
+// except Sun 8/16, whose week settles next period.
 const PERIOD = '8.10.26-8.16.26';
 
 function emp(name, reg, ot, rate = 16) {
@@ -45,12 +47,16 @@ describe('period parsing / week math', () => {
         expect(parsePeriodRange('8.10-8.23')).toBeNull();
         expect(parsePeriodRange('')).toBeNull();
     });
-    it('monday-start weeks', () => {
-        expect(isMonday('2026-08-10')).toBe(true);
-        expect(mondayKey('2026-08-10')).toBe('2026-08-10');
-        expect(mondayKey('2026-08-16')).toBe('2026-08-10'); // Sunday belongs to the prior Monday
-        expect(mondayKey('2026-08-17')).toBe('2026-08-17');
+    it('sunday–saturday weeks (owner-confirmed)', () => {
+        expect(sundayKey('2026-08-09')).toBe('2026-08-09');  // Sunday starts its own week
+        expect(sundayKey('2026-08-10')).toBe('2026-08-09');  // Monday belongs to the prior Sunday
+        expect(sundayKey('2026-08-15')).toBe('2026-08-09');  // Saturday ends that week
+        expect(sundayKey('2026-08-16')).toBe('2026-08-16');  // next Sunday = new week
+        expect(saturdayOf('2026-08-10')).toBe('2026-08-15');
         expect(periodDayCount({ start: '2026-08-10', end: '2026-08-23' })).toBe(14);
+        // Monday-start pay period → fetch window extends back to Sunday.
+        expect(clockFetchRange({ start: '2026-08-10', end: '2026-08-23' }))
+            .toEqual({ start: '2026-08-09', end: '2026-08-23' });
     });
 });
 
@@ -134,11 +140,45 @@ describe('computeCrossLocOt', () => {
         expect(out.checksByLoc.MH[0].level).toBe('fail');
     });
 
-    it('unparseable / non-Monday period → warn, no money', () => {
-        const args = { ...base({ wgEmp: emp('Y G', 40, 0), mhEmp: emp('Y G', 10, 0) }), period: '8.11.26-8.24.26' };
+    it('unparseable period → warn, no money', () => {
+        const args = { ...base({ wgEmp: emp('Y G', 40, 0), mhEmp: emp('Y G', 10, 0) }), period: '8.10-8.23' };
         const out = computeCrossLocOt({ ...args, cards: ready({}) });
         expect(out.extras).toHaveLength(0);
+        expect(out.crossOps).toHaveLength(0);
         expect(out.checksByLoc.WG[0].id).toBe('xot:period');
+    });
+
+    it('a leading SUNDAY (prior to the Monday period start) counts into week 1', () => {
+        // Sun 8/9: 4h MH + Mon–Fri 8h×5 WG = 44h in the week of 8/9 → 4h OT,
+        // even though the Sunday itself belongs to the previous pay period.
+        const args = base({ wgEmp: emp('Yency Guzman', 40, 0), mhEmp: emp('Yency Guzman', 0, 0) });
+        args.employees.MH.gz = emp('Yency Guzman', 0, 0); // no in-period MH hours
+        const cards = cardsFor('yency guzman', {
+            '2026-08-09': ['MH', 4],
+            '2026-08-10': ['WG', 8], '2026-08-11': ['WG', 8], '2026-08-12': ['WG', 8],
+            '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        expect(out.crossOps).toHaveLength(1);
+        expect(out.crossOps[0].hours).toBe(4);
+        expect(out.crossOps[0].total_cents).toBe(4 * 16 * 1.5 * 100); // $96
+    });
+
+    it('a trailing partial week (Saturday after period end) settles NEXT period', () => {
+        // Period ends Sun 8/16; hours on 8/16 belong to the week of Sun 8/16
+        // (Saturday 8/22 > period end) → excluded from THIS run's weekly
+        // math, but still counted in the clock/export reconciliation.
+        const args = base({ wgEmp: emp('Yency Guzman', 40, 0), mhEmp: emp('Yency Guzman', 10, 0) });
+        args.employees.MH.gz = emp('Yency Guzman', 20, 0); // 10 Sat + 10 Sun 8/16
+        const cards = cardsFor('yency guzman', {
+            '2026-08-10': ['WG', 8], '2026-08-11': ['WG', 8], '2026-08-12': ['WG', 8],
+            '2026-08-13': ['WG', 8], '2026-08-14': ['WG', 8],
+            '2026-08-15': ['MH', 10], '2026-08-16': ['MH', 10],
+        });
+        const out = computeCrossLocOt({ ...args, cards: ready({ 'yency guzman': cards }) });
+        // Only week of 8/9 settles: 40 WG + 10 MH (Sat) = 50h → 10h OT.
+        expect(out.crossOps).toHaveLength(1);
+        expect(out.crossOps[0].hours).toBe(10);
     });
 
     it('different rates → FLSA weighted rate, disclosed', () => {

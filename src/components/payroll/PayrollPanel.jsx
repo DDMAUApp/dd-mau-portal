@@ -36,7 +36,7 @@ import { logError } from '../../data/logger.js';
 import { db } from '../../firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { cardHours } from '../../data/timecards';
-import { computeCrossLocOt, applyCrossOt, normCardKey, parsePeriodRange } from '../../data/payroll/crossLocOt.js';
+import { computeCrossLocOt, applyCrossOt, normCardKey, parsePeriodRange, clockFetchRange } from '../../data/payroll/crossLocOt.js';
 
 const LOCS = ['WG', 'MH'];
 const LOC_NAMES = { WG: 'Webster Groves', MH: 'Maryland Heights' };
@@ -577,11 +577,15 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                     // without it this range query needs a date-ASC composite
                     // that doesn't exist and FAILED_PRECONDITIONs (found in
                     // the 2026-08-26 dry run).
+                    // clockFetchRange extends the window back to the Sunday
+                    // starting the period's first week (Sun–Sat workweeks vs
+                    // Monday-start pay periods — see crossLocOt.js).
+                    const fr = clockFetchRange(range);
                     const snap = await getDocs(query(
                         collection(db, 'timecards'),
                         where('staffKey', '==', sk),
-                        where('date', '>=', range.start),
-                        where('date', '<=', range.end),
+                        where('date', '>=', fr.start),
+                        where('date', '<=', fr.end),
                         orderBy('date', 'desc'),
                     ));
                     byKey[sk] = snap.docs.map((d) => {

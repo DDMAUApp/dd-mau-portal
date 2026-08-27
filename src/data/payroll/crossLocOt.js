@@ -31,9 +31,9 @@
 //   • clock data still loading → FAIL check (generation hard-blocks)
 //   • clock data unavailable / fetch error → WARN, no auto-add
 //   • clock total disagrees with the Toast export beyond tolerance → WARN
-//   • period label unparseable / doesn't start on Monday (Toast's workweek
-//     — verified empirically 2026-08-26: no card ever carries hours INTO a
-//     Monday) or isn't whole weeks → WARN, no auto-add
+//   • period label unparseable → WARN, no auto-add. Weeks run SUN–SAT
+//     (owner-confirmed 2026-08-26); each week's OT settles in the period
+//     containing its Saturday, so misaligned Monday-start periods work.
 //   • the two stores pay different rates → FLSA weighted regular rate,
 //     spelled out in the note (that's the legal rule, not a guess)
 //
@@ -64,16 +64,27 @@ export function parsePeriodRange(period) {
 
 const DAY_MS = 86400000;
 function utcNoon(dateStr) { return new Date(dateStr + 'T12:00:00Z'); }
-export function isMonday(dateStr) { return utcNoon(dateStr).getUTCDay() === 1; }
 export function periodDayCount(range) {
     return Math.round((utcNoon(range.end) - utcNoon(range.start)) / DAY_MS) + 1;
 }
-/** Monday-start week key (Toast workweek) for a YYYY-MM-DD date. */
-export function mondayKey(dateStr) {
+/** SUNDAY-start week key for a YYYY-MM-DD date. Andrew 2026-08-26: "our
+ *  weeks are sunday through saturday" — the workweek for the 40h overtime
+ *  threshold runs Sun–Sat. (An earlier build inferred Monday-start from
+ *  clock data; the stores are closed most Sundays, which makes the two
+ *  indistinguishable in the data — the owner's statement is the truth.) */
+export function sundayKey(dateStr) {
     const d = utcNoon(dateStr);
-    const dow = d.getUTCDay(); // 0=Sun
-    const back = (dow + 6) % 7; // days since Monday
-    return new Date(d.getTime() - back * DAY_MS).toISOString().slice(0, 10);
+    return new Date(d.getTime() - d.getUTCDay() * DAY_MS).toISOString().slice(0, 10);
+}
+/** The Saturday that ends the week containing dateStr. */
+export function saturdayOf(dateStr) {
+    return new Date(utcNoon(sundayKey(dateStr)).getTime() + 6 * DAY_MS).toISOString().slice(0, 10);
+}
+/** The clock-data range the panel must fetch for a pay period: extended back
+ *  to the Sunday that starts the period's first week, because a Monday-start
+ *  pay period's first Sun–Sat week can include the prior Sunday's hours. */
+export function clockFetchRange(range) {
+    return { start: sundayKey(range.start), end: range.end };
 }
 
 const OT_WEEK_HOURS = 40;
@@ -135,13 +146,21 @@ export function computeCrossLocOt({ period, employees, masters, cards }) {
     const pushBoth = (k) => { checksByLoc.WG.push(k); checksByLoc.MH.push(k); };
 
     const range = period ? parsePeriodRange(period) : null;
-    if (!range || !isMonday(range.start) || periodDayCount(range) % 7 !== 0) {
+    if (!range || periodDayCount(range) < 6 || periodDayCount(range) > 35) {
         pushBoth(check('xot:period', 'warn', 'Cross-store overtime NOT auto-checked',
             `${both.length} name(s) worked both stores, but the period "${period || '(blank)'}" ` +
-            `couldn't be resolved into whole Monday-start Toast workweeks — combined weekly ` +
-            `overtime was not verified. Check their combined hours by hand.`));
+            `couldn't be resolved into real dates — combined weekly overtime was not verified. ` +
+            `Check their combined hours by hand.`));
         return done('period-unparseable');
     }
+    // Weeks run SUNDAY–SATURDAY (owner-confirmed). Pay periods start on
+    // Mondays, so they don't align to week boundaries: a week's overtime
+    // SETTLES in the pay period that contains that week's SATURDAY. The
+    // leading partial week pulls in the prior Sunday's hours (the panel
+    // fetches from clockFetchRange(range).start); the trailing partial
+    // week (its Saturday lands after the period) settles NEXT period —
+    // each week counts exactly once, no gaps, no double-pay.
+    const fetchStart = sundayKey(range.start);
 
     if (!cards || !cards.ready) {
         // Hard-block: money could still change once the clock data lands.
@@ -199,7 +218,10 @@ export function computeCrossLocOt({ period, employees, masters, cards }) {
         const rows = [];
         for (const sk of staffKeys) {
             for (const r of (cards.byKey[sk] || [])) {
-                if (!r || !r.date || r.date < range.start || r.date > range.end) continue;
+                // Extended window: leading days back to the week's Sunday
+                // feed the weekly math; the RECONCILIATION below only counts
+                // days inside the pay period (what the export pays).
+                if (!r || !r.date || r.date < fetchStart || r.date > range.end) continue;
                 const id = r.id || `${r.location}|${r.date}`;
                 if (seen.has(id)) continue;
                 seen.add(id);
@@ -207,16 +229,21 @@ export function computeCrossLocOt({ period, employees, masters, cards }) {
             }
         }
 
-        // Per-location clock totals + per-week per-location hours.
+        // Per-location clock totals (period days only) + per-week
+        // per-location hours (Sun–Sat weeks, extended window).
         const clockByLoc = { WG: 0, MH: 0 };
-        const weekLocHours = new Map(); // mondayKey -> { WG, MH }
+        const weekLocHours = new Map(); // sundayKey -> { WG, MH }
         let unknownLoc = false;
         for (const r of rows) {
             const loc = LOC_OF_CARD[r.location];
             if (!loc) { unknownLoc = true; continue; }
             const h = Number(r.hours) || 0;
-            clockByLoc[loc] += h;
-            const wk = mondayKey(r.date);
+            if (r.date >= range.start) clockByLoc[loc] += h;
+            const wk = sundayKey(r.date);
+            // Only weeks that SETTLE in this period (Saturday ≤ period end)
+            // count toward this run — a trailing partial week is the next
+            // period's business.
+            if (saturdayOf(r.date) > range.end) continue;
             const w = weekLocHours.get(wk) || { WG: 0, MH: 0 };
             w[loc] += h;
             weekLocHours.set(wk, w);
