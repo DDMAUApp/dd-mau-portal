@@ -12,8 +12,11 @@
 //     the mobile home tile grid so admins see it without scrolling.
 //
 // Data flow:
-//   - Owns the Firestore subscription via subscribeClockedIn (one
-//     location, or both when location='both').
+//   - Owns the Firestore subscriptions via subscribeClockedIn. Since
+//     2026-08-29 (CI7a) BOTH locations are always subscribed and the
+//     `location` prop only filters the display — toggling W↔M no longer
+//     tears listeners down. State is warm-seeded from localStorage (CI1)
+//     so reopening the app paints instantly.
 //   - Renders an empty/stale/loaded state per location.
 //   - When parent passes `todaysShifts` + `staffList`, each row is
 //     matched (by employeeName ↔ staff.name, case-insensitive) to
@@ -28,7 +31,7 @@
 //     gated on canViewClockedIn(viewerStaffRecord). We don't gate
 //     here to keep the component simple.
 
-import { useEffect, useState, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef, memo, lazy, Suspense } from 'react';
 import {
     Users, Clock, Coffee, AlertTriangle, ChevronRight, ChevronDown,
     X, RefreshCw, Calendar, UserX, LogOut, History,
@@ -37,7 +40,10 @@ import {
     subscribeClockedIn, getClockedInStatus,
     subscribeClockSessions, earlierSessionsFor,
     fmtClockTime, hoursWeekTone,
+    readClockedInCache, writeClockedInCache,
+    readClockSessionsCache, writeClockSessionsCache,
 } from '../data/clockedIn';
+import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
 
 // Lazy — the attendance/clock-in history (the same one in Admin) only loads
@@ -148,23 +154,92 @@ function getPunctuality(clockedInIso, scheduledShift, isEs) {
     };
 }
 
-// ── Hook: subscribe to one or both locations, return merged status ──────────
+// ── Hook: subscribe to BOTH locations, return status for the displayed one ──
 function useClockedIn(location) {
-    const [webster, setWebster]   = useState(null);
-    const [maryland, setMaryland] = useState(null);
-    const [wSess, setWSess] = useState(null);   // ops/clock_sessions_webster
-    const [mSess, setMSess] = useState(null);   // ops/clock_sessions_maryland
+    // CI1 (2026-08-29): seed BOTH locations from the localStorage warm cache
+    // (≤10 min old) so reopening the app paints the roster instantly instead
+    // of spinning while the first snapshot round-trips. The seed is honest:
+    // the freshness memo below always derives minutesAgo/isStale from the
+    // seeded doc's own updatedAt, so an old seed shows its true age (and the
+    // Stale badge) on the very first paint — the 2026-08-12 "badge must fire
+    // without a snapshot" invariant holds for seeded paints too.
+    const [webster, setWebster]   = useState(() => readClockedInCache('webster'));
+    const [maryland, setMaryland] = useState(() => readClockedInCache('maryland'));
+    // clock_sessions seeded too (my call, CI1): earlierSessionsFor()
+    // date-guards on the doc's own `date` field, so seeding a prior day's
+    // doc is inert — and a same-day seed makes "Earlier today" lines paint
+    // with the roster instead of popping in a beat later.
+    const [wSess, setWSess] = useState(() => readClockSessionsCache('webster'));   // ops/clock_sessions_webster
+    const [mSess, setMSess] = useState(() => readClockSessionsCache('maryland'));  // ops/clock_sessions_maryland
     const [tick, setTick] = useState(0);
-    const refresh = useCallback(() => setTick(t => t + 1), []);
-    // 30s wall clock (2026-08-12, Andrew: "i keep seeing the stale") — the
-    // status memo below only recomputed when a SNAPSHOT arrived, so if the
+
+    // CI8 (2026-08-29): per-stream error tracking + one coalesced retry.
+    // A snapshot error must NOT wipe data (null is the doc-absent signal,
+    // see subscribeClockedIn) — keep the prior roster, flag the error, and
+    // drive ALL failing streams through a single pending backoff timer.
+    const streamErrorsRef = useRef({});                       // { webster: bool, maryland: bool, wSess: bool, mSess: bool }
+    const [hasStreamError, setHasStreamError] = useState(false);
+    const retryTimerRef = useRef(null);
+    const backoffIdxRef = useRef(0);
+
+    const scheduleRetry = useCallback(() => {
+        if (retryTimerRef.current) return; // one pending timer covers all streams
+        const BACKOFFS = [15_000, 30_000, 60_000, 300_000];   // 15s→30s→60s→5min cap
+        const delay = BACKOFFS[Math.min(backoffIdxRef.current, BACKOFFS.length - 1)];
+        backoffIdxRef.current = Math.min(backoffIdxRef.current + 1, BACKOFFS.length - 1);
+        retryTimerRef.current = setTimeout(() => {
+            retryTimerRef.current = null;
+            setTick(t => t + 1); // re-attach all listeners
+        }, delay);
+    }, []);
+
+    const noteSuccess = useCallback((stream) => {
+        backoffIdxRef.current = 0; // any successful snapshot resets the backoff
+        if (streamErrorsRef.current[stream]) streamErrorsRef.current[stream] = false;
+        const anyLeft = Object.values(streamErrorsRef.current).some(Boolean);
+        // Only cancel the pending retry when EVERY stream has recovered —
+        // clearing it on a partial success would strand the still-failing ones.
+        if (!anyLeft && retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+        }
+        setHasStreamError(anyLeft);
+    }, []);
+
+    const noteError = useCallback((stream) => {
+        streamErrorsRef.current[stream] = true;
+        setHasStreamError(true);
+        scheduleRetry();
+    }, [scheduleRetry]);
+
+    // Manual refresh — cancel any pending backoff and re-attach now.
+    const refresh = useCallback(() => {
+        if (retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+        }
+        backoffIdxRef.current = 0;
+        setTick(t => t + 1);
+    }, []);
+
+    // Clear the pending retry timer on unmount.
+    useEffect(() => () => {
+        if (retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+        }
+    }, []);
+
+    // 15s wall clock (2026-08-12, Andrew: "i keep seeing the stale") — the
+    // freshness memo below only recomputed when a SNAPSHOT arrived, so if the
     // scraper stalled, "updated 3m ago" froze at 3m and the STALE badge
     // could never fire (no new snapshot = no recompute — the exact moment
     // staleness matters). This clock keeps minutesAgo/isStale honest
-    // between writes.
+    // between writes. (CI2 2026-08-29: was 30s; tightened to 15s so the
+    // seconds-granularity "updated 40s ago" stamp stays fresh under 2 min.)
     const [clock, setClock] = useState(0);
     useEffect(() => {
-        const id = setInterval(() => setClock(c => c + 1), 30_000);
+        const id = setInterval(() => setClock(c => c + 1), 15_000);
         return () => clearInterval(id);
     }, []);
 
@@ -175,7 +250,17 @@ function useClockedIn(location) {
     // update. Bumping `tick` tears the listener down and recreates it, forcing a
     // fresh server snapshot so reopening the app always shows who's on the clock now.
     useEffect(() => {
-        const bump = () => setTick(t => t + 1);
+        // CI7c (2026-08-29): focus + visibilitychange usually fire together on
+        // foreground, which double-bumped tick and tore down/rebuilt all four
+        // listeners twice back-to-back. Coalesce by timestamp (1s window).
+        // BOTH listeners stay registered — some platforms only fire one.
+        let lastBump = 0;
+        const bump = () => {
+            const now = Date.now();
+            if (now - lastBump < 1000) return;
+            lastBump = now;
+            setTick(t => t + 1);
+        };
         const onVis = () => { if (typeof document !== 'undefined' && document.visibilityState === 'visible') bump(); };
         if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis);
         if (typeof window !== 'undefined') window.addEventListener('focus', bump);
@@ -186,66 +271,112 @@ function useClockedIn(location) {
     }, []);
 
     useEffect(() => {
-        if (location === 'webster') {
-            const u1 = subscribeClockedIn('webster', setWebster);
-            const u2 = subscribeClockSessions('webster', setWSess);
-            return () => { u1(); u2(); };
-        }
-        if (location === 'maryland') {
-            const u1 = subscribeClockedIn('maryland', setMaryland);
-            const u2 = subscribeClockSessions('maryland', setMSess);
-            return () => { u1(); u2(); };
-        }
-        // 'both' — subscribe to both rosters + both session docs, merge in consumer.
-        const uW1 = subscribeClockedIn('webster',  setWebster);
-        const uW2 = subscribeClockSessions('webster', setWSess);
-        const uM1 = subscribeClockedIn('maryland', setMaryland);
-        const uM2 = subscribeClockSessions('maryland', setMSess);
+        // CI7a (2026-08-29): subscribe BOTH locations unconditionally and let
+        // the display layer filter by `location`. Toggling W↔M used to tear
+        // every listener down and recreate it — a full server round-trip on
+        // each toggle was the "slow, not smooth" feel. Four tiny-doc
+        // listeners are cheap. NOTE: revisit this if ops/ rules are ever
+        // carved per-location — a viewer without cross-location read would
+        // make the extra pair error instead of stream.
+        //
+        // CI1: cache writes are SUCCESS-PATH ONLY. Error and doc-absent both
+        // surface as null and must never clobber the warm cache.
+        const uW1 = subscribeClockedIn('webster', (d) => {
+            noteSuccess('webster');
+            setWebster(d);
+            if (d) writeClockedInCache('webster', d);
+        }, () => noteError('webster'));
+        const uW2 = subscribeClockSessions('webster', (d) => {
+            noteSuccess('wSess');
+            setWSess(d);
+            if (d) writeClockSessionsCache('webster', d);
+        }, () => noteError('wSess'));
+        const uM1 = subscribeClockedIn('maryland', (d) => {
+            noteSuccess('maryland');
+            setMaryland(d);
+            if (d) writeClockedInCache('maryland', d);
+        }, () => noteError('maryland'));
+        const uM2 = subscribeClockSessions('maryland', (d) => {
+            noteSuccess('mSess');
+            setMSess(d);
+            if (d) writeClockSessionsCache('maryland', d);
+        }, () => noteError('mSess'));
         return () => { uW1(); uW2(); uM1(); uM2(); };
-    }, [location, tick]);
+        // `location` intentionally NOT a dep (CI7a) — display filters instead,
+        // so a W↔M toggle never tears the listeners down. `tick` stays.
+    }, [tick, noteSuccess, noteError]);
 
-    return useMemo(() => {
-        const w = getClockedInStatus(webster);
-        const m = getClockedInStatus(maryland);
+    // CI4 (2026-08-29): entries enrichment — identity MUST NOT change on
+    // clock ticks. This is what fedEntries/sorts/memoized EntryRows hang off;
+    // when it churned every 30s (old single memo dep'd on `clock`), every row
+    // re-rendered twice a minute for no data change. Re-derives only when a
+    // doc actually changes or the displayed location flips.
+    const entries = useMemo(() => {
         // Enrich each entry with TODAY's earlier completed sessions (clock out →
         // clock back in), captured by the recordCompletedSessions Cloud Function.
-        const wE = w.entries.map(e => ({ ...e, _loc: 'webster', earlierSessions: earlierSessionsFor(wSess, e.toastEmployeeId) }));
-        const mE = m.entries.map(e => ({ ...e, _loc: 'maryland', earlierSessions: earlierSessionsFor(mSess, e.toastEmployeeId) }));
-        if (location === 'webster')  { const ws = { ...w, entries: wE }; return { combined: ws, perLoc: { webster: ws }, refresh }; }
-        if (location === 'maryland') { const ms = { ...m, entries: mE }; return { combined: ms, perLoc: { maryland: ms }, refresh }; }
-        // both
-        const mergedEntries = [...wE, ...mE].sort((a, b) => (a.clockedInAt || '').localeCompare(b.clockedInAt || ''));
-        // Combined status: oldest updatedAt is the "least fresh" one.
-        const updatedAt = w.updatedAt && m.updatedAt
-            ? (w.updatedAt < m.updatedAt ? w.updatedAt : m.updatedAt)
-            : (w.updatedAt || m.updatedAt);
-        const minutesAgo = updatedAt
-            ? Math.round((Date.now() - updatedAt.getTime()) / 60000)
-            : null;
+        const wE = (Array.isArray(webster?.entries) ? webster.entries : [])
+            .map(e => ({ ...e, _loc: 'webster', earlierSessions: earlierSessionsFor(wSess, e.toastEmployeeId) }));
+        const mE = (Array.isArray(maryland?.entries) ? maryland.entries : [])
+            .map(e => ({ ...e, _loc: 'maryland', earlierSessions: earlierSessionsFor(mSess, e.toastEmployeeId) }));
+        if (location === 'webster')  return wE;
+        if (location === 'maryland') return mE;
+        // 'both' — merge, oldest clock-in first.
+        return [...wE, ...mE].sort((a, b) => (a.clockedInAt || '').localeCompare(b.clockedInAt || ''));
+    }, [webster, maryland, wSess, mSess, location]);
+
+    // CI2: freshness — minutesAgo/secondsAgo/isStale for the displayed
+    // location. The wall-clock dep MUST stay HERE (2026-08-12 invariant:
+    // the stale badge has to fire even when no new snapshot arrives) — it
+    // was deliberately split away from the entries memo above.
+    const freshness = useMemo(() => {
+        const w = getClockedInStatus(webster);
+        const m = getClockedInStatus(maryland);
+        let hasData, updatedAt, isStale;
+        if (location === 'webster')       { hasData = w.hasData; updatedAt = w.updatedAt; isStale = w.isStale; }
+        else if (location === 'maryland') { hasData = m.hasData; updatedAt = m.updatedAt; isStale = m.isStale; }
+        else {
+            hasData = w.hasData || m.hasData;
+            // Combined stamp: oldest updatedAt is the "least fresh" one.
+            updatedAt = w.updatedAt && m.updatedAt
+                ? (w.updatedAt < m.updatedAt ? w.updatedAt : m.updatedAt)
+                : (w.updatedAt || m.updatedAt);
+            isStale = w.isStale || m.isStale;
+        }
+        const ageMs = updatedAt ? Math.max(0, Date.now() - updatedAt.getTime()) : null;
         return {
-            combined: {
-                hasData: w.hasData || m.hasData,
-                entries: mergedEntries,
-                count:   mergedEntries.filter(e => !e.clockedOut).length,  // on the clock now
-                updatedAt,
-                minutesAgo,
-                isStale: (w.isStale || m.isStale),
-            },
-            perLoc: { webster: { ...w, entries: wE }, maryland: { ...m, entries: mE } },
-            refresh,
+            hasData,
+            updatedAt,
+            minutesAgo: ageMs !== null ? Math.round(ageMs / 60000) : null,
+            secondsAgo: ageMs !== null ? Math.round(ageMs / 1000) : null,
+            isStale,
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [webster, maryland, wSess, mSess, location, refresh, clock]);
+    }, [webster, maryland, location, clock]);
+
+    return {
+        combined: {
+            ...freshness,
+            entries,                                            // identity-stable across clock ticks
+            count: entries.filter(e => !e.clockedOut).length,   // on the clock now
+            error: hasStreamError,                              // CI8 — any stream currently failing
+        },
+        refresh,
+    };
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 
 function StaleBadge({ minutesAgo, language }) {
     const tx = (en, es) => (language === 'es' ? es : en);
+    // CI8: the badge also fires for stream errors, where there may be no
+    // timestamped doc at all — guard so we never print "Stale (nullm)".
+    const label = minutesAgo != null
+        ? tx(`Stale (${minutesAgo}m)`, `Atrasado (${minutesAgo}m)`)
+        : tx('Stale', 'Atrasado');
     return (
         <div className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
             <AlertTriangle size={11} strokeWidth={2.5} />
-            {tx(`Stale (${minutesAgo}m)`, `Atrasado (${minutesAgo}m)`)}
+            {label}
         </div>
     );
 }
@@ -281,7 +412,13 @@ function InitialsAvatar({ name, onBreak, overtimeRisk, isNoShow, isOut }) {
 //
 // isNoShow rows (scheduled, not clocked in 20+ min after start) skip
 // the clock-in line and render the name struck-through + red.
-function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
+//
+// CI5 (2026-08-29): React.memo + a stable (rowKey, onToggle) contract.
+// The parent passes ONE useCallback'd toggle plus this row's key instead
+// of a fresh closure per row per render — so expanding one row re-renders
+// only the two affected rows, and clock-tick re-renders of the parent
+// skip every row (entry identity is stable across ticks, see CI4).
+const EntryRow = memo(function EntryRow({ entry, language, showLocation, isExpanded, rowKey, onToggle }) {
     const tx = (en, es) => (language === 'es' ? es : en);
     const isEs = language === 'es';
     const onBreak = !!entry.onBreakSince;
@@ -305,7 +442,7 @@ function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
         <li className={`border-b border-dd-line/60 last:border-0 ${isNoShow ? 'bg-red-50/40' : isOut ? 'bg-dd-bg/40' : ''}`}>
             <button
                 type="button"
-                onClick={onToggle}
+                onClick={() => onToggle(rowKey)}
                 className="w-full flex items-center gap-3 py-2.5 text-left hover:bg-dd-bg/50 transition rounded-md px-1 -mx-1 active:scale-[0.998]"
                 aria-expanded={isExpanded}
                 aria-label={tx(`Toggle details for ${entry.employeeName}`, `Mostrar/ocultar detalles de ${entry.employeeName}`)}
@@ -503,7 +640,14 @@ function EntryRow({ entry, language, showLocation, isExpanded, onToggle }) {
             )}
         </li>
     );
-}
+});
+
+// CI5 — row identity: toastEmployeeId when present, else location+name.
+// MUST be the same value used for the React key, the expansion check, AND
+// the toggle argument. (The old check compared expandedRowId against a
+// possibly-undefined e.toastEmployeeId, so once one id-less row was
+// toggled, EVERY id-less row read as expanded.)
+const rowKeyOf = (e) => e.toastEmployeeId || `${e._loc || ''}:${e.employeeName}`;
 
 function EmptyState({ language }) {
     const tx = (en, es) => (language === 'es' ? es : en);
@@ -524,6 +668,28 @@ function LoadingState({ language }) {
         <div className="text-center py-6">
             <RefreshCw size={20} strokeWidth={2.25} className="mx-auto text-dd-text-2/60 animate-spin" />
             <p className="text-[11px] text-dd-text-2 mt-2">{tx('Loading from Toast…', 'Cargando desde Toast…')}</p>
+        </div>
+    );
+}
+
+// CI8 — explicit couldn't-load state. Renders when every stream errored
+// before ANY data (live or cache-seeded) arrived; replaces the old infinite
+// "Loading from Toast…" spinner that an error would leave up forever.
+function ErrorState({ language, onRetry }) {
+    const tx = (en, es) => (language === 'es' ? es : en);
+    return (
+        <div className="text-center py-6">
+            <div className="w-11 h-11 mx-auto mb-2 rounded-full bg-red-50 flex items-center justify-center text-red-700">
+                <AlertTriangle size={20} strokeWidth={2.25} />
+            </div>
+            <p className="text-sm font-bold text-dd-text">{tx("Couldn't load who's clocked in", 'No se pudo cargar')}</p>
+            <p className="text-[11px] text-dd-text-2 mt-0.5">
+                {tx('Check your connection — retrying automatically.', 'Revisa tu conexión — reintentando automáticamente.')}
+            </p>
+            <button type="button" onClick={onRetry}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-dd-text bg-dd-bg hover:bg-dd-line px-3 py-1.5 rounded-full border border-dd-line active:scale-95 transition">
+                <RefreshCw size={12} strokeWidth={2.5} /> {tx('Retry', 'Reintentar')}
+            </button>
         </div>
     );
 }
@@ -692,7 +858,34 @@ export default function ClockedInPanel({
         });
     }, [fedEntries]);
 
-    const toggleRow = (id) => setExpandedRowId(prev => prev === id ? null : id);
+    // CI5 — one stable toggle shared by every row (see EntryRow memo note).
+    const toggleRow = useCallback((id) => setExpandedRowId(prev => (prev === id ? null : id)), []);
+
+    // CI2 — honest Refresh: re-attaching the listeners is ALL this button can
+    // do (fresh data lands on Toast's ~90s scrape cadence, not on demand), so
+    // show a brief spin and say so instead of implying an instant re-fetch.
+    const [refreshSpin, setRefreshSpin] = useState(false);
+    const spinTimerRef = useRef(null);
+    useEffect(() => () => clearTimeout(spinTimerRef.current), []);
+    const handleRefresh = () => {
+        refresh(); // tears down + re-attaches the listeners (unchanged behavior)
+        setRefreshSpin(true);
+        clearTimeout(spinTimerRef.current);
+        spinTimerRef.current = setTimeout(() => setRefreshSpin(false), 900);
+        toast(tx('Reconnected — Toast updates every ~90s', 'Reconectado — Toast actualiza cada ~90s'), { duration: 3500 });
+    };
+
+    // CI2 — freshness stamp: seconds granularity under 2 min ("updated 40s
+    // ago"), minutes above. The hook's wall clock ticks every 15s so the
+    // seconds read stays honest.
+    const agoShort = combined.updatedAt
+        ? (combined.secondsAgo != null && combined.secondsAgo < 120
+            ? `${combined.secondsAgo}s`
+            : `${combined.minutesAgo}m`)
+        : null;
+    // CI8 — stale-badge treatment also covers "stream errored but we still
+    // have data" (live-or-seeded); an error with NO data gets ErrorState.
+    const showStaleBadge = combined.isStale || (combined.error && combined.hasData);
 
     const cardCount   = fedEntries.filter(e => !e.isNoShow && !e.clockedOut).length;  // on the clock now
     const outCount    = fedEntries.filter(e => e.clockedOut).length;                  // clocked out today
@@ -715,14 +908,14 @@ export default function ClockedInPanel({
                             </h3>
                             <p className="text-xs text-dd-text-2">
                                 {tx('Live from Toast', 'En vivo desde Toast')}
-                                {combined.updatedAt && (
-                                    <span> · {tx(`updated ${combined.minutesAgo}m ago`, `hace ${combined.minutesAgo}m`)}</span>
+                                {agoShort && (
+                                    <span> · {tx(`updated ${agoShort} ago`, `hace ${agoShort}`)}</span>
                                 )}
                             </p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        {combined.isStale && <StaleBadge minutesAgo={combined.minutesAgo} language={language} />}
+                        {showStaleBadge && <StaleBadge minutesAgo={combined.minutesAgo} language={language} />}
                         {noShowCount > 0 && (
                             <span className="text-xs font-black text-red-700 bg-red-50 px-2.5 py-1 rounded-full border border-red-300">
                                 ⚠ {noShowCount} {tx('no-show', 'no llegó')}
@@ -741,10 +934,11 @@ export default function ClockedInPanel({
                                 {outCount} {tx('out', 'salió')}
                             </span>
                         )}
-                        <button onClick={refresh} title={tx('Refresh now', 'Actualizar ahora')}
+                        <button onClick={handleRefresh}
+                            title={tx('Reconnect — Toast updates every ~90s', 'Reconectar — Toast actualiza cada ~90s')}
                             className="inline-flex items-center justify-center w-7 h-7 text-dd-text-2 bg-dd-bg hover:bg-dd-line rounded-full border border-dd-line active:scale-95 transition"
                             aria-label={tx('Refresh', 'Actualizar')}>
-                            <RefreshCw size={13} strokeWidth={2.5} />
+                            <RefreshCw size={13} strokeWidth={2.5} className={refreshSpin ? 'animate-spin' : ''} />
                         </button>
                         <button onClick={() => setHistoryOpen(true)}
                             className="inline-flex items-center gap-1 text-xs font-bold text-dd-text-2 bg-dd-bg hover:bg-dd-line px-2.5 py-1 rounded-full border border-dd-line active:scale-95 transition">
@@ -754,21 +948,29 @@ export default function ClockedInPanel({
                 </div>
 
                 {!combined.hasData ? (
-                    <LoadingState language={language} />
+                    // CI8 — error with no data is an explicit couldn't-load
+                    // row with retry, never the infinite spinner.
+                    combined.error
+                        ? <ErrorState language={language} onRetry={handleRefresh} />
+                        : <LoadingState language={language} />
                 ) : fedEntries.length === 0 ? (
                     <EmptyState language={language} />
                 ) : (
                     <ul className="divide-y divide-dd-line/40 max-h-[520px] overflow-y-auto -mx-1 px-1">
-                        {fedSortedForCard.map(e => (
-                            <EntryRow
-                                key={e.toastEmployeeId || `${e._loc || ''}:${e.employeeName}`}
-                                entry={e}
-                                language={language}
-                                showLocation={showLocation}
-                                isExpanded={expandedRowId === e.toastEmployeeId}
-                                onToggle={() => toggleRow(e.toastEmployeeId)}
-                            />
-                        ))}
+                        {fedSortedForCard.map(e => {
+                            const rk = rowKeyOf(e); // CI5 — same key for React key + expansion + toggle
+                            return (
+                                <EntryRow
+                                    key={rk}
+                                    rowKey={rk}
+                                    entry={e}
+                                    language={language}
+                                    showLocation={showLocation}
+                                    isExpanded={expandedRowId === rk}
+                                    onToggle={toggleRow}
+                                />
+                            );
+                        })}
                     </ul>
                 )}
                 {historyModal}
@@ -791,10 +993,14 @@ export default function ClockedInPanel({
                 <div className="flex-1 min-w-0 text-left">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
                         {tx("Who's clocked in", 'Quién está marcado')}
+                        {/* CI2 — freshness stamp on the collapsed strip too. */}
+                        {agoShort && <span className="normal-case font-semibold text-dd-text-2/70"> · {agoShort}</span>}
                     </div>
                     <div className="text-sm font-black text-dd-text">
                         {!combined.hasData
-                            ? tx('Loading…', 'Cargando…')
+                            ? (combined.error
+                                ? tx("Couldn't load", 'No se pudo cargar')
+                                : tx('Loading…', 'Cargando…'))
                             : cardCount === 0 && noShowCount === 0
                                 ? tx('Nobody right now', 'Nadie ahora')
                                 : tx(`${cardCount} on the clock`, `${cardCount} marcados`)}
@@ -806,11 +1012,11 @@ export default function ClockedInPanel({
                         )}
                     </div>
                 </div>
-                {combined.isStale && <StaleBadge minutesAgo={combined.minutesAgo} language={language} />}
+                {showStaleBadge && <StaleBadge minutesAgo={combined.minutesAgo} language={language} />}
                 {/* Avatar stack (first 3, no-shows first) */}
                 <div className="flex -space-x-2 shrink-0">
                     {fedSortedForModal.slice(0, 3).map(e => (
-                        <div key={e.toastEmployeeId}
+                        <div key={rowKeyOf(e)}
                              className={`w-7 h-7 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-black ${
                                  e.isNoShow
                                      ? 'bg-red-50 text-red-700 ring-1 ring-red-400'
@@ -848,10 +1054,10 @@ export default function ClockedInPanel({
                                         {tx("Who's clocked in", 'Quién está marcado')}
                                     </h2>
                                     <p className="text-[11px] text-dd-green-700/80 leading-tight mt-0.5">
-                                        {combined.updatedAt
-                                            ? tx(`Updated ${combined.minutesAgo}m ago`, `Actualizado hace ${combined.minutesAgo}m`)
+                                        {agoShort
+                                            ? tx(`Updated ${agoShort} ago`, `Actualizado hace ${agoShort}`)
                                             : tx('Live from Toast', 'En vivo desde Toast')}
-                                        {combined.isStale && ' · ' + tx('STALE', 'ATRASADO')}
+                                        {showStaleBadge && ' · ' + tx('STALE', 'ATRASADO')}
                                         {noShowCount > 0 && ' · ' + tx(`${noShowCount} no-show`, `${noShowCount} no llegó`)}
                                     </p>
                                 </div>
@@ -872,21 +1078,28 @@ export default function ClockedInPanel({
                             </div>
                             <div className="flex-1 overflow-y-auto p-3" style={{ overscrollBehavior: 'contain' }}>
                                 {!combined.hasData ? (
-                                    <LoadingState language={language} />
+                                    // CI8 — explicit error row w/ retry, never the infinite spinner.
+                                    combined.error
+                                        ? <ErrorState language={language} onRetry={handleRefresh} />
+                                        : <LoadingState language={language} />
                                 ) : fedEntries.length === 0 ? (
                                     <EmptyState language={language} />
                                 ) : (
                                     <ul className="divide-y divide-dd-line/40">
-                                        {fedSortedForModal.map(e => (
-                                            <EntryRow
-                                                key={e.toastEmployeeId || `${e._loc || ''}:${e.employeeName}`}
-                                                entry={e}
-                                                language={language}
-                                                showLocation={showLocation}
-                                                isExpanded={expandedRowId === e.toastEmployeeId}
-                                                onToggle={() => toggleRow(e.toastEmployeeId)}
-                                            />
-                                        ))}
+                                        {fedSortedForModal.map(e => {
+                                            const rk = rowKeyOf(e); // CI5
+                                            return (
+                                                <EntryRow
+                                                    key={rk}
+                                                    rowKey={rk}
+                                                    entry={e}
+                                                    language={language}
+                                                    showLocation={showLocation}
+                                                    isExpanded={expandedRowId === rk}
+                                                    onToggle={toggleRow}
+                                                />
+                                            );
+                                        })}
                                     </ul>
                                 )}
                             </div>

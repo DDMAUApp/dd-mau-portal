@@ -1,3 +1,4 @@
+import { useTransition } from 'react';
 import { LogOut, Bell } from 'lucide-react';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsHeaderButton from './EnableNotificationsHeaderButton';
@@ -44,6 +45,15 @@ export default function Header({
     // instead of opening a per-component Firestore listener. The provider
     // owns one notifications subscription that every consumer reads from.
     const { unreadCount } = useAppData();
+    // 2026-08-29 (TG4): the location flip re-renders every location-scoped
+    // subtree (home tiles, schedule, ops) in one synchronous pass, so on a
+    // slow tablet the pill looked DEAD for ~1s after the tap. Marking the
+    // cycle as a transition lets React paint this header's feedback first
+    // and render the heavy subtree at transition priority; locPending
+    // drives an immediate "working…" cue on the pill. The ref write +
+    // functional setState inside onLocationChange stay correctly ordered —
+    // both run inside the transition's synchronous scope.
+    const [locPending, startLocTransition] = useTransition();
     const loc = LOCATIONS.find(l => l.id === storeLocation) || LOCATIONS[0];
     const fullLabel = isEs ? loc.esLabel : loc.enLabel;
     const shortLabel = loc.short;
@@ -89,16 +99,20 @@ export default function Header({
                     </button>
                 ) : (
                     <button
-                        onClick={() => { if (canToggleLocation) onLocationChange?.(); }}
+                        onClick={() => { if (canToggleLocation) startLocTransition(() => { onLocationChange?.(); }); }}
                         className={`md:hidden flex items-center gap-1.5 min-h-[44px] px-2 -mx-1 rounded-lg transition group ${canToggleLocation ? 'active:bg-dd-bg' : 'cursor-default'}`}
                         aria-label={canToggleLocation ? (isEs ? 'Cambiar ubicación' : 'Switch location') : (isEs ? 'Ubicación' : 'Location')}
                         title={canToggleLocation ? (isEs ? 'Cambiar ubicación' : 'Switch location') : undefined}
                     >
-                        <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-dd-green"></span>
-                        </span>
-                        <span className="text-sm font-bold text-dd-text leading-none">
+                        {locPending ? (
+                            <span className="h-2 w-2 rounded-full border-2 border-dd-green border-t-transparent animate-spin shrink-0" aria-hidden="true"></span>
+                        ) : (
+                            <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-dd-green"></span>
+                            </span>
+                        )}
+                        <span className={`text-sm font-bold text-dd-text leading-none ${locPending ? 'opacity-60' : ''}`}>
                             <span className="sm:hidden">{shortLabel}</span>
                             <span className="hidden sm:inline">{fullLabel}</span>
                         </span>
@@ -117,13 +131,17 @@ export default function Header({
                     search ships. */}
                 <div className="hidden md:flex flex-1 justify-center items-center gap-2 max-w-3xl mx-auto">
                     <button
-                        onClick={() => { if (canToggleLocation) onLocationChange?.(); }}
+                        onClick={() => { if (canToggleLocation) startLocTransition(() => { onLocationChange?.(); }); }}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg bg-dd-bg border border-dd-line text-sm font-semibold text-dd-text transition ${canToggleLocation ? 'hover:bg-dd-sage-50 active:scale-95' : 'cursor-default'}`}>
-                        <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-dd-green"></span>
-                        </span>
-                        <span>{fullLabel}</span>
+                        {locPending ? (
+                            <span className="h-2 w-2 rounded-full border-2 border-dd-green border-t-transparent animate-spin shrink-0" aria-hidden="true"></span>
+                        ) : (
+                            <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-dd-green"></span>
+                            </span>
+                        )}
+                        <span className={locPending ? 'opacity-60' : undefined}>{fullLabel}</span>
                         {canToggleLocation && <span className="text-dd-text-2 text-xs">▾</span>}
                     </button>
                 </div>

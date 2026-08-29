@@ -13,7 +13,7 @@ import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
-import { installFirestoreRevive } from './data/firestoreRevive';
+import { installFirestoreRevive, resilientSnapshot } from './data/firestoreRevive';
 import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
 import { parseChatDeepLink, setPendingChatOpen } from './data/chatDeepLink';
@@ -978,7 +978,15 @@ export default function App() {
             await waitInputIdle();
             if (!cancelled) forceRefresh();
         };
-        const unsub = onSnapshot(ref, (snap) => {
+        // resilientSnapshot (2026-08-29, ST3): an errored onSnapshot is DEAD
+        // — the SDK never re-fires it, so one transport blip used to mean
+        // this device silently missed every future deploy broadcast until a
+        // manual refresh. The wrapper re-attaches with backoff INSIDE this
+        // same closure, so `baseline` persists across re-attaches — a
+        // broadcast that landed during the dead window still reads as
+        // ms > baseline on the fresh listener's first snapshot and fires.
+        const stopBroadcast = resilientSnapshot('forceRefresh', (onHealthy, onError) => onSnapshot(ref, (snap) => {
+            onHealthy();
             const data = snap.exists() ? snap.data() : null;
             const ts = data?.triggeredAt;
             const ms = ts && typeof ts.toMillis === 'function' ? ts.toMillis() : 0;
@@ -991,8 +999,41 @@ export default function App() {
                 console.warn('System refresh broadcast received — updating to', data?.version || 'latest');
                 handleBroadcast(data?.version || null);
             }
-        }, (err) => { console.warn('forceRefresh listener error:', err); });
-        return () => { cancelled = true; unsub(); };
+        }, onError));
+        // ── Hourly version poll (2026-08-29, ST4 — web/TV backstop) ─────
+        // The broadcast above only reaches a device whose listener is ALIVE
+        // at deploy time. A web tab or wall TV that slept through the
+        // broadcast (or whose listener died and re-attached after the
+        // triggeredAt baseline… which resilientSnapshot now covers, but a
+        // laptop lid-closed for a week still misses everything) could run a
+        // stale build for days. Poll version.json hourly and refresh when
+        // the server demonstrably serves a DIFFERENT build. Deliberately
+        // NOT handleBroadcast: its 4-min "wait for propagation" loop
+        // assumes a deploy just happened — here the new build is already
+        // live, and reusing it would re-arm a reload every hour if the
+        // fetch raced a CDN edge. Native devices have their own OTA
+        // triggers (12s/foreground/4h — see below); dev servers have no
+        // meaningful version.json.
+        let versionPollTimer = null;
+        const isNativePoll = (() => { try { return window.Capacitor?.isNativePlatform?.() === true; } catch { return false; } })();
+        const localVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
+        if (!isNativePoll && !import.meta.env.DEV && localVersion) {
+            versionPollTimer = setInterval(async () => {
+                try {
+                    const resp = await fetch((import.meta.env.BASE_URL || '/') + 'version.json?t=' + Date.now(), { cache: 'no-store' });
+                    if (!resp.ok) return;
+                    const served = (await resp.json())?.v;
+                    if (!served || served === localVersion) return;
+                    await waitInputIdle();
+                    if (!cancelled) forceRefresh();
+                } catch { /* offline blip — try again next hour */ }
+            }, 60 * 60 * 1000);
+        }
+        return () => {
+            cancelled = true;
+            stopBroadcast();
+            if (versionPollTimer) clearInterval(versionPollTimer);
+        };
     }, []);
 
     // ── Apply OTA updates only at the LOGIN screen (2026-07-14, Andrew: "make
@@ -1442,7 +1483,13 @@ export default function App() {
         // changes (name / role / access flags / availability /
         // scheduleSide / etc.).
         let prevShapeHash = '';
-        const unsubscribe = onSnapshot(doc(db, "config", "staff"), (docSnap) => {
+        // resilientSnapshot (2026-08-29, ST3): an errored roster listener
+        // used to be permanently dead (see the corrected note in the error
+        // handler below) — renames/access changes then never reached this
+        // device until a manual refresh. prevShapeHash lives OUTSIDE the
+        // attach closure so the dedup survives re-attaches.
+        const stopStaff = resilientSnapshot('config/staff', (onHealthy, onError) => onSnapshot(doc(db, "config", "staff"), (docSnap) => {
+            onHealthy();
             if (!docSnap.exists()) {
                 // The doc not existing is still a valid "we've heard
                 // back from Firestore" signal — flip ready so gated
@@ -1472,13 +1519,15 @@ export default function App() {
             setStaffList(list);
             setStaffListReady(true);
         }, (err) => {
-            // Network-error path: surface to logger but DON'T flip
-            // ready, so gated effects keep waiting for real data
-            // rather than running against the stale placeholder.
-            // The subscription will re-fire when Firestore reconnects.
-            console.warn('config/staff snapshot error:', err);
-        });
-        return () => unsubscribe();
+            // Error path: DON'T flip ready, so gated effects keep waiting
+            // for real data rather than running against the stale
+            // placeholder. NOTE (2026-08-29): the old comment here claimed
+            // "the subscription will re-fire when Firestore reconnects" —
+            // WRONG. An errored onSnapshot is dead forever; only
+            // resilientSnapshot's re-attach brings the roster back.
+            onError(err);
+        }));
+        return () => stopStaff();
     }, []);
     // Validate the persisted staffName against the live staffList. If admin
     // deleted the staff member while their device still had the localStorage
@@ -2255,10 +2304,19 @@ export default function App() {
         manualLocationRef.current = true;
         // Admins can also view 'both'; both-store STAFF flip between the two
         // real stores only (every page + the printers need a concrete store).
-        const cycle = staffIsAdmin ? ['webster', 'maryland', 'both'] : ['webster', 'maryland'];
         setActiveLocation(prev => {
-            const idx = cycle.indexOf(prev);
-            return cycle[(idx + 1) % cycle.length];   // unknown prev (e.g. 'both' left over) → cycle[0] = webster
+            if (staffIsAdmin) {
+                const cycle = ['webster', 'maryland', 'both'];
+                const idx = cycle.indexOf(prev);
+                return cycle[(idx + 1) % cycle.length];
+            }
+            // Non-admin (TG3, 2026-08-29): cycle from the CLAMPED base. A
+            // stale 'both' (or any unknown) left over from an admin session
+            // clamps to webster — the store the UI is already showing — so
+            // the FIRST tap lands on maryland instead of a "did nothing"
+            // hop from 'both' to the webster they were already looking at.
+            const base = (prev === 'maryland') ? 'maryland' : 'webster';
+            return base === 'webster' ? 'maryland' : 'webster';
         });
     }, [canToggleLocation, staffIsAdmin]);
 

@@ -50,7 +50,14 @@ if (typeof Node === 'function' && Node.prototype) {
 // so a truly unrecoverable device can't reload-loop forever. Installed here,
 // at module eval, so it's armed before the first Firestore call. Pattern is
 // specific to Firestore's fatal assertion — normal errors never match.
-const FS_ASSERT = /INTERNAL ASSERTION FAILED|without an in-progress transaction/i;
+// 2026-08-29 (ST2): |IndexedDbTransactionError added — WKWebView also
+// surfaces the wedge as a rejection whose MESSAGE is generic ("Connection
+// to Indexed Database server lost" etc.) while the error NAME is
+// IndexedDbTransactionError, so the rejection handler below passes
+// name + message into this test. That class gets its own gentler path in
+// maybeHealFirestore (reload-only, 2-sightings threshold) — the
+// deleteDatabase branch stays reserved for the INTERNAL ASSERTION class.
+const FS_ASSERT = /INTERNAL ASSERTION FAILED|without an in-progress transaction|IndexedDbTransactionError/i;
 let _fsHealing = false;
 async function healFirestoreCrash() {
     const KEY = 'ddmau:fsHeal';
@@ -75,7 +82,30 @@ async function healFirestoreCrash() {
     try { window.location.reload(); } catch { /* noop */ }
 }
 function maybeHealFirestore(msg) {
-    if (_fsHealing || !FS_ASSERT.test(String(msg || ''))) return;
+    const text = String(msg || '');
+    if (_fsHealing || !FS_ASSERT.test(text)) return;
+    // ── IndexedDbTransactionError — its OWN gentler path (2026-08-29, ST2).
+    // Unlike the fatal INTERNAL ASSERTION, a single IDB transaction error
+    // can be transient (Safari pauses the IDB connection under memory
+    // pressure and the SDK sometimes recovers), so: count sightings in a
+    // ~90s window (separate sessionStorage key from ddmau:fsHeal) and only
+    // reload — never deleteDatabase — at the 2nd sighting. ORDERING: the
+    // sighting is recorded WITHOUT setting _fsHealing; flipping it on the
+    // 1st sighting would swallow the 2nd and the threshold could never trip.
+    if (/IndexedDbTransactionError/i.test(text)) {
+        const KEY = 'ddmau:fsIdbTxn';
+        let s = {};
+        try { s = JSON.parse(sessionStorage.getItem(KEY) || '{}'); } catch { /* noop */ }
+        const now = Date.now();
+        const n = (s.at && now - s.at < 90_000) ? (s.n || 0) + 1 : 1;
+        try { sessionStorage.setItem(KEY, JSON.stringify({ at: now, n })); } catch { /* noop */ }
+        if (n < 2) return;                   // one sighting — could be a blip
+        if (n > 3) return;                   // reloads aren't helping — stop looping
+        _fsHealing = true;
+        try { hideSplash(); } catch { /* noop */ }
+        try { window.location.reload(); } catch { /* noop */ }
+        return;
+    }
     _fsHealing = true;
     healFirestoreCrash();
 }
@@ -83,7 +113,9 @@ if (typeof window !== 'undefined') {
     window.addEventListener('error', (e) => maybeHealFirestore(e?.message || e?.error?.message), true);
     window.addEventListener('unhandledrejection', (e) => {
         const r = e?.reason;
-        maybeHealFirestore(r instanceof Error ? r.message : String(r || ''));
+        // name + message: Firestore's IndexedDbTransactionError carries a
+        // generic message — the NAME is the only reliable marker.
+        maybeHealFirestore(r instanceof Error ? r.name + ': ' + r.message : String(r || ''));
     }, true);
 }
 

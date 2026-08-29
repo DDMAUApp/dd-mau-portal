@@ -240,6 +240,21 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
             .slice(0, 8);
     }, [shifts.list, storeLocation]);
 
+    // CI6 (2026-08-29): today's shifts for the ClockedInPanel. Was built
+    // inline in the JSX, handing the panel a brand-new array identity on
+    // EVERY HomeV2 render and forcing its schedule-matching memos (and every
+    // row) to recompute — part of the "who's clocked in feels slow" report.
+    // Output identical; identity now only changes when the snapshot or the
+    // viewed store changes. (todayKey() rolls at midnight; like the other
+    // day-scoped memos here, the next snapshot re-derives it.)
+    const clockedInTodayShifts = useMemo(() => {
+        const today = todayKey();
+        return shifts.list.filter(s =>
+            s.date === today &&
+            (storeLocation === 'both' || s.location === storeLocation)
+        );
+    }, [shifts.list, storeLocation]);
+
     const greeting = (() => {
         const h = new Date().getHours();
         if (h < 12) return tx('Good morning', 'Buenos días');
@@ -403,10 +418,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                             location={storeLocation}
                             language={language}
                             staffList={staffList}
-                            todaysShifts={shifts.list.filter(s =>
-                                s.date === todayKey() &&
-                                (storeLocation === 'both' || s.location === storeLocation)
-                            )}
+                            todaysShifts={clockedInTodayShifts}
                         />
                     </div>
                 ) : (

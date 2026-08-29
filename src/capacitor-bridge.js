@@ -95,16 +95,49 @@ let _otaPending = false;
 let _otaApplyAllowed = false;      // true only while at the login/lock screen
 let _otaBundlePending = null;      // a downloaded-but-not-yet-applied Capgo bundle
 
+// ── stale-bundle guard (2026-08-29) ─────────────────────────────────
+// Andrew tapped Refresh while RUNNING v1.0.447 and got DOWNGRADED to
+// v1.0.446, then back to 447 on the next tap. Root cause: the one-slot
+// _otaBundlePending queue is never invalidated — after several rapid
+// deploys it can still hold an OLDER bundle than the one the WebView is
+// already running (the newer one got applied via another path), and
+// set(oldBundle) is an active downgrade. Every consumer of the slot now
+// checks "strictly newer than what's running" and discards stale slots.
+// Local numeric compare (kept dependency-free on purpose — this bridge
+// deliberately avoids app-chunk imports): '1.0.446' vs '1.0.447'.
+function _verTuple(v) {
+    const m = String(v || '').match(/(\d+)\.(\d+)\.(\d+)/);
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function _isNewerVersion(candidate, running) {
+    const c = _verTuple(candidate); const r = _verTuple(running);
+    if (!c || !r) return true; // unparseable — don't block updates on a format change
+    for (let i = 0; i < 3; i++) { if (c[i] !== r[i]) return c[i] > r[i]; }
+    return false; // equal = not newer
+}
+function _runningVersion() {
+    try { return typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : ''; } catch { return ''; }
+}
+// Returns the pending bundle ONLY if it's strictly newer than the running
+// build; otherwise clears the stale slot and returns null.
+function _takePendingBundleIfNewer() {
+    const b = _otaBundlePending;
+    if (!b) return null;
+    if (_isNewerVersion(b.version, _runningVersion())) { _otaBundlePending = null; return b; }
+    console.warn('[cap] discarding stale queued bundle', b.version, '(running', _runningVersion() + ')');
+    _otaBundlePending = null;
+    return null;
+}
+
 // Apply any queued OTA now — ONLY call when _otaApplyAllowed (login screen).
 async function applyPendingOtaNow() {
     if (!_otaApplyAllowed) return false;
     if (!_otaBundlePending && !_otaPending) return false;
     try {
         const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
-        if (_otaBundlePending) {
-            const b = _otaBundlePending;
-            _otaBundlePending = null;
-            await CapacitorUpdater.set(b);   // activate the bundle we downloaded + reload
+        const queued = _takePendingBundleIfNewer();
+        if (queued) {
+            await CapacitorUpdater.set(queued);   // activate the bundle we downloaded + reload
             return true;
         }
         // Capgo's autoUpdate already downloaded one (updateAvailable fired).
@@ -501,10 +534,9 @@ export async function applyNativeOtaRefresh() {
         // downloaded-and-set yet — worst on always-foreground devices (iOS app
         // on a Mac never backgrounds, so autoUpdate never re-checks), where the
         // button reloaded the SAME stale bundle forever (Andrew's laptop).
-        if (_otaBundlePending) {
-            const b = _otaBundlePending;
-            _otaBundlePending = null;
-            await CapacitorUpdater.set(b);   // activates the queued bundle + reloads
+        const queued = _takePendingBundleIfNewer();
+        if (queued) {
+            await CapacitorUpdater.set(queued);   // activates the queued bundle + reloads
             return true;
         }
         // 2026-07-27 audit R12: when Capgo's autoUpdate already queued the new

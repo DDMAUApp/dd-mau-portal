@@ -32,6 +32,7 @@
 
 import { disableNetwork, enableNetwork, doc, getDocFromServer } from 'firebase/firestore';
 import { db } from '../firebase';
+import { logError } from './logger';
 
 // Backgrounded longer than this ⇒ assume the socket died (iOS suspends
 // sockets after ~30s; 45s adds margin so quick app-switches skip the cycle).
@@ -63,7 +64,7 @@ export function escalateReload(reason = 'write-stuck') {
         if (Date.now() - last < RELOAD_GUARD_MS) return false;
         sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
     } catch { /* storage broken — still reload; worst case iOS re-suspends */ }
-    console.warn(`[firestoreRevive] write still stuck after revive (${reason}) — reloading app to rebuild the SDK`);
+    console.warn(`[firestoreRevive] still stuck after revive (${reason}) — reloading app to rebuild the SDK`);
     _reloadImpl();
     return true;
 }
@@ -211,6 +212,65 @@ export function watchdogRead(promise, hangMs = WRITE_HANG_MS) {
 export const PROBE_INTERVAL_MS = 3 * 60 * 1000;
 let _probeInFlight = false;
 
+// ── Probe-stuck reload escalation (2026-08-29, ST1) ────────────────────
+// The watchdogRead revive above fixes a dead TRANSPORT, but an iOS
+// IndexedDB wedge (see WRITE_ESCALATE_MS) survives a network cycle: the
+// probe keeps hanging forever and the tab keeps showing stale data until
+// someone happens to WRITE. So: count CONSECUTIVE hung probes. A probe
+// that succeeds — or that late-settles after being counted — resets the
+// count; so does a clean rejection (the SDK knows it's offline, no
+// wedge); a hang detected while the tab isn't visible never counts (a
+// frozen background WebView hangs for boring reasons). Two strikes while
+// the browser believes it's online ⇒ wait for input-idle, re-check, and
+// reload — the same last resort the write path already uses.
+// ONE probe-triggered reload per session (own key, separate from the
+// write path's 2-min guard): if the reload didn't cure it, it's a
+// backend outage — degrade to staleness, never a reload loop.
+export const PROBE_STUCK_MS = WRITE_HANG_MS + WRITE_ESCALATE_MS;
+export const PROBE_STRIKES_TO_RELOAD = 2;
+const PROBE_RELOAD_KEY = 'ddmau:probeReloadAt';
+let _probeStrikes = 0;
+let _probeEscalating = false;
+
+function _resetProbeStrikes() { _probeStrikes = 0; }
+
+async function _maybeProbeReload() {
+    if (_probeEscalating) return;
+    try { if (sessionStorage.getItem(PROBE_RELOAD_KEY)) return; } catch { /* storage broken — still escalate (same posture as escalateReload) */ }
+    _probeEscalating = true;
+    try {
+        // Input-idle wait (same pattern as App.jsx's broadcast reload):
+        // never yank the page out from under someone mid-typing. 3s poll,
+        // 60s cap — after the cap we reload anyway (the tab is wedged;
+        // nothing they type can save without a reload either).
+        const cap = Date.now() + 60_000;
+        while (Date.now() < cap) {
+            const el = typeof document !== 'undefined' ? document.activeElement : null;
+            const busy = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+            if (!busy) break;
+            await new Promise(r => setTimeout(r, 3000));
+        }
+        // RE-CHECK after the wait — a probe may have succeeded meanwhile
+        // (strikes reset), the tab may have hidden, or we may have gone
+        // honestly offline. Any of those ⇒ stand down.
+        if (_probeStrikes < PROBE_STRIKES_TO_RELOAD) return;
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+        try { sessionStorage.setItem(PROBE_RELOAD_KEY, String(Date.now())); } catch { /* still reload */ }
+        escalateReload('probe-stuck');
+    } finally { _probeEscalating = false; }
+}
+
+function _onProbeHang() {
+    // Hidden tabs hang because the WebView is frozen, not wedged.
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    _probeStrikes += 1;
+    if (_probeStrikes < PROBE_STRIKES_TO_RELOAD) return;
+    // Honestly offline — hanging is expected; the online listener revives.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    _maybeProbeReload();
+}
+
 export async function probeFirestoreLiveness() {
     if (_probeInFlight) return;               // never stack probes
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
@@ -218,9 +278,88 @@ export async function probeFirestoreLiveness() {
     try {
         // config/minVersion: tiny, always present, already hot in cache
         // server-side. watchdogRead = revive on hang, no reload, no pill.
-        await watchdogRead(getDocFromServer(doc(db, 'config', 'minVersion')));
-    } catch { /* clean offline rejection — Firestore is aware, not wedged */ }
-    finally { _probeInFlight = false; }
+        const read = watchdogRead(getDocFromServer(doc(db, 'config', 'minVersion')));
+        let hangTimer = null;
+        const hung = await Promise.race([
+            read.then(() => false, () => null),   // null ⇒ clean rejection
+            new Promise((res) => { hangTimer = setTimeout(() => res(true), PROBE_STUCK_MS); }),
+        ]);
+        clearTimeout(hangTimer);
+        if (hung === true) {
+            // Counted as a strike below — but if the read settles LATE
+            // (the revive healed it after all) the transport is alive:
+            // un-count by resetting.
+            read.then(_resetProbeStrikes, _resetProbeStrikes);
+            _onProbeHang();
+        } else {
+            // Success or clean rejection — either way the SDK is not
+            // wedged, so consecutive-hang evidence resets.
+            _resetProbeStrikes();
+        }
+    } finally { _probeInFlight = false; }
+}
+
+export const POST_RESUME_PROBE_MS = 15 * 1000;
+
+// ── resilientSnapshot (2026-08-29, ST3) ────────────────────────────────
+// A Firestore onSnapshot that ERRORS is DEAD: the SDK never re-fires an
+// errored listener, so a transport blip could permanently kill a stream
+// (roster, notifications, the deploy broadcast…) until the next full
+// reload. This wraps an attach function and re-attaches with backoff.
+//
+// Deliberately closure-preserving (NOT a gen-counter/remount pattern):
+// `attach` re-runs inside the SAME effect closure, so state the callback
+// captures (e.g. App.jsx's forceRefresh `baseline`, the roster's
+// prevShapeHash) survives across re-attaches — a broadcast that landed
+// during the dead window still registers on the fresh listener's first
+// snapshot.
+//
+//   attach: (onHealthy, onError) => Unsubscribe
+//     — call onHealthy() as the FIRST line of the snapshot callback,
+//       and pass the error callback straight through as onError.
+//   returns: stop() — unsubscribes and cancels any pending retry.
+export function resilientSnapshot(label, attach) {
+    let stopped = false;
+    let unsub = null;
+    let timer = null;
+    let attempt = 0;
+    const DELAYS = [5_000, 30_000, 120_000, 300_000];
+    const onHealthy = () => { attempt = 0; };
+    const onError = (err) => {
+        if (stopped) return;
+        try { unsub?.(); } catch { /* listener already dead */ }
+        unsub = null;
+        const delay = DELAYS[Math.min(attempt, DELAYS.length - 1)];
+        attempt += 1;
+        console.warn(`[resilientSnapshot] ${label} listener error (${err?.code || err?.message || err}) — re-attaching in ${Math.round(delay / 1000)}s`);
+        // One report per losing streak (not per retry): ~4 consecutive
+        // failures means this is real, not a blip.
+        if (attempt === DELAYS.length) {
+            try {
+                logError({
+                    error: err instanceof Error ? err : new Error(String(err?.message || err || 'snapshot error')),
+                    severity: 'warning',
+                    feature: `resilientSnapshot:${label}`,
+                });
+            } catch { /* logging must never break the retry loop */ }
+        }
+        timer = setTimeout(start, delay);
+    };
+    const start = () => {
+        if (stopped) return;
+        timer = null;
+        try {
+            unsub = attach(onHealthy, onError);
+        } catch (e) {
+            onError(e);
+        }
+    };
+    start();
+    return () => {
+        stopped = true;
+        if (timer) clearTimeout(timer);
+        try { unsub?.(); } catch { /* ignore */ }
+    };
 }
 
 export function installFirestoreRevive() {
@@ -233,6 +372,12 @@ export function installFirestoreRevive() {
         hiddenAt = null;
         if (was != null && Date.now() - was > RESUME_STALE_MS) {
             reviveFirestore('resume');
+            // Post-resume probe (2026-08-29, ST1): don't wait up to
+            // PROBE_INTERVAL_MS to learn whether the resume-revive
+            // actually took — probe ~15s after it (enough time for the
+            // fresh transport to dial) so a still-wedged tab starts
+            // accumulating strikes immediately instead of ~3 min later.
+            setTimeout(() => { probeFirestoreLiveness(); }, POST_RESUME_PROBE_MS);
         }
     };
 

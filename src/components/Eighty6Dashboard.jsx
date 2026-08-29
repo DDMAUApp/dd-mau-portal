@@ -14,7 +14,7 @@
 // Read-only at this view layer — admins toggle 86 status from the
 // Operations page (Tasks / Inventory tabs).
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     onSnapshot, doc, collection, serverTimestamp,
     setDoc as _fsSetDoc, addDoc as _fsAddDoc, getDoc as _fsGetDoc,
@@ -56,20 +56,42 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
         [docKey],
         { label: `86-${docKey}`, feature: '86' },
     );
+    // TG5 (2026-08-29): per-key last-known cache so toggling W↔M paints the
+    // previous board for THAT key instantly instead of a skeleton while
+    // useFirestoreDoc re-subscribes. Rules:
+    //   - Store only clean loaded states (!loading && !error). Note the
+    //     stored value CAN be null — data===null with exists=false is a
+    //     legit loaded state meaning "All available!" — which is why the
+    //     skeleton gate below uses the `in` operator, never truthiness
+    //     (truthiness would re-skeleton legit-empty boards on every toggle).
+    //   - While loading, display ONLY this key's cached value — never the
+    //     hook's `data`, which still holds the PREVIOUS key's doc until the
+    //     new snapshot lands (useFirestoreDoc doesn't clear it on re-sub).
+    //   - No context fallback on purpose: AppDataContext's 86 cache has no
+    //     freshness bit, so we'd risk painting stale cross-source data.
+    const lastKnown = useRef({});
+    useEffect(() => {
+        if (!loading && !eightySixError) lastKnown.current[docKey] = eightySixDoc;
+    }, [loading, eightySixError, eightySixDoc, docKey]);
+    const displayDoc = !loading ? eightySixDoc : lastKnown.current[docKey];
+    // Skeleton ONLY when this key has never loaded — a cached null (empty
+    // board) renders the green "All available!" state, not a skeleton, and
+    // a not-yet-loaded key can never flash "All available!" mid-toggle.
+    const showSkeleton = loading && !(docKey in lastKnown.current);
     // Derive the legacy field shape from the doc so the rest of the
     // component reads unchanged. When the doc doesn't exist or hasn't
     // loaded, we fall back to empty defaults — the same behavior as
     // the previous onSnapshot's else branch.
-    const items = eightySixDoc?.items || [];
-    const count = eightySixDoc?.count || 0;
-    const updatedAt = eightySixDoc?.updatedAt || null;
+    const items = displayDoc?.items || [];
+    const count = displayDoc?.count || 0;
+    const updatedAt = displayDoc?.updatedAt || null;
     // Attribution map written by scripts/sync-toast-86-attribution.mjs.
     // Shape: { [itemName]: { outBy: [staffName,...], outAt: Timestamp,
     //                        inBy: [...], inAt: Timestamp } }
     // Items that haven't been seen transition yet (legacy / from before
     // the sync script started running) won't have an entry — display
     // gracefully degrades to no name shown.
-    const attribution = eightySixDoc?.attribution || {};
+    const attribution = displayDoc?.attribution || {};
     // Toast menu items map (guid → human name), written by
     // sync-toast-86-attribution.mjs. Used to resolve any row whose
     // items[].name is still a raw Toast GUID before the script has
@@ -423,8 +445,10 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                 </div>
             )}
 
-            {/* Body — empty state OR grouped lists */}
-            {loading ? (
+            {/* Body — empty state OR grouped lists. TG5: skeleton only on a
+                never-loaded key; a W↔M toggle keeps painting that key's
+                last-known board (or its legit cached-empty green state). */}
+            {showSkeleton ? (
                 <div className="space-y-2">
                     {[1,2,3].map(i => (
                         <div key={i} className="h-14 glass-skeleton" />

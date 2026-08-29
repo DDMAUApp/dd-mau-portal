@@ -61,7 +61,9 @@ import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { auditAvailabilityChange, auditPtoChange, auditShiftChange, auditScheduleConfig } from '../data/audit';
 import { enableFcmPush } from '../messaging';
-import { DAYPARTS, aggregateSplh, scheduledHoursByDayPart, variance } from '../data/splh';
+// (src/data/splh imports removed 2026-08-29 — the SPLH forecast pipeline
+// was dead code after the SplhAdvisor weather-only redesign; see SC4 note
+// near the deleted memos.)
 import { applyOptimistic, revertOptimistic, overlayOptimistic } from '../data/optimisticShifts';
 // 2026-05-27 — Andrew: forecast bar redesigned to a weather-channel-
 // style row of day cards. Lucide weather glyphs picked per NWS
@@ -152,6 +154,162 @@ const AvailabilityBadge = memo(function AvailabilityBadge({ available, from, to,
         </div>
     );
 });
+
+// ── ScheduleBell (2026-08-29 perf, SC6) ────────────────────────────────────
+// Schedule's notification bell + drawer, extracted from the root component.
+// This child is the ONLY consumer of AppDataContext in this file: every
+// notifications tick (each chat message fans out a notification doc) used to
+// re-render the entire 14k-line Schedule root just to update the unread
+// badge. Now the context re-render is scoped to this small subtree.
+//
+// Mounted UNCONDITIONALLY at the old bell spot — the unreadCount > 0
+// visibility check lives INSIDE this component ON PURPOSE. A conditional
+// mount at the callsite would (a) re-introduce the context read at the root
+// to compute the condition, and (b) unmount/remount the child as unread
+// crosses 0, resetting the seen-Set and re-opening the popup re-fire window.
+//
+// Do NOT wrap in memo(): its re-render sources are the context tick (which
+// it must react to) and root renders (rare by design after this extraction).
+function ScheduleBell({ staffName, staffList, setStaffList, isEn, notifPermission, setNotifPermission }) {
+    const [showNotifDrawer, setShowNotifDrawer] = useState(false);
+    // Andrew 2026-05-30 audit fix — consume from AppDataContext instead of
+    // subscribing here. Before this, Schedule held its own limit(50)
+    // notifications listener in parallel with AppDataContext's limit(100)
+    // one — two streams of identical data for any user with Schedule open.
+    // 2026-07-26 perf audit (M1): no local mirror state either — read the
+    // context array directly (markAllNotifsRead just writes and lets the
+    // snapshot rebase).
+    const { notifications: ctxNotifications } = useAppData();
+    const notifications = ctxNotifications || [];
+
+    // Re-create the de-dup Set whenever staffName changes — otherwise IDs
+    // from a previous user persist and we either silently swallow new notifs
+    // or worse, re-fire alien IDs that weren't ours. useRef (not useMemo):
+    // React reserves the right to recompute useMemo under memory pressure,
+    // which would drop the Set and re-fire OS notifications for every
+    // previously-seen unread item (2026-05-24 audit). ORDER MATTERS: this
+    // ref + reset effect MUST stay declared BEFORE the foreground effect
+    // below — effects run in declaration order, so the reset swaps in the
+    // fresh Set before the popup pass reads it. Reversed, a user switch
+    // fires the popup pass against the PREVIOUS user's Set (the 2026-08-25
+    // user-switch popup bug).
+    const seenNotifIdsRef = useRef(new Set());
+    useEffect(() => {
+        seenNotifIdsRef.current = new Set();
+    }, [staffName]);
+    // Foreground browser-Notification toast — watches the context-supplied
+    // notifications array directly. Fire once per fresh unread item, dedupe
+    // by id, ignore items older than 30s on first sight to avoid replaying
+    // a backlog when the page mounts.
+    useEffect(() => {
+        if (!staffName) return;
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+        const cutoff = Date.now() - 30 * 1000;
+        // Deref at USE time (2026-08-25 audit): a render-time
+        // `const seenNotifIds = seenNotifIdsRef.current` alias captured the
+        // Set from BEFORE the reset effect above swapped .current — marks
+        // written during that pass landed in the discarded Set, so every
+        // notification could re-fire once after a user switch. Reading
+        // .current here always hits the live Set.
+        const seenNotifIds = seenNotifIdsRef.current;
+        for (const n of (ctxNotifications || [])) {
+            if (n.read) continue;
+            if (seenNotifIds.has(n.id)) continue;
+            const ts = n.createdAt?.toMillis ? n.createdAt.toMillis() : 0;
+            if (ts < cutoff) { seenNotifIds.add(n.id); continue; }
+            // showLocalNotification, not a bare `new Notification()` in a
+            // silent catch: on Android the page-context constructor throws and
+            // the old catch swallowed it, so these popups never appeared there
+            // at all (2026-08-01 bug run). It falls back to the service worker.
+            showLocalNotification(n.title || 'DD Mau', {
+                body: n.body || '',
+                icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
+                tag: n.id,
+            });
+            seenNotifIds.add(n.id);
+        }
+    // seenNotifIds is a useRef whose .current Set is mutated in place;
+    // intentionally not in the deps. Re-runs only when context flips
+    // or staffName changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [staffName, ctxNotifications]);
+
+    const requestNotifPermission = async () => {
+        if (typeof Notification === 'undefined') return;
+        try {
+            // enableFcmPush runs the permission prompt AND fetches the FCM token
+            // AND persists it on the staff record. If FCM is not configured (no
+            // VAPID key yet), it still leaves the in-page permission flow intact
+            // — we fall back to plain Notification.requestPermission() so
+            // foreground notifications keep working.
+            const result = await enableFcmPush(staffName, staffList, setStaffList);
+            if (!result.ok && result.reason === 'no-vapid-key') {
+                // FCM not set up yet — just request permission for foreground
+                await Notification.requestPermission();
+            }
+            setNotifPermission(Notification.permission);
+        } catch (e) {
+            console.warn('Notification permission failed:', e);
+            setNotifPermission(Notification.permission);
+        }
+    };
+
+    const markNotifRead = async (id) => {
+        try {
+            await updateDoc(doc(db, 'notifications', id), { read: true });
+        } catch (e) {
+            console.warn('mark read failed:', e);
+        }
+    };
+
+    const markAllNotifsRead = async () => {
+        const unread = notifications.filter(n => !n.read);
+        if (unread.length === 0) return;
+        try {
+            const batch = writeBatch(db);
+            for (const n of unread) batch.update(doc(db, 'notifications', n.id), { read: true });
+            await watchdogWrite(batch.commit());
+        } catch (e) {
+            console.warn('mark all read failed:', e);
+        }
+    };
+
+    const unreadCount = notifications.filter(n => !n.read).length;
+
+    return (
+        <>
+            {/* Schedule's own notification bell — opens the schedule-specific
+                notif drawer (shift offers / swap approvals / PTO updates).
+                Distinct from the v2 header's global bell, but visually
+                redundant when both are on screen. Only shown when there
+                ARE unread notifs so users don't see two bells in normal
+                operation. */}
+            {unreadCount > 0 && (
+                <button onClick={() => setShowNotifDrawer(true)}
+                    title="Schedule notifications"
+                    className="relative p-2 rounded-lg glass-sheet hover:bg-dd-bg transition shadow-card">
+                    <Bell size={18} strokeWidth={2.25} aria-hidden="true" className="text-dd-green-700" />
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                </button>
+            )}
+            {/* Drawer renders through ModalPortal, so mounting it here (inside
+                the header flex row) has no layout effect. */}
+            {showNotifDrawer && (
+                <NotificationsDrawer
+                    notifications={notifications}
+                    onClose={() => setShowNotifDrawer(false)}
+                    onMarkRead={markNotifRead}
+                    onMarkAllRead={markAllNotifsRead}
+                    isEn={isEn}
+                    notifPermission={notifPermission}
+                    onRequestPermission={requestNotifPermission}
+                />
+            )}
+        </>
+    );
+}
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -578,45 +736,26 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Recurring shifts ("Maria works Mon/Wed 9-3 every week")
     const [recurringShifts, setRecurringShifts] = useState([]);
     const [showRecurringModal, setShowRecurringModal] = useState(false);
-    // In-app notifications (bell drawer)
-    // Andrew 2026-05-30 audit fix — consume from AppDataContext instead
-    // of subscribing here. Before this, Schedule held its own
-    // limit(50) notifications listener in parallel with
-    // AppDataContext's limit(100) one — two streams of identical data
-    // for any user with Schedule open. The local-state shim below
-    // preserves the existing code shape (notifications/setNotifications)
-    // so the bell drawer + markAllRead path keeps working unchanged;
-    // we just mirror context → local on every context change and
-    // accept local-only optimistic edits (markAllRead) until the
-    // server snapshot rebases it.
-    const { notifications: ctxNotifications } = useAppData();
-    // 2026-07-26 perf audit (M1): this used to be mirrored into local state
-    // via an effect — every notifications tick (each chat message writes a
-    // notification doc) rendered the whole 13k-line component TWICE. No
-    // optimistic local edits exist (markAllNotifsRead just writes and lets
-    // the snapshot rebase), so read the context array directly.
-    const notifications = useMemo(() => ctxNotifications || [], [ctxNotifications]);
-    // SPLH historical data — last 28 days of laborHistory_{location} feeds
-    // the per-daypart staffing advisor that sits above the weekly grid.
-    // Same shape used by LaborDashboard; helpers in src/data/splh.js.
+    // In-app notifications (bell drawer) — 2026-08-29 perf (SC6): the bell,
+    // drawer, unread badge, foreground-popup effect and mark-read writes all
+    // moved into the module-scope <ScheduleBell> (see above), which is now
+    // the ONLY consumer of AppDataContext in this file. Previously the root
+    // read useAppData().notifications here, so every notifications tick
+    // (each chat message writes a notification doc) re-rendered this entire
+    // 14k-line component. The root keeps only notifPermission state (the
+    // 1-hour-reminder effect reads it) and the notify()/resolveText()
+    // writers, which need no context.
     //
-    // 2026-06-02 consolidation: this listener moved into AppDataContext.
-    // Previously Schedule + LaborDashboard each ran their own
-    // onSnapshot on `laborHistory_{loc}` with a 28-day cutoff — same
-    // data, ~1,500 docs / mount, double-counted whenever the labor page
-    // and the schedule page were open in adjacent tabs.
-    //
-    // The localStorage cache (30-min TTL, "fast path" perceived warmth
-    // on tab return) and the 'both' → webster fallback are preserved in
-    // the context; behavior here is unchanged.
-    const { laborHistory: ctxLaborHistory } = useAppData();
-    const splhHistory = ctxLaborHistory || [];
+    // The useAppData().laborHistory read that also lived here is GONE: it
+    // fed the SPLH grid/forecast/advisory pipeline, dead since the
+    // 2026-05-27 SplhAdvisor redesign dropped the forecast copy. The whole
+    // pipeline was deleted 2026-08-29 (SC4) — SplhAdvisor renders NWS
+    // weather only.
     // Weather forecast for the current location's lat/lng. NWS API is free
     // (no key) and returns up to 7 days of half-day periods. We use the
     // forecast to nudge "rain → trim FOH" / "extreme heat → +1 drinks".
     const [weather, setWeather] = useState(null);
     const [splhAdvisorOpen, setSplhAdvisorOpen] = useState(false);
-    const [showNotifDrawer, setShowNotifDrawer] = useState(false);
 
     // ── Data load ──
     // 2026-05-15 — Andrew: "the schedules loads very slow take a look."
@@ -716,10 +855,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 return;
             }
             // First live snapshot — cached badge can drop, real
-            // "last updated" timestamp lights up. Subsequent ticks
-            // bump liveAt so the user sees the relative-time label
-            // roll forward.
-            setScheduleCacheStatus(prev => ({ usingCache: false, cachedAt: prev.cachedAt, liveAt: Date.now() }));
+            // "last updated" timestamp lights up. 2026-08-29 (perf, SC1):
+            // return `prev` UNCHANGED on metadata-only server acks once the
+            // pill is already Live — minting a fresh object every ack (one
+            // per write with includeMetadataChanges) re-rendered the whole
+            // root with nothing visible changing. liveAt still rolls
+            // forward on real data changes and on the amber→green flip.
+            setScheduleCacheStatus(prev => (prev.usingCache || !prev.liveAt || dataChanged)
+                ? { usingCache: false, cachedAt: prev.cachedAt, liveAt: Date.now() }
+                : prev);
             try {
                 // Strip Firestore Timestamps before caching — the
                 // serializer turns them into plain objects without
@@ -931,12 +1075,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return unsub;
     }, []);
 
-    // 2026-06-02 — SPLH historical listener removed; now sourced from
-    // useAppData().laborHistory above. The localStorage cache (30-min
-    // TTL, "fast path" perceived warmth) and the 'both' → webster
-    // fallback both moved into AppDataContext, where they serve
-    // LaborDashboard too. Cuts ~1,500 docs per cold mount when both
-    // Schedule and Labor are opened in the same session.
+    // 2026-06-02 — SPLH historical listener moved into AppDataContext (it
+    // still serves LaborDashboard there). 2026-08-29 (SC4): Schedule no
+    // longer reads it AT ALL — the splhGrid/forecast/advisory pipeline was
+    // dead code after the 2026-05-27 SplhAdvisor weather-only redesign and
+    // has been deleted.
 
     // ── Weather forecast (NWS API, free, no key) ──
     // Two-step: lat/lng → grid point → forecast. Stored per location-coord.
@@ -1011,88 +1154,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return unsub;
     }, []);
 
-    // ── Listen for in-app notifications addressed to me ──
-    // Side-effect: when a NEW notification arrives (created in the last 30s)
-    // AND the user has granted browser-notification permission, fire a
-    // foreground browser notification so they're alerted even if they're
-    // looking at another tab. True closed-app push (FCM via Cloud Functions)
-    // is a follow-up; this covers app-open + PWA-backgrounded cases.
-    // Re-create the de-dup Set whenever staffName changes — otherwise IDs
-    // from a previous user persist and we either silently swallow new notifs
-    // or worse, re-fire alien IDs that weren't ours. useMemo([staffName]) is
-    // the right scope: stable across re-renders for one user, fresh on switch.
-    // 2026-05-24 audit fix: useMemo was wrong tool — React reserves the
-    // right to recompute useMemo under memory pressure even when deps
-    // haven't changed, which would drop the Set and re-fire OS
-    // notifications for every previously-seen unread item. useRef is
-    // memory-stable by design; we reset .current explicitly on
-    // staffName change instead of via deps.
-    const seenNotifIdsRef = useRef(new Set());
-    useEffect(() => {
-        seenNotifIdsRef.current = new Set();
-    }, [staffName]);
-    // Andrew 2026-05-30 — foreground browser-Notification toast now
-    // watches the context-supplied notifications array directly. Same
-    // semantics as before (fire once per fresh unread item, dedupe by
-    // id, ignore items older than 30s on first sight to avoid replaying
-    // a backlog when the page mounts). Just no longer holds a parallel
-    // Firestore subscription to do it.
-    useEffect(() => {
-        if (!staffName) return;
-        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-        const cutoff = Date.now() - 30 * 1000;
-        // Deref at USE time (2026-08-25 audit): a render-time
-        // `const seenNotifIds = seenNotifIdsRef.current` alias captured the
-        // Set from BEFORE the reset effect above swapped .current — marks
-        // written during that pass landed in the discarded Set, so every
-        // notification could re-fire once after a user switch. Reading
-        // .current here always hits the live Set.
-        const seenNotifIds = seenNotifIdsRef.current;
-        for (const n of (ctxNotifications || [])) {
-            if (n.read) continue;
-            if (seenNotifIds.has(n.id)) continue;
-            const ts = n.createdAt?.toMillis ? n.createdAt.toMillis() : 0;
-            if (ts < cutoff) { seenNotifIds.add(n.id); continue; }
-            // showLocalNotification, not a bare `new Notification()` in a
-            // silent catch: on Android the page-context constructor throws and
-            // the old catch swallowed it, so these popups never appeared there
-            // at all (2026-08-01 bug run). It falls back to the service worker.
-            showLocalNotification(n.title || 'DD Mau', {
-                body: n.body || '',
-                icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
-                tag: n.id,
-            });
-            seenNotifIds.add(n.id);
-        }
-    // seenNotifIds is a useRef whose .current Set is mutated in place;
-    // intentionally not in the deps. Re-runs only when context flips
-    // or staffName changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [staffName, ctxNotifications]);
+    // ── In-app notification popups / bell — moved to <ScheduleBell> ──
+    // (2026-08-29, SC6.) The seen-Set ref, its staffName reset, the
+    // foreground browser-Notification effect, requestNotifPermission and
+    // the mark-read writers all live in the extracted child now, next to
+    // the context read they depend on.
 
-    // Browser notification permission state, requested on demand from drawer.
+    // Browser notification permission state, requested on demand from the
+    // drawer (via ScheduleBell → setNotifPermission). Kept at the ROOT
+    // because the 1-hour-before-shift reminder effect below reads it and
+    // that effect needs the root-local `shifts` state.
     const [notifPermission, setNotifPermission] = useState(
         typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
     );
-    const requestNotifPermission = async () => {
-        if (typeof Notification === 'undefined') return;
-        try {
-            // enableFcmPush runs the permission prompt AND fetches the FCM token
-            // AND persists it on the staff record. If FCM is not configured (no
-            // VAPID key yet), it still leaves the in-page permission flow intact
-            // — we fall back to plain Notification.requestPermission() so
-            // foreground notifications keep working.
-            const result = await enableFcmPush(staffName, staffList, setStaffList);
-            if (!result.ok && result.reason === 'no-vapid-key') {
-                // FCM not set up yet — just request permission for foreground
-                await Notification.requestPermission();
-            }
-            setNotifPermission(Notification.permission);
-        } catch (e) {
-            console.warn('Notification permission failed:', e);
-            setNotifPermission(Notification.permission);
-        }
-    };
 
     // ── 1-hour-before-shift reminders ──
     // For each of MY upcoming published shifts in the next 24h, schedule a
@@ -1228,28 +1302,6 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             console.warn('notify failed (non-fatal):', e);
         }
     };
-
-    const markNotifRead = async (id) => {
-        try {
-            await updateDoc(doc(db, 'notifications', id), { read: true });
-        } catch (e) {
-            console.warn('mark read failed:', e);
-        }
-    };
-
-    const markAllNotifsRead = async () => {
-        const unread = notifications.filter(n => !n.read);
-        if (unread.length === 0) return;
-        try {
-            const batch = writeBatch(db);
-            for (const n of unread) batch.update(doc(db, 'notifications', n.id), { read: true });
-            await watchdogWrite(batch.commit());
-        } catch (e) {
-            console.warn('mark all read failed:', e);
-        }
-    };
-
-    const unreadCount = notifications.filter(n => !n.read).length;
 
     // ── Permission-filtered views — 2026-05-15 ─────────────────────────
     // Andrew: "if the staff isnt a editor of schedules then they shouldnt
@@ -1666,82 +1718,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation))
     ), [staffingNeeds, side, storeLocation]);
 
-    // ── Hours scoreboard ─────────────────────────────────────────────
-    // Live, both-sides-at-once roll-up of scheduled vs target hours so a
-    // manager building a week sees over/under signals BEFORE publishing.
-    // Replaces the "labor cost %" idea — that needed wage data we don't
-    // have. This uses only targetHours which already exists per staff.
-    // SPLH grid from the last 28 days of laborHistory.
-    const splhGrid = useMemo(() => aggregateSplh(splhHistory), [splhHistory]);
-    // Scheduled hours per (dow, daypart) for the currently-viewed week.
-    // Filtered to the active side so FOH advisor only counts FOH labor etc.
-    const scheduledByDayPart = useMemo(() => {
-        const sideFilter = (sh) => {
-            // Match Schedule's existing visible-shift filter logic loosely.
-            // If the shift has an explicit side, use it; otherwise infer from
-            // staff role group.
-            return sh.side === side || (!sh.side && sh.staffName && (() => {
-                const s = staffList.find(x => x.name === sh.staffName);
-                if (!s) return false;
-                if (s.scheduleSide) return s.scheduleSide === side;
-                // Fall back to role-family inference (BOH-tagged roles → boh).
-                const isBoh = BOH_ROLE_HINTS.has(s.role);
-                return side === (isBoh ? 'boh' : 'foh');
-            })());
-        };
-        const weekShifts = (visibleShifts || []).filter(sh => sideFilter(sh));
-        return scheduledHoursByDayPart(weekShifts, weekStart);
-    }, [visibleShifts, side, staffList, weekStart]);
-    // Build per-day forecast: typical sales × scheduled hours → implied SPLH
-    const splhForecast = useMemo(() => {
-        const out = [];
-        for (let i = 0; i < 7; i++) {
-            const day = addDays(weekStart, i);
-            const dow = day.getDay();
-            const dateStr = toDateStr(day);
-            for (const part of DAYPARTS) {
-                const hist = splhGrid[dow]?.[part.id];
-                const scheduled = scheduledByDayPart[dow]?.[part.id] || 0;
-                const v = variance(scheduled, hist?.avgHours);
-                out.push({
-                    dow, dateStr, part,
-                    hist,
-                    scheduled,
-                    variance: v,
-                    impliedSplh: hist?.avgSales > 0 && scheduled > 0 ? hist.avgSales / scheduled : null,
-                });
-            }
-        }
-        return out;
-    }, [splhGrid, scheduledByDayPart, weekStart]);
-    // Top-line advisory: how many slots are flagged?
-    const splhAdvisory = useMemo(() => {
-        const under = splhForecast.filter(f => f.variance.status === 'under').length;
-        const over  = splhForecast.filter(f => f.variance.status === 'over').length;
-        const haveData = splhHistory.length > 0;
-        return { under, over, haveData };
-    }, [splhForecast, splhHistory.length]);
-
-    // Weather impact derivation. Maps each forecast period to a hint.
-    // Conservative thresholds — only show a tip if the weather is genuinely
-    // unusual for the region.
-    const weatherTips = useMemo(() => {
-        if (!weather?.periods?.length) return [];
-        const tips = [];
-        for (const p of weather.periods.slice(0, 8)) { // 4 days, day+night
-            if (!p.isDaytime) continue;
-            const rain = p.probabilityOfPrecipitation?.value || 0;
-            const tF = Number(p.temperature) || null;
-            const partsForDay = [];
-            if (rain >= 60) partsForDay.push({ kind: 'rain', text: `${rain}% rain — walk-in traffic typically dips. Consider trimming 1 FOH from lunch.`, esText: `${rain}% lluvia — el tráfico baja. Considera quitar 1 FOH del almuerzo.` });
-            if (tF != null && tF >= 95) partsForDay.push({ kind: 'heat', text: `${tF}°F — drinks demand spikes ~30%. Consider +1 at the boba station.`, esText: `${tF}°F — bebidas suben ~30%. Considera +1 en boba.` });
-            if (tF != null && tF <= 25) partsForDay.push({ kind: 'cold', text: `${tF}°F — pho/hot food ramps; foot traffic drops. Same labor, watch lunch volume.`, esText: `${tF}°F — pho sube; menos tráfico. Mismo personal, vigila el almuerzo.` });
-            if (partsForDay.length > 0) {
-                tips.push({ name: p.name, shortForecast: p.shortForecast, tF, rain, parts: partsForDay });
-            }
-        }
-        return tips;
-    }, [weather]);
+    // ── SPLH pipeline DELETED 2026-08-29 (perf, SC4) ─────────────────
+    // splhGrid / scheduledByDayPart / splhForecast / splhAdvisory (and the
+    // weatherTips derivation) recomputed on every shifts snapshot but had
+    // ZERO consumers: the 2026-05-27 SplhAdvisor redesign renders only the
+    // NWS weather row (`weather` prop) and ignored the forecast props it
+    // still accepted. Recover from git history if the SPLH advisor copy
+    // ever comes back — src/data/splh.js still holds the pure helpers.
 
     // hoursScoreboard DELETED 2026-07-26 (perf audit M2): its render was
     // removed 2026-05-27 but the useMemo kept executing — an O(staff ×
@@ -3044,6 +3027,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         let leftoverDetail = '';  // populated when splitting; drives notification copy
         try {
             await runTransaction(db, async (txn) => {
+                // 2026-08-29 (SC7/F10.1): Firestore RETRIES this callback on
+                // contention. detail/leftoverDetail live outside it, so a
+                // first attempt that took the split path could leave stale
+                // copy behind for a retry that resolves as a full swap (or
+                // vice versa) — wrong notification text. Reset both on
+                // every attempt so only the COMMITTED attempt's values
+                // drive the notifications below.
+                detail = '';
+                leftoverDetail = '';
                 const ref = doc(db, 'shifts', shift.id);
                 const snap = await txn.get(ref);
                 if (!snap.exists()) {
@@ -3379,6 +3371,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const handleAddNeed = async (need) => {
         if (!canEditSide(need?.side)) return;
+        // 2026-08-29 (SC5/F8): the grid hides "+ slot" on closed days, but
+        // the StaffingNeedModal's own date field (and the day/list-view
+        // bars) could still create a need on a closed date with no warning —
+        // it then broadcasts "up for grabs" pushes for a day the store is
+        // dark. Confirm instead of hard-blocking: a manager opening a
+        // normally-closed day for an event may legitimately want the slot.
+        if (need?.date && dateClosed(need.date, need.location)) {
+            const ok = confirm(tx(
+                `${need.date} is marked CLOSED. Create this open slot anyway?`,
+                `${need.date} está marcado como CERRADO. ¿Crear este espacio de todos modos?`
+            ));
+            if (!ok) return;
+        }
         try {
             const docRef = await addDoc(collection(db, 'staffing_needs'), {
                 ...need,
@@ -6222,22 +6227,20 @@ ${dayBlocks}
                         )}
                     </p>
                 </div>
-                {/* Schedule's own notification bell — opens the schedule-specific
-                    notif drawer (shift offers / swap approvals / PTO updates).
-                    Distinct from the v2 header's global bell, but visually
-                    redundant when both are on screen. Only shown when there
-                    ARE unread notifs so users don't see two bells in normal
-                    operation. */}
-                {unreadCount > 0 && (
-                    <button onClick={() => setShowNotifDrawer(true)}
-                        title="Schedule notifications"
-                        className="relative p-2 rounded-lg glass-sheet hover:bg-dd-bg transition shadow-card">
-                        <Bell size={18} strokeWidth={2.25} aria-hidden="true" className="text-dd-green-700" />
-                        <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                            {unreadCount > 9 ? '9+' : unreadCount}
-                        </span>
-                    </button>
-                )}
+                {/* Schedule's notification bell + drawer — extracted child
+                    (SC6). Mounted UNCONDITIONALLY: the unread>0 visibility
+                    check is INSIDE ScheduleBell so the root never touches
+                    the notifications context (and the child never remounts
+                    when unread hits 0, which would reset its seen-Set and
+                    re-open the popup re-fire window). */}
+                <ScheduleBell
+                    staffName={staffName}
+                    staffList={staffList}
+                    setStaffList={setStaffList}
+                    isEn={isEn}
+                    notifPermission={notifPermission}
+                    setNotifPermission={setNotifPermission}
+                />
             </div>
 
             {/* FOH / BOH segmented control — matches the v2 segmented pattern
@@ -6935,7 +6938,7 @@ ${dayBlocks}
                                 isEn={isEn}
                                 canEdit={canEdit}
                                 currentStaffName={staffName}
-                                blocksByDate={blocksByDate}
+                                dateClosed={dateClosed}
                                 onFillSlot={(n) => {
                                     if (canEdit) {
                                         setFillingNeed(n);
@@ -6964,7 +6967,7 @@ ${dayBlocks}
                                 isEn={isEn}
                                 canEdit={canEdit}
                                 currentStaffName={staffName}
-                                blocksByDate={blocksByDate}
+                                dateClosed={dateClosed}
                                 onFillSlot={() => {}}
                                 onTakeShift={handleTakeShift}
                                 onCancelOffer={askCancelOffer}
@@ -6995,14 +6998,10 @@ ${dayBlocks}
                                         exported so leaving it costs
                                         nothing at runtime. */}
                                     <SplhAdvisor
-                                        splhForecast={splhForecast}
-                                        advisory={splhAdvisory}
-                                        weatherTips={weatherTips}
                                         weather={weather}
                                         open={splhAdvisorOpen}
                                         onToggle={() => setSplhAdvisorOpen(o => !o)}
                                         isEn={isEn}
-                                        side={side}
                                     />
                                 </>
                             )}
@@ -7397,7 +7396,15 @@ ${dayBlocks}
                     sideStaff={sideStaff}
                     shifts={shifts}
                     storeLocation={storeLocation}
-                    isStaffOffOn={isStaffOffOn}
+                    /* Stable identity (SC3) — the modal memoizes its rows
+                       pipeline and an inline closure here would defeat any
+                       future memo keyed on it. viewerTimeOff is threaded as
+                       the DATA dep for that memo: isStaffOffOnCb reads it,
+                       and its identity changes on every PTO edit (it's a
+                       useMemo over the live timeOff snapshot), so PTO
+                       changes refresh the modal's rows while it sits open. */
+                    isStaffOffOn={isStaffOffOnCb}
+                    viewerTimeOff={viewerTimeOff}
                     isEn={isEn}
                     requiredRoleGroup={fillingNeed?.roleGroup || null}
                     slotStart={fillingNeed?.startTime || null}
@@ -7529,17 +7536,9 @@ ${dayBlocks}
                     isEn={isEn}
                 />
             )}
-            {showNotifDrawer && (
-                <NotificationsDrawer
-                    notifications={notifications}
-                    onClose={() => setShowNotifDrawer(false)}
-                    onMarkRead={markNotifRead}
-                    onMarkAllRead={markAllNotifsRead}
-                    isEn={isEn}
-                    notifPermission={notifPermission}
-                    onRequestPermission={requestNotifPermission}
-                />
-            )}
+            {/* NotificationsDrawer now renders from inside <ScheduleBell>
+                (SC6) — it portals via ModalPortal, so nothing changes
+                visually. */}
 
             {/* 2026-05-30 — confirmation + offer/take modals. Mounted at
                 the end of the JSX so they paint on top of everything else.
@@ -8247,9 +8246,9 @@ function HoursScoreboard({ scoreboard, side, isEn }) {
 // precipitation chance). On mobile the row scrolls horizontally; on
 // desktop it lays out as a 7-column grid.
 //
-// Args still accepted (splhForecast, advisory, weatherTips, side)
-// but only `weather`, `open`, `onToggle`, and `isEn` are used. Kept
-// the prop signature so the call site doesn't have to change.
+// 2026-08-29 (SC4): the vestigial props (splhForecast, advisory,
+// weatherTips, side) are gone — the upstream pipeline that produced them
+// was deleted as dead code. Signature is now weather/open/onToggle/isEn.
 
 // Map an NWS shortForecast string to a Lucide weather glyph.
 // Conservative keyword matching — order matters (thunderstorm
@@ -8268,7 +8267,7 @@ function pickWeatherIcon(forecast) {
     return CloudSun;
 }
 
-function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onToggle, isEn, side }) {
+function SplhAdvisor({ weather, open, onToggle, isEn }) {
     const tx = (en, es) => (isEn ? en : es);
     // Daytime periods only — that's "Mon / Tue / Wed / …" or
     // "Today / Tonight / Tomorrow …". NWS returns up to 14 periods
@@ -8391,7 +8390,12 @@ const DINNER_WIN_END   = 19 * 60; // 7:00  pm
 function OpenShiftsCalendarBar({
     mode,                 // 'unassigned' | 'available'
     weekStart, staffingNeeds, shifts, side, storeLocation, isEn,
-    canEdit, currentStaffName, blocksByDate,
+    canEdit, currentStaffName,
+    // dateClosed(dateStr) — the parent's single-source-of-truth closed
+    // resolver (2026-08-29, SC5/F8). Replaces the old blocksByDate prop +
+    // local `type === 'closed'` scan, which missed recurring closures
+    // (Sundays) and ignored open_override days.
+    dateClosed,
     onFillSlot, onTakeShift, onCancelOffer,
     // Speed slot add (unassigned mode only — managers tap a "+ slot"
     // chip per day to open the StaffingNeedModal pre-filled to that date).
@@ -8491,8 +8495,7 @@ function OpenShiftsCalendarBar({
                     const dStr = toDateStr(d);
                     const isToday = dStr === today;
                     const items = itemsByDate.get(dStr) || [];
-                    const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
-                    const closed = dayBlocks.some(b => b.type === 'closed');
+                    const closed = !!(dateClosed && dateClosed(dStr));
 
                     return (
                         <div key={i} className={`shrink-0 w-[96px] md:w-auto snap-start p-1.5 min-w-0 border-r border-dd-line md:border-r-0 ${isToday ? 'bg-dd-sage-50/40' : ''} ${closed ? 'opacity-60' : ''}`}>
@@ -8650,7 +8653,15 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
     // unreachable: pending cells rendered the approved 🌴 look and the ⏳
     // chip was dead code. Visual only — doesn't block anything. Entries
     // with no status field are legacy admin-entered pre-approvals.
-    const [dragOverCell, setDragOverCell] = useState(null); // "staffName|date" while dragging
+    // Drag-over cell highlight (2026-08-29 perf, SC2/F3): was a
+    // `dragOverCell` useState keyed "staffName|date", which re-rendered the
+    // ENTIRE WeeklyGrid on every cell the pointer crossed mid-drag. The
+    // highlight is purely cosmetic and scoped to one <td>, so it's now an
+    // imperative `.dd-dragover` class (defined in src/index.css, visually
+    // identical to the old bg-blue-50 + ring-2 ring-blue-400 ring-inset)
+    // added in onDragOver / removed in onDragLeave + onDrop. A sweep in the
+    // document-level drop/dragend cleanup below catches aborted/off-grid
+    // drags so no cell keeps a stale highlight.
     // Memoized on weekStart so the closedByDate useMemo below (which lists
     // `days` in its deps) actually skips recompute when WeeklyGrid re-renders
     // for a reason other than the week changing.
@@ -8720,7 +8731,14 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
             }
             if (vy !== 0 && raf === null) raf = requestAnimationFrame(tick);
         };
-        const stop = () => { vy = 0; if (raf) { cancelAnimationFrame(raf); raf = null; } };
+        const stop = () => {
+            vy = 0;
+            if (raf) { cancelAnimationFrame(raf); raf = null; }
+            // Sweep any lingering drag-over highlight (SC2/F3): an aborted
+            // or off-grid drop never fires the cell's own onDragLeave/onDrop,
+            // so clear the imperative class here (drop / dragend / unmount).
+            document.querySelectorAll('.dd-dragover').forEach(el => el.classList.remove('dd-dragover'));
+        };
         document.addEventListener('dragover', onDragOver);
         document.addEventListener('drop', stop);
         document.addEventListener('dragend', stop);
@@ -9135,8 +9153,14 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                             </td>
                             {days.map((d, i) => {
                                 const dStr = toDateStr(d);
-                                const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
-                                const closed = dayBlocks.some(b => b.type === 'closed');
+                                // 2026-08-29 (SC5/F8): use the shared closedByDate
+                                // map (same source as the body cells) instead of a
+                                // one-off `type === 'closed'` scan — that scan
+                                // missed recurring closures (Sundays showed a
+                                // "+ slot" button) and ignored open_override days
+                                // (which SHOULD show it, and now do:
+                                // hasOverride ⇒ closed=false in the map).
+                                const closed = !!(closedByDate.get(dStr)?.closed);
                                 const slots = openSlots.filter(n => n.date === dStr);
                                 return (
                                     <td key={i} className={`border-b border-r border-dd-line align-top p-1 ${closed ? 'bg-dd-bg' : 'bg-blue-50/40'}`}>
@@ -9202,8 +9226,9 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                             </td>
                             {days.map((d, i) => {
                                 const dStr = toDateStr(d);
-                                const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
-                                const closed = dayBlocks.some(b => b.type === 'closed');
+                                // Shared closedByDate map (SC5/F8) — see the
+                                // unassigned row above for the why.
+                                const closed = !!(closedByDate.get(dStr)?.closed);
                                 const offers = openOffers.filter(o => o.date === dStr);
                                 return (
                                     <td key={i} className={`border-b border-r border-dd-line align-top p-1 ${closed ? 'bg-dd-bg' : 'bg-purple-50/40'}`}>
@@ -9289,8 +9314,6 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                                 const cellMeta = closedByDate.get(dStr) || {};
                                 const closed = cellMeta.closed;
                                 const closedReason = cellMeta.reason;
-                                const cellKey = `${s.name}|${dStr}`;
-                                const isDragOver = dragOverCell === cellKey;
                                 const onPTO = staffPtoOn(s.name, dStr, 'approved');
                                 const onPendingPTO = !onPTO && staffPtoOn(s.name, dStr, 'pending');
                                 return (
@@ -9311,16 +9334,17 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                                             if (!canEdit || closed) return;
                                             e.preventDefault(); // allow drop
                                             e.dataTransfer.dropEffect = 'move';
-                                            if (dragOverCell !== cellKey) setDragOverCell(cellKey);
+                                            // Imperative highlight (SC2/F3) — no state, no grid re-render.
+                                            e.currentTarget.classList.add('dd-dragover');
                                         }}
-                                        onDragLeave={() => { if (dragOverCell === cellKey) setDragOverCell(null); }}
+                                        onDragLeave={(e) => { e.currentTarget.classList.remove('dd-dragover'); }}
                                         onDrop={(e) => {
                                             e.preventDefault();
-                                            setDragOverCell(null);
+                                            e.currentTarget.classList.remove('dd-dragover');
                                             const shiftId = e.dataTransfer.getData('text/shift-id');
                                             if (shiftId && onDropShift) onDropShift(shiftId, s.name, dStr);
                                         }}
-                                        className={`relative border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''} ${movingShiftId && canEdit && !closed ? 'cursor-pointer ring-1 ring-inset ring-dd-green/50 hover:bg-dd-green-50' : ''}`}>
+                                        className={`relative border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''} ${movingShiftId && canEdit && !closed ? 'cursor-pointer ring-1 ring-inset ring-dd-green/50 hover:bg-dd-green-50' : ''}`}>
                                         {/* 2026-05-16 — closed-day watermark.
                                             Translucent reason text centered on
                                             the cell. Stacked vertically across
@@ -12379,91 +12403,112 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
 // by current weekly hours so the manager can pick the lowest-hours person to
 // avoid pushing anyone into OT. Tap any name to jump straight into the
 // Add Shift modal pre-filled for that staff + date.
-function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule, requiredRoleGroup, slotStart, slotEnd, fillProgress }) {
+function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule, requiredRoleGroup, slotStart, slotEnd, fillProgress, viewerTimeOff }) {
     const tx = (en, es) => (isEn ? en : es);
     const date = parseLocalDate(dateStr);
-    const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-    const dayKey = date ? dayKeys[date.getDay()] : null;
     const dayName = date ? (isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[date.getDay()] : '';
-    // Apply role filter when filling a slot that wants a specific role group.
-    const roleFilteredStaff = requiredRoleGroup && requiredRoleGroup !== 'any'
-        ? sideStaff.filter(s => isRoleEligible(s.role, requiredRoleGroup))
-        : sideStaff;
     const requiredGroup = requiredRoleGroup ? SLOT_ROLE_BY_ID[requiredRoleGroup] : null;
 
-    // Compute each staff's weekly hours (across the FLSA week containing dateStr)
-    // and their availability state for this specific day.
-    const weekStartLocal = date ? startOfWeek(date) : null;
-    const rows = roleFilteredStaff.map(s => {
-        // Total this week's hours
-        let weeklyHours = 0;
-        if (weekStartLocal) {
-            for (let i = 0; i < 7; i++) {
-                const d = toDateStr(addDays(weekStartLocal, i));
-                // Cross-store ON PURPOSE (2026-08-25 audit): OT is per
-                // employee per FLSA week across BOTH stores (staffSummary
-                // and AddShiftModal already count this way) — filtering to
-                // the viewed store hid the other store's hours and made an
-                // OT pick look green.
-                const myShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === d);
-                // Per-day paid hours (auto-double deduction baked in).
-                weeklyHours += dayPaidHours(myShifts);
+    // ── Rows pipeline (2026-08-29 perf, SC3) — memoized ────────────────
+    // Every keystroke-level parent render used to rebuild this O(staff ×
+    // 7 × shifts) pipeline from scratch while the modal sat open on top of
+    // a live grid. The WHOLE pipeline lives inside one useMemo — including
+    // the `.sort()` (mutates the array: never sort a memoized result
+    // outside its memo) and the available/otherwise partition, so
+    // consumers only ever see the finished, stable pair.
+    //
+    // Deps notes: `isStaffOffOn` is the parent's identity-stable
+    // useStableCallback wrapper, so it can't serve as an invalidation key —
+    // `viewerTimeOff` (the data it reads, threaded down as a prop for
+    // exactly this purpose) stands in for it so PTO edits refresh the rows.
+    const { available, otherwise } = useMemo(() => {
+        const d0 = parseLocalDate(dateStr);
+        const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+        const dayKey = d0 ? dayKeys[d0.getDay()] : null;
+        // Apply role filter when filling a slot that wants a specific role group.
+        const roleFilteredStaff = requiredRoleGroup && requiredRoleGroup !== 'any'
+            ? sideStaff.filter(s => isRoleEligible(s.role, requiredRoleGroup))
+            : sideStaff;
+
+        // Compute each staff's weekly hours (across the FLSA week containing dateStr)
+        // and their availability state for this specific day.
+        const weekStartLocal = d0 ? startOfWeek(d0) : null;
+        const rows = roleFilteredStaff.map(s => {
+            // Total this week's hours
+            let weeklyHours = 0;
+            if (weekStartLocal) {
+                for (let i = 0; i < 7; i++) {
+                    const d = toDateStr(addDays(weekStartLocal, i));
+                    // Cross-store ON PURPOSE (2026-08-25 audit): OT is per
+                    // employee per FLSA week across BOTH stores (staffSummary
+                    // and AddShiftModal already count this way) — filtering to
+                    // the viewed store hid the other store's hours and made an
+                    // OT pick look green.
+                    const myShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === d);
+                    // Per-day paid hours (auto-double deduction baked in).
+                    weeklyHours += dayPaidHours(myShifts);
+                }
             }
-        }
-        // Same-day shifts (raw list) so we can distinguish "real conflict"
-        // (overlapping time) from "double-shift opportunity" (non-overlapping).
-        // Cross-store ON PURPOSE — a person can't be in two stores at
-        // once, so overlap detection must see the other store's shifts.
-        const sameDayShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === dateStr);
-        // Time overlap check — only meaningful if the slot has a time range.
-        // No range (free day-header click) → we can't know, so don't treat
-        // any existing shift as a hard conflict. Manager wants doubles to
-        // be allowed: morning shift + evening pickup should both fly here.
-        const hasOverlap = (slotStart && slotEnd) ? sameDayShifts.some(sh =>
-            !(sh.endTime <= slotStart || sh.startTime >= slotEnd)
-        ) : false;
-        const isDoubleDay = sameDayShifts.length > 0 && !hasOverlap;
-        // Availability for this weekday. Default semantics flipped per
-        // Andrew (2026-05-12): missing or empty day data = AVAILABLE all
-        // day. Staff only need to opt OUT of days they can't work, not
-        // opt IN to days they can. Only `dayAvail.available === false` is
-        // a true "unavailable" — any other shape (undefined, partial,
-        // from/to set) counts as available.
-        const dayAvail = (s.availability || {})[dayKey];
-        const explicitlyOff = dayAvail && dayAvail.available === false;
-        const availableThisDay = !explicitlyOff;
-        // PTO?
-        const onPto = isStaffOffOn(s.name, dateStr);
+            // Same-day shifts (raw list) so we can distinguish "real conflict"
+            // (overlapping time) from "double-shift opportunity" (non-overlapping).
+            // Cross-store ON PURPOSE — a person can't be in two stores at
+            // once, so overlap detection must see the other store's shifts.
+            const sameDayShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === dateStr);
+            // Time overlap check — only meaningful if the slot has a time range.
+            // No range (free day-header click) → we can't know, so don't treat
+            // any existing shift as a hard conflict. Manager wants doubles to
+            // be allowed: morning shift + evening pickup should both fly here.
+            const hasOverlap = (slotStart && slotEnd) ? sameDayShifts.some(sh =>
+                !(sh.endTime <= slotStart || sh.startTime >= slotEnd)
+            ) : false;
+            const isDoubleDay = sameDayShifts.length > 0 && !hasOverlap;
+            // Availability for this weekday. Default semantics flipped per
+            // Andrew (2026-05-12): missing or empty day data = AVAILABLE all
+            // day. Staff only need to opt OUT of days they can't work, not
+            // opt IN to days they can. Only `dayAvail.available === false` is
+            // a true "unavailable" — any other shape (undefined, partial,
+            // from/to set) counts as available.
+            const dayAvail = (s.availability || {})[dayKey];
+            const explicitlyOff = dayAvail && dayAvail.available === false;
+            const availableThisDay = !explicitlyOff;
+            // PTO?
+            const onPto = isStaffOffOn(s.name, dateStr);
 
-        let status = 'available';
-        let reason = '';
-        if (onPto) { status = 'pto'; reason = tx('on time-off', 'tiempo libre'); }
-        else if (hasOverlap) {
-            status = 'scheduled';
-            // Name the conflicting shift — with a store tag when it lives at
-            // the OTHER store (the filters above are cross-store on purpose)
-            // so the manager sees WHY a name is blocked from this view.
-            const conflictSh = sameDayShifts.find(sh => !(sh.endTime <= slotStart || sh.startTime >= slotEnd));
-            const conflictTag = conflictSh && conflictSh.location && storeLocation !== 'both' && conflictSh.location !== storeLocation
-                ? ` @${LOCATION_ABBR[conflictSh.location] || String(conflictSh.location).slice(0, 2).toUpperCase()}`
-                : '';
-            reason = tx('time overlaps existing shift', 'choca con turno existente')
-                + (conflictSh ? ` (${conflictSh.startTime}–${conflictSh.endTime}${conflictTag})` : '');
-        }
-        else if (!availableThisDay) { status = 'unavailable'; reason = tx('marked off this day', 'marcado como no disponible'); }
+            let status = 'available';
+            let reason = '';
+            if (onPto) { status = 'pto'; reason = tx('on time-off', 'tiempo libre'); }
+            else if (hasOverlap) {
+                status = 'scheduled';
+                // Name the conflicting shift — with a store tag when it lives at
+                // the OTHER store (the filters above are cross-store on purpose)
+                // so the manager sees WHY a name is blocked from this view.
+                const conflictSh = sameDayShifts.find(sh => !(sh.endTime <= slotStart || sh.startTime >= slotEnd));
+                const conflictTag = conflictSh && conflictSh.location && storeLocation !== 'both' && conflictSh.location !== storeLocation
+                    ? ` @${LOCATION_ABBR[conflictSh.location] || String(conflictSh.location).slice(0, 2).toUpperCase()}`
+                    : '';
+                reason = tx('time overlaps existing shift', 'choca con turno existente')
+                    + (conflictSh ? ` (${conflictSh.startTime}–${conflictSh.endTime}${conflictTag})` : '');
+            }
+            else if (!availableThisDay) { status = 'unavailable'; reason = tx('marked off this day', 'marcado como no disponible'); }
 
-        return { ...s, weeklyHours, status, reason, dayAvail, sameDayShifts, isDoubleDay };
-    });
+            return { ...s, weeklyHours, status, reason, dayAvail, sameDayShifts, isDoubleDay };
+        });
 
-    // Sort: available first, then by weekly hours ascending (lowest → best candidate)
-    const STATUS_RANK = { available: 0, scheduled: 1, unavailable: 2, pto: 3 };
-    rows.sort((a, b) => {
-        if (a.status !== b.status) return STATUS_RANK[a.status] - STATUS_RANK[b.status];
-        return a.weeklyHours - b.weeklyHours;
-    });
+        // Sort: available first, then by weekly hours ascending (lowest → best candidate)
+        const STATUS_RANK = { available: 0, scheduled: 1, unavailable: 2, pto: 3 };
+        rows.sort((a, b) => {
+            if (a.status !== b.status) return STATUS_RANK[a.status] - STATUS_RANK[b.status];
+            return a.weeklyHours - b.weeklyHours;
+        });
 
-    const available = rows.filter(r => r.status === 'available');
-    const otherwise = rows.filter(r => r.status !== 'available');
+        return {
+            available: rows.filter(r => r.status === 'available'),
+            otherwise: rows.filter(r => r.status !== 'available'),
+        };
+    // isStaffOffOn is identity-stable (useStableCallback) — viewerTimeOff
+    // is its data dep; tx closes over isEn which IS a dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sideStaff, shifts, dateStr, slotStart, slotEnd, requiredRoleGroup, storeLocation, isEn, viewerTimeOff]);
 
     return (
         <ModalPortal>

@@ -14,6 +14,10 @@ vi.mock('firebase/firestore', () => ({
     getDocFromServer: (...a) => getDocFromServer(...a),
 }));
 vi.mock('../firebase', () => ({ db: { __fake: true } }));
+// firestoreRevive imports logError for resilientSnapshot's streak report;
+// mock it so the test graph never pulls the real logger's firebase deps.
+const logError = vi.fn().mockResolvedValue(undefined);
+vi.mock('./logger', () => ({ logError: (...a) => logError(...a) }));
 
 // Fresh module per test so the throttle state resets.
 async function loadFresh() {
@@ -27,6 +31,7 @@ beforeEach(() => {
     enableNetwork.mockClear();
     getDocFromServer.mockClear();
     getDocFromServer.mockResolvedValue({ exists: () => true });
+    logError.mockClear();
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -254,6 +259,171 @@ describe('probeFirestoreLiveness (2026-08-10 — wedged desktop tabs)', () => {
     // document listeners that outlive vi.resetModules() (shared jsdom doc)
     // and would double-fire the resume-path test below. The interval wiring
     // is a single setInterval line; the probe behaviors above are the pins.
+});
+
+describe('probe-stuck reload escalation (2026-08-29, ST1)', () => {
+    const setVisibility = (state) => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: state });
+    };
+    const hangForever = () => new Promise(() => {});
+
+    // Boot a fresh module with the reload seam installed and a clean session.
+    async function setup() {
+        setVisibility('visible');
+        sessionStorage.clear();
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        return { mod, reload };
+    }
+
+    it('reloads after TWO consecutive hung probes — never after one', async () => {
+        getDocFromServer.mockReturnValue(hangForever());
+        const { mod, reload } = await setup();
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // strike 1
+        expect(reload).not.toHaveBeenCalled();
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // strike 2 → idle-wait (no input) → reload
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('a probe SUCCESS between hangs resets the strike count', async () => {
+        const { mod, reload } = await setup();
+        getDocFromServer.mockReturnValueOnce(hangForever());
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // strike 1
+        getDocFromServer.mockResolvedValueOnce({ exists: () => true });
+        await mod.probeFirestoreLiveness();                            // success → reset
+        getDocFromServer.mockReturnValue(hangForever());
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // back to strike 1 only
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('a clean REJECTION (honest offline) also resets the strike count', async () => {
+        const { mod, reload } = await setup();
+        getDocFromServer.mockReturnValueOnce(hangForever());
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // strike 1
+        getDocFromServer.mockRejectedValueOnce(new Error('unavailable'));
+        await mod.probeFirestoreLiveness();                            // clean rejection → reset
+        getDocFromServer.mockReturnValue(hangForever());
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // strike 1 again
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('caps at ONE probe-triggered reload per session (recurrence = outage)', async () => {
+        getDocFromServer.mockReturnValue(hangForever());
+        const { mod, reload } = await setup();
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);
+        expect(reload).toHaveBeenCalledTimes(1);
+        // Move PAST escalateReload's generic 2-min guard so the only thing
+        // standing between us and reload #2 is the per-session probe key.
+        vi.setSystemTime(Date.now() + mod.RELOAD_GUARD_MS + 1000);
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);
+        expect(reload).toHaveBeenCalledTimes(1);                       // still one
+    });
+
+    it('a hang detected while the tab is HIDDEN does not count a strike', async () => {
+        getDocFromServer.mockReturnValue(hangForever());
+        const { mod, reload } = await setup();
+        mod.probeFirestoreLiveness();                                  // starts visible…
+        setVisibility('hidden');                                       // …tab hides mid-probe
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // hang while hidden → NO strike
+        setVisibility('visible');
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // only strike 1
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('idle-wait then RE-CHECK: a probe success while waiting for typing stands the reload down', async () => {
+        getDocFromServer.mockReturnValue(hangForever());
+        const { mod, reload } = await setup();
+        // User is mid-typing when the second strike lands.
+        const input = document.createElement('input');
+        document.body.appendChild(input);
+        input.focus();
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);   // strike 2 → idle-wait loop parks
+        expect(reload).not.toHaveBeenCalled();                         // waiting, not reloading
+        // While parked, a probe succeeds — the SDK healed itself.
+        getDocFromServer.mockResolvedValueOnce({ exists: () => true });
+        await mod.probeFirestoreLiveness();
+        input.blur();
+        document.body.removeChild(input);
+        await vi.advanceTimersByTimeAsync(4000);                       // next 3s poll → idle → re-check
+        expect(reload).not.toHaveBeenCalled();                         // strikes reset → stood down
+    });
+});
+
+describe('resilientSnapshot (2026-08-29, ST3 — dead listeners re-attach)', () => {
+    it('re-attaches after an error, preserving the same closure', async () => {
+        const mod = await loadFresh();
+        let attachCount = 0;
+        let handlers = null;
+        const stop = mod.resilientSnapshot('test-stream', (onHealthy, onError) => {
+            attachCount += 1;
+            handlers = { onHealthy, onError };
+            return () => {};
+        });
+        expect(attachCount).toBe(1);
+        handlers.onError(Object.assign(new Error('transport died'), { code: 'unavailable' }));
+        await vi.advanceTimersByTimeAsync(5_000 + 100);               // first backoff step
+        expect(attachCount).toBe(2);
+        stop();
+    });
+
+    it('stop() cancels a pending retry and further errors are ignored', async () => {
+        const mod = await loadFresh();
+        let attachCount = 0;
+        let handlers = null;
+        const stop = mod.resilientSnapshot('test-stream', (onHealthy, onError) => {
+            attachCount += 1;
+            handlers = { onHealthy, onError };
+            return () => {};
+        });
+        handlers.onError(new Error('boom'));
+        stop();                                                        // cancels the queued retry
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+        expect(attachCount).toBe(1);
+        handlers.onError(new Error('late'));                           // post-stop error → no-op
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+        expect(attachCount).toBe(1);
+    });
+
+    it('a healthy snapshot resets the backoff ladder; one logError per ~4-failure streak', async () => {
+        const mod = await loadFresh();
+        let attachCount = 0;
+        let handlers = null;
+        const stop = mod.resilientSnapshot('test-stream', (onHealthy, onError) => {
+            attachCount += 1;
+            handlers = { onHealthy, onError };
+            return () => {};
+        });
+        // 4 consecutive failures → exactly ONE logError (not one per retry).
+        for (const delay of [5_000, 30_000, 120_000, 300_000]) {
+            handlers.onError(new Error('down'));
+            await vi.advanceTimersByTimeAsync(delay + 100);
+        }
+        expect(attachCount).toBe(5);
+        expect(logError).toHaveBeenCalledTimes(1);
+        // Healthy snapshot resets the ladder: next error retries at 5s again.
+        handlers.onHealthy();
+        handlers.onError(new Error('down again'));
+        await vi.advanceTimersByTimeAsync(5_000 + 100);
+        expect(attachCount).toBe(6);
+        stop();
+    });
 });
 
 describe('installFirestoreRevive (resume path)', () => {

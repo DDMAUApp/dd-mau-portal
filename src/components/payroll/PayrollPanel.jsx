@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ModalPortal from '../ModalPortal';
 import { toast } from '../../toast';
 import PayrollNotes from './PayrollNotes';
+import { subscribePayrollNotes, setPayrollNoteDone } from '../../data/payroll/payrollNotes.js';
 import { downloadFile } from '../../capacitor-bridge';
 import { lockPullToRefresh } from '../hooks/usePullToRefresh';
 import { isAdmin } from '../../data/staff';
@@ -547,6 +548,27 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     // acknowledgment is stale and must be re-given, so a payroll can never ship
     // under an acknowledgment that referred to different figures. (Fails always
     // hard-block regardless of ack.)
+    // ── 📝 Notes reminder popup (2026-08-29, Andrew: "have a window that
+    // pops up in the people and direct deposit tab") ────────────────────
+    // When the owner lands on People & Direct Deposit with OPEN reminders,
+    // pop them up once per payroll session so nothing is forgotten on
+    // payroll day. Checkboxes work right in the popup; closing never
+    // deletes anything.
+    const [panelNotes, setPanelNotes] = useState(null);
+    useEffect(() => {
+        if (!unlocked) return undefined;
+        return subscribePayrollNotes((list) => setPanelNotes(Array.isArray(list) ? list : null));
+    }, [unlocked]);
+    const openNotes = Array.isArray(panelNotes) ? panelNotes.filter((n) => !n.done) : [];
+    const [showNotesPopup, setShowNotesPopup] = useState(false);
+    const notesPopupShownRef = useRef(false);
+    useEffect(() => {
+        if (step === 1 && !notesPopupShownRef.current && openNotes.length > 0) {
+            notesPopupShownRef.current = true;
+            setShowNotesPopup(true);
+        }
+    }, [step, openNotes.length]);
+
     // ── Cross-location overtime clock data (2026-08-26) ─────────────────
     // For people on BOTH stores' exports, combined weekly hours come from
     // the /timecards feed. null = fetch in flight (computeCrossLocOt emits a
@@ -1540,6 +1562,39 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                         </div>
                     )}
                 </div>
+            )}
+
+            {showNotesPopup && (
+                <ModalPortal onBackPress={() => setShowNotesPopup(false)}>
+                    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setShowNotesPopup(false)}>
+                        <div className="bg-white rounded-2xl p-5 w-full max-w-md max-h-[80vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
+                            <h3 className="text-base font-black text-dd-text mb-1">📝 Payroll reminders</h3>
+                            <p className="text-xs text-dd-text-2 mb-3">Open notes from the Notes tab — check off what's handled.</p>
+                            <div className="space-y-2">
+                                {openNotes.map((n) => (
+                                    <label key={n.id} className="flex items-start gap-2.5 p-2.5 rounded-lg border border-dd-line bg-dd-bg/40 cursor-pointer">
+                                        <input type="checkbox" checked={false}
+                                            onChange={() => setPayrollNoteDone(n.id, true, staffName)}
+                                            className="mt-0.5 w-5 h-5 accent-dd-green-700 shrink-0" />
+                                        <span className="text-sm text-dd-text">
+                                            {n.text}
+                                            <span className="block text-[11px] text-dd-text-2 mt-0.5">— {n.byName || 'unknown'}</span>
+                                        </span>
+                                    </label>
+                                ))}
+                                {openNotes.length === 0 && (
+                                    <p className="text-sm text-dd-green-700 font-bold">✓ All reminders handled.</p>
+                                )}
+                            </div>
+                            <div className="flex justify-between mt-4">
+                                <button onClick={() => { setShowNotesPopup(false); setStep(NOTES_STEP); }}
+                                    className="px-3 py-2 rounded-lg border border-dd-line text-sm font-bold text-dd-text">Open Notes tab</button>
+                                <button onClick={() => setShowNotesPopup(false)}
+                                    className="px-4 py-2 rounded-lg bg-dd-green text-white text-sm font-bold">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </ModalPortal>
             )}
 
             {step === NOTES_STEP && (

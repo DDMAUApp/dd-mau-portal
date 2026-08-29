@@ -731,6 +731,82 @@ function ChatThreadInner({
     const draftApiRef = useRef(null);
     const getDraft = () => draftApiRef.current?.get?.() ?? '';
     const setDraft = (v) => { draftApiRef.current?.set?.(v); };
+
+    // ── ST5 (2026-08-29) — draft survival across forced reloads ───
+    // Deploy broadcasts (forceRefresh reloads web clients ≤60s after a
+    // deploy, mid-typing or not — ~8 of those on 08-26 alone), the
+    // versionFloor gate, the Firestore-revive escalation, pull-to-refresh
+    // and manual reloads all kill the page and took the composer draft
+    // with it. On pagehide (the iOS-reliable unload signal — same
+    // precedent as toast.js:98 / OnboardingApply.jsx; beforeunload kept
+    // as a desktop backup) we stash the draft in sessionStorage; the
+    // mount effect below restores it exactly once. sessionStorage scopes
+    // recovery to the same tab — a reload comes back, a closed tab
+    // doesn't leak drafts to other devices/tabs.
+    // TEXT-ONLY recovery: a staged attachment and the replyTarget can't
+    // survive a reload anyway (object URLs die with the page), and
+    // chat-SWITCH draft loss is pre-existing behavior, untouched here.
+    // composerLocked case: the bridge is null → getDraft() returns '' →
+    // the stash handler stores nothing, and restore's setDraft no-ops.
+    useEffect(() => {
+        if (!chat?.id) return undefined;
+        const stash = (e) => {
+            // bfcache entry (persisted) — the page stays alive with its
+            // state intact; stashing would double-restore later. Skip.
+            if (e && e.persisted === true) return;
+            try {
+                const text = getDraft();
+                if (!text.trim()) return;
+                sessionStorage.setItem(`chatDraft:${chat.id}`, JSON.stringify({
+                    chatId: chat.id,
+                    staffName,
+                    text: text.slice(0, 16384),
+                    ts: Date.now(),
+                }));
+            } catch { /* storage blocked/full — draft loss, not a crash */ }
+        };
+        window.addEventListener('pagehide', stash);
+        window.addEventListener('beforeunload', stash);
+        return () => {
+            window.removeEventListener('pagehide', stash);
+            window.removeEventListener('beforeunload', stash);
+        };
+    }, [chat?.id, staffName]);
+
+    // Restore leg — READ-AND-DELETE so a stored draft can only ever
+    // restore once (no resurrection loops). Composer registers the
+    // draft bridge in ITS mount effect, which runs BEFORE this parent
+    // effect in the same commit (child effects flush first), so
+    // setDraft is live here.
+    useEffect(() => {
+        if (!chat?.id) return;
+        let stored = null;
+        try {
+            const raw = sessionStorage.getItem(`chatDraft:${chat.id}`);
+            sessionStorage.removeItem(`chatDraft:${chat.id}`);
+            if (raw) stored = JSON.parse(raw);
+        } catch { /* corrupt entry / blocked storage — nothing to restore */ }
+        if (!stored) return;
+        if (stored.chatId !== chat.id) return;
+        // Shared-iPad guard: a draft stashed by a different signed-in
+        // user must never surface for the next one.
+        if (stored.staffName !== staffName) return;
+        if (!stored.text || typeof stored.text !== 'string') return;
+        // 15-minute TTL (missing/garbage ts fails the check and skips).
+        if (!Number.isFinite(stored.ts) || Date.now() - stored.ts >= 15 * 60 * 1000) return;
+        if (getDraft()) return;  // never clobber text already typed
+        setDraft(stored.text);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chat?.id]);
+
+    // Belt-and-suspenders for the send paths: pagehide normally means
+    // the page is gone, but a beforeunload-initiated navigation CAN be
+    // canceled — leaving a stale stash behind that would resurrect an
+    // already-sent draft on the next reload. Send paths clear it.
+    const clearDraftStash = () => {
+        try { if (chat?.id) sessionStorage.removeItem(`chatDraft:${chat.id}`); } catch { /* ignore */ }
+    };
+
     const [sending, setSending] = useState(false);
     const [recording, setRecording] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(null); // { kind, pct }
@@ -1106,6 +1182,7 @@ function ChatThreadInner({
         // by then the draft state is '' so a second Enter is a no-op.
         setDraft('');
         setReplyTarget(null);
+        clearDraftStash();  // ST5 — a sent draft must never resurrect
         setTimeout(() => { sendingRef.current = false; }, 0);
         try {
             await sendMessage({
@@ -1344,6 +1421,7 @@ function ChatThreadInner({
             });
             setDraft('');
             setReplyTarget(null);
+            clearDraftStash();  // ST5 — a sent caption must never resurrect
             setPendingAttachment(null);  // effect cleanup revokes URL
         } catch (err) {
             uploadTaskRef.current = null;
@@ -2281,6 +2359,7 @@ function ChatThreadInner({
             });
             setDraft('');
             setReplyTarget(null);
+            clearDraftStash();  // ST5 — a scheduled draft must never resurrect
             // notifyAnyway removed 2026-05-24 — chat always pushes.
             setShowScheduleModal(false);
             toast(tx('Scheduled', 'Programado'), { kind: 'success' });

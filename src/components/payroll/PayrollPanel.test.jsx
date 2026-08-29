@@ -102,3 +102,27 @@ describe('PayrollPanel notes tab', () => {
         await waitFor(() => expect(screen.getByText('Edith needs to be paid vacation pay').className).not.toMatch(/line-through/));
     });
 });
+
+describe('PayrollPanel notes popup on People & DD', () => {
+    it('pops open reminders when entering People & Direct Deposit, once per session', async () => {
+        sessionStorage.setItem('ddmau:payrollUnlocked', '1');
+        render(<PayrollPanel language="en" staffName="Andrew" staffList={OWNER} />);
+        // seed a note via the Notes tab
+        fireEvent.click(await screen.findByText(/📝 Notes/));
+        const ta = await screen.findByPlaceholderText(/Write a note or reminder/i);
+        fireEvent.change(ta, { target: { value: 'Edith needs vacation pay' } });
+        fireEvent.click(screen.getByText('Add'));
+        await screen.findByText('Edith needs vacation pay');
+        // enter People & DD → popup appears with the open note
+        fireEvent.click(screen.getByText(/People & Direct Deposit/));
+        expect(await screen.findByText(/Payroll reminders/)).toBeTruthy();
+        expect(screen.getAllByText(/Edith needs vacation pay/).length).toBeGreaterThan(0);
+        // close, leave, re-enter → does NOT pop again this session
+        fireEvent.click(screen.getByText('Close'));
+        await waitFor(() => expect(screen.queryByText(/Payroll reminders/)).toBeNull());
+        fireEvent.click(screen.getByText(/📝 Notes/));
+        fireEvent.click(screen.getByText(/People & Direct Deposit/));
+        await new Promise((r) => setTimeout(r, 50));
+        expect(screen.queryByText(/Payroll reminders/)).toBeNull();
+    });
+});

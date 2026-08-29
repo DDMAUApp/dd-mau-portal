@@ -550,6 +550,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // — leftover from the shared-password Operations gate. Replaced by the
             // hasOpsAccess opt-in toggle (admin or per-staff opsAccess === true).
             // Nothing references these any more; commit history preserves them.
+
+            // ── Checklist location clamp (2026-08-29, TG2) ────────────────
+            // 'Both' admin mode: EVERY checklist doc ref (checklists2_* live
+            // doc + checklistHistory_* archive + the taskPlan per-task
+            // transactions) uses this clamped value, mirroring the sauceLog
+            // clamp below. Before, writes went to a phantom
+            // ops/checklists2_both doc neither store reads, and the rollover
+            // ARCHIVED into checklistHistory_both. Accepted semantics: an
+            // admin viewing 'Both' sees AND edits WEBSTER's checklist (same
+            // as the sauce log). Inventory refs are intentionally NOT
+            // clamped — that surface's model is the M16 write-block instead.
+            const checklistLoc = storeLocation === 'both' ? 'webster' : storeLocation;
             const [inventory, setInventory] = useState({});
             const [invCountMeta, setInvCountMeta] = useState({}); // { itemId: { by, at } }
             // Counts for vendor-only items that aren't matched to a master inventory item.
@@ -2320,6 +2332,55 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return positions;
             };
 
+            // ── Location-toggle state reset (2026-08-29, TG1) ─────────────
+            // Admins toggling Webster ↔ Maryland kept the OLD store's counts
+            // and checks on screen until the new store's first snapshot
+            // arrived — and worse, the inventory stability guard below
+            // compared the NEW store's (possibly empty) first snapshot
+            // against the OLD store's ref-mirrored cart and IGNORED it,
+            // leaving cross-store counts stuck on screen where one stray tap
+            // could seed them into the new store's doc. Wipe the
+            // per-location state AND the ref mirrors synchronously on
+            // toggle: with the refs cleared, localHasAny is false and the
+            // guard structurally cannot ignore the new store's snapshot (no
+            // guard-bypass flag needed — the hasPendingWrites/fromCache
+            // checks in the listener stay untouched). Declared ABOVE the
+            // subscription effect below (declaration order = run order) so
+            // the wipe lands before the new location's listeners attach.
+            // Deliberately NOT reset: customInventory / customTasks /
+            // checklistLists / checklistAssignments / splitOverrides — the
+            // first snapshot repaints them anyway, and blanking them
+            // flashes the whole tab empty.
+            // Accepted residuals (verified 2026-08-29): (1) the not-found
+            // fallback in updateInventoryCount seeds counts from the
+            // now-cleared ref, so a tap racing the toggle on a MISSING
+            // old-store doc seeds {} — one lost tap, better than
+            // cross-store seeding; (2) saveAndResetInventory's post-await
+            // local setStates can clobber the new store's paint if the
+            // toggle lands mid-save (its server writes still target the
+            // correct old-store doc).
+            const locResetMountedRef = useRef(false);
+            useEffect(() => {
+                // Skip the mount run — resetting freshly-initialized state
+                // is harmless but pointless.
+                if (!locResetMountedRef.current) { locResetMountedRef.current = true; return; }
+                setInventory({});
+                setVendorCounts({});
+                setInvCountMeta({});
+                setChecks({}); // wrapper — syncs checksRef synchronously
+                setDeliveryDate(null);
+                setInventorySyncStatus({});
+                // Ref mirrors must clear NOW, not via their mirror effects
+                // (those only run after the next commit) — the stability
+                // guard and the pending-count reconciler read them the
+                // moment the new location's first snapshot arrives.
+                inventoryRef.current = {};
+                vendorCountsRef.current = {};
+                pendingCountsRef.current = {};
+                lastAppliedClearedAtRef.current = null;
+                lastDeliveryPromptCountRef.current = 0;
+            }, [storeLocation]);
+
             useEffect(() => {
                 // Load checklist data (new system).
                 // FIX (2026-05-14): subscribe with includeMetadataChanges +
@@ -2328,7 +2389,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // checklist state in the same tick could echo each
                 // other's local writes back as if they were remote
                 // updates and stomp the other side's input.
-                const unsubChecklist = onSnapshot(doc(db, "ops", "checklists2_" + storeLocation), { includeMetadataChanges: true }, async (docSnap) => {
+                const unsubChecklist = onSnapshot(doc(db, "ops", "checklists2_" + checklistLoc), { includeMetadataChanges: true }, async (docSnap) => {
                     if (docSnap.metadata.hasPendingWrites) return;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
@@ -2352,7 +2413,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // existing customTasks/lists/assignments from `data`.
                         if (!data.version || data.version < CHECKLIST_VERSION) {
                             try {
-                                await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), {
+                                await updateDoc(doc(db, "ops", "checklists2_" + checklistLoc), {
                                     version: CHECKLIST_VERSION, updatedAt: new Date().toISOString(),
                                 });
                             } catch (err) { console.error("Error bumping checklist version:", err); }
@@ -2377,7 +2438,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 const prevChecks = data.checks || {};
                                 const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
                                 if (hasAnyChecks) {
-                                    await setDoc(doc(db, "checklistHistory_" + storeLocation, data.date), {
+                                    await setDoc(doc(db, "checklistHistory_" + checklistLoc, data.date), {
                                         checks: prevChecks, customTasks: data.customTasks || {}, assignments: data.assignments || {}, lists: data.lists || {}, date: data.updatedAt || new Date().toISOString(), version: CHECKLIST_VERSION
                                     });
                                 }
@@ -2386,7 +2447,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             setChecklistDate(todayKey);
                             // Also reset the Firestore doc for the new day with empty checks
                             try {
-                                await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: todayKey, updatedAt: new Date().toISOString() });
+                                await updateDoc(doc(db, "ops", "checklists2_" + checklistLoc), { checks: {}, date: todayKey, updatedAt: new Date().toISOString() });
                             } catch (err) { console.error("Error resetting for new day:", err); }
                         } else {
                             // PERF (2026-07-27 audit): with includeMetadataChanges
@@ -2776,7 +2837,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const prevDate = checklistDateRef.current || addDaysKey(now, -1);
                     if (hasAnyChecks) {
                         try {
-                            await setDoc(doc(db, "checklistHistory_" + storeLocation, prevDate + "_saved"), {
+                            await setDoc(doc(db, "checklistHistory_" + checklistLoc, prevDate + "_saved"), {
                                 checks: cleanForFirestore(prevChecks), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignmentsRef.current), lists: cleanForFirestore(checklistListsRef.current), date: new Date().toISOString(), savedBy: "auto-midnight"
                             });
                         } catch (err) { console.error("Midnight save error:", err); }
@@ -2784,7 +2845,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     setChecks({});
                     setChecklistDate(now);
                     try {
-                        await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: now, updatedAt: new Date().toISOString() });
+                        await updateDoc(doc(db, "ops", "checklists2_" + checklistLoc), { checks: {}, date: now, updatedAt: new Date().toISOString() });
                     } catch (err) { console.error("Midnight reset error:", err); }
                 }, 60000);
                 return () => clearInterval(midnightInterval);
@@ -3047,8 +3108,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // Nothing to write — no-op rather than wasting a round-trip.
                 if (Object.keys(patch).length <= 3) return;
 
-                const liveRef = doc(db, "ops", "checklists2_" + storeLocation);
-                const histRef = doc(db, "checklistHistory_" + storeLocation, todayKey);
+                const liveRef = doc(db, "ops", "checklists2_" + checklistLoc);
+                const histRef = doc(db, "checklistHistory_" + checklistLoc, todayKey);
                 try { await updateDoc(liveRef, patch); }
                 catch (e) {
                     // Doc may not exist yet — seed it with merge (nested shape).
@@ -3091,8 +3152,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const v = patch[k];
                     dotted[`checks.${k}`] = v === undefined ? deleteField() : v;
                 }
-                const liveRef = doc(db, "ops", "checklists2_" + storeLocation);
-                const histRef = doc(db, "checklistHistory_" + storeLocation, todayKey);
+                const liveRef = doc(db, "ops", "checklists2_" + checklistLoc);
+                const histRef = doc(db, "checklistHistory_" + checklistLoc, todayKey);
                 try {
                     await updateDoc(liveRef, dotted);
                 } catch (e) {
@@ -3121,8 +3182,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     updatedAt: new Date().toISOString(),
                     date: todayKey,
                 };
-                const liveRef = doc(db, "ops", "checklists2_" + storeLocation);
-                const histRef = doc(db, "checklistHistory_" + storeLocation, todayKey);
+                const liveRef = doc(db, "ops", "checklists2_" + checklistLoc);
+                const histRef = doc(db, "checklistHistory_" + checklistLoc, todayKey);
                 try { await updateDoc(liveRef, dotted); }
                 catch (e) {
                     await setDoc(liveRef, { checks: { [pKey]: [value] }, date: todayKey, version: CHECKLIST_VERSION }, { merge: true });
@@ -3194,7 +3255,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updated[checklistSide][PERIOD_KEY][taskIdx] = toggleName(item);
                 setCustomTasks(updated);
                 try {
-                    await mutateOpsChecklistTask(storeLocation, checklistSide, liveTaskId, toggleName, { fallbackSideArr: preSideArr });
+                    await mutateOpsChecklistTask(checklistLoc, checklistSide, liveTaskId, toggleName, { fallbackSideArr: preSideArr });
                 } catch (e) { console.error('toggleTaskAssignee transaction failed:', e); }
             };
 
@@ -3224,7 +3285,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updated[checklistSide][PERIOD_KEY][taskIdx] = applyNames(item);
                 setCustomTasks(updated);
                 try {
-                    await mutateOpsChecklistTask(storeLocation, checklistSide, liveTaskId, applyNames, { fallbackSideArr: preSideArr });
+                    await mutateOpsChecklistTask(checklistLoc, checklistSide, liveTaskId, applyNames, { fallbackSideArr: preSideArr });
                 } catch (e) { console.error('setTaskAssignees transaction failed:', e); }
             };
 
@@ -3511,7 +3572,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     // flags need persisting, via the per-task transaction (the old
                                     // whole-array write raced every other checklist writer).
                                     try {
-                                        await mutateOpsChecklistTask(storeLocation, checklistSide, taskObj.id, markDelivered, { fallbackSideArr: preSideArr });
+                                        await mutateOpsChecklistTask(checklistLoc, checklistSide, taskObj.id, markDelivered, { fallbackSideArr: preSideArr });
                                     } catch (e) { console.error('mark task messages delivered failed:', e); }
                                 }
                             }
@@ -3620,7 +3681,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // array and appends, so a concurrent add/edit on another
                 // device survives (the old whole-array write clobbered it).
                 try {
-                    await appendOpsChecklistTask(storeLocation, checklistSide, item);
+                    await appendOpsChecklistTask(checklistLoc, checklistSide, item);
                 } catch (e) { console.error('quickAddTask append failed:', e); }
                 setQuickAddText("");
             };
@@ -3649,7 +3710,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setCustomTasks(updated);
                 // Transactional append (2026-08-25 audit) — see quickAddTask.
                 try {
-                    await appendOpsChecklistTask(storeLocation, checklistSide, item);
+                    await appendOpsChecklistTask(checklistLoc, checklistSide, item);
                 } catch (e) { console.error('addChecklistTask append failed:', e); }
                 setNewTask(""); setNewCategory("other"); setNewRecurrence("daily"); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
             };
@@ -3701,7 +3762,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updated[checklistSide][PERIOD_KEY][idx] = applyEdit(item);
                 setCustomTasks(updated);
                 try {
-                    await mutateOpsChecklistTask(storeLocation, checklistSide, liveTaskId, applyEdit, { fallbackSideArr: preSideArr });
+                    await mutateOpsChecklistTask(checklistLoc, checklistSide, liveTaskId, applyEdit, { fallbackSideArr: preSideArr });
                 } catch (e) { console.error('saveChecklistEdit transaction failed:', e); }
                 setEditingIdx(null); setEditTask(""); setEditCategory("other"); setEditRecurrence("daily"); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
             };
@@ -3793,7 +3854,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 [arr[fromIdx], arr[toIdx]] = [arr[toIdx], arr[fromIdx]];
                 setCustomTasks(updated);
                 try {
-                    await swapOpsChecklistTasks(storeLocation, idA, idB);
+                    await swapOpsChecklistTasks(checklistLoc, idA, idB);
                 } catch (e) { console.error('moveChecklistTask swap failed:', e); }
             };
 
@@ -3905,7 +3966,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // The check-key cleanup above already dual-wrote live +
                     // history via writeCheckPatch's dotted deleteField paths.
                     try {
-                        await mutateOpsChecklistTask(storeLocation, checklistSide, removed.id, () => null, {
+                        await mutateOpsChecklistTask(checklistLoc, checklistSide, removed.id, () => null, {
                             // Pre-splice local array — the create-branch seed
                             // must still contain the task being deleted.
                             fallbackSideArr: tasks?.[checklistSide]?.[PERIOD_KEY],
@@ -3922,7 +3983,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
                 try {
-                    await setDoc(doc(db, "checklistHistory_" + storeLocation, todayKey + "_saved"), {
+                    await setDoc(doc(db, "checklistHistory_" + checklistLoc, todayKey + "_saved"), {
                         checks: cleanForFirestore(checksRef.current), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), lists: cleanForFirestore(checklistListsRef.current), date: now, savedBy: staffName
                     });
                 } catch (err) { console.error("Error saving history:", err); }
@@ -6575,7 +6636,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                             list[tIdx] = dropQueued(list[tIdx]);
                                                                                             setCustomTasks(updated);
                                                                                             try {
-                                                                                                await mutateOpsChecklistTask(storeLocation, checklistSide, item.id, dropQueued, { fallbackSideArr: preSideArr });
+                                                                                                await mutateOpsChecklistTask(checklistLoc, checklistSide, item.id, dropQueued, { fallbackSideArr: preSideArr });
                                                                                             } catch (e) { console.error('unqueue task message failed:', e); }
                                                                                         }
                                                                                     }} className="text-red-500 text-xs">×</button>
@@ -6617,7 +6678,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                 list[tIdx] = addQueued(list[tIdx]);
                                                                                 setCustomTasks(updated);
                                                                                 try {
-                                                                                    await mutateOpsChecklistTask(storeLocation, checklistSide, item.id, addQueued, { fallbackSideArr: preSideArr });
+                                                                                    await mutateOpsChecklistTask(checklistLoc, checklistSide, item.id, addQueued, { fallbackSideArr: preSideArr });
                                                                                     toast(language === 'es' ? '✓ Mensaje en cola para entrega al completar' : '✓ Queued for completion delivery');
                                                                                 } catch (e) { console.error('queue task message failed:', e); }
                                                                             }

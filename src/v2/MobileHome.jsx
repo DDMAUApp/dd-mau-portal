@@ -129,6 +129,21 @@ export default function MobileHome({
             .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
     }, [shifts14, staffName]);
 
+    // CI6 (2026-08-29): today's shifts for the ClockedInPanel strip. Was
+    // built inline in the JSX, handing the panel a brand-new array identity
+    // on EVERY MobileHome render and forcing its schedule-matching memos
+    // (and every roster row) to recompute — part of the "who's clocked in
+    // feels slow" report. Output identical; identity now only changes when
+    // the snapshot or the viewed store changes. (todayKey() rolls at
+    // midnight; like todayShifts above, the next snapshot re-derives it.)
+    const clockedInTodayShifts = useMemo(() => {
+        const today = todayKey();
+        return shifts14.filter(s =>
+            s.date === today &&
+            (storeLocation === 'both' || s.location === storeLocation)
+        );
+    }, [shifts14, storeLocation]);
+
     // Draft count — managers/admins only. Gated post-derivation so we
     // still read from the shared snapshot without an extra subscription.
     const draftCount = useMemo(() => {
@@ -388,10 +403,7 @@ export default function MobileHome({
                     language={language}
                     variant="strip"
                     staffList={staffList}
-                    todaysShifts={shifts14.filter(s =>
-                        s.date === todayKey() &&
-                        (storeLocation === 'both' || s.location === storeLocation)
-                    )}
+                    todaysShifts={clockedInTodayShifts}
                 />
             )}
 

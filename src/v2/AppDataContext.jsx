@@ -54,6 +54,13 @@ import { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, doc, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
+// 2026-08-29 (ST3): every always-on stream below is wrapped in
+// resilientSnapshot — an errored onSnapshot is DEAD (the SDK never
+// re-fires it), so one transport blip used to silently kill e.g. the
+// notifications badge or the 86 tiles until a full reload. The wrapper
+// re-attaches with backoff; each effect's cleanup calls the returned
+// stop(), which also cancels any pending retry timer.
+import { resilientSnapshot } from '../data/firestoreRevive';
 
 const AppDataContext = createContext(null);
 
@@ -168,12 +175,13 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
             orderBy('createdAt', 'desc'),
             limit(100),
         );
-        const unsub = onSnapshot(q, (snap) => {
+        const stop = resilientSnapshot('notifications', (onHealthy, onError) => onSnapshot(q, (snap) => {
+            onHealthy();
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setNotifications(list);
-        }, (err) => console.warn('notifications snapshot failed:', err));
-        return () => unsub();
+        }, onError));
+        return () => stop();
     }, [staffName, staffListReady]);
 
     // shifts — next 14 days, date-bounded query (Firestore-side, not
@@ -215,13 +223,17 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
             where('date', '>=', fmt(today)),
             where('date', '<', fmt(cutoff))
         );
-        const unsub = onSnapshot(q, (snap) => {
+        // Composes with the daily dayKey re-subscribe: rollover re-runs this
+        // effect, and the cleanup's stop() cancels any pending retry from the
+        // outgoing window's listener.
+        const stop = resilientSnapshot('shifts14', (onHealthy, onError) => onSnapshot(q, (snap) => {
+            onHealthy();
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setShifts14(list);
             writeHomeCache('shifts14', list);
-        }, (err) => console.warn('shifts snapshot failed:', err));
-        return () => unsub();
+        }, onError));
+        return () => stop();
     }, [dayKey]);
 
     // time_off — scoped to the last 180 days + future.
@@ -252,33 +264,38 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
             collection(db, 'time_off'),
             where('startDate', '>=', cutoffStr),
         );
-        const unsub = onSnapshot(q, (snap) => {
+        const stop = resilientSnapshot('time_off', (onHealthy, onError) => onSnapshot(q, (snap) => {
+            onHealthy();
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setTimeOff(list);
-        }, (err) => console.warn('time_off snapshot failed:', err));
-        return () => unsub();
+        }, onError));
+        return () => stop();
     }, []);
 
     // ops/86_{loc} — one doc per location. We subscribe to BOTH locations
     // unconditionally (only two docs, both small) so a 'both'-mode admin
     // doesn't need to swap subscriptions on location toggle.
     useEffect(() => {
-        const unsubW = onSnapshot(doc(db, 'ops', '86_webster'), (snap) => {
+        // Each doc listener gets its OWN resilient wrapper so one location's
+        // error/retry cycle can't tear down the other's healthy stream.
+        const stopW = resilientSnapshot('86_webster', (onHealthy, onError) => onSnapshot(doc(db, 'ops', '86_webster'), (snap) => {
+            onHealthy();
             setEightySix(prev => {
                 const next = { ...prev, webster: snap.exists() ? snap.data() : null };
                 writeHomeCache('eightySix', next);
                 return next;
             });
-        }, (err) => console.warn('86_webster snapshot failed:', err));
-        const unsubM = onSnapshot(doc(db, 'ops', '86_maryland'), (snap) => {
+        }, onError));
+        const stopM = resilientSnapshot('86_maryland', (onHealthy, onError) => onSnapshot(doc(db, 'ops', '86_maryland'), (snap) => {
+            onHealthy();
             setEightySix(prev => {
                 const next = { ...prev, maryland: snap.exists() ? snap.data() : null };
                 writeHomeCache('eightySix', next);
                 return next;
             });
-        }, (err) => console.warn('86_maryland snapshot failed:', err));
-        return () => { unsubW(); unsubM(); };
+        }, onError));
+        return () => { stopW(); stopM(); };
     }, []);
 
     // NOTE (2026-07-26 audit): the client-side "86 → chat auto-post"
@@ -294,13 +311,15 @@ export function AppDataProvider({ staffName, storeLocation, staffList = [], staf
     // labor access is granted, tears down + clears when revoked.
     useEffect(() => {
         if (!canSeeLabor) { setLabor({ webster: null, maryland: null }); return undefined; }
-        const unsubW = onSnapshot(doc(db, 'ops', 'labor_webster'), (snap) => {
+        const stopW = resilientSnapshot('labor_webster', (onHealthy, onError) => onSnapshot(doc(db, 'ops', 'labor_webster'), (snap) => {
+            onHealthy();
             setLabor(prev => ({ ...prev, webster: snap.exists() ? snap.data() : null }));
-        }, (err) => console.warn('labor_webster snapshot failed:', err));
-        const unsubM = onSnapshot(doc(db, 'ops', 'labor_maryland'), (snap) => {
+        }, onError));
+        const stopM = resilientSnapshot('labor_maryland', (onHealthy, onError) => onSnapshot(doc(db, 'ops', 'labor_maryland'), (snap) => {
+            onHealthy();
             setLabor(prev => ({ ...prev, maryland: snap.exists() ? snap.data() : null }));
-        }, (err) => console.warn('labor_maryland snapshot failed:', err));
-        return () => { unsubW(); unsubM(); };
+        }, onError));
+        return () => { stopW(); stopM(); };
     }, [canSeeLabor]);
 
     // laborHistory_{loc} listeners: REMOVED 2026-08-15 (P0-1). See the note
