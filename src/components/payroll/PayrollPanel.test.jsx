@@ -52,3 +52,53 @@ describe('PayrollPanel shell', () => {
         expect(await screen.findByText(/Import this period's Toast files/i)).toBeTruthy();
     });
 });
+
+// ── 📝 Notes tab (2026-08-29) ────────────────────────────────────────────
+vi.mock('../../data/payroll/payrollNotes.js', () => {
+    let listeners = [];
+    let notes = [];
+    const emit = () => listeners.forEach((cb) => cb([...notes]));
+    return {
+        subscribePayrollNotes: vi.fn((cb) => { listeners.push(cb); cb([...notes]); return () => { listeners = listeners.filter((l) => l !== cb); }; }),
+        addPayrollNote: vi.fn(async ({ text, byName }) => {
+            notes.unshift({ id: `n${notes.length + 1}`, text, byName, createdAt: { toMillis: () => Date.now() }, done: false, doneBy: null, doneAt: null });
+            emit();
+            return { ok: true, id: notes[0].id };
+        }),
+        setPayrollNoteDone: vi.fn(async (id, done, byName) => {
+            const n = notes.find((x) => x.id === id);
+            if (n) { n.done = done; n.doneBy = done ? byName : null; n.doneAt = done ? { toMillis: () => Date.now() } : null; }
+            emit();
+            return { ok: true };
+        }),
+        deletePayrollNote: vi.fn(async (id) => { notes = notes.filter((x) => x.id !== id); emit(); return { ok: true }; }),
+    };
+});
+
+import { fireEvent, waitFor } from '@testing-library/react';
+
+describe('PayrollPanel notes tab', () => {
+    it('adds a note with author + stamp, toggles done with strike-through', async () => {
+        sessionStorage.setItem('ddmau:payrollUnlocked', '1');
+        render(<PayrollPanel language="en" staffName="Andrew" staffList={OWNER} />);
+        // open the Notes tab
+        const tab = await screen.findByText(/📝 Notes/);
+        fireEvent.click(tab);
+        // add a note
+        const ta = await screen.findByPlaceholderText(/Write a note or reminder/i);
+        fireEvent.change(ta, { target: { value: 'Edith needs to be paid vacation pay' } });
+        fireEvent.click(screen.getByText('Add'));
+        const noteText = await screen.findByText('Edith needs to be paid vacation pay');
+        expect(noteText).toBeTruthy();
+        // author stamp
+        expect(screen.getByText(/— Andrew ·/)).toBeTruthy();
+        expect(noteText.className).not.toMatch(/line-through/);
+        // toggle done → strike-through + done stamp
+        fireEvent.click(screen.getByLabelText('Mark done'));
+        await waitFor(() => expect(screen.getByText('Edith needs to be paid vacation pay').className).toMatch(/line-through/));
+        expect(screen.getByText(/done by Andrew/)).toBeTruthy();
+        // uncheck → line comes back off
+        fireEvent.click(screen.getByLabelText('Mark not done'));
+        await waitFor(() => expect(screen.getByText('Edith needs to be paid vacation pay').className).not.toMatch(/line-through/));
+    });
+});

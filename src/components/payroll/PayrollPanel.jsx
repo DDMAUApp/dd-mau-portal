@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ModalPortal from '../ModalPortal';
 import { toast } from '../../toast';
+import PayrollNotes from './PayrollNotes';
 import { downloadFile } from '../../capacitor-bridge';
 import { lockPullToRefresh } from '../hooks/usePullToRefresh';
 import { isAdmin } from '../../data/staff';
@@ -40,7 +41,10 @@ import { computeCrossLocOt, applyCrossOt, normCardKey, parsePeriodRange, clockFe
 
 const LOCS = ['WG', 'MH'];
 const LOC_NAMES = { WG: 'Webster Groves', MH: 'Maryland Heights' };
-const STEPS = ['Import', 'People & Direct Deposit', 'Pay adds', 'Tips', 'Review', 'Create docs'];
+const STEPS = ['Import', 'People & Direct Deposit', 'Pay adds', 'Tips', 'Review', 'Create docs', '📝 Notes'];
+// Notes tab (2026-08-29): reachable any day, no Toast import needed —
+// reminders like "Edith needs vacation pay" live there with author + stamp.
+const NOTES_STEP = STEPS.length - 1;
 const UNLOCK_KEY = 'ddmau:payrollUnlocked';
 
 const money = (cents) => (cents < 0 ? '-' : '') + '$' + (Math.abs(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1038,7 +1042,7 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                     clickable any day of the period). Tips onward need
                     imported Toast files. */}
                 {STEPS.map((s, i) => (
-                    <button key={s} onClick={() => { if (i <= 2 || imported) setStep(i); else toast('Import the 4 files first.'); }}
+                    <button key={s} onClick={() => { if (i <= 2 || i === NOTES_STEP || imported) setStep(i); else toast('Import the 4 files first.'); }}
                         className={`px-2.5 py-1 rounded-full text-xs font-bold border transition ${
                             i === step ? 'bg-dd-green text-white border-dd-green'
                                 : i < step ? 'text-dd-green border-dd-green/40 bg-white'
@@ -1536,6 +1540,10 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                         </div>
                     )}
                 </div>
+            )}
+
+            {step === NOTES_STEP && (
+                <PayrollNotes staffName={staffName} />
             )}
 
             {/* nav */}
