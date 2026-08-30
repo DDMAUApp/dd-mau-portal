@@ -66,6 +66,7 @@ describe('availabilityForDate + week overrides', () => {
         expect(weekKeyOf('2026-08-15')).toBe('2026-08-09');   // Saturday
         expect(weekKeyOf('2026-08-16')).toBe('2026-08-16');   // next Sunday
         expect(weekKeyOf('')).toBeNull();
+        expect(weekKeyOf('garbage')).toBeNull();              // never 'NaN-NaN-NaN'
     });
     it('an override week replaces the base pattern for that whole week', () => {
         // Monday of the override week: base says available 10–16, override says OFF.

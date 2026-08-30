@@ -12373,7 +12373,12 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
             const dd = m[d.k];
             return dd && dd.available !== false && dd.from && dd.to && dd.to <= dd.from;
         });
-        for (const [label, m] of [[null, avail], ...Object.entries(weeks).map(([k, m2]) => [k, m2])]) {
+        // Only validate the base pattern + CURRENT/FUTURE weeks: a bad
+        // entry for a past week has no tab to fix it on and is pruned by
+        // the save anyway — it must never hard-block saving (2026-08-29
+        // review; the old admin editor could write reversed windows).
+        const currentKey = weekTabs[0].key;
+        for (const [label, m] of [[null, avail], ...Object.entries(weeks).filter(([k]) => k >= currentKey).map(([k, m2]) => [k, m2])]) {
             const bad = m ? findBad(m) : null;
             if (bad) {
                 const where = label ? ` (${tx('week of', 'semana del')} ${label})` : '';

@@ -3700,6 +3700,15 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         })();
                         const personWeeks = (person.availabilityWeeks && typeof person.availabilityWeeks === 'object' && !Array.isArray(person.availabilityWeeks))
                             ? person.availabilityWeeks : {};
+                        // Midnight-rollover guard (2026-08-29 review): weekTabs is
+                        // recomputed from new Date() every render, so a modal left
+                        // open across Sat→Sun midnight can hold a wkTab key that no
+                        // longer exists in the strip — derive the range from the key
+                        // itself in that case instead of crashing on find().start.
+                        const activeWeekTab = wkTab !== 'base'
+                            ? (weekTabs.find(tw => tw.key === wkTab)
+                                || { key: wkTab, start: new Date(wkTab + 'T00:00:00'), end: addDays(new Date(wkTab + 'T00:00:00'), 6) })
+                            : null;
                         const weekOverride = wkTab !== 'base' ? personWeeks[wkTab] : null;
                         // What the day rows display: usual pattern, or the week's
                         // override; a week WITHOUT an override previews the usual
@@ -3714,6 +3723,21 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             return pruned ? { ...rest, availabilityWeeks: pruned } : rest;
                         };
                         const updateDay = async (dayKey, patch) => {
+                            // Reversed windows (From 9pm / To 9am) poison the
+                            // conflict checker AND could hard-block the staff
+                            // modal's save — reject here like the staff editor
+                            // does (2026-08-29 review).
+                            if (patch.from || patch.to) {
+                                const disp = avail[dayKey] || { available: true, from: "09:00", to: "21:00" };
+                                const nf = patch.from || disp.from || "09:00";
+                                const nt = patch.to || disp.to || "21:00";
+                                if (nt <= nf) {
+                                    alert(language === "es"
+                                        ? 'La hora "hasta" debe ser después de la hora "desde".'
+                                        : 'The "until" time must be after the "from" time.');
+                                    return;
+                                }
+                            }
                             // Server-anchored patch — reads availability from
                             // the live record inside the transaction, so two
                             // quick sibling edits merge instead of clobbering.
@@ -3796,7 +3820,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         ) : (
                                             <div className="flex items-center justify-between gap-2 mb-1">
                                                 <p className="text-xs text-gray-500">
-                                                    📅 {formatDateShort(weekTabs.find(tw => tw.key === wkTab).start, language !== "es")} – {formatDateShort(weekTabs.find(tw => tw.key === wkTab).end, language !== "es")}
+                                                    📅 {formatDateShort(activeWeekTab.start, language !== "es")} – {formatDateShort(activeWeekTab.end, language !== "es")}
                                                     {!weekOverride && (language === "es" ? " — sigue la semana usual (editar crea días propios)" : " — follows the usual week (editing creates custom days)")}
                                                 </p>
                                                 {weekOverride ? (

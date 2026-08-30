@@ -199,7 +199,8 @@ export const weeksBetween = (fromWeekStart, toWeekStart) => {
 // The Sunday key for the week containing dateStr (null on garbage input).
 export const weekKeyOf = (dateStr) => {
     const d = parseLocalDate(dateStr);
-    return d ? toDateStr(startOfWeek(d)) : null;
+    if (!d || Number.isNaN(d.getTime())) return null;   // garbage in → null, not 'NaN-NaN-NaN'
+    return toDateStr(startOfWeek(d));
 };
 
 // Drop week entries that are entirely in the past (key < the current
