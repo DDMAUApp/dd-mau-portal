@@ -3804,7 +3804,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     <div className="border-b border-gray-200 px-2 py-2 flex gap-1.5 overflow-x-auto">
                                         <button onClick={() => setAvailabilityWeekTab('base')}
                                             className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold ${wkTab === 'base' ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
-                                            {language === "es" ? "Semana usual" : "Usual week"}
+                                            {language === "es" ? "Cada semana" : "Every week"}
                                         </button>
                                         {weekTabs.map((tw, i) => (
                                             <button key={tw.key} onClick={() => setAvailabilityWeekTab(tw.key)}
@@ -3816,28 +3816,33 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     </div>
                                     <div className="flex-1 overflow-y-auto p-3 space-y-2">
                                         {wkTab === 'base' ? (
-                                            <p className="text-xs text-gray-500 mb-1">{language === "es" ? "Auto-popular usa esto para asignar turnos. La semana usual se repite salvo que una semana tenga días personalizados." : "Auto-fill uses this to assign shifts. The usual week repeats unless a specific week has custom days."}</p>
+                                            <p className="text-xs text-gray-500 mb-1">{language === "es" ? "Auto-popular usa esto para asignar turnos. Este horario aplica cada semana salvo que una semana tenga días propios." : "Auto-fill uses this to assign shifts. This schedule applies every week unless a specific week has its own days."}</p>
                                         ) : (
                                             <div className="flex items-center justify-between gap-2 mb-1">
                                                 <p className="text-xs text-gray-500">
                                                     📅 {formatDateShort(activeWeekTab.start, language !== "es")} – {formatDateShort(activeWeekTab.end, language !== "es")}
-                                                    {!weekOverride && (language === "es" ? " — sigue la semana usual (editar crea días propios)" : " — follows the usual week (editing creates custom days)")}
+                                                    {weekOverride
+                                                        ? (language === "es" ? " — días propios solo para esta semana" : " — custom days for this week only")
+                                                        : (language === "es" ? " — igual que cada semana (toca un día para cambiar solo esta semana)" : " — same as every week (tap a day to change just this week)")}
                                                 </p>
                                                 {weekOverride ? (
                                                     <button onClick={clearWeekOverride}
                                                         className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-gray-100 text-gray-600">
-                                                        ↩ {language === "es" ? "Usar semana usual" : "Use usual week"}
+                                                        ↩ {language === "es" ? "Volver a cada semana" : "Reset to every week"}
                                                     </button>
                                                 ) : null}
                                             </div>
                                         )}
-                                        {DAYS.map(d => {
+                                        {DAYS.map((d, di) => {
                                             const dayData = avail[d.k] || { available: true, from: "09:00", to: "21:00" };
                                             const available = dayData.available !== false;
                                             return (
                                                 <div key={d.k} className="bg-gray-50 rounded-lg p-2">
                                                     <div className="flex items-center justify-between mb-1">
-                                                        <span className="font-bold text-sm text-gray-800">{language === "es" ? d.es : d.en}</span>
+                                                        <span className="font-bold text-sm text-gray-800">
+                                                            {language === "es" ? d.es : d.en}
+                                                            {activeWeekTab && <span className="ml-1.5 text-[11px] font-semibold text-gray-400">{formatDateShort(addDays(activeWeekTab.start, di), language !== "es")}</span>}
+                                                        </span>
                                                         <button onClick={() => updateDay(d.k, { available: !available })}
                                                             className={`px-3 py-1 rounded-full text-xs font-bold ${available ? "bg-green-600 text-white" : "bg-gray-300 text-gray-600"}`}>
                                                             {available ? (language === "es" ? "Disponible" : "Available") : (language === "es" ? "No disponible" : "Off")}

@@ -12348,16 +12348,25 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
     const [avail, setAvail] = useState(initialAvail);
     const [weeks, setWeeks] = useState(initialWeeks);
     const override = tab !== 'base' ? weeks[tab] : null;
-    const editing = tab === 'base' ? avail : (override || avail);   // no override → preview the usual week
+    const activeWeek = tab !== 'base' ? weekTabs.find(t => t.key === tab) : null;
+    const editing = tab === 'base' ? avail : (override || avail);   // no custom days yet → show the every-week pattern
     const updateDay = (dayKey, patch) => {
         const merge = (m) => ({ ...m, [dayKey]: { ...(m[dayKey] || { available: true, from: '09:00', to: '21:00' }), ...patch } });
         if (tab === 'base') setAvail(merge);
-        else setWeeks(w => ({ ...w, [tab]: merge(w[tab] || {}) }));
+        // DIRECT edit (Andrew 2026-08-29 v2: "whenever you press a
+        // different week to change make the days editable"): the first
+        // touch of a week seeds its custom days from the every-week
+        // pattern — no separate "customize" step.
+        else setWeeks(w => ({ ...w, [tab]: merge(w[tab] || JSON.parse(JSON.stringify(avail))) }));
     };
-    // Seed a week override from the usual pattern so staff tweak from
-    // their normal week instead of starting blank.
-    const startOverride = () => setWeeks(w => ({ ...w, [tab]: JSON.parse(JSON.stringify(avail)) }));
     const clearOverride = () => setWeeks(w => { const { [tab]: _x, ...rest } = w; return rest; });
+    // Quick set-all: "I can only work Thursday" = All off + one tap,
+    // instead of six. All-available stores {} (= the opt-out default).
+    const setAll = (allAvailable) => {
+        const m = allAvailable ? {} : Object.fromEntries(DAYS.map(d => [d.k, { available: false }]));
+        if (tab === 'base') setAvail(m);
+        else setWeeks(w => ({ ...w, [tab]: m }));
+    };
     const weekLabel = (t, i) => {
         if (i === 0) return tx('This week', 'Esta semana');
         if (i === 1) return tx('Next week', 'Próxima sem.');
@@ -12408,7 +12417,7 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                 <div className="border-b border-gray-200 px-2 py-2 flex gap-1.5 overflow-x-auto">
                     <button onClick={() => setTab('base')}
                         className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold ${tab === 'base' ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
-                        {tx('Usual week', 'Semana usual')}
+                        {tx('Every week', 'Cada semana')}
                     </button>
                     {weekTabs.map((t, i) => (
                         <button key={t.key} onClick={() => setTab(t.key)}
@@ -12422,39 +12431,48 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                     {tab === 'base' ? (
                         <p className="text-xs text-gray-500 mb-1">
                             {tx(
-                                "Your normal week — it repeats every week unless you customize a specific week above. Mark any day you can't work as Off.",
-                                'Tu semana normal — se repite cada semana a menos que personalices una semana específica arriba. Marca como No Disponible cualquier día que no puedas trabajar.',
+                                'Your every-week schedule. Tap a week above to change just that week — this one stays the same.',
+                                'Tu horario de cada semana. Toca una semana arriba para cambiar solo esa semana — este no cambia.',
                             )}
                         </p>
                     ) : (
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                            <p className="text-xs text-gray-500">
-                                📅 {rangeLabel(weekTabs.find(t => t.key === tab))}
-                                {!override && ` — ${tx('follows your usual week', 'sigue tu semana usual')}`}
-                            </p>
-                            {override ? (
-                                <button onClick={clearOverride}
-                                    className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-gray-100 text-gray-600">
-                                    ↩ {tx('Use usual week', 'Usar semana usual')}
-                                </button>
-                            ) : (
-                                <button onClick={startOverride}
-                                    className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-100 text-purple-700">
-                                    ✏️ {tx('Customize this week', 'Personalizar')}
-                                </button>
-                            )}
-                        </div>
+                        <p className="text-xs text-gray-500 mb-1">
+                            📅 <b>{rangeLabel(activeWeek)}</b>
+                            {override
+                                ? ` — ${tx('custom days for this week only', 'días propios solo para esta semana')}`
+                                : ` — ${tx('same as every week. Tap any day to change it just for this week.', 'igual que cada semana. Toca un día para cambiarlo solo en esta semana.')}`}
+                        </p>
                     )}
-                    {DAYS.map(d => {
+                    {/* Quick actions — one tap instead of seven. */}
+                    <div className="flex items-center gap-1.5 mb-1">
+                        <button onClick={() => setAll(true)}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-green-50 text-green-700 border border-green-200">
+                            ✓ {tx('All available', 'Todos disponibles')}
+                        </button>
+                        <button onClick={() => setAll(false)}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-gray-100 text-gray-600 border border-gray-200">
+                            ✕ {tx('All off', 'Todos no disp.')}
+                        </button>
+                        {override && (
+                            <button onClick={clearOverride}
+                                className="ml-auto px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-100 text-purple-700">
+                                ↩ {tx('Reset to every week', 'Volver a cada semana')}
+                            </button>
+                        )}
+                    </div>
+                    {DAYS.map((d, i) => {
                         const dayData = editing[d.k] || { available: true, from: '09:00', to: '21:00' };
                         const available = dayData.available !== false;
-                        const readOnly = tab !== 'base' && !override;   // previewing the usual week
                         return (
-                            <div key={d.k} className={`bg-gray-50 rounded-lg p-2 ${readOnly ? 'opacity-60' : ''}`}>
+                            <div key={d.k} className="bg-gray-50 rounded-lg p-2">
                                 <div className="flex items-center justify-between mb-1">
-                                    <span className="font-bold text-sm text-gray-800">{tx(d.en, d.es)}</span>
-                                    <button disabled={readOnly}
-                                        onClick={() => updateDay(d.k, { available: !available })}
+                                    <span className="font-bold text-sm text-gray-800">
+                                        {tx(d.en, d.es)}
+                                        {/* Concrete date on week tabs so staff know exactly
+                                            which calendar day they're marking. */}
+                                        {activeWeek && <span className="ml-1.5 text-[11px] font-semibold text-gray-400">{formatDateShort(addDays(activeWeek.start, i), isEn)}</span>}
+                                    </span>
+                                    <button onClick={() => updateDay(d.k, { available: !available })}
                                         className={`px-3 py-1 rounded-full text-xs font-bold ${available ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
                                         {available ? tx('Available', 'Disponible') : tx('Off', 'No disponible')}
                                     </button>
@@ -12463,13 +12481,13 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
                                             <label className="text-[10px] text-gray-500 block">{tx('From', 'Desde')}</label>
-                                            <input type="time" value={dayData.from || '09:00'} disabled={readOnly}
+                                            <input type="time" value={dayData.from || '09:00'}
                                                 onChange={e => updateDay(d.k, { from: e.target.value })}
                                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
                                         </div>
                                         <div>
                                             <label className="text-[10px] text-gray-500 block">{tx('To', 'Hasta')}</label>
-                                            <input type="time" value={dayData.to || '21:00'} disabled={readOnly}
+                                            <input type="time" value={dayData.to || '21:00'}
                                                 onChange={e => updateDay(d.k, { to: e.target.value })}
                                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
                                         </div>
