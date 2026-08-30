@@ -75,17 +75,23 @@ export const TASK_TYPES = {
         icon: '📅',
         defaultBlockApp: true,
         defaultAllowSkip: false,
-        // Auto-resolves once staff.availability has at least one
-        // day with at least one usable window. Empty objects /
-        // empty arrays count as "still pending".
+        // Auto-resolves once staff.availability has at least one day
+        // actually set. FIXED 2026-08-29: this used to test a phantom
+        // {start,end,allDay} shape that the real editors never write —
+        // the live shape is { mon: {available, from?, to?}, ... } (see
+        // AdminPanel availability editor) — so the gate refused staff who
+        // HAD set availability. A day counts when it's an object with an
+        // `available` boolean or a from/to window; legacy array slots
+        // still count so any old completions stay valid.
         autoComplete: (staff) => {
             if (!staff || !staff.availability) return false;
             const av = staff.availability;
-            if (typeof av !== 'object') return false;
+            if (typeof av !== 'object' || Array.isArray(av)) return false;
             for (const day of Object.keys(av)) {
                 const slots = av[day];
                 if (Array.isArray(slots) && slots.length > 0) return true;
-                if (slots && typeof slots === 'object' && (slots.start || slots.end || slots.allDay)) return true;
+                if (slots && typeof slots === 'object'
+                    && (typeof slots.available === 'boolean' || slots.from || slots.to || slots.start || slots.end || slots.allDay)) return true;
             }
             return false;
         },

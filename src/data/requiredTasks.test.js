@@ -77,6 +77,19 @@ describe('availability.autoComplete', () => {
             sun: { allDay: true },
         }})).toBe(true);
     });
+    // 2026-08-29 fix: the REAL editor shape { available, from, to } must
+    // count as set — it previously failed every branch, so the required-
+    // task gate refused staff who had genuinely set availability.
+    it('true for the real editor shape — available day with window', () => {
+        expect(def.autoComplete({ name: 'x', availability: {
+            mon: { available: true, from: '09:00', to: '17:00' },
+        }})).toBe(true);
+    });
+    it('true for the real editor shape — a day marked Off', () => {
+        expect(def.autoComplete({ name: 'x', availability: {
+            sun: { available: false },
+        }})).toBe(true);
+    });
     it('false when staff is missing', () => {
         expect(def.autoComplete(null)).toBe(false);
         expect(def.autoComplete(undefined)).toBe(false);

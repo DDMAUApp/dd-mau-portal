@@ -8,7 +8,7 @@
 // has produced three shipped bugs. Schedule.jsx keeps thin wrappers that
 // bind its live state.
 
-import { parseLocalDate, ptoIsPartial, timeRangesOverlap } from './scheduleCore';
+import { parseLocalDate, ptoIsPartial, timeRangesOverlap, weekKeyOf } from './scheduleCore';
 
 // ── Availability conflict helper ───────────────────────────────────────────
 // Single source of truth for "does this shift fit the staff's declared
@@ -22,13 +22,31 @@ import { parseLocalDate, ptoIsPartial, timeRangesOverlap } from './scheduleCore'
 // "Constrained" means the staff narrowed from the modal default 09:00–21:00.
 // Default-wide availability shouldn't fire warnings on every early-open or
 // late-close shift.
+// ── Date-aware availability resolution (2026-08-29 multi-week) ─────────────
+// THE way to read someone's availability for a concrete date. A week-
+// specific entry in staff.availabilityWeeks (keyed by that week's Sunday)
+// replaces the base weekly pattern for that whole week; otherwise the base
+// `availability` map applies. Same opt-OUT semantics inside either map:
+// an absent day key means available all day. Every consumer (conflict
+// checker, auto-fill, grid badge, who-can-work modal) resolves through
+// here so a week override is honored everywhere at once.
+export function availabilityForDate(staff, dateStr) {
+    const weeks = staff && staff.availabilityWeeks;
+    if (weeks && typeof weeks === 'object' && !Array.isArray(weeks)) {
+        const wk = weekKeyOf(dateStr);
+        const m = wk ? weeks[wk] : null;
+        if (m && typeof m === 'object' && !Array.isArray(m)) return m;
+    }
+    return (staff && staff.availability) || {};
+}
+
 export function checkAvailabilityConflict(staff, dateStr, startTime, endTime) {
     if (!staff || !dateStr || !startTime || !endTime) return null;
     const d = parseLocalDate(dateStr);
     if (!d) return null;
     const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
     const dayKey = dayKeys[d.getDay()];
-    const dayAvail = (staff.availability || {})[dayKey];
+    const dayAvail = availabilityForDate(staff, dateStr)[dayKey];
     if (!dayAvail) return null;
     if (dayAvail.available === false) return { type: 'off' };
     const from = dayAvail.from || '09:00';

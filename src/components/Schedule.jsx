@@ -97,13 +97,14 @@ import {
     SLOT_ROLE_GROUPS, SLOT_ROLE_BY_ID, isRoleEligible,
     SHIFT_PRESETS_FOH, SHIFT_PRESETS_BOH, getShiftPresets, sanitizeShiftPresets,
     roleColors, toDateStr, parseLocalDate, startOfWeek, addDays, weeksBetween,
+    pruneAvailabilityWeeks, formatDateShort,
     blockedDatesInRange, stripShiftTimestamps, rehydrateShiftTimestamps,
     formatTime12h, ptoIsPartial, ptoWindowLabel, timeRangesOverlap, selectGhostShifts,
     hoursBetween, dayPaidHours, isDoubleDay, formatHours, hoursColor,
     minorShiftWarnings, SCHEDULE_DAY_KEYS, shortTime12h,
 } from '../data/scheduleCore';
 import {
-    checkAvailabilityConflict, staffOffOn, partialOffWindows,
+    checkAvailabilityConflict, availabilityForDate, staffOffOn, partialOffWindows,
     shiftOverlapsPartialOff as shiftOverlapsPartialOffPure,
     computeScheduleConflicts,
 } from '../data/scheduleConflicts';
@@ -4781,26 +4782,43 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
-    const handleSaveMyAvailability = async (newAvailability) => {
+    const handleSaveMyAvailability = async ({ availability: newAvailability, availabilityWeeks: newWeeks }) => {
         if (!staffList || !setStaffList) return;
-        // Snapshot the pre-change availability for the audit trail (read
+        // Past week-overrides are garbage — prune on every save so the
+        // roster doc never accumulates stale entries. null = none left.
+        const prunedWeeks = pruneAvailabilityWeeks(newWeeks, toDateStr(new Date()));
+        // Applies both fields; when no overrides remain the field is
+        // REMOVED from the record (availabilityForDate treats missing and
+        // empty the same, but a dropped key keeps the roster doc clean).
+        const applyTo = (s) => {
+            const { availabilityWeeks: _drop, ...rest } = s;
+            return prunedWeeks
+                ? { ...rest, availability: newAvailability, availabilityWeeks: prunedWeeks }
+                : { ...rest, availability: newAvailability };
+        };
+        // Snapshot the pre-change state for the audit trail (read
         // before the optimistic update swaps the record out).
         const meRec = staffList.find(s => s.name === staffName);
         const beforeAvail = meRec ? (meRec.availability || null) : null;
+        const beforeWeeks = meRec ? (meRec.availabilityWeeks || null) : null;
         // Optimistic local update for snappy UI.
-        const updatedLocal = staffList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
+        const updatedLocal = staffList.map(s => s.name === staffName ? applyTo(s) : s);
         setStaffList(updatedLocal);
         // Server-anchored single-record patch — applies ONLY this
         // staffer's availability to the live list, bumps `rev`, and runs
         // the central roster invariants (staffDoc.js), which subsume the
         // old inline PIN-integrity gate.
-        const res = await patchStaffRecordByName(staffName, s => ({ ...s, availability: newAvailability }));
+        const res = await patchStaffRecordByName(staffName, applyTo);
         if (res.ok) {
             // Audit 2026-06-24: log every availability change (who / old /
-            // new / where / how) for the Debug/QA change-history. Best-effort.
+            // new / where / how) for the Debug/QA change-history. Week
+            // overrides ride as `wk:<sunday>` keys so the log's per-key
+            // Diff shows exactly which week changed. Best-effort.
+            const wkKeys = (m) => Object.fromEntries(Object.entries(m || {}).map(([k, v]) => [`wk:${k}`, v]));
             auditAvailabilityChange({
                 staffId: meRec?.id, staffName,
-                before: beforeAvail, after: newAvailability,
+                before: { ...(beforeAvail || {}), ...wkKeys(beforeWeeks) },
+                after: { ...(newAvailability || {}), ...wkKeys(prunedWeeks) },
                 surface: 'self-serve',
             });
         } else {
@@ -5618,7 +5636,6 @@ ${dayBlocks}
         for (const s of sideStaff) {
             const target = Number(s.targetHours) || 0;
             if (target <= 0) { skipped.push(`${s.name}: ${tx('no target hours', 'sin horas objetivo')}`); continue; }
-            const avail = s.availability || {};
             // Already-scheduled hours for this person this week (don't double-book).
             // IMPORTANT: must use `shifts` (location-filtered), NOT visibleShifts —
             // visibleShifts is side-filtered, so a FOH cook with a Tuesday BOH
@@ -5657,7 +5674,9 @@ ${dayBlocks}
                 if (isStaffOffOn(s.name, dStr)) continue;
                 // Don't double-book this person on a day they already have a shift.
                 if (myExisting.some(sh => sh.date === dStr)) continue;
-                const dayAvail = avail[dayKeys[date.getDay()]];
+                // Week-specific override (availabilityWeeks) beats the base
+                // pattern for this concrete date — availabilityForDate.
+                const dayAvail = availabilityForDate(s, dStr)[dayKeys[date.getDay()]];
                 // Skip ONLY when the staff explicitly marked the day off.
                 // Empty / partial availability now defaults to AVAILABLE
                 // (per Andrew 2026-05-12): staff opt OUT of days, not in.
@@ -9414,7 +9433,7 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                                                 // skips re-render of unchanged cells. Module-level
                                                 // SCHEDULE_DAY_KEYS / AvailabilityBadge live near
                                                 // the top of this file. Andrew 2026-05-21 perf.
-                                                const dayAvail = (s.availability || {})[SCHEDULE_DAY_KEYS[d.getDay()]];
+                                                const dayAvail = availabilityForDate(s, dStr)[SCHEDULE_DAY_KEYS[d.getDay()]];
                                                 if (!dayAvail) return null;
                                                 return (
                                                     <AvailabilityBadge
@@ -12304,6 +12323,8 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
     const tx = (en, es) => (isEn ? en : es);
     const me = (staffList || []).find(s => s.name === staffName);
     const initialAvail = (me && me.availability) || {};
+    const initialWeeks = (me && me.availabilityWeeks && typeof me.availabilityWeeks === 'object' && !Array.isArray(me.availabilityWeeks))
+        ? me.availabilityWeeks : {};
     const DAYS = [
         { k: 'sun', en: 'Sunday',    es: 'Domingo' },
         { k: 'mon', en: 'Monday',    es: 'Lunes' },
@@ -12313,26 +12334,57 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
         { k: 'fri', en: 'Friday',    es: 'Viernes' },
         { k: 'sat', en: 'Saturday',  es: 'Sábado' },
     ];
+    // Multi-week (Andrew 2026-08-29): "Usual week" is the repeating base
+    // pattern; the dated tabs are week-specific overrides for this week +
+    // the next 5. A week WITHOUT an override follows the usual pattern.
+    const weekTabs = useMemo(() => {
+        const w0 = startOfWeek(new Date());
+        return Array.from({ length: 6 }, (_, i) => {
+            const start = addDays(w0, i * 7);
+            return { key: toDateStr(start), start, end: addDays(start, 6) };
+        });
+    }, []);
+    const [tab, setTab] = useState('base');   // 'base' | a weekTabs key
     const [avail, setAvail] = useState(initialAvail);
+    const [weeks, setWeeks] = useState(initialWeeks);
+    const override = tab !== 'base' ? weeks[tab] : null;
+    const editing = tab === 'base' ? avail : (override || avail);   // no override → preview the usual week
     const updateDay = (dayKey, patch) => {
-        setAvail(a => ({ ...a, [dayKey]: { ...(a[dayKey] || { available: true, from: '09:00', to: '21:00' }), ...patch } }));
+        const merge = (m) => ({ ...m, [dayKey]: { ...(m[dayKey] || { available: true, from: '09:00', to: '21:00' }), ...patch } });
+        if (tab === 'base') setAvail(merge);
+        else setWeeks(w => ({ ...w, [tab]: merge(w[tab] || {}) }));
     };
+    // Seed a week override from the usual pattern so staff tweak from
+    // their normal week instead of starting blank.
+    const startOverride = () => setWeeks(w => ({ ...w, [tab]: JSON.parse(JSON.stringify(avail)) }));
+    const clearOverride = () => setWeeks(w => { const { [tab]: _x, ...rest } = w; return rest; });
+    const weekLabel = (t, i) => {
+        if (i === 0) return tx('This week', 'Esta semana');
+        if (i === 1) return tx('Next week', 'Próxima sem.');
+        return formatDateShort(t.start, isEn);
+    };
+    const rangeLabel = (t) => `${formatDateShort(t.start, isEn)} – ${formatDateShort(t.end, isEn)}`;
     const handleSave = async () => {
         // Reversed windows (From 9pm / To 9am) read as "available almost
         // never" to the conflict checker and render a nonsense badge —
-        // reject them before saving (2026-07-23).
-        const bad = DAYS.find(d => {
-            const dd = avail[d.k];
+        // reject them before saving (2026-07-23). Checked on the base
+        // pattern AND every week override.
+        const findBad = (m) => DAYS.find(d => {
+            const dd = m[d.k];
             return dd && dd.available !== false && dd.from && dd.to && dd.to <= dd.from;
         });
-        if (bad) {
-            alert(tx(
-                `${bad.en}: the "until" time must be after the "from" time.`,
-                `${bad.es}: la hora "hasta" debe ser después de la hora "desde".`,
-            ));
-            return;
+        for (const [label, m] of [[null, avail], ...Object.entries(weeks).map(([k, m2]) => [k, m2])]) {
+            const bad = m ? findBad(m) : null;
+            if (bad) {
+                const where = label ? ` (${tx('week of', 'semana del')} ${label})` : '';
+                alert(tx(
+                    `${bad.en}${where}: the "until" time must be after the "from" time.`,
+                    `${bad.es}${where}: la hora "hasta" debe ser después de la hora "desde".`,
+                ));
+                return;
+            }
         }
-        await onSave(avail);
+        await onSave({ availability: avail, availabilityWeeks: weeks });
         onClose();
     };
     return (
@@ -12346,21 +12398,58 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                     </div>
                     <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
+                {/* Week strip — Usual week + this week and the next 5. A dot
+                    marks weeks that have their own custom days. */}
+                <div className="border-b border-gray-200 px-2 py-2 flex gap-1.5 overflow-x-auto">
+                    <button onClick={() => setTab('base')}
+                        className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold ${tab === 'base' ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                        {tx('Usual week', 'Semana usual')}
+                    </button>
+                    {weekTabs.map((t, i) => (
+                        <button key={t.key} onClick={() => setTab(t.key)}
+                            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 ${tab === t.key ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                            {weekLabel(t, i)}
+                            {weeks[t.key] ? <span className={`w-1.5 h-1.5 rounded-full ${tab === t.key ? 'bg-white' : 'bg-purple-600'}`} /> : null}
+                        </button>
+                    ))}
+                </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                    <p className="text-xs text-gray-500 mb-1">
-                        {tx(
-                            "Mark any day you can't work as Off. Leave the rest as Available — you don't need to set specific hours unless your availability is limited.",
-                            "Marca como No Disponible cualquier día que no puedas trabajar. Deja el resto como Disponible — solo ajusta las horas si tu disponibilidad es limitada.",
-                        )}
-                    </p>
+                    {tab === 'base' ? (
+                        <p className="text-xs text-gray-500 mb-1">
+                            {tx(
+                                "Your normal week — it repeats every week unless you customize a specific week above. Mark any day you can't work as Off.",
+                                'Tu semana normal — se repite cada semana a menos que personalices una semana específica arriba. Marca como No Disponible cualquier día que no puedas trabajar.',
+                            )}
+                        </p>
+                    ) : (
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                            <p className="text-xs text-gray-500">
+                                📅 {rangeLabel(weekTabs.find(t => t.key === tab))}
+                                {!override && ` — ${tx('follows your usual week', 'sigue tu semana usual')}`}
+                            </p>
+                            {override ? (
+                                <button onClick={clearOverride}
+                                    className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-gray-100 text-gray-600">
+                                    ↩ {tx('Use usual week', 'Usar semana usual')}
+                                </button>
+                            ) : (
+                                <button onClick={startOverride}
+                                    className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-100 text-purple-700">
+                                    ✏️ {tx('Customize this week', 'Personalizar')}
+                                </button>
+                            )}
+                        </div>
+                    )}
                     {DAYS.map(d => {
-                        const dayData = avail[d.k] || { available: true, from: '09:00', to: '21:00' };
+                        const dayData = editing[d.k] || { available: true, from: '09:00', to: '21:00' };
                         const available = dayData.available !== false;
+                        const readOnly = tab !== 'base' && !override;   // previewing the usual week
                         return (
-                            <div key={d.k} className="bg-gray-50 rounded-lg p-2">
+                            <div key={d.k} className={`bg-gray-50 rounded-lg p-2 ${readOnly ? 'opacity-60' : ''}`}>
                                 <div className="flex items-center justify-between mb-1">
                                     <span className="font-bold text-sm text-gray-800">{tx(d.en, d.es)}</span>
-                                    <button onClick={() => updateDay(d.k, { available: !available })}
+                                    <button disabled={readOnly}
+                                        onClick={() => updateDay(d.k, { available: !available })}
                                         className={`px-3 py-1 rounded-full text-xs font-bold ${available ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
                                         {available ? tx('Available', 'Disponible') : tx('Off', 'No disponible')}
                                     </button>
@@ -12369,13 +12458,13 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
                                             <label className="text-[10px] text-gray-500 block">{tx('From', 'Desde')}</label>
-                                            <input type="time" value={dayData.from || '09:00'}
+                                            <input type="time" value={dayData.from || '09:00'} disabled={readOnly}
                                                 onChange={e => updateDay(d.k, { from: e.target.value })}
                                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
                                         </div>
                                         <div>
                                             <label className="text-[10px] text-gray-500 block">{tx('To', 'Hasta')}</label>
-                                            <input type="time" value={dayData.to || '21:00'}
+                                            <input type="time" value={dayData.to || '21:00'} disabled={readOnly}
                                                 onChange={e => updateDay(d.k, { to: e.target.value })}
                                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
                                         </div>
@@ -12468,7 +12557,7 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
             // opt IN to days they can. Only `dayAvail.available === false` is
             // a true "unavailable" — any other shape (undefined, partial,
             // from/to set) counts as available.
-            const dayAvail = (s.availability || {})[dayKey];
+            const dayAvail = availabilityForDate(s, dateStr)[dayKey];
             const explicitlyOff = dayAvail && dayAvail.available === false;
             const availableThisDay = !explicitlyOff;
             // PTO?

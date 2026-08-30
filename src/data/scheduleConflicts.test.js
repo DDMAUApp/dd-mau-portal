@@ -7,9 +7,10 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    checkAvailabilityConflict, staffOffOn, partialOffWindows,
+    checkAvailabilityConflict, availabilityForDate, staffOffOn, partialOffWindows,
     shiftOverlapsPartialOff, computeScheduleConflicts,
 } from './scheduleConflicts';
+import { weekKeyOf, pruneAvailabilityWeeks } from './scheduleCore';
 import { GOLDEN_STAFF, GOLDEN_SHIFTS, GOLDEN_TIME_OFF } from './__fixtures__/goldenSchedule';
 
 const byName = (n) => GOLDEN_STAFF.find(s => s.name === n);
@@ -38,6 +39,79 @@ describe('checkAvailabilityConflict', () => {
         expect(checkAvailabilityConflict(null, '2026-08-10', '10:00', '15:00')).toBeNull();
         expect(checkAvailabilityConflict(byName('Ana Torres'), '', '10:00', '15:00')).toBeNull();
         expect(checkAvailabilityConflict(byName('Ana Torres'), '2026-08-10', '', '15:00')).toBeNull();
+    });
+});
+
+// ── Multi-week availability (2026-08-29) ───────────────────────────────────
+// availabilityWeeks: { '<sunday>': <day map> } replaces the base pattern
+// for that WHOLE week; weeks without an entry fall back to the base map.
+
+describe('availabilityForDate + week overrides', () => {
+    // Ana's base: Mon 10–16, Sun off. Override for the golden week
+    // (Sunday 2026-08-09): ONLY Thursday, everything else off — Andrew's
+    // "this week I can only work Thursday" example.
+    const anaMultiWeek = {
+        ...byName('Ana Torres'),
+        availabilityWeeks: {
+            '2026-08-09': {
+                sun: { available: false }, mon: { available: false }, tue: { available: false },
+                wed: { available: false }, fri: { available: false }, sat: { available: false },
+                // thu absent → available all day (opt-out semantics hold inside overrides)
+            },
+        },
+    };
+    it('weekKeyOf maps any date to its Sunday', () => {
+        expect(weekKeyOf('2026-08-09')).toBe('2026-08-09');   // Sunday itself
+        expect(weekKeyOf('2026-08-12')).toBe('2026-08-09');   // Wednesday
+        expect(weekKeyOf('2026-08-15')).toBe('2026-08-09');   // Saturday
+        expect(weekKeyOf('2026-08-16')).toBe('2026-08-16');   // next Sunday
+        expect(weekKeyOf('')).toBeNull();
+    });
+    it('an override week replaces the base pattern for that whole week', () => {
+        // Monday of the override week: base says available 10–16, override says OFF.
+        expect(checkAvailabilityConflict(anaMultiWeek, '2026-08-10', '10:00', '15:00')).toEqual({ type: 'off' });
+        // Thursday of the override week: absent in the override → available (no warning).
+        expect(checkAvailabilityConflict(anaMultiWeek, '2026-08-13', '10:00', '15:00')).toBeNull();
+    });
+    it('weeks without an entry fall back to the base pattern', () => {
+        // Next-week Monday: no override → base window 10–16 applies again.
+        expect(checkAvailabilityConflict(anaMultiWeek, '2026-08-17', '10:00', '15:00')).toBeNull();
+        expect(checkAvailabilityConflict(anaMultiWeek, '2026-08-17', '09:00', '17:00'))
+            .toEqual({ type: 'outside', from: '10:00', to: '16:00' });
+        // Next-week Sunday: base says off.
+        expect(checkAvailabilityConflict(anaMultiWeek, '2026-08-16', '10:00', '15:00')).toEqual({ type: 'off' });
+    });
+    it('an override can OPEN a day the base pattern blocks', () => {
+        const opened = { ...byName('Ana Torres'), availabilityWeeks: { '2026-08-09': {} } };
+        // Sunday is off in the base map, but the override week's empty map = all available.
+        expect(checkAvailabilityConflict(opened, '2026-08-09', '10:00', '15:00')).toBeNull();
+    });
+    it('malformed availabilityWeeks falls back to the base map and never throws', () => {
+        for (const weeks of [null, 'junk', 7, [], { '2026-08-09': 'junk' }, { '2026-08-09': [] }]) {
+            const s = { ...byName('Ana Torres'), availabilityWeeks: weeks };
+            expect(checkAvailabilityConflict(s, '2026-08-10', '09:00', '17:00'))
+                .toEqual({ type: 'outside', from: '10:00', to: '16:00' });   // base still applies
+        }
+        expect(availabilityForDate(null, '2026-08-10')).toEqual({});
+        expect(availabilityForDate({}, '')).toEqual({});
+    });
+});
+
+describe('pruneAvailabilityWeeks', () => {
+    it('drops weeks before the current week, keeps current + future', () => {
+        const weeks = { '2026-08-02': { sun: { available: false } }, '2026-08-09': {}, '2026-08-16': {} };
+        expect(pruneAvailabilityWeeks(weeks, '2026-08-12'))
+            .toEqual({ '2026-08-09': {}, '2026-08-16': {} });   // 08-12 is inside the 08-09 week
+    });
+    it('returns null when nothing valid remains (caller drops the field)', () => {
+        expect(pruneAvailabilityWeeks({ '2026-08-02': {} }, '2026-08-12')).toBeNull();
+        expect(pruneAvailabilityWeeks({}, '2026-08-12')).toBeNull();
+        expect(pruneAvailabilityWeeks(null, '2026-08-12')).toBeNull();
+        expect(pruneAvailabilityWeeks('junk', '2026-08-12')).toBeNull();
+    });
+    it('drops garbage keys and non-map values', () => {
+        expect(pruneAvailabilityWeeks({ junk: {}, '2026-08-16': 'nope', '2026-08-23': {} }, '2026-08-12'))
+            .toEqual({ '2026-08-23': {} });
     });
 });
 

@@ -32,6 +32,7 @@ import { renameStaffEverywhere, removeStaffFromChats } from '../data/renameStaff
 import { mutateStaffList, removeStaffRecord, appendStaffRecord } from '../data/staffDoc';
 import DeletedStaffSection from './DeletedStaffSection';
 import { auditAvailabilityChange } from '../data/audit';
+import { startOfWeek, addDays, toDateStr, formatDateShort, pruneAvailabilityWeeks } from '../data/scheduleCore';
 import {
     normalizeToE164,
     formatE164ForDisplay,
@@ -1767,6 +1768,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 if (res.ok) showSaved();
             };
             const [availabilityForId, setAvailabilityForId] = useState(null); // staff id whose availability we're editing
+            const [availabilityWeekTab, setAvailabilityWeekTab] = useState('base'); // 'base' (usual week) | a Sunday week-key
             const [showAdd, setShowAdd] = useState(false);
             const [newName, setNewName] = useState("");
             const [newRole, setNewRole] = useState("FOH");
@@ -3402,7 +3404,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             </button>
                                                         </div>
                                                     </div>
-                                                    <button onClick={() => setAvailabilityForId(person.id)}
+                                                    <button onClick={() => { setAvailabilityWeekTab('base'); setAvailabilityForId(person.id); }}
                                                         className="glass-button-apple w-full py-2 text-xs">
                                                         🗓 {language === "es" ? "Editar disponibilidad" : "Edit Availability"}
                                                     </button>
@@ -3685,7 +3687,32 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             { k: "sat", en: "Saturday",  es: "Sábado" },
                         ];
                         // availability stored as: { mon: { available: true, from: "09:00", to: "17:00" } | { available: false }, ... }
-                        const avail = person.availability || {};
+                        // Week-specific overrides (2026-08-29): availabilityWeeks
+                        // { '<sunday YYYY-MM-DD>': <same day-map shape> } — an
+                        // entry replaces the usual pattern for that whole week.
+                        const wkTab = availabilityWeekTab;
+                        const weekTabs = (() => {
+                            const w0 = startOfWeek(new Date());
+                            return Array.from({ length: 6 }, (_, i) => {
+                                const start = addDays(w0, i * 7);
+                                return { key: toDateStr(start), start, end: addDays(start, 6) };
+                            });
+                        })();
+                        const personWeeks = (person.availabilityWeeks && typeof person.availabilityWeeks === 'object' && !Array.isArray(person.availabilityWeeks))
+                            ? person.availabilityWeeks : {};
+                        const weekOverride = wkTab !== 'base' ? personWeeks[wkTab] : null;
+                        // What the day rows display: usual pattern, or the week's
+                        // override; a week WITHOUT an override previews the usual
+                        // pattern (first edit creates the override, seeded from it).
+                        const avail = wkTab === 'base' ? (person.availability || {}) : (weekOverride || person.availability || {});
+                        const readWeeks = (s) => (s.availabilityWeeks && typeof s.availabilityWeeks === 'object' && !Array.isArray(s.availabilityWeeks)) ? s.availabilityWeeks : {};
+                        // Applies a new weeks map to the record — pruning past
+                        // entries and DROPPING the field when nothing remains.
+                        const withWeeks = (s, nextWeeks) => {
+                            const pruned = pruneAvailabilityWeeks(nextWeeks, toDateStr(new Date()));
+                            const { availabilityWeeks: _x, ...rest } = s;
+                            return pruned ? { ...rest, availabilityWeeks: pruned } : rest;
+                        };
                         const updateDay = async (dayKey, patch) => {
                             // Server-anchored patch — reads availability from
                             // the live record inside the transaction, so two
@@ -3693,11 +3720,22 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             let auditDiff = null;
                             const res = await runRosterMutation(list => list.map(s => {
                                 if (s.id !== person.id) return s;
-                                const curAvail = s.availability || {};
-                                const cur = curAvail[dayKey] || { available: true, from: "09:00", to: "21:00" };
+                                if (wkTab === 'base') {
+                                    const curAvail = s.availability || {};
+                                    const cur = curAvail[dayKey] || { available: true, from: "09:00", to: "21:00" };
+                                    const nextDay = { ...cur, ...patch };
+                                    auditDiff = { before: { [dayKey]: cur }, after: { [dayKey]: nextDay } };
+                                    return { ...s, availability: { ...curAvail, [dayKey]: nextDay } };
+                                }
+                                // Week override edit — seed from the usual pattern
+                                // on first touch so the manager tweaks a normal week.
+                                const weeksCur = readWeeks(s);
+                                const weekMap = weeksCur[wkTab] || JSON.parse(JSON.stringify(s.availability || {}));
+                                const cur = weekMap[dayKey] || { available: true, from: "09:00", to: "21:00" };
                                 const nextDay = { ...cur, ...patch };
-                                auditDiff = { before: { [dayKey]: cur }, after: { [dayKey]: nextDay } };
-                                return { ...s, availability: { ...curAvail, [dayKey]: nextDay } };
+                                const nextWeek = { ...weekMap, [dayKey]: nextDay };
+                                auditDiff = { before: { ["wk:" + wkTab]: weeksCur[wkTab] || null }, after: { ["wk:" + wkTab]: nextWeek } };
+                                return withWeeks({ ...s }, { ...weeksCur, [wkTab]: nextWeek });
                             }));
                             if (res.ok && !res.noop && auditDiff) {
                                 // Audit 2026-06-24: manager-edited availability →
@@ -3705,6 +3743,23 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 auditAvailabilityChange({
                                     staffId: person.id, staffName: person.name,
                                     before: auditDiff.before, after: auditDiff.after,
+                                    surface: 'admin-dashboard',
+                                });
+                            }
+                        };
+                        // Remove a week's override → that week follows the usual pattern again.
+                        const clearWeekOverride = async () => {
+                            const res = await runRosterMutation(list => list.map(s => {
+                                if (s.id !== person.id) return s;
+                                const weeksCur = readWeeks(s);
+                                if (!(wkTab in weeksCur)) return s;
+                                const { [wkTab]: _gone, ...restWeeks } = weeksCur;
+                                return withWeeks({ ...s }, restWeeks);
+                            }));
+                            if (res.ok && !res.noop) {
+                                auditAvailabilityChange({
+                                    staffId: person.id, staffName: person.name,
+                                    before: { ["wk:" + wkTab]: weekOverride }, after: { ["wk:" + wkTab]: null },
                                     surface: 'admin-dashboard',
                                 });
                             }
@@ -3720,8 +3775,38 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         <button onClick={() => setAvailabilityForId(null)}
                                             className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
                                     </div>
+                                    {/* Week strip — Usual week + this week and the next 5.
+                                        A dot marks weeks with their own custom days. */}
+                                    <div className="border-b border-gray-200 px-2 py-2 flex gap-1.5 overflow-x-auto">
+                                        <button onClick={() => setAvailabilityWeekTab('base')}
+                                            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold ${wkTab === 'base' ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                                            {language === "es" ? "Semana usual" : "Usual week"}
+                                        </button>
+                                        {weekTabs.map((tw, i) => (
+                                            <button key={tw.key} onClick={() => setAvailabilityWeekTab(tw.key)}
+                                                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 ${wkTab === tw.key ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                                                {i === 0 ? (language === "es" ? "Esta semana" : "This week") : formatDateShort(tw.start, language !== "es")}
+                                                {personWeeks[tw.key] ? <span className={`w-1.5 h-1.5 rounded-full ${wkTab === tw.key ? 'bg-white' : 'bg-purple-600'}`} /> : null}
+                                            </button>
+                                        ))}
+                                    </div>
                                     <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                                        <p className="text-xs text-gray-500 mb-1">{language === "es" ? "Auto-popular usa esto para asignar turnos." : "Auto-fill uses this to assign shifts."}</p>
+                                        {wkTab === 'base' ? (
+                                            <p className="text-xs text-gray-500 mb-1">{language === "es" ? "Auto-popular usa esto para asignar turnos. La semana usual se repite salvo que una semana tenga días personalizados." : "Auto-fill uses this to assign shifts. The usual week repeats unless a specific week has custom days."}</p>
+                                        ) : (
+                                            <div className="flex items-center justify-between gap-2 mb-1">
+                                                <p className="text-xs text-gray-500">
+                                                    📅 {formatDateShort(weekTabs.find(tw => tw.key === wkTab).start, language !== "es")} – {formatDateShort(weekTabs.find(tw => tw.key === wkTab).end, language !== "es")}
+                                                    {!weekOverride && (language === "es" ? " — sigue la semana usual (editar crea días propios)" : " — follows the usual week (editing creates custom days)")}
+                                                </p>
+                                                {weekOverride ? (
+                                                    <button onClick={clearWeekOverride}
+                                                        className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-gray-100 text-gray-600">
+                                                        ↩ {language === "es" ? "Usar semana usual" : "Use usual week"}
+                                                    </button>
+                                                ) : null}
+                                            </div>
+                                        )}
                                         {DAYS.map(d => {
                                             const dayData = avail[d.k] || { available: true, from: "09:00", to: "21:00" };
                                             const available = dayData.available !== false;
@@ -4385,7 +4470,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                                     onChange={e => handleBulkUpdate(s.id, { targetHours: Number(e.target.value) || 0 })}
                                                                     className="w-14 text-center text-xs font-bold border border-dd-line rounded-md py-1 text-dd-text focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50" />
                                                             </label>
-                                                            <button onClick={() => { setShowBulkTag(false); setAvailabilityForId(s.id); }}
+                                                            <button onClick={() => { setShowBulkTag(false); setAvailabilityWeekTab('base'); setAvailabilityForId(s.id); }}
                                                                 title={language === "es" ? "Disponibilidad" : "Availability"}
                                                                 className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg transition">
                                                                 🗓 {language === "es" ? "Disponib." : "Avail"}

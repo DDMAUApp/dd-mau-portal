@@ -184,6 +184,42 @@ export const weeksBetween = (fromWeekStart, toWeekStart) => {
     return Math.round((toWeekStart.getTime() - fromWeekStart.getTime()) / (7 * 24 * 60 * 60 * 1000));
 };
 
+// ── Multi-week availability (2026-08-29, Andrew: "when someone puts in
+// there availability i want them to be able to put in multiple weeks at a
+// time") ────────────────────────────────────────────────────────────────
+// Week-specific availability lives on the staff record as
+//   availabilityWeeks: { 'YYYY-MM-DD': { mon: {available,from,to}, ... } }
+// keyed by that week's SUNDAY (startOfWeek — same FLSA Sun–Sat convention
+// as payroll). A week WITH an entry uses that entry INSTEAD of the base
+// `availability` pattern (whole-week replace, not per-day merge — "this
+// week Thu only" is one self-contained map); a week WITHOUT an entry falls
+// back to the base pattern. Resolution lives in scheduleConflicts'
+// availabilityForDate.
+
+// The Sunday key for the week containing dateStr (null on garbage input).
+export const weekKeyOf = (dateStr) => {
+    const d = parseLocalDate(dateStr);
+    return d ? toDateStr(startOfWeek(d)) : null;
+};
+
+// Drop week entries that are entirely in the past (key < the current
+// week's key) so the roster doc never accumulates stale overrides. Also
+// drops non-map values defensively. Returns a NEW object; null when
+// nothing (or nothing valid) remains, so callers can delete the field.
+export const pruneAvailabilityWeeks = (weeks, todayStr) => {
+    if (!weeks || typeof weeks !== 'object') return null;
+    const floor = weekKeyOf(todayStr);
+    if (!floor) return null;
+    const out = {};
+    for (const [k, v] of Object.entries(weeks)) {
+        if (typeof k !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(k)) continue;
+        if (k < floor) continue;
+        if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+        out[k] = v;
+    }
+    return Object.keys(out).length ? out : null;
+};
+
 // blockedDatesInRange — every day in [startStr, endStr] that lands on a
 // no-time-off / closed blackout, as [{date, reason}]. Single source of truth
 // for BOTH the staff self-serve guard (hard stop) AND the manager add-entry
