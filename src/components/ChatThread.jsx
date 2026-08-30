@@ -65,6 +65,14 @@ const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+// QUIET write posture for invisible housekeeping (2026-08-29, Andrew: the
+// "Saving…/Reconnecting…" pill while just trying to type): the automatic
+// read-marker fires 1.5s after opening a chat, so on store Wi-Fi it was
+// showing the pill — and arming the reload escalation — for a write the
+// user never asked for. Revive on hang like a read; never feed the pill,
+// never escalate. Real errors still reach .catch(). Wedge escalation is
+// owned by the idle-guarded liveness probe.
+const quietUpdateDoc = (...a) => watchdogRead(_fsUpdateDoc(...a));
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 import { ref as sref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
@@ -551,7 +559,7 @@ function ChatThreadInner({
             // bottom (atBottom defaults true), so the normal "open = read"
             // case is unchanged.
             if (!atBottomRef.current) return;
-            updateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
+            quietUpdateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
                 .catch(e => console.warn('markRead failed:', e));
         }, 1500);
         return () => clearTimeout(t);
@@ -630,7 +638,7 @@ function ChatThreadInner({
         const ref = doc(db, 'chats', chat.id);
         const t = setTimeout(() => {
             if (!atBottomRef.current) return;
-            updateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
+            quietUpdateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
                 .catch(() => { /* best-effort */ });
         }, 1500);
         return () => clearTimeout(t);
@@ -755,6 +763,11 @@ function ChatThreadInner({
             // state intact; stashing would double-restore later. Skip.
             if (e && e.persisted === true) return;
             try {
+                // Refresh ChatCenter's reopen stamp (ddmau:lastOpenChat)
+                // with a fresh ts: its 10-min TTL is otherwise measured
+                // from thread-OPEN, so a long compose session would not
+                // auto-reopen after the reload this pagehide precedes.
+                sessionStorage.setItem('ddmau:lastOpenChat', JSON.stringify({ id: chat.id, staffName, ts: Date.now() }));
                 const text = getDraft();
                 if (!text.trim()) return;
                 sessionStorage.setItem(`chatDraft:${chat.id}`, JSON.stringify({
@@ -773,31 +786,57 @@ function ChatThreadInner({
         };
     }, [chat?.id, staffName]);
 
-    // Restore leg — READ-AND-DELETE so a stored draft can only ever
-    // restore once (no resurrection loops). Composer registers the
+    // Restore leg. NON-DESTRUCTIVE read (2026-08-29 — was read-AND-delete,
+    // which destroyed the stash even when a guard failed): the entry is
+    // deleted only when it's garbage, expired, or successfully restored.
+    // A different user's draft (shared iPad) stays put for THAT user's
+    // return; no resurrection loop is possible because a successful
+    // restore deletes, and the send paths clear. Composer registers the
     // draft bridge in ITS mount effect, which runs BEFORE this parent
     // effect in the same commit (child effects flush first), so
     // setDraft is live here.
     useEffect(() => {
         if (!chat?.id) return;
+        const key = `chatDraft:${chat.id}`;
+        const drop = () => { try { sessionStorage.removeItem(key); } catch { /* ignore */ } };
         let stored = null;
         try {
-            const raw = sessionStorage.getItem(`chatDraft:${chat.id}`);
-            sessionStorage.removeItem(`chatDraft:${chat.id}`);
-            if (raw) stored = JSON.parse(raw);
-        } catch { /* corrupt entry / blocked storage — nothing to restore */ }
-        if (!stored) return;
-        if (stored.chatId !== chat.id) return;
+            const raw = sessionStorage.getItem(key);
+            if (!raw) return;
+            stored = JSON.parse(raw);
+        } catch { drop(); return; }   // corrupt entry — clean it up
+        if (!stored || stored.chatId !== chat.id || !stored.text || typeof stored.text !== 'string') { drop(); return; }
+        // 15-minute TTL (missing/garbage ts fails the check) — expired = delete.
+        if (!Number.isFinite(stored.ts) || Date.now() - stored.ts >= 15 * 60 * 1000) { drop(); return; }
         // Shared-iPad guard: a draft stashed by a different signed-in
-        // user must never surface for the next one.
+        // user must never surface for the next one — but stays stored.
         if (stored.staffName !== staffName) return;
-        if (!stored.text || typeof stored.text !== 'string') return;
-        // 15-minute TTL (missing/garbage ts fails the check and skips).
-        if (!Number.isFinite(stored.ts) || Date.now() - stored.ts >= 15 * 60 * 1000) return;
-        if (getDraft()) return;  // never clobber text already typed
+        if (getDraft()) return;  // never clobber text already typed — keep the stash
         setDraft(stored.text);
+        drop();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [chat?.id]);
+
+    // Unmount stash (2026-08-29): pagehide only covers page-death. The
+    // SILENT draft erasers — idle relock, tab switch, remote-strand
+    // recovery closing the thread, readOnly flip, error boundary — all
+    // unmount the Composer with no pagehide event and the text just
+    // vanished. Composer calls this from its own unmount cleanup (the
+    // parent's cleanup runs AFTER the bridge is nulled, so it must be
+    // the child's). Same store + guards as the pagehide stash; the
+    // restore leg above brings it back when THIS chat reopens.
+    const stashDraftOnUnmount = (text) => {
+        try {
+            const t = String(text || '');
+            if (!chat?.id || !t.trim()) return;
+            sessionStorage.setItem(`chatDraft:${chat.id}`, JSON.stringify({
+                chatId: chat.id,
+                staffName,
+                text: t.slice(0, 16384),
+                ts: Date.now(),
+            }));
+        } catch { /* storage blocked/full — draft loss, not a crash */ }
+    };
 
     // Belt-and-suspenders for the send paths: pagehide normally means
     // the page is gone, but a beforeunload-initiated navigation CAN be
@@ -2879,6 +2918,7 @@ function ChatThreadInner({
             <Composer
                 isEs={isEs}
                 draftApiRef={draftApiRef}
+                onUnmountStash={stashDraftOnUnmount}
                 onTyping={maybeSendTyping}
                 sending={sending}
                 recording={recording}
@@ -3790,7 +3830,7 @@ function AudioPlayer({ src, duration, isMine }) {
 // closures). The parent now reaches the draft through `draftApiRef`
 // ({ get, set } registered here) and gets typing signals via `onTyping`.
 function Composer({
-    isEs, draftApiRef, onTyping, sending, recording,
+    isEs, draftApiRef, onUnmountStash, onTyping, sending, recording,
     replyTarget, onClearReply,
     onSendText, onPickImage, onPickVideo, onPickFile,
     onStartRecording, onStopRecording, onCancelRecording,
@@ -3826,6 +3866,16 @@ function Composer({
         };
         return () => { if (draftApiRef.current?.set === setDraft) draftApiRef.current = null; };
     }, [draftApiRef, setDraft]);
+    // Unmount stash (2026-08-29): silent unmounts (idle relock, tab
+    // switch, strand recovery, readOnly flip, error boundary) fire no
+    // pagehide — the ONLY chance to save the text is this cleanup. Ref
+    // indirection keeps the effect mount-once (the handler prop has a
+    // fresh identity every render). Empty drafts write nothing.
+    const onUnmountStashRef = useRef(onUnmountStash);
+    onUnmountStashRef.current = onUnmountStash;
+    useEffect(() => () => {
+        try { onUnmountStashRef.current?.(_liveDraftRef.current); } catch { /* never break unmount */ }
+    }, []);
     const imageInputRef = useRef(null);
     const videoInputRef = useRef(null);
     const fileInputRef = useRef(null);   // C8 — document attachments

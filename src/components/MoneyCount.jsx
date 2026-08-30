@@ -93,6 +93,25 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const readStoreMemory = () => {
         try { const s = localStorage.getItem(STORE_MEMORY_KEY); return (s === 'maryland' || s === 'webster') ? s : null; } catch { return null; }
     };
+    // Tip-entry draft (Andrew 2026-08-29: tip save wedged mid-entry). The
+    // write watchdog can recover a wedged save by RELOADING the app; without
+    // a draft that recovery would erase the typed amount — the same "it got
+    // erased" failure as chat. Restores the DATE too: a manager entering
+    // yesterday's tips must not be silently flipped to today by a reload.
+    const tipDraftKey = (l) => 'ddmau:tipdraft:' + l;
+    const readTipDraft = (l) => {
+        try {
+            const d = JSON.parse(localStorage.getItem(tipDraftKey(l)) || 'null');
+            if (!d || typeof d !== 'object' || !d.amount) return null;
+            if (Date.now() - (Number(d.at) || 0) > 12 * 60 * 60 * 1000) return null;   // 12h TTL
+            // Cash safety on a shared iPad: never surface a tip amount
+            // typed by a DIFFERENT signed-in manager.
+            if (d.staffName !== staffName) return null;
+            return d;
+        } catch { return null; }
+    };
+    const initLoc0 = (storeLocation === 'webster' || storeLocation === 'maryland')
+        ? storeLocation : (readStoreMemory() || 'webster');
     const [counts, setCounts] = useState(() => {       // { [cents]: 'string' }
         // For a fixed-store manager use their store; for a 'both'/admin
         // manager restore the store they last counted so an in-progress
@@ -109,9 +128,10 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const [history, setHistory] = useState(null);   // null = loading
     const [openId, setOpenId] = useState(null);
     const [locFilter, setLocFilter] = useState('all');
-    // Cash tips — separate daily total.
-    const [tipDate, setTipDate] = useState(() => centralDate());
-    const [tipAmount, setTipAmount] = useState('');
+    // Cash tips — separate daily total. Lazy-init from the tip draft so a
+    // watchdog reload mid-entry lands back exactly where the manager was.
+    const [tipDate, setTipDate] = useState(() => readTipDraft(initLoc0)?.date || centralDate());
+    const [tipAmount, setTipAmount] = useState(() => readTipDraft(initLoc0)?.amount || '');
     const [savingTip, setSavingTip] = useState(false);
     // History sub-mode + tip date-range lookup.
     const [histMode, setHistMode] = useState('counts');   // 'counts' | 'tips'
@@ -138,6 +158,23 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     const loc = fixedStore || pickedStore;
     // Remember the active store so a remount restores the right draft.
     useEffect(() => { try { localStorage.setItem(STORE_MEMORY_KEY, loc); } catch { /* private mode */ } }, [loc]);
+    // Mirror the in-progress tip entry (cleared when the amount empties —
+    // which is what a successful save does). Deliberately follows the manager
+    // across a store toggle: a typed amount stays typed.
+    useEffect(() => {
+        try {
+            // ONE active tip draft, under the CURRENT store — unlike drawer
+            // drafts (separate per store by design), the tip entry follows
+            // the manager, so writing here also clears the other store's
+            // copy. A stale copy left behind after a store toggle could
+            // resurrect an already-saved amount at the wrong store.
+            const other = loc === 'webster' ? 'maryland' : 'webster';
+            if (tipAmount) {
+                localStorage.setItem(tipDraftKey(loc), JSON.stringify({ date: tipDate, amount: tipAmount, staffName, at: Date.now() }));
+                localStorage.removeItem(tipDraftKey(other));
+            } else localStorage.removeItem(tipDraftKey(loc));
+        } catch { /* private mode */ }
+    }, [tipAmount, tipDate, loc, staffName]);
     // Draft ↔ store binding. Persist every change under the CURRENT store's
     // key; when a 'both' manager toggles stores, swap in that store's own
     // saved draft (each store keeps its own in-progress count).
@@ -272,12 +309,27 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
     };
 
     // ── Cash tips ──
+    // A user-pressed tip button must NEVER spin forever (Andrew 2026-08-29:
+    // "entering the tip count it just got stuck on saving and never saved").
+    // The data layer now runs these under the write watchdog (revive +
+    // escalate), but the reload escalation is once-per-session — so the
+    // button itself also races a deadline that clears its busy flag and says
+    // retry. Retrying is safe here: tip docs have a deterministic
+    // `${loc}_${date}` id and edits[] only logs value CHANGES, so a save that
+    // actually landed after the deadline makes the retry a no-op. (The drawer
+    // Save button deliberately has NO deadline — addDoc is not idempotent and
+    // a retry after a late success would double-count the drawer.)
+    const SAVE_DEADLINE_MS = 25_000;
+    const withDeadline = (p) => new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('timed out — check your connection and try again')), SAVE_DEADLINE_MS);
+        p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+    });
     const tipCents = dollarsToCents(tipAmount);
     const saveTip = async () => {
         if (savingTip || tipCents <= 0 || !tipDate) return;
         setSavingTip(true);
         try {
-            await saveCashTips({ date: tipDate, amountCents: tipCents, staffName, staffId: myId, location: loc });
+            await withDeadline(saveCashTips({ date: tipDate, amountCents: tipCents, staffName, staffId: myId, location: loc }));
             toast(tx(`Tips saved · ${fmtMoney(tipCents)}`, `Propinas guardadas · ${fmtMoney(tipCents)}`), { kind: 'success' });
             if (mountedRef.current) setTipAmount('');
         } catch (e) {
@@ -293,7 +345,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         try {
             const lo = tipFrom <= tipTo ? tipFrom : tipTo;
             const hi = tipFrom <= tipTo ? tipTo : tipFrom;
-            const rows = await getCashTipsRange({ from: lo, to: hi });
+            const rows = await withDeadline(getCashTipsRange({ from: lo, to: hi }));
             if (!mountedRef.current) return;
             setTipRows(rows);
             setLoadedRange({ from: lo, to: hi });
@@ -314,7 +366,7 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
         if (newCents === (Number(r.amountCents) || 0)) { setEditTipId(null); return; }
         setSavingEdit(true);
         try {
-            await editCashTips({ location: r.location, date: r.date, newAmountCents: newCents, by: staffName });
+            await withDeadline(editCashTips({ location: r.location, date: r.date, newAmountCents: newCents, by: staffName }));
             toast(tx(`Tip updated · ${fmtMoney(newCents)}`, `Propina actualizada · ${fmtMoney(newCents)}`), { kind: 'success' });
             if (mountedRef.current) setEditTipId(null);
             await loadTipRange();
@@ -508,6 +560,39 @@ export default function MoneyCount({ language, storeLocation, staffName, staffLi
                                     );
                                 })}
                             </ul>
+                            {/* Morning ↔ current comparison (Andrew 2026-08-29: "when I add
+                                the count I need to see the current count show up at the bottom
+                                with the morning count"). First save of the day = Morning,
+                                latest save = Current, Change = current − morning (red when the
+                                drawer is down, green when up). With one count so far it IS the
+                                morning, so only that line shows. */}
+                            {(() => {
+                                const morning = todayCounts[0];
+                                const latest = todayCounts[todayCounts.length - 1];
+                                const diff = (Number(latest.totalCents) || 0) - (Number(morning.totalCents) || 0);
+                                return (
+                                    <div className="mt-2 rounded-lg bg-white border border-dd-line px-2.5 py-2 space-y-1">
+                                        <div className="flex items-center justify-between text-[12px]">
+                                            <span className="text-dd-text-2">🌅 {tx('Morning', 'Mañana')} · {fmtWhen(morning.createdMs, isEn)}</span>
+                                            <span className="font-bold text-dd-text tabular-nums">{fmtMoney(morning.totalCents)}</span>
+                                        </div>
+                                        {todayCounts.length > 1 && (
+                                            <>
+                                                <div className="flex items-center justify-between text-[12px]">
+                                                    <span className="text-dd-text-2">🕐 {tx('Current', 'Actual')} · {fmtWhen(latest.createdMs, isEn)}</span>
+                                                    <span className="font-bold text-dd-text tabular-nums">{fmtMoney(latest.totalCents)}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between text-[12px] border-t border-dd-line/60 pt-1">
+                                                    <span className="font-bold text-dd-text-2">{tx('Change', 'Cambio')}</span>
+                                                    <span className={`font-black tabular-nums ${diff < 0 ? 'text-red-600' : diff > 0 ? 'text-dd-green-700' : 'text-dd-text'}`}>
+                                                        {diff > 0 ? '+' : ''}{fmtMoney(diff)}
+                                                    </span>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                );
+                            })()}
                             <p className="text-[10px] text-dd-text-2 mt-1.5">{tx('Saved counts for today — they move to History after midnight.', 'Conteos de hoy — pasan al Historial después de medianoche.')}</p>
                         </div>
                     )}

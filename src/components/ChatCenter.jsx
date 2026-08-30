@@ -565,7 +565,10 @@ export default function ChatCenter({
                     });
                     count++;
                 }
-                await watchdogWrite(batch.commit());
+                // watchdogRead posture = QUIET (2026-08-29): background
+                // housekeeping must never feed the "Saving…" pill or arm the
+                // reload escalation (revive-on-hang + error flow-through kept).
+                await watchdogRead(batch.commit());
                 try { localStorage.setItem(FLAG_KEY, String(Date.now())); } catch {}
             } catch (e) {
                 console.warn('one-shot autochannel purge failed:', e);
@@ -621,8 +624,10 @@ export default function ChatCenter({
                     if (cancelled) return;
                     const batch = writeBatch(db);
                     chatDocs.slice(i, i + 450).forEach(id => batch.update(doc(db, 'notifications', id), { read: true }));
+                    // Quiet posture — automatic mark-read on entering the Chat
+                    // tab must not show the pill or arm the reload escalation.
                     // eslint-disable-next-line no-await-in-loop
-                    await watchdogWrite(batch.commit());
+                    await watchdogRead(batch.commit());
                 }
             } catch (e) {
                 console.warn('mark-chat-read failed:', e);
@@ -723,7 +728,37 @@ export default function ChatCenter({
     // actually be IN the loaded list before opening (a stale push for a
     // chat the user was removed from must not strand mobile on an empty
     // thread pane), with a 15s give-up so a mismatch can't linger.
-    const [pendingOpenChatId, setPendingOpenChatId] = useState(() => consumePendingChatOpen());
+    const [pendingOpenChatId, setPendingOpenChatId] = useState(() => {
+        const parked = consumePendingChatOpen();
+        if (parked) return parked;   // a real push deep link always wins
+        // Reload recovery (2026-08-29, Andrew: text erased around the
+        // "Saving…/Reconnecting…" pill): a watchdog/deploy reload used to
+        // land back on the chat LIST, so the stashed draft sat unrestored.
+        // The stamp below survives ONLY page death (every normal exit
+        // clears it), so consuming it here reopens exactly the thread the
+        // reload interrupted — and the draft restore fires with it.
+        try {
+            const raw = sessionStorage.getItem('ddmau:lastOpenChat');
+            if (raw) {
+                const d = JSON.parse(raw);
+                if (d && d.id && d.staffName === staffName
+                    && Number.isFinite(d.ts) && Date.now() - d.ts < 10 * 60 * 1000) {
+                    return String(d.id);
+                }
+            }
+        } catch { /* corrupt/blocked storage — just land on the list */ }
+        return null;
+    });
+    // Stamp the open thread while it's open. Cleared on every NORMAL exit —
+    // back button, tab-switch unmount, strand recovery — so it can only be
+    // seen by a mount that follows an unclean page death (reload).
+    useEffect(() => {
+        try {
+            if (activeChatId) sessionStorage.setItem('ddmau:lastOpenChat', JSON.stringify({ id: activeChatId, staffName, ts: Date.now() }));
+            else sessionStorage.removeItem('ddmau:lastOpenChat');
+        } catch { /* private mode */ }
+        return () => { try { sessionStorage.removeItem('ddmau:lastOpenChat'); } catch { /* ignore */ } };
+    }, [activeChatId, staffName]);
     useEffect(() => {
         const onOpen = (e) => {
             const id = e?.detail?.chatId;

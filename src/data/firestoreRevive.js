@@ -68,6 +68,21 @@ export function escalateReload(reason = 'write-stuck') {
     _reloadImpl();
     return true;
 }
+// Input-idle wait (same pattern as App.jsx's broadcast reload): never yank
+// the page out from under someone mid-typing. 3s poll, capped — after the
+// cap the caller reloads anyway (the tab is wedged; nothing they type can
+// save without a reload either). Shared by BOTH escalation paths (probe +
+// write) — every reload this module can trigger waits for idle first.
+async function _waitInputIdle(capMs = 60_000) {
+    const cap = Date.now() + capMs;
+    while (Date.now() < cap) {
+        const el = typeof document !== 'undefined' ? document.activeElement : null;
+        const busy = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+        if (!busy) return;
+        await new Promise(r => setTimeout(r, 3000));
+    }
+}
+
 // A healthy Firestore write acks in <2s even on store Wi-Fi. 8s without
 // settling means the transport is gone, not slow.
 export const WRITE_HANG_MS = 8 * 1000;
@@ -155,8 +170,18 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS) {
         // the app and it works"): if the network cycle didn't unstick the
         // write, the wedge is in the persistence layer and only a reload
         // rebuilds it. Do the reload for him — guarded to once per 2 min.
-        escalateTimer = setTimeout(() => {
-            if (!settled) escalateReload('write-stuck-after-revive');
+        // 2026-08-29 (Andrew: chat text "gets erased" while the pill shows):
+        // this reload used to fire mid-KEYSTROKE — an auto mark-read hanging
+        // on store Wi-Fi would yank the app out from under a half-typed
+        // message 18s later. Now it waits for input-idle (same pattern as
+        // the probe path) and RE-CHECKS settled — a write that landed during
+        // the wait, or an honest offline drop, stands the reload down.
+        escalateTimer = setTimeout(async () => {
+            if (settled) return;
+            await _waitInputIdle(60_000);
+            if (settled) return;
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+            escalateReload('write-stuck-after-revive');
         }, WRITE_ESCALATE_MS);
     }, hangMs);
     const onSettle = () => {
@@ -239,17 +264,7 @@ async function _maybeProbeReload() {
     try { if (sessionStorage.getItem(PROBE_RELOAD_KEY)) return; } catch { /* storage broken — still escalate (same posture as escalateReload) */ }
     _probeEscalating = true;
     try {
-        // Input-idle wait (same pattern as App.jsx's broadcast reload):
-        // never yank the page out from under someone mid-typing. 3s poll,
-        // 60s cap — after the cap we reload anyway (the tab is wedged;
-        // nothing they type can save without a reload either).
-        const cap = Date.now() + 60_000;
-        while (Date.now() < cap) {
-            const el = typeof document !== 'undefined' ? document.activeElement : null;
-            const busy = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
-            if (!busy) break;
-            await new Promise(r => setTimeout(r, 3000));
-        }
+        await _waitInputIdle(60_000);
         // RE-CHECK after the wait — a probe may have succeeded meanwhile
         // (strikes reset), the tab may have hidden, or we may have gone
         // honestly offline. Any of those ⇒ stand down.

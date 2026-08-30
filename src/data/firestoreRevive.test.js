@@ -141,6 +141,45 @@ describe('escalation to reload (persistence-layer wedge)', () => {
         expect(mod.escalateReload('c')).toBe(false);
         expect(reload).toHaveBeenCalledTimes(1);
     });
+
+    // 2026-08-29 (Andrew: chat text "gets erased" while the pill shows) —
+    // the write-stuck reload must never fire mid-keystroke.
+    it('waits for typing to stop before the write-stuck reload', async () => {
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        sessionStorage.clear();
+        const input = document.createElement('textarea');
+        document.body.appendChild(input);
+        input.focus();
+        mod.watchdogWrite(new Promise(() => {}));   // never settles
+        await vi.advanceTimersByTimeAsync(mod.WRITE_HANG_MS + mod.WRITE_ESCALATE_MS + 200);
+        expect(reload).not.toHaveBeenCalled();      // parked on the idle wait
+        input.blur();
+        document.body.removeChild(input);
+        await vi.advanceTimersByTimeAsync(4000);    // next 3s idle poll
+        expect(reload).toHaveBeenCalledTimes(1);    // wedge still real → reload
+    });
+
+    it('a write that lands DURING the idle wait stands the reload down', async () => {
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        sessionStorage.clear();
+        const input = document.createElement('textarea');
+        document.body.appendChild(input);
+        input.focus();
+        let resolveLate;
+        const wrapped = mod.watchdogWrite(new Promise(res => { resolveLate = res; }));
+        await vi.advanceTimersByTimeAsync(mod.WRITE_HANG_MS + mod.WRITE_ESCALATE_MS + 200);
+        expect(reload).not.toHaveBeenCalled();      // parked on the idle wait
+        resolveLate('flushed');                     // the revive worked after all
+        await wrapped;
+        input.blur();
+        document.body.removeChild(input);
+        await vi.advanceTimersByTimeAsync(4000);    // idle again → re-check settled
+        expect(reload).not.toHaveBeenCalled();      // stood down
+    });
 });
 
 describe('watchdogRead (2026-08-09 audit — reads must not reload or feed the pill)', () => {

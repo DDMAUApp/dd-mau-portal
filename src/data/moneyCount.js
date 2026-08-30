@@ -10,7 +10,7 @@
 import { collection, onSnapshot, query, orderBy, limit, serverTimestamp, doc, where, arrayUnion,
     addDoc as _addDoc, setDoc as _setDoc, getDocs as _getDocs, getDoc as _getDoc, deleteDoc as _deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { watchdogWrite, watchdogRead } from './firestoreRevive';
+import { watchdogWrite, watchdogRead, resilientSnapshot } from './firestoreRevive';
 
 // Wedged-connection watchdog (2026-08-08, Andrew: "the money counter keeps
 // timing out"). After a background suspend the Firestore transport can die
@@ -25,6 +25,15 @@ const setDoc = (...a) => watchdogWrite(_setDoc(...a));
 // "Saving…" pill (2026-08-09 audit — see watchdogRead).
 const getDocs = (...a) => watchdogRead(_getDocs(...a));
 const getDoc = (...a) => watchdogRead(_getDoc(...a));
+// WRITE-POSTURE read (2026-08-29, Andrew: tip save "stuck on saving and
+// never saved"): saveCashTips/editCashTips must READ the day's doc before
+// writing (the edits[] audit log needs oldCents), and that read sat under
+// watchdogRead — which by design never escalates and never rejects. On the
+// iOS transport wedge the read hung forever, the write was never reached,
+// and the Save button spun eternally with no pill and no recovery. A read
+// that GATES a user-pressed save deserves write posture: pill + revive +
+// reload escalation.
+const getDocForWrite = (...a) => watchdogWrite(_getDoc(...a));
 const deleteDoc = (...a) => watchdogWrite(_deleteDoc(...a));
 
 // The ONLY real stores. Cash is NEVER merged across locations: every count /
@@ -130,11 +139,15 @@ export async function saveMoneyCount({ counts, staffName, staffId, location }) {
 // few counts/day, so "look back" reaches well past a couple of weeks.
 export function subscribeMoneyCounts(cb, max = 300) {
     const q = query(collection(db, COLL), orderBy('createdMs', 'desc'), limit(max));
-    return onSnapshot(
+    // resilientSnapshot (2026-08-29): auto-resubscribe with backoff on
+    // listener death, and NEVER clobber displayed records with [] on an
+    // error — on a financial page an errored listener rendering "No counts
+    // saved yet" reads as "the money records are gone."
+    return resilientSnapshot('money_counts', (onHealthy, onError) => onSnapshot(
         q,
-        (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-        (err) => { console.warn('money_counts subscribe failed:', err); cb([]); },
-    );
+        (snap) => { onHealthy(); cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); },
+        onError,
+    ));
 }
 
 // Live listener for ONE day's counts (the "Today" panel) — a single-field
@@ -144,11 +157,11 @@ export function subscribeMoneyCounts(cb, max = 300) {
 export function subscribeTodayCounts(date, cb) {
     const d = date || centralDate();
     const q = query(collection(db, COLL), where('date', '==', d));
-    return onSnapshot(
+    return resilientSnapshot('money_counts_today', (onHealthy, onError) => onSnapshot(
         q,
-        (snap) => cb(snap.docs.map((x) => ({ id: x.id, ...x.data() }))),
-        (err) => { console.warn('today money_counts subscribe failed:', err); cb([]); },
-    );
+        (snap) => { onHealthy(); cb(snap.docs.map((x) => ({ id: x.id, ...x.data() }))); },
+        onError,
+    ));
 }
 
 // ── Cash tips — a SEPARATE daily total, saved on its own (not part of the
@@ -190,7 +203,7 @@ export async function saveCashTips({ date, amountCents, staffName, staffId, loca
     // Re-saving a day overwrites its total — log every value CHANGE to the
     // on-doc edits[] (cash-audit safety), so a re-count from the Count view is
     // recorded the same as a History edit. The first entry of a day isn't logged.
-    const snap = await getDoc(ref);
+    const snap = await getDocForWrite(ref);
     const existed = snap.exists();
     const oldCents = existed ? (Number(snap.data()?.amountCents) || 0) : 0;
     const payload = {
@@ -248,7 +261,7 @@ export async function editCashTips({ location, date, newAmountCents, by }) {
     // it can never move a tip to a different store.
     const loc = normalizeLocation(location);
     const ref = doc(db, TIPS_COLL, `${loc}_${date}`);
-    const snap = await getDoc(ref);
+    const snap = await getDocForWrite(ref);
     const oldCents = snap.exists() ? (Number(snap.data()?.amountCents) || 0) : 0;
     const cents = Math.max(0, Math.round(Number(newAmountCents) || 0));
     if (cents === oldCents) return false;
