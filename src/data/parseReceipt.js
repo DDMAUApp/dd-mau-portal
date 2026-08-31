@@ -15,29 +15,71 @@ function getCallable() {
 
 // Read an image File → downscale (longest side ≤ maxDim) → JPEG base64.
 // Returns { base64, mediaType }.
+//
+// MEMORY-LEAN rewrite (2026-08-31, Andrew: "my last upload just crashed"):
+// the old path held the photo THREE ways at once — the whole original as a
+// FileReader base64 STRING, a full-resolution <img> decode (a 48MP iPhone
+// shot decodes to ~190MB of RGBA), and the modal's full-res preview <img>
+// on top. That spike could blow the WKWebView's memory limit and iOS
+// killed the app mid-upload — an intermittent hard crash with no JS error.
+// Now: createImageBitmap(file, { resizeWidth }) lets WebKit decode AND
+// downsample natively, so neither the original base64 string nor a
+// full-size bitmap ever enters the JS heap. Fallback for engines without
+// resize support uses an object URL (still no giant string) and releases
+// everything promptly.
 export async function fileToScaledBase64(file, maxDim = 1600, quality = 0.82) {
-    const dataUrl = await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result);
-        r.onerror = () => reject(new Error('read failed'));
-        r.readAsDataURL(file);
-    });
-    const img = await new Promise((resolve, reject) => {
-        const im = new Image();
-        im.onload = () => resolve(im);
-        im.onerror = () => reject(new Error('decode failed'));
-        im.src = dataUrl;
-    });
-    let w = img.naturalWidth || img.width;
-    let h = img.naturalHeight || img.height;
-    const scale = Math.min(1, maxDim / Math.max(w, h || 1));
-    w = Math.max(1, Math.round(w * scale));
-    h = Math.max(1, Math.round(h * scale));
+    let w, h;
     const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    let drew = false;
+    if (typeof createImageBitmap === 'function') {
+        try {
+            // Resize by width; aspect is preserved. Receipt photos are always
+            // wider than maxDim so this never upscales in practice; a portrait
+            // shot's height may exceed maxDim somewhat — harmless (still far
+            // under the function's ~5MB cap).
+            const bmp = await createImageBitmap(file, { resizeWidth: maxDim, resizeQuality: 'high' });
+            // Some older WebKit builds IGNORE the resize options instead of
+            // throwing — detect that (bitmap far wider than asked) and draw
+            // it CAPPED onto the canvas rather than at full size, so a giant
+            // photo can never ride through to the upload.
+            if (bmp.width > maxDim * 1.02) {
+                const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height || 1));
+                w = Math.max(1, Math.round(bmp.width * scale));
+                h = Math.max(1, Math.round(bmp.height * scale));
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+            } else {
+                w = bmp.width; h = bmp.height;
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(bmp, 0, 0);
+            }
+            bmp.close();   // release the bitmap immediately — don't wait for GC
+            drew = true;
+        } catch { /* resize options unsupported — fall through to the img path */ }
+    }
+    if (!drew) {
+        const objUrl = URL.createObjectURL(file);
+        try {
+            const img = await new Promise((resolve, reject) => {
+                const im = new Image();
+                im.onload = () => resolve(im);
+                im.onerror = () => reject(new Error('decode failed'));
+                im.src = objUrl;
+            });
+            w = img.naturalWidth || img.width;
+            h = img.naturalHeight || img.height;
+            const scale = Math.min(1, maxDim / Math.max(w, h || 1));
+            w = Math.max(1, Math.round(w * scale));
+            h = Math.max(1, Math.round(h * scale));
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            img.src = '';   // drop the decoded bitmap reference promptly
+        } finally {
+            URL.revokeObjectURL(objUrl);
+        }
+    }
     const jpeg = canvas.toDataURL('image/jpeg', quality);
+    canvas.width = 0; canvas.height = 0;   // free the canvas backing store
     return { base64: (jpeg.split(',')[1] || ''), mediaType: 'image/jpeg' };
 }
 

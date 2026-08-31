@@ -111,20 +111,22 @@ export default function ReceiptScanModal({ location, staffName, language, master
     const [savedSummary, setSavedSummary] = useState(null);
     const fileRef = useRef(null);
 
-    // 2026-06-20 (QA audit L1) — keep an object-URL preview of the captured
-    // receipt. The file was base64'd, sent to the AI, then discarded with no
-    // preview anywhere — so on "retake" the manager couldn't see what was
-    // captured, and on "review" couldn't cross-check a misread price against
-    // the source image. Revoke the prior URL on replace + on unmount.
+    // 2026-06-20 (QA audit L1) — keep a preview of the captured receipt for
+    // the retake/review cross-check. MEMORY-LEAN since 2026-08-31 (Andrew:
+    // "my last upload just crashed"): the preview used to be an object URL
+    // of the ORIGINAL photo — a full-resolution <img> decode (~190MB for a
+    // 48MP shot) living alongside the scaler's own work, which could blow
+    // the WebView's memory limit and get the app killed by iOS mid-upload.
+    // Now the preview is the ~1600px downscaled JPEG the AI sees (a few
+    // hundred KB) — plenty to eyeball. Only blob: URLs need revoking.
     const [previewUrl, setPreviewUrl] = useState(null);
     const previewUrlRef = useRef(null);
-    const setPreview = (file) => {
-        try { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); } catch {}
-        const url = file ? URL.createObjectURL(file) : null;
-        previewUrlRef.current = url;
-        setPreviewUrl(url);
+    const setPreview = (url) => {
+        try { if (previewUrlRef.current && previewUrlRef.current.startsWith('blob:')) URL.revokeObjectURL(previewUrlRef.current); } catch {}
+        previewUrlRef.current = url || null;
+        setPreviewUrl(url || null);
     };
-    useEffect(() => () => { try { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); } catch {} }, []);
+    useEffect(() => () => { try { if (previewUrlRef.current && previewUrlRef.current.startsWith('blob:')) URL.revokeObjectURL(previewUrlRef.current); } catch {} }, []);
 
     // Mirror the in-progress review to the draft on every change.
     useEffect(() => {
@@ -139,11 +141,13 @@ export default function ReceiptScanModal({ location, staffName, language, master
 
     const handleFile = async (file) => {
         if (!file) return;
-        setPreview(file);
         setStage('parsing');
         setProblems([]);
         try {
             const { base64, mediaType } = await fileToScaledBase64(file);
+            // Preview comes from the downscaled copy, AFTER scaling — never
+            // render the full-resolution original (see setPreview comment).
+            setPreview(`data:${mediaType};base64,${base64}`);
             const result = await parseReceiptImage({ imageBase64: base64, mediaType });
             if (!result || result.readable !== true) {
                 setProblems(result?.problems?.length ? result.problems
