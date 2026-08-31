@@ -204,6 +204,16 @@ export default function ReceiptScanModal({ location, staffName, language, master
         };
     });
 
+    // The Save button must NEVER spin forever (2026-08-31, Andrew: "stuck
+    // on saving"): the writes are watchdogged now (revive + escalate), but
+    // as a last line each write also races a deadline — on timeout the
+    // catch below clears `saving`, shows the error toast, and the review
+    // (+ its reload-surviving draft) stays intact for a one-tap retry.
+    const SAVE_DEADLINE_MS = 30_000;
+    const withDeadline = (p) => new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('save timed out')), SAVE_DEADLINE_MS);
+        p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+    });
     const save = async () => {
         if (saving) return;
         setSaving(true);
@@ -213,7 +223,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
                 if (!r.included || !r.masterId) continue;
                 const price = parsePrice(r.price);
                 if (!isFinite(price) || price < 0) continue;
-                await recordPurchase(location, r.masterId, {
+                await withDeadline(recordPurchase(location, r.masterId, {
                     vendor: vendor || 'Other',
                     price,
                     pack: r.pack || null,
@@ -223,7 +233,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
                     by: staffName,
                     purchasedDate: date,
                     reason: scanSource === 'import' ? 'price import' : 'receipt scan',
-                });
+                }));
                 const pu = perUnitPrice(price, r.pack);
                 landed.push({
                     name: masterById.get(r.masterId)?.name || r.name,

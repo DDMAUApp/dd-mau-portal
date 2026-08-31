@@ -29,6 +29,9 @@ import {
     query, orderBy, limit, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+// Watchdogged writes (2026-08-31 — same "stuck on saving" class as
+// itemPricing.js; see the comment there). Reads/listeners unchanged.
+import { watchdogWrite } from './firestoreRevive';
 import { normalizeAliasKey } from './itemAliases';
 
 export function receiptScansCollPath(location) {
@@ -79,7 +82,7 @@ export function subscribeReceiptScans(location, cb, max = 40) {
 // new row appears immediately (a pending serverTimestamp sorts as null and
 // would briefly drop out of the orderBy).
 export async function saveReceiptScan(location, scan, createdAtMs) {
-    const ref = await addDoc(collection(db, receiptScansCollPath(location)), {
+    const ref = await watchdogWrite(addDoc(collection(db, receiptScansCollPath(location)), {
         vendor: scan.vendor || '',
         date: scan.date || null,
         scannedBy: scan.scannedBy || null,
@@ -91,7 +94,7 @@ export async function saveReceiptScan(location, scan, createdAtMs) {
         createdAt: createdAtMs ?? Date.now(),
         scannedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-    });
+    }));
     return ref.id;
 }
 
@@ -99,17 +102,17 @@ export async function saveReceiptScan(location, scan, createdAtMs) {
 // Merge so createdAt / scannedAt / scannedBy are preserved.
 export async function updateReceiptScan(location, scanId, patch) {
     const ref = doc(db, receiptScansCollPath(location), String(scanId));
-    await setDoc(ref, {
+    await watchdogWrite(setDoc(ref, {
         ...(patch.vendor !== undefined ? { vendor: patch.vendor } : {}),
         ...(patch.date !== undefined ? { date: patch.date } : {}),
         ...(patch.savedCount !== undefined ? { savedCount: patch.savedCount } : {}),
         ...(patch.lines !== undefined ? { lines: patch.lines } : {}),
         updatedAt: serverTimestamp(),
-    }, { merge: true });
+    }, { merge: true }));
 }
 
 // Remove a scan record (manager housekeeping for junk scans). This deletes
 // only the scan's history row — the prices it wrote to item_prices stay.
 export async function deleteReceiptScan(location, scanId) {
-    await deleteDoc(doc(db, receiptScansCollPath(location), String(scanId)));
+    await watchdogWrite(deleteDoc(doc(db, receiptScansCollPath(location), String(scanId))));
 }

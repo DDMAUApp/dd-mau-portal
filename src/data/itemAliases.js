@@ -23,6 +23,7 @@ import {
     collection, doc, onSnapshot, writeBatch, serverTimestamp, increment,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { watchdogWrite } from './firestoreRevive';   // 2026-08-31 — see itemPricing.js
 
 export function aliasesCollPath(location) {
     return `item_aliases_${location}`;
@@ -81,5 +82,5 @@ export async function learnAliases(location, entries, by) {
         }, { merge: true });
         writes++;
     }
-    if (writes) await batch.commit();
+    if (writes) await watchdogWrite(batch.commit());
 }

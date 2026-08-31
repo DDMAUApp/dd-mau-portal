@@ -26,6 +26,15 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { normalizeVendor } from './inventory';
+// Wedged-connection watchdog (2026-08-31, Andrew: receipt save "stuck on
+// saving"): scanning a receipt backgrounds the app into the camera, iOS
+// kills the Firestore socket, and the SAVE is the first write after resume
+// — on the wedged transport a raw runTransaction hangs FOREVER with no
+// pill and no recovery. Same class (and same fix) as Money Count's tip
+// save: every write in this module runs under watchdogWrite (pill + 8s
+// network revive + idle-guarded reload escalation). The scan draft
+// (ReceiptScanModal) survives any escalation reload via its Resume banner.
+import { watchdogWrite } from './firestoreRevive';
 
 // ── Price source taxonomy + trust ranking ───────────────────────────────
 // Lower rank = MORE trusted. This is the priority order Andrew approved:
@@ -318,7 +327,7 @@ export async function setManualPrice(location, itemId, fields, byName) {
     // Transaction so a concurrent write to the same item (e.g. a receipt
     // import landing at the same moment) can't drop history entries via a
     // stale read-modify-write of the `history` array.
-    await runTransaction(db, async (tx) => {
+    await watchdogWrite(runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         const prev = snap.exists() ? snap.data() : {};
         const prevManual = prev.manual || null;
@@ -344,7 +353,7 @@ export async function setManualPrice(location, itemId, fields, byName) {
         };
         const history = [...(prev.history || []), historyEntry].slice(-50); // cap growth
         tx.set(ref, { itemId: String(itemId), location, manual, history }, { merge: true });
-    });
+    }));
 }
 
 // Clear a manual price (2026-08-31): a set manual price outranks every
@@ -354,7 +363,7 @@ export async function setManualPrice(location, itemId, fields, byName) {
 // hidden by the history view's filter — this is an audit row, not a price).
 export async function clearManualPrice(location, itemId, byName) {
     const ref = doc(db, itemPricesCollPath(location), String(itemId));
-    await runTransaction(db, async (tx) => {
+    await watchdogWrite(runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         if (!snap.exists()) return;
         const prev = snap.data();
@@ -367,7 +376,7 @@ export async function clearManualPrice(location, itemId, byName) {
         };
         const history = [...(prev.history || []), historyEntry].slice(-50);
         tx.set(ref, { manual: null, history }, { merge: true });
-    });
+    }));
 }
 
 // ── One-time vendor-key merge (2026-08-31 migration helper) ──────────────
@@ -414,7 +423,7 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
     // work. The RAW receipt vendor still lives on the scan record.
     const vKey = canonicalVendorKey(vendor);
     // Transaction — same history-loss guard as setManualPrice.
-    await runTransaction(db, async (tx) => {
+    await watchdogWrite(runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         const prev = snap.exists() ? snap.data() : {};
         const prevEntry = (prev.byVendor || {})[vKey] || null;
@@ -453,7 +462,7 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
             history,
             qtyHistory: qtyHistory.slice(-60),
         }, { merge: true });
-    });
+    }));
 }
 
 // last (most recent by ts; ties resolve to the later-appended sample) + mean
