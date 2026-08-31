@@ -10244,25 +10244,47 @@ function CompactView({ weekStart, shifts, staffSummary, isEn, currentStaffName, 
         return m;
     }, [shifts]);
     // Same lunch/dinner counts as the Week grid headers (same windows,
-    // same "skip open offers / unassigned" rule) so the numbers match.
+    // same "skip open offers / unassigned" rule, same per-shift lead/
+    // manager dot counting) so the numbers AND dots match the grid.
     const mealsByDate = useMemo(() => {
         const toMin = (t) => { if (!t) return null; const [h, mm] = t.split(':').map(Number); return h * 60 + (mm || 0); };
+        const positionByName = new Map();
+        for (const st of staffSummary) positionByName.set(st.name, st.position || 'regular');
         const out = new Map();
         for (const d of days) {
             const dStr = toDateStr(d);
             const lunch = new Set(); const dinner = new Set();
+            let lunchLeads = 0, lunchManagers = 0, dinnerLeads = 0, dinnerManagers = 0;
             for (const sh of (shiftsByDate.get(dStr) || [])) {
                 if (sh.offerStatus === 'open' || !sh.staffName) continue;
                 const sm = toMin(sh.startTime); const em = toMin(sh.endTime);
                 if (sm == null || em == null) continue;
-                if (sm < LUNCH_WIN_END && em > LUNCH_WIN_START) lunch.add(sh.staffName);
-                if (sm < DINNER_WIN_END && em > DINNER_WIN_START) dinner.add(sh.staffName);
+                const pos = positionByName.get(sh.staffName) || 'regular';
+                if (sm < LUNCH_WIN_END && em > LUNCH_WIN_START) {
+                    lunch.add(sh.staffName);
+                    if (pos === 'manager') lunchManagers += 1;
+                    else if (pos === 'lead') lunchLeads += 1;
+                }
+                if (sm < DINNER_WIN_END && em > DINNER_WIN_START) {
+                    dinner.add(sh.staffName);
+                    if (pos === 'manager') dinnerManagers += 1;
+                    else if (pos === 'lead') dinnerLeads += 1;
+                }
             }
-            out.set(dStr, { lunch: lunch.size, dinner: dinner.size });
+            out.set(dStr, { lunch: lunch.size, dinner: dinner.size, lunchLeads, lunchManagers, dinnerLeads, dinnerManagers });
         }
         return out;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [shiftsByDate, weekStart]);
+    }, [shiftsByDate, weekStart, staffSummary]);
+    // One emerald dot per shift lead + one orange dot per manager working
+    // that meal — identical legend to the Week grid headers.
+    const mealDots = (leads, managers) => {
+        if (!leads && !managers) return null;
+        const dots = [];
+        for (let i = 0; i < leads; i++) dots.push(<span key={`l${i}`} className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />);
+        for (let i = 0; i < managers; i++) dots.push(<span key={`m${i}`} className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500" />);
+        return <span className="inline-flex gap-0.5 items-center">{dots}</span>;
+    };
     const pill = 'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold border tabular-nums';
     return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 gap-3 items-start">
@@ -10288,10 +10310,12 @@ function CompactView({ weekStart, shifts, staffSummary, isEn, currentStaffName, 
                                     <span className={`${pill} ${meals.lunch === 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-800 border-amber-200'}`}
                                         title={isEn ? 'Lunch (12-1pm)' : 'Almuerzo (12-1pm)'}>
                                         {isEn ? 'L' : 'A'}:{meals.lunch}
+                                        {mealDots(meals.lunchLeads, meals.lunchManagers)}
                                     </span>
                                     <span className={`${pill} ${meals.dinner === 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-indigo-50 text-indigo-800 border-indigo-200'}`}
                                         title={isEn ? 'Dinner (5-7pm)' : 'Cena (5-7pm)'}>
                                         {isEn ? 'D' : 'C'}:{meals.dinner}
+                                        {mealDots(meals.dinnerLeads, meals.dinnerManagers)}
                                     </span>
                                 </div>
                             )}
