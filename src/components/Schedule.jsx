@@ -73,7 +73,7 @@ import {
     CloudSnow, CloudFog, Wind, ChevronDown,
     // Schedule top-of-page chrome icons — replace bare emoji glyphs
     // for a more polished, OS-consistent look across iOS + Android.
-    Sofa, Utensils, LayoutGrid, LayoutList, List, Palmtree,
+    Sofa, Utensils, LayoutGrid, LayoutList, List, Palmtree, Rows3,
     Search, User, Users, Megaphone, Plus, MoreHorizontal, Bell,
     Hourglass, RefreshCw,
     // More-menu items
@@ -6309,6 +6309,7 @@ ${dayBlocks}
                 <div className="flex flex-1 gap-1 glass-sheet rounded-lg p-1">
                     {[
                         { key: 'grid', labelEn: 'Week', labelEs: 'Semana', Icon: LayoutGrid },
+                        { key: 'compact', labelEn: 'Compact', labelEs: 'Compacta', Icon: Rows3 },
                         { key: 'day',  labelEn: 'Day',  labelEs: 'Día',    Icon: LayoutList },
                         { key: 'list', labelEn: 'List', labelEs: 'Lista',  Icon: List },
                         { key: 'pto',  labelEn: 'Time Off', labelEs: 'Tiempo libre', Icon: Palmtree },
@@ -7115,6 +7116,18 @@ ${dayBlocks}
 
                     {/* Day / List / PTO views — at lg+, main content + sticky HoursSummary sidebar.
                         On smaller screens they stack as before. */}
+                    {viewMode === 'compact' && (
+                        <CompactView
+                            weekStart={weekStart}
+                            shifts={visibleShifts}
+                            staffSummary={staffSummary}
+                            isEn={isEn}
+                            currentStaffName={staffName}
+                            canEdit={canEdit}
+                            onEditShift={onEditShiftCb}
+                            dateClosed={dateClosed}
+                        />
+                    )}
                     {['day', 'list', 'pto'].includes(viewMode) && (
                         <div className="lg:flex lg:gap-4">
                             <div className="lg:flex-1 min-w-0">
@@ -10194,6 +10207,132 @@ function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdi
                     </button>
                 )}
             </div>
+        </div>
+    );
+}
+
+// ── CompactView (Andrew 2026-08-30: "a compact schedule view… only the
+// schedule shifts… monday at the top, and 5 shifts with start times and
+// names. still keep the same color of the shifts. and the same count at
+// the top") ─────────────────────────────────────────────────────────────
+// The whole week as seven day sections showing ONLY scheduled shifts —
+// no roster rows, no empty cells. Day headers carry the SAME lunch/dinner
+// staffing pills as the Week grid (same window + skip rules), rows keep
+// the role colors + draft/offer/pending markers, and — same as the grid —
+// double-click (or right-click / long-press context menu) opens the shift
+// edit modal for editors. Read-only for everyone else.
+function CompactView({ weekStart, shifts, staffSummary, isEn, currentStaffName, canEdit, onEditShift, dateClosed }) {
+    const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
+    const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
+    const staffByName = useMemo(() => {
+        const m = new Map();
+        for (const st of staffSummary) m.set(st.name, st);
+        return m;
+    }, [staffSummary]);
+    // Shifts bucketed per day, sorted by start time (ties: name).
+    const shiftsByDate = useMemo(() => {
+        const m = new Map();
+        for (const sh of shifts) {
+            if (!sh.date) continue;
+            const arr = m.get(sh.date);
+            if (arr) arr.push(sh); else m.set(sh.date, [sh]);
+        }
+        for (const arr of m.values()) {
+            arr.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || '')
+                || (a.staffName || '').localeCompare(b.staffName || ''));
+        }
+        return m;
+    }, [shifts]);
+    // Same lunch/dinner counts as the Week grid headers (same windows,
+    // same "skip open offers / unassigned" rule) so the numbers match.
+    const mealsByDate = useMemo(() => {
+        const toMin = (t) => { if (!t) return null; const [h, mm] = t.split(':').map(Number); return h * 60 + (mm || 0); };
+        const out = new Map();
+        for (const d of days) {
+            const dStr = toDateStr(d);
+            const lunch = new Set(); const dinner = new Set();
+            for (const sh of (shiftsByDate.get(dStr) || [])) {
+                if (sh.offerStatus === 'open' || !sh.staffName) continue;
+                const sm = toMin(sh.startTime); const em = toMin(sh.endTime);
+                if (sm == null || em == null) continue;
+                if (sm < LUNCH_WIN_END && em > LUNCH_WIN_START) lunch.add(sh.staffName);
+                if (sm < DINNER_WIN_END && em > DINNER_WIN_START) dinner.add(sh.staffName);
+            }
+            out.set(dStr, { lunch: lunch.size, dinner: dinner.size });
+        }
+        return out;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [shiftsByDate, weekStart]);
+    const pill = 'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold border tabular-nums';
+    return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 gap-3 items-start">
+            {days.map((d, i) => {
+                const dStr = toDateStr(d);
+                const dayShifts = shiftsByDate.get(dStr) || EMPTY_CELL_SHIFTS;
+                const closed = !!(dateClosed && dateClosed(dStr));
+                const meals = mealsByDate.get(dStr) || { lunch: 0, dinner: 0 };
+                return (
+                    <div key={dStr} className="bg-white rounded-xl border border-dd-line shadow-sm overflow-hidden">
+                        <div className="px-2.5 py-2 border-b border-dd-line/70 bg-dd-bg/40">
+                            <div className="flex items-center justify-between gap-1">
+                                <span className="text-sm font-black text-dd-text">
+                                    {dayLabelsFull[i]}
+                                    <span className="ml-1.5 text-[11px] font-bold text-dd-text-2 tabular-nums">{d.getMonth() + 1}/{d.getDate()}</span>
+                                </span>
+                                {closed
+                                    ? <span className="text-[10px] font-black uppercase tracking-wider text-red-600">🚫 {isEn ? 'Closed' : 'Cerrado'}</span>
+                                    : <span className="text-[10px] font-bold text-dd-text-2 tabular-nums">{dayShifts.length} {isEn ? (dayShifts.length === 1 ? 'shift' : 'shifts') : (dayShifts.length === 1 ? 'turno' : 'turnos')}</span>}
+                            </div>
+                            {!closed && (
+                                <div className="mt-1 flex gap-1">
+                                    <span className={`${pill} ${meals.lunch === 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-800 border-amber-200'}`}
+                                        title={isEn ? 'Lunch (12-1pm)' : 'Almuerzo (12-1pm)'}>
+                                        {isEn ? 'L' : 'A'}:{meals.lunch}
+                                    </span>
+                                    <span className={`${pill} ${meals.dinner === 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-indigo-50 text-indigo-800 border-indigo-200'}`}
+                                        title={isEn ? 'Dinner (5-7pm)' : 'Cena (5-7pm)'}>
+                                        {isEn ? 'D' : 'C'}:{meals.dinner}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-1.5 space-y-1">
+                            {dayShifts.length === 0 && !closed && (
+                                <p className="text-[11px] text-dd-text-2 text-center py-2">{isEn ? 'No shifts' : 'Sin turnos'}</p>
+                            )}
+                            {dayShifts.map(sh => {
+                                const st = staffByName.get(sh.staffName);
+                                const colors = roleColors(st?.role, !!st?.shiftLead);
+                                const isDraft = sh.published === false;
+                                const isOffered = sh.offerStatus === 'open';
+                                const isCoverRequest = isOffered && !!sh.coverNeeded;
+                                const isCasualOffer = isOffered && !isCoverRequest;
+                                const isPending = sh.offerStatus === 'pending';
+                                const isMine = sh.staffName === currentStaffName;
+                                return (
+                                    <div key={sh.id}
+                                        onDoubleClick={(e) => { if (!canEdit) return; e.preventDefault(); onEditShift?.(sh); }}
+                                        onContextMenu={(e) => { if (!canEdit) return; e.preventDefault(); onEditShift?.(sh); }}
+                                        title={canEdit ? (isEn ? 'Double-click to edit' : 'Doble clic para editar') : undefined}
+                                        className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs ${isDraft ? 'border-2 border-dashed border-dd-text-2/50 opacity-70' : `border ${colors.border}`} ${isMine ? 'bg-dd-green-50' : colors.bg} ${isCoverRequest ? 'ring-2 ring-red-500 ring-offset-1' : isCasualOffer ? 'ring-2 ring-blue-400 ring-offset-1' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1' : ''} ${canEdit ? 'cursor-pointer hover:shadow-card-hov' : ''} transition select-none`}>
+                                        <span className={`shrink-0 font-bold tabular-nums ${colors.text}`}>{shortTime12h(sh.startTime)}–{shortTime12h(sh.endTime)}</span>
+                                        <span className={`min-w-0 truncate font-bold ${isMine ? 'text-dd-green-700' : colors.text}`}>
+                                            {isMine && '✓ '}{sh.staffName}
+                                        </span>
+                                        <span className="ml-auto shrink-0 inline-flex items-center gap-0.5">
+                                            {sh.isShiftLead && <span title="Shift Lead" className="text-[10px]">🛡️</span>}
+                                            {isDraft && <span className="text-[9px] font-bold uppercase text-dd-text-2">✏️</span>}
+                                            {isCoverRequest && <span className="text-[10px]" title={isEn ? 'Needs cover' : 'Necesita cobertura'}>🆘</span>}
+                                            {isCasualOffer && <span className="text-[10px]" title={isEn ? 'Up for grabs' : 'Disponible'}>📣</span>}
+                                            {isPending && <span className="text-[10px]" title={`⏳ → ${sh.pendingClaimBy || ''}`}>⏳</span>}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            })}
         </div>
     );
 }

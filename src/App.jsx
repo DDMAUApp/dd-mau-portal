@@ -262,10 +262,14 @@ class ErrorBoundary extends Component {
             })();
             if (isChunkErr && !alreadyTried) {
                 try { sessionStorage.setItem(RELOAD_FLAG_KEY, String(Date.now())); } catch {}
-                // Use replace to avoid adding to history; defer so React
-                // can finish painting the fallback (in case reload is
-                // blocked, the user still sees the friendly message).
-                setTimeout(() => { window.location.reload(); }, 50);
+                // Cache-busting forceRefresh, NOT a plain reload (2026-08-29,
+                // Julie mid-deploy: "page was flashing and wanted a reload"):
+                // a plain reload can serve the SAME stale cached index.html,
+                // hit the same dead chunk, and land on the button screen —
+                // forceRefresh clears the SW + caches so one attempt converges
+                // on the fresh build. Deferred so React paints the fallback
+                // first in case the reload is blocked.
+                setTimeout(() => { Promise.resolve(forceRefresh()).catch(() => window.location.reload()); }, 50);
             } else if (!isChunkErr) {
                 // Non-chunk crash that fell all the way to the global
                 // boundary — almost always a top-level render bug (e.g.
@@ -309,7 +313,7 @@ class ErrorBoundary extends Component {
                         style={{padding: "10px 24px", background: "#059669", color: "white", border: "none", borderRadius: "8px", fontWeight: 700, fontSize: "14px", cursor: "pointer", marginRight: "8px"}}>
                         {isEs ? "Reintentar" : "Try Again"}
                     </button>
-                    <button onClick={() => { try { sessionStorage.removeItem(RELOAD_FLAG_KEY); } catch {} window.location.reload(); }}
+                    <button onClick={() => { try { sessionStorage.removeItem(RELOAD_FLAG_KEY); } catch {} Promise.resolve(forceRefresh()).catch(() => window.location.reload()); }}
                         style={{padding: "10px 24px", background: "#fff", color: "#374151", border: "1px solid #d1d5db", borderRadius: "8px", fontWeight: 700, fontSize: "14px", cursor: "pointer"}}>
                         {isEs ? "Recargar" : "Reload"}
                     </button>
