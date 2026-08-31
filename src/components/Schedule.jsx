@@ -10229,7 +10229,9 @@ function CompactView({ weekStart, shifts, staffSummary, isEn, currentStaffName, 
         for (const st of staffSummary) m.set(st.name, st);
         return m;
     }, [staffSummary]);
-    // Shifts bucketed per day, sorted by start time (ties: name).
+    // Shifts bucketed per day. Sort (Andrew 2026-08-31): by the time they
+    // LEAVE first — a 10-2 lists before a 10-8 — and inside the same leave
+    // time (the 8pm dinner crew) by who comes IN earliest. Ties: name.
     const shiftsByDate = useMemo(() => {
         const m = new Map();
         for (const sh of shifts) {
@@ -10238,7 +10240,8 @@ function CompactView({ weekStart, shifts, staffSummary, isEn, currentStaffName, 
             if (arr) arr.push(sh); else m.set(sh.date, [sh]);
         }
         for (const arr of m.values()) {
-            arr.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || '')
+            arr.sort((a, b) => (a.endTime || '').localeCompare(b.endTime || '')
+                || (a.startTime || '').localeCompare(b.startTime || '')
                 || (a.staffName || '').localeCompare(b.staffName || ''));
         }
         return m;

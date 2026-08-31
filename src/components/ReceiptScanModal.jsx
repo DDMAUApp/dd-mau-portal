@@ -21,6 +21,26 @@ import { saveReceiptScan, updateReceiptScan } from '../data/receiptScans';
 import { lookupAlias, learnAliases } from '../data/itemAliases';
 import { toast } from '../toast';
 
+// ── Reload-survival draft (2026-08-31, Andrew: "i just scanned one today"
+// and it vanished — a deploy's auto-refresh reloaded the app mid-review
+// and the whole scan was lost before Save). While the review screen is
+// open, the extraction + every edit mirrors to localStorage; a reload (or
+// accidental close) can then resume exactly where the manager was via the
+// banner in PricingWorkspace. Cleared on successful save / explicit
+// discard; 12h TTL.
+const scanDraftKey = (loc) => 'ddmau:receiptScanDraft:' + loc;
+export function readScanDraft(location) {
+    try {
+        const d = JSON.parse(localStorage.getItem(scanDraftKey(location)) || 'null');
+        if (!d || typeof d !== 'object' || !Array.isArray(d.rows) || !d.rows.length) return null;
+        if (Date.now() - (Number(d.ts) || 0) > 12 * 60 * 60 * 1000) return null;
+        return d;
+    } catch { return null; }
+}
+export function clearScanDraft(location) {
+    try { localStorage.removeItem(scanDraftKey(location)); } catch { /* private mode */ }
+}
+
 export default function ReceiptScanModal({ location, staffName, language, masterCategories, aliasMap, initialExtraction, onClose }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -105,6 +125,17 @@ export default function ReceiptScanModal({ location, staffName, language, master
         setPreviewUrl(url);
     };
     useEffect(() => () => { try { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); } catch {} }, []);
+
+    // Mirror the in-progress review to the draft on every change.
+    useEffect(() => {
+        if (stage !== 'review') return;
+        try {
+            const slim = rows.map(({ pickerOpen, query, ...r }) => r);
+            localStorage.setItem(scanDraftKey(location), JSON.stringify({
+                vendor, date, rows: slim, scanId, source: scanSource, ts: Date.now(),
+            }));
+        } catch { /* private mode / full — draft protection off, scan still works */ }
+    }, [stage, rows, vendor, date, scanId, location, scanSource]);
 
     const handleFile = async (file) => {
         if (!file) return;
@@ -242,6 +273,7 @@ export default function ReceiptScanModal({ location, staffName, language, master
             }
             toast(tx(`Saved ${landed.length} price${landed.length === 1 ? '' : 's'}.`, `${landed.length} precio${landed.length === 1 ? '' : 's'} guardado${landed.length === 1 ? '' : 's'}.`));
             setSavedSummary({ count: landed.length, landed, unmatched: rows.filter((r) => r.included && !r.masterId).length });
+            clearScanDraft(location);   // saved for real — the draft's job is done
             setStage('saved');
             setSaving(false);
         } catch (e) {

@@ -15,7 +15,7 @@
 // screen to fix matches and re-save. (receiptScans + ReceiptScanModal)
 import { useState, useEffect, useMemo } from 'react';
 import { Camera, FileUp, Sparkles, History, Trash2, ChevronRight, Download, Wand2, Search } from 'lucide-react';
-import ReceiptScanModal from './ReceiptScanModal';
+import ReceiptScanModal, { readScanDraft, clearScanDraft } from './ReceiptScanModal';
 import { subscribeReceiptScans, deleteReceiptScan, buildUnmatchedQueue } from '../data/receiptScans';
 import { subscribeItemAliases, learnAliases } from '../data/itemAliases';
 import { recordPurchase } from '../data/itemPricing';
@@ -38,6 +38,9 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
     const tx = (en, es) => (isEs ? es : en);
     const [scanning, setScanning] = useState(false);
     const [reopen, setReopen] = useState(null);   // a saved scan doc to edit
+    // Unsaved scan draft (reload/deploy interrupted a review) — offer Resume.
+    const [scanDraft, setScanDraft] = useState(() => readScanDraft(storeLocation));
+    useEffect(() => { setScanDraft(readScanDraft(storeLocation)); }, [storeLocation]);
     const [scans, setScans] = useState([]);
     const [aliasMap, setAliasMap] = useState({});
     const [confirmDel, setConfirmDel] = useState(null);
@@ -115,7 +118,13 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
     }
 
     const modalOpen = scanning || reopen;
-    const closeModal = () => { setScanning(false); setReopen(null); };
+    const closeModal = () => { setScanning(false); setReopen(null); setScanDraft(readScanDraft(storeLocation)); };
+    const resumeDraft = () => {
+        const d = readScanDraft(storeLocation);
+        if (!d) { setScanDraft(null); return; }
+        setReopen({ vendor: d.vendor, date: d.date, lines: d.rows, id: d.scanId || null, source: d.source || 'receipt' });
+    };
+    const discardDraft = () => { clearScanDraft(storeLocation); setScanDraft(null); };
 
     return (
         <div className="space-y-4">
@@ -132,6 +141,33 @@ export default function PricingWorkspace({ language, isAdmin, storeLocation, sta
                     )}
                 </p>
             </div>
+
+            {/* Interrupted scan — a reload (often a deploy's auto-refresh)
+                killed the review screen before Save. Offer to pick it back
+                up exactly where it was. */}
+            {scanDraft && !modalOpen && (
+                <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-3 flex items-center gap-2 flex-wrap">
+                    <div className="flex-1 min-w-[12rem]">
+                        <div className="text-sm font-bold text-amber-900">
+                            ⚠️ {tx('Unsaved scan', 'Escaneo sin guardar')}
+                            {scanDraft.vendor ? ` — ${scanDraft.vendor}` : ''}
+                        </div>
+                        <div className="text-xs text-amber-800">
+                            {(scanDraft.rows || []).length} {tx('items read', 'artículos leídos')}
+                            {scanDraft.ts ? ` · ${new Date(scanDraft.ts).toLocaleString(isEs ? 'es' : 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}
+                            {' — '}{tx('the app reloaded before it was saved.', 'la app se recargó antes de guardarse.')}
+                        </div>
+                    </div>
+                    <button onClick={resumeDraft}
+                        className="px-3 py-2 rounded-lg text-xs font-black text-white bg-amber-600 active:scale-95">
+                        ▶ {tx('Resume', 'Continuar')}
+                    </button>
+                    <button onClick={discardDraft}
+                        className="px-3 py-2 rounded-lg text-xs font-bold text-amber-800 bg-white border border-amber-300 active:scale-95">
+                        {tx('Discard', 'Descartar')}
+                    </button>
+                </div>
+            )}
 
             {/* Two ways in */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
