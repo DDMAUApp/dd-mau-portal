@@ -4426,7 +4426,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // stays enabled while addDoc awaits, so a double-tap on slow Wi-Fi
         // used to file the same request twice (two docs, two manager pushes,
         // both approvable).
-        if (ptoSubmitBusyRef.current) return;
+        // 2026-08-31 (Yulissa: "PTO isn't working"): a swallowed retry used
+        // to be SILENT — say we're still working instead of playing dead.
+        if (ptoSubmitBusyRef.current) {
+            toast(tx('Still submitting your request — one moment…', 'Aún enviando tu solicitud — un momento…'));
+            return;
+        }
         ptoSubmitBusyRef.current = true;
         try {
         // Check every date in range against no_timeoff blackouts
@@ -4436,18 +4441,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // advisory on desktop web (typed dates bypass it) and its `today`
         // is frozen at modal mount (stale across midnight).
         if (start < toDateStr(new Date())) {
-            toast(tx('Start date is in the past.', 'La fecha inicial ya pasó.'));
+            toast(tx('Start date is in the past.', 'La fecha inicial ya pasó.'), { kind: 'error', duration: 7000 });
             return;
         }
         // Duplicate guard: an identical/overlapping request of their own
-        // that isn't denied already covers these dates.
-        const overlapping = (timeOff || []).some(t =>
+        // that isn't denied already covers these dates. 2026-08-31 UX fix
+        // (Yulissa tried to extend a range that touched an already-approved
+        // day and got a quiet gray toast — "nothing happened"): NAME the
+        // conflicting entry + dates, style as an error, hold it longer, and
+        // say what to do instead.
+        const conflict = (timeOff || []).find(t =>
             t.staffName === staffName && t.status !== 'denied' &&
             (t.startDate || t.date) <= end &&
             (t.endDate || t.startDate || t.date) >= start);
-        if (overlapping) {
-            toast(tx('You already have a time-off request covering those dates.',
-                     'Ya tienes una solicitud de tiempo libre para esas fechas.'));
+        if (conflict) {
+            const cs = conflict.startDate || conflict.date;
+            const ce = conflict.endDate || conflict.startDate || conflict.date;
+            const range = cs === ce ? cs : `${cs} – ${ce}`;
+            const st = conflict.status === 'approved' ? tx('approved', 'aprobada') : tx('pending', 'pendiente');
+            toast(tx(
+                `You already have ${st} time off for ${range}. Pick dates that don't overlap it — or ask a manager to change the existing one.`,
+                `Ya tienes una solicitud ${st} para ${range}. Elige fechas que no se crucen — o pide a un gerente cambiar la existente.`,
+            ), { kind: 'error', duration: 9000 });
             return;
         }
         // 2026-06-16 (#9): belt-and-suspenders. Both PTO UIs already disable
@@ -4457,7 +4472,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         {
             const _s = parseLocalDate(start), _e = parseLocalDate(end);
             if (_s && _e && _e < _s) {
-                toast(tx('End date must be on or after the start date.', 'La fecha final debe ser igual o posterior a la inicial.'));
+                toast(tx('End date must be on or after the start date.', 'La fecha final debe ser igual o posterior a la inicial.'), { kind: 'error', duration: 7000 });
                 return;
             }
         }
@@ -4469,7 +4484,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             toast(tx(
                 `🛑 Time-off cannot be requested for these dates:\n${lines.join('\n')}\n\nAsk a manager — they can add it as an exception.`,
                 `🛑 No se puede pedir tiempo libre para estas fechas:\n${lines.join('\n')}\n\nPídele a un gerente — puede agregarlo como excepción.`,
-            ));
+            ), { kind: 'error', duration: 10000 });
             return;
         }
         try {
