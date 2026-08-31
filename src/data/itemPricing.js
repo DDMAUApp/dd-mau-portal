@@ -119,6 +119,28 @@ export function perUnitPrice(price, pack) {
     return { perUnit: price / parsed.total, unit: parsed.unit, packTotal: parsed.total };
 }
 
+// ── Canonical vendor key (2026-08-31, Andrew: "always use where we usually
+// order from") ──────────────────────────────────────────────────────────
+// Receipts print the same vendor a dozen ways ("ST. LOUIS WHOLESALE FOODS,
+// INC." / "ST. Louis Wholesale Foods, Inc." / "STL Wholesale") and the AI
+// preserves whatever it read — live data had ONE vendor split across two
+// byVendor keys on 30 items. Every byVendor write now lands under ONE
+// canonical key: the normalizeVendor() bucket when the vendor is one of
+// the 8 known ones; unknown vendors (e.g. "The Authentic French Bakery")
+// keep their identity, title-cased so case variants merge too.
+export function canonicalVendorKey(raw) {
+    const t = (raw == null ? '' : String(raw)).replace(/\s+/g, ' ').trim();
+    if (!t) return 'Other';
+    const canon = normalizeVendor(t);
+    if (canon && canon !== 'Other') return canon;
+    return t.toLowerCase().replace(/(^|[\s(\-\/&.,'"])([a-z])/g, (m, p, c) => p + c.toUpperCase());
+}
+
+// Do two vendor strings refer to the same vendor? Canonical-key equality.
+export function sameVendor(a, b) {
+    return canonicalVendorKey(a) === canonicalVendorKey(b);
+}
+
 // ── Internal: coerce a timestamp-ish value to millis ─────────────────────
 function toMillis(v) {
     if (v == null) return 0;
@@ -170,13 +192,24 @@ function priceCandidates(priceDoc) {
 // Returns { price, perUnit, unit, vendor, source, at, stale } or null.
 // Legacy scraped prices only win when nothing better exists, and they're
 // always returned with source='legacy_scraped' so the UI labels them.
-export function resolveTrustedPrice(priceDoc, { nowMs = Date.now() } = {}) {
+// `preferredVendor` (2026-08-31, Andrew: "always use where we usually order
+// from") pins the shown price to the item's assigned vendor: within the same
+// trust rank, the usual vendor's entry beats a NEWER entry from a one-off
+// vendor — a single Costco run no longer flips the item's price until the
+// next usual-vendor purchase. Other vendors still surface when the usual
+// vendor has no price at all (`fromUsualVendor: false` so the UI labels it).
+export function resolveTrustedPrice(priceDoc, { nowMs = Date.now(), preferredVendor = null } = {}) {
     const candidates = priceCandidates(priceDoc);
     if (!candidates.length) return null;
+    const prefKey = preferredVendor ? canonicalVendorKey(preferredVendor) : null;
+    const pinning = !!(prefKey && prefKey !== 'Other');
+    const usual = (c) => (pinning && c.vendor && canonicalVendorKey(c.vendor) === prefKey) ? 1 : 0;
     candidates.sort((a, b) => {
         const ra = PRICE_SOURCE_RANK[a.source] ?? 99;
         const rb = PRICE_SOURCE_RANK[b.source] ?? 99;
         if (ra !== rb) return ra - rb;              // more trusted source first
+        const ua = usual(a), ub = usual(b);
+        if (ua !== ub) return ub - ua;              // then the USUAL vendor
         return toMillis(b.at) - toMillis(a.at);     // then most recent
     });
     const best = candidates[0];
@@ -184,6 +217,11 @@ export function resolveTrustedPrice(priceDoc, { nowMs = Date.now() } = {}) {
         price: best.price, perUnit: best.perUnit, unit: best.unit,
         vendor: best.vendor, source: best.source, at: best.at || null,
         stale: isStale(best.at, STALE_DAYS, nowMs),
+        // false ONLY when pinning was requested and an off-vendor INVOICE
+        // price won (usual vendor has no usable entry) — the UI shows whose
+        // price it is then. A manual price is a deliberate admin choice, so
+        // it's never labeled as foreign regardless of its vendor field.
+        fromUsualVendor: (pinning && best.source === PRICE_SOURCE.INVOICE) ? usual(best) === 1 : true,
     };
 }
 
@@ -309,6 +347,59 @@ export async function setManualPrice(location, itemId, fields, byName) {
     });
 }
 
+// Clear a manual price (2026-08-31): a set manual price outranks every
+// receipt FOREVER, and until now there was no way to remove it — the #1
+// reason scanned prices "didn't update." Clearing lets the receipt-based
+// price show again. History records the clear (newPrice null rows are
+// hidden by the history view's filter — this is an audit row, not a price).
+export async function clearManualPrice(location, itemId, byName) {
+    const ref = doc(db, itemPricesCollPath(location), String(itemId));
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) return;
+        const prev = snap.data();
+        if (!prev.manual || prev.manual.price == null) return;   // nothing to clear
+        const historyEntry = {
+            oldPrice: prev.manual.price, newPrice: null,
+            source: PRICE_SOURCE.MANUAL, vendor: prev.manual.vendor || null,
+            by: byName || null, at: new Date().toISOString(),
+            reason: 'manual price cleared',
+        };
+        const history = [...(prev.history || []), historyEntry].slice(-50);
+        tx.set(ref, { manual: null, history }, { merge: true });
+    });
+}
+
+// ── One-time vendor-key merge (2026-08-31 migration helper) ──────────────
+// Pure: collapses a doc's byVendor keys onto canonical keys (newest entry
+// per canonical group wins — entries are last-state snapshots) and rewrites
+// history[].vendor to the canonical name. Returns null when nothing changes.
+export function mergeVendorKeys(docData) {
+    const bv = docData?.byVendor;
+    if (!bv || typeof bv !== 'object') return null;
+    const groups = new Map();
+    let changed = false;
+    for (const [k, e] of Object.entries(bv)) {
+        const ck = canonicalVendorKey(k);
+        if (ck !== k) changed = true;
+        const at = toMillis(e?.lastPurchased || e?.at);
+        const cur = groups.get(ck);
+        if (!cur || at > cur.at) groups.set(ck, { entry: e, at });
+        else changed = true;   // dropped an older duplicate — a change too
+    }
+    const history = (docData.history || []).map((h) => {
+        if (!h || !h.vendor) return h;
+        const ck = canonicalVendorKey(h.vendor);
+        if (ck === h.vendor) return h;
+        changed = true;
+        return { ...h, vendor: ck };
+    });
+    if (!changed) return null;
+    const byVendor = {};
+    for (const [ck, g] of groups.entries()) byVendor[ck] = g.entry;
+    return { byVendor, history };
+}
+
 // Record an actual purchase (from a confirmed receipt match) → updates the
 // vendor's entry as source='invoice' with lastPurchased + lastQty, + history.
 // `qty` = how much was ordered (receipt line quantity) — drives the cart's
@@ -317,10 +408,11 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
     const ref = doc(db, itemPricesCollPath(location), String(itemId));
     const pu = perUnitPrice(price, pack);
     const qn = (qty != null && isFinite(Number(qty)) && Number(qty) >= 0) ? Number(qty) : null;
-    // Preserve the real receipt vendor name as the byVendor key (Phase 2
-    // receipts supply varied vendor strings we don't want collapsed); only a
-    // truly blank vendor falls back to 'Other'.
-    const vKey = (vendor && String(vendor).trim()) || 'Other';
+    // Canonical byVendor key (2026-08-31 — supersedes the Phase-2 "preserve
+    // the raw receipt string" choice): every spelling of the same vendor
+    // lands under one key, so the usual-vendor pin + last-price continuity
+    // work. The RAW receipt vendor still lives on the scan record.
+    const vKey = canonicalVendorKey(vendor);
     // Transaction — same history-loss guard as setManualPrice.
     await runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);

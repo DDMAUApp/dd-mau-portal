@@ -92,8 +92,35 @@ fi
 # problem as the unpinned-dep chunking outage. Bump this deliberately after
 # testing, never implicitly.
 CAPGO_CLI_VERSION="8.31.1"
-npx "@capgo/cli@${CAPGO_CLI_VERSION}" bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION"
-echo "  ✓ OTA v$VERSION uploaded to channel '$CHANNEL' — open phones apply it via the broadcast below."
+
+# PROVE the channel actually serves $VERSION before telling any device to
+# update (2026-08-31: v454 AND v455 uploads died with "uploadBundle failed:
+# unknown error" but the CLI still EXITED 0 — the deploy then broadcast
+# forceRefresh for a version the CDN didn't have, stranding every phone on
+# the old bundle until a manual re-upload). The CLI's word is not enough:
+# ask Capgo's own /updates endpoint what a stale device would be offered.
+capgo_serves_version() {
+  curl -fsS --max-time 20 -X POST https://plugin.capgo.app/updates \
+    -H 'Content-Type: application/json' \
+    -d "{\"app_id\":\"com.ddmau.staff\",\"platform\":\"ios\",\"version_name\":\"1.0.1\",\"version_build\":\"1.0.1\",\"is_prod\":true,\"is_emulator\":false,\"plugin_version\":\"7.0.0\",\"device_id\":\"00000000-0000-4000-8000-00000de10a00\"}" \
+    2>/dev/null | grep -q "\"version\":\"$VERSION\""
+}
+CAPGO_OK=0
+for attempt in 1 2 3; do
+  if npx "@capgo/cli@${CAPGO_CLI_VERSION}" bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION"; then :; fi
+  sleep 5
+  if capgo_serves_version; then CAPGO_OK=1; break; fi
+  echo "  ⚠ Capgo is NOT serving v$VERSION after upload attempt $attempt — retrying…" >&2
+  sleep 10
+done
+if [ "$CAPGO_OK" != "1" ]; then
+  echo "" >&2
+  echo "✗ ABORTING before the refresh broadcast: Capgo never served v$VERSION." >&2
+  echo "  Phones would have been told to fetch a version that doesn't exist" >&2
+  echo "  (web is already live — re-run this script once Capgo recovers)." >&2
+  exit 1
+fi
+echo "  ✓ OTA v$VERSION uploaded AND verified served by channel '$CHANNEL' — open phones apply it via the broadcast below."
 
 # 5) Post-deploy verification (Debug/QA automation). Calls the read-only
 #    healthCheck Cloud Function, which records the deploy to /deploys + runs

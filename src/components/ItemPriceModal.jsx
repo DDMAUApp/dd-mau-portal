@@ -11,7 +11,7 @@ import { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { INVENTORY_VENDORS } from '../data/inventory';
 import {
-    setManualPrice, perUnitPrice, resolveTrustedPrice, PRICE_SOURCE_LABEL,
+    setManualPrice, clearManualPrice, perUnitPrice, resolveTrustedPrice, PRICE_SOURCE_LABEL,
 } from '../data/itemPricing';
 
 export default function ItemPriceModal({ item, location, staffName, language, priceDoc, onClose }) {
@@ -35,8 +35,12 @@ export default function ItemPriceModal({ item, location, staffName, language, pr
         return perUnitPrice(n, pack);
     }, [price, pack]);
 
-    const trusted = useMemo(() => resolveTrustedPrice(priceDoc), [priceDoc]);
-    const history = (priceDoc?.history || []).slice(-6).reverse();
+    // Pass the item's usual vendor so the modal's "Current" line shows the
+    // SAME pinned price as the badge the admin just tapped (2026-08-31).
+    const trusted = useMemo(() => resolveTrustedPrice(priceDoc, { preferredVendor: item?.preferredVendor || item?.vendor || item?.supplier || null }), [priceDoc, item]);
+    // newPrice == null rows are manual-CLEAR audit entries, not prices —
+    // rendering them showed "$0.00" after a clear (review 2026-08-31).
+    const history = (priceDoc?.history || []).filter(h => h && h.newPrice != null).slice(-6).reverse();
 
     const save = async () => {
         const n = parseFloat(price);
@@ -54,6 +58,24 @@ export default function ItemPriceModal({ item, location, staffName, language, pr
         } catch (e) {
             console.error('[ItemPriceModal] save failed', e);
             setErr(tx('Save failed — try again.', 'Error al guardar — intenta de nuevo.'));
+            setSaving(false);
+        }
+    };
+
+    // Clear the manual price (2026-08-31): a set manual price outranks every
+    // scanned receipt forever — this is the release valve so receipt prices
+    // can show again.
+    const hasManual = priceDoc?.manual?.price != null;
+    const clearManual = async () => {
+        if (saving) return;
+        setSaving(true);
+        setErr('');
+        try {
+            await clearManualPrice(location, item.id, staffName);
+            onClose();
+        } catch (e) {
+            console.error('[ItemPriceModal] clear failed', e);
+            setErr(tx('Could not clear — try again.', 'No se pudo borrar — intenta de nuevo.'));
             setSaving(false);
         }
     };
@@ -148,6 +170,13 @@ export default function ItemPriceModal({ item, location, staffName, language, pr
 
                 {/* Footer */}
                 <div className="sticky bottom-0 bg-white border-t border-gray-100 px-4 py-3 flex gap-2">
+                    {hasManual && (
+                        <button onClick={clearManual} disabled={saving}
+                            title={tx('Remove the manual price so receipt prices show again', 'Quita el precio manual para que vuelvan a verse los precios de recibos')}
+                            className="px-3 py-2.5 rounded-xl text-sm font-bold text-red-700 bg-red-50 border border-red-200 disabled:opacity-50">
+                            🗑 {tx('Clear manual', 'Borrar manual')}
+                        </button>
+                    )}
                     <button onClick={onClose} disabled={saving}
                         className="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-700 font-semibold text-sm">
                         {tx('Cancel', 'Cancelar')}

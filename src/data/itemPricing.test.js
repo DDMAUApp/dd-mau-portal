@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+    canonicalVendorKey,
+    sameVendor,
+    mergeVendorKeys,
     parsePackToUnits,
     perUnitPrice,
     resolveTrustedPrice,
@@ -108,6 +111,99 @@ describe('resolveTrustedPrice — priority order', () => {
         const doc = { manual: { price: 9, pack: 'lb', effectiveDate: '2026-01-01' } };
         const r = resolveTrustedPrice(doc, { nowMs: Date.parse('2026-06-15') });
         expect(r.stale).toBe(true);
+    });
+});
+
+// ── Usual-vendor pinning (2026-08-31, Andrew: "always use where we
+// usually order from") ──────────────────────────────────────────────────
+describe('resolveTrustedPrice — usual-vendor pinning', () => {
+    const doc = {
+        byVendor: {
+            'Wholesale': { price: 2.10, pack: 'lb', source: PRICE_SOURCE.INVOICE, lastPurchased: '2026-08-10' },
+            'Costco':    { price: 1.80, pack: 'lb', source: PRICE_SOURCE.INVOICE, lastPurchased: '2026-08-28' },
+        },
+    };
+    it('the usual vendor beats a NEWER one-off vendor', () => {
+        const r = resolveTrustedPrice(doc, { preferredVendor: 'STL Wholesale' });
+        expect(r.vendor).toBe('Wholesale');
+        expect(r.price).toBe(2.10);
+        expect(r.fromUsualVendor).toBe(true);
+    });
+    it('vendor-name spelling does not matter (canonical match)', () => {
+        const r = resolveTrustedPrice(doc, { preferredVendor: 'ST. LOUIS WHOLESALE FOODS, INC.' });
+        expect(r.vendor).toBe('Wholesale');
+    });
+    it('falls back to another vendor when the usual one has no price — labeled', () => {
+        const r = resolveTrustedPrice(doc, { preferredVendor: 'Sysco' });
+        expect(r.vendor).toBe('Costco');            // newest available
+        expect(r.fromUsualVendor).toBe(false);      // so the UI shows whose price it is
+    });
+    it('no preferred vendor (or Other) keeps plain recency', () => {
+        expect(resolveTrustedPrice(doc).vendor).toBe('Costco');
+        expect(resolveTrustedPrice(doc).fromUsualVendor).toBe(true);
+        expect(resolveTrustedPrice(doc, { preferredVendor: 'Some Unknown Shop' }).vendor).toBe('Costco');
+    });
+    it('manual still outranks the usual vendor', () => {
+        const withManual = { ...doc, manual: { price: 9, effectiveDate: '2026-01-01' } };
+        const r = resolveTrustedPrice(withManual, { preferredVendor: 'Wholesale' });
+        expect(r.source).toBe('manual');
+    });
+    it('a manual price is NEVER labeled as off-vendor (deliberate admin choice)', () => {
+        // vendor-less manual + pinning
+        const m1 = resolveTrustedPrice({ ...doc, manual: { price: 9 } }, { preferredVendor: 'Wholesale' });
+        expect(m1.fromUsualVendor).toBe(true);
+        // manual whose vendor DIFFERS from the usual vendor — still not "foreign"
+        const m2 = resolveTrustedPrice({ ...doc, manual: { price: 9, vendor: 'Sysco' } }, { preferredVendor: 'Wholesale' });
+        expect(m2.fromUsualVendor).toBe(true);
+    });
+});
+
+describe('canonicalVendorKey + sameVendor', () => {
+    it('collapses every spelling of a known vendor', () => {
+        expect(canonicalVendorKey('ST. LOUIS WHOLESALE FOODS, INC.')).toBe('Wholesale');
+        expect(canonicalVendorKey('ST. Louis Wholesale Foods, Inc.')).toBe('Wholesale');
+        expect(canonicalVendorKey('STL Wholesale')).toBe('Wholesale');
+        expect(canonicalVendorKey('SYSCO FOODS')).toBe('Sysco');
+        expect(canonicalVendorKey('costco whse')).toBe('Costco');
+    });
+    it('unknown vendors keep their identity, title-cased so casings merge', () => {
+        expect(canonicalVendorKey('The Authentic French Bakery')).toBe('The Authentic French Bakery');
+        expect(canonicalVendorKey('THE AUTHENTIC FRENCH BAKERY')).toBe('The Authentic French Bakery');
+        expect(canonicalVendorKey("  double   spaced  shop ")).toBe('Double Spaced Shop');
+    });
+    it('blank falls to Other', () => {
+        expect(canonicalVendorKey('')).toBe('Other');
+        expect(canonicalVendorKey(null)).toBe('Other');
+    });
+    it('sameVendor matches across spellings', () => {
+        expect(sameVendor('STL Wholesale', 'ST. LOUIS WHOLESALE FOODS, INC.')).toBe(true);
+        expect(sameVendor('Costco', 'Sysco')).toBe(false);
+    });
+});
+
+describe('mergeVendorKeys — one-time key migration', () => {
+    it('merges split spellings, newest entry wins, history rewritten', () => {
+        const docData = {
+            byVendor: {
+                'ST. Louis Wholesale Foods, Inc.': { price: 50.5, source: PRICE_SOURCE.INVOICE, lastPurchased: '2026-06-14' },
+                'ST. LOUIS WHOLESALE FOODS, INC.': { price: 8.99, source: PRICE_SOURCE.INVOICE, lastPurchased: '2026-06-25' },
+                'Sysco': { price: 12, source: PRICE_SOURCE.INVOICE, lastPurchased: '2026-06-15' },
+            },
+            history: [
+                { newPrice: 50.5, vendor: 'ST. Louis Wholesale Foods, Inc.', source: 'invoice' },
+                { newPrice: 12, vendor: 'Sysco', source: 'invoice' },
+            ],
+        };
+        const merged = mergeVendorKeys(docData);
+        expect(Object.keys(merged.byVendor).sort()).toEqual(['Sysco', 'Wholesale']);
+        expect(merged.byVendor['Wholesale'].price).toBe(8.99);   // newer entry won
+        expect(merged.history[0].vendor).toBe('Wholesale');
+        expect(merged.history[1].vendor).toBe('Sysco');
+    });
+    it('returns null when nothing needs merging', () => {
+        expect(mergeVendorKeys({ byVendor: { 'Sysco': { price: 1 } }, history: [] })).toBeNull();
+        expect(mergeVendorKeys({})).toBeNull();
+        expect(mergeVendorKeys(null)).toBeNull();
     });
 });
 

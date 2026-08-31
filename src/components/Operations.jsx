@@ -5004,11 +5004,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // Capture the item ID from local state so we can locate it in the live
                 // list by ID rather than by index — index drifts if other managers
                 // added/removed items in this category between snapshots.
-                const targetId = customInventory[catIdx]?.items[itemIdx]?.id;
+                const editedItem = customInventory[catIdx]?.items[itemIdx];
+                const targetId = editedItem?.id;
                 if (!targetId) return;
                 const patch = {
                     name: invEditName.trim(), nameEs: invEditNameEs.trim(),
                     vendor: invEditSupplier.trim(), supplier: invEditSupplier.trim(),
+                    // 2026-08-31 hygiene fix: editing "Vendor" here used to touch
+                    // only the legacy field — a previously-set preferredVendor kept
+                    // silently overriding it everywhere else. Editing the vendor now
+                    // moves preferredVendor with it (only when actually changed, so
+                    // pack-only edits can't clobber a dropdown-set vendor).
+                    ...(invEditSupplier.trim() !== (editedItem?.vendor || editedItem?.supplier || '')
+                        ? { preferredVendor: invEditSupplier.trim() } : {}),
                     orderDay: invEditOrderDay,
                     subcat: (invEditSubcat || '').trim(),
                     // 2026-05-29 — storage location ('Walk-in Freezer',
@@ -5292,7 +5300,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const hasScraped = list && list.length > 0;
                 // Trusted price from the new item_prices engine (manual / receipt / …).
                 const priceDoc = itemPrices[itemId];
-                const trusted = priceDoc ? resolveTrustedPrice(priceDoc) : null;
+                // Pin to the item's USUAL vendor (Andrew 2026-08-31): a one-off
+                // purchase elsewhere no longer flips the shown price.
+                const usualVendor = item?.preferredVendor || item?.vendor || item?.supplier || null;
+                const trusted = priceDoc ? resolveTrustedPrice(priceDoc, { preferredVendor: usualVendor }) : null;
                 const esLang = language === 'es';
                 // Unchanged behavior for non-admins with no prices at all.
                 if (!trusted && !hasScraped && !currentIsAdmin) return null;
@@ -5311,6 +5322,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 💲${Number(trusted.price).toFixed(2)}
                                 {trusted.perUnit != null && <span className="opacity-80 ml-0.5">/{trusted.unit}</span>}
                                 <span className="opacity-70 ml-1 font-normal">{srcLabel}</span>
+                                {/* Off-vendor price (usual vendor has none yet) — say WHOSE
+                                    price this is, visibly, not just in the hover tooltip. */}
+                                {trusted.fromUsualVendor === false && trusted.vendor && (
+                                    <span className="ml-1 font-normal text-indigo-700">· {trusted.vendor}</span>
+                                )}
                                 {trusted.stale && <span className="ml-1 text-amber-700">⚠</span>}
                             </span>
                         )}
@@ -7395,7 +7411,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                 const searchLower = (invSearchDeferred || "").toLowerCase().trim();
                 customInventory.forEach((cat, catIdx) => {
                     cat.items.forEach((item, iIdx) => {
-                        const v = item.vendor || item.supplier || "Other";
+                        // 2026-08-31 hygiene fix: group by the SAME field precedence the
+                // row labels / cart use — the dropdown-set preferredVendor first.
+                // (Was legacy item.vendor only, so re-assigning a vendor moved the
+                // label but not the grouping.)
+                const v = item.preferredVendor || item.vendor || item.supplier || "Other";
                         if (!vendorGroups[v]) vendorGroups[v] = [];
                         const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
                         // 2026-07-27 (audit O4) — Vendor view ignored the "Low

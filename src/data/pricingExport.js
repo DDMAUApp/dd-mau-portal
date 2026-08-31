@@ -68,7 +68,7 @@ export function buildPricingCsv({ categories, itemPrices, language } = {}) {
             if (!it || !it.id) continue;
             itemCount++;
             const pd = itemPrices ? itemPrices[it.id] : null;
-            const trusted = pd ? resolveTrustedPrice(pd) : null;
+            const trusted = pd ? resolveTrustedPrice(pd, { preferredVendor: it.preferredVendor || it.vendor || it.supplier || null }) : null;
             const best = pd ? cheapestVendor(pd) : null;
             const last = pd ? lastOrdered(pd) : null;
             const q = pd ? orderQtyStats(pd) : null;
@@ -79,7 +79,7 @@ export function buildPricingCsv({ categories, itemPrices, language } = {}) {
                 it.name || '',
                 it.nameEs || '',
                 it.pack || '',
-                it.vendor || it.supplier || '',
+                it.preferredVendor || it.vendor || it.supplier || '',   // assigned vendor — same precedence as the badge pin
                 trusted ? money(trusted.price) : '',
                 trusted && trusted.perUnit != null ? money(trusted.perUnit, trusted.perUnit < 1 ? 4 : 2) : '',
                 trusted?.unit || '',
