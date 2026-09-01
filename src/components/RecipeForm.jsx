@@ -15,6 +15,7 @@
 import { useMemo, useState } from 'react';
 import { t } from '../data/translations';
 import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone } from '../data/allergens';
+import { splitIngredientLine, joinIngredientParts, unitsFor } from '../data/ingredientParts';
 import { toast } from '../toast';
 
 export const BLANK_RECIPE = {
@@ -163,6 +164,89 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
         return <span className="text-[10px] font-bold text-amber-700 ml-2">EN {a} · ES {b} — {tx('line counts differ', 'las líneas no coinciden')}</span>;
     };
 
+    // ── Ingredient rows: [amount][unit ▾][ingredient] (Andrew 2026-09-01:
+    // "the amount on a box and the measurement in one … with the cup it
+    // can come from a drop down menu"). STORAGE UNCHANGED — each row still
+    // saves as the same single string ("1 cup sugar"), split/joined by the
+    // round-trip-tested ingredientParts helpers, so display, ×-scaling,
+    // search and the AI import see exactly what they always did.
+    //
+    // rowDraft: while a row is being edited, the WHOLE row {qty, unit,
+    // rest} lives in a draft — all three boxes display from it and every
+    // keystroke writes join(draft) into the row string. The string is
+    // always current (no reliance on blur firing), and the split's
+    // auto-classification ("2 limes" → amount 2, item limes) only happens
+    // when the row draft clears, never mid-typing under the cursor.
+    const [rowDraft, setRowDraft] = useState(null); // { key, qty, unit, rest }
+    const renderIngredientEditor = (field, label) => {
+        const lang = field === 'ingredientsEs' ? 'es' : 'en';
+        const units = unitsFor(lang);
+        return (
+            <div className="mb-3">
+                <label className="block text-xs font-bold text-gray-600 mb-1">{label} <span className="text-gray-400 font-normal">({(form[field] || []).filter(s => String(s || '').trim()).length})</span></label>
+                {form[field].map((item, i) => {
+                    const key = `${field}:${i}`;
+                    const active = rowDraft?.key === key ? rowDraft : null;
+                    const parts = active || splitIngredientLine(item, lang);
+                    // Edit = update the row draft AND write the composed
+                    // string into the form in the same handler (functional
+                    // update, so batched edits can't clobber each other).
+                    const edit = (patch) => {
+                        const next = { key, qty: parts.qty, unit: parts.unit, rest: parts.rest, ...patch };
+                        setRowDraft(next);
+                        updateListItem(field, i, joinIngredientParts(next));
+                    };
+                    const seed = () => { if (!active) setRowDraft({ key, qty: parts.qty, unit: parts.unit, rest: parts.rest }); };
+                    const unseed = () => setRowDraft(d => (d?.key === key ? null : d));
+                    // A unit spelled outside the list (or with different
+                    // casing) stays selectable so nothing silently rewrites.
+                    const unitOptions = parts.unit && !units.includes(parts.unit) ? [parts.unit, ...units] : units;
+                    return (
+                        <div key={i} className="flex gap-1 mb-1">
+                            <span className="text-xs text-gray-400 mt-2 w-5 text-right flex-shrink-0">{i + 1}.</span>
+                            <input
+                                className="w-14 flex-shrink-0 border border-gray-300 rounded px-1 py-1.5 text-sm text-center"
+                                value={parts.qty}
+                                inputMode="decimal"
+                                placeholder="#"
+                                aria-label={tx('amount', 'cantidad')}
+                                onFocus={seed}
+                                onChange={e => edit({ qty: e.target.value })}
+                                onBlur={unseed}
+                            />
+                            <select
+                                className="w-24 flex-shrink-0 border border-gray-300 rounded px-1 py-1.5 text-sm bg-white"
+                                value={parts.unit}
+                                aria-label={tx('measurement', 'medida')}
+                                onChange={e => edit({ unit: e.target.value })}
+                            >
+                                <option value="">—</option>
+                                {unitOptions.map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                            <input
+                                className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                                value={parts.rest}
+                                placeholder={tx('ingredient', 'ingrediente')}
+                                onFocus={seed}
+                                onChange={e => edit({ rest: e.target.value })}
+                                onBlur={unseed}
+                                onPaste={e => {
+                                    // Multi-line paste replaces rows below via
+                                    // pasteList (which preventDefaults) — drop
+                                    // the row draft so it can't mask them.
+                                    if ((e.clipboardData?.getData('text') || '').includes('\n')) setRowDraft(null);
+                                    pasteList(field, i, e);
+                                }}
+                            />
+                            <button type="button" onClick={() => { setRowDraft(null); removeListItem(field, i); }} className="text-red-400 text-sm px-1" aria-label="remove">✕</button>
+                        </div>
+                    );
+                })}
+                <button type="button" onClick={() => addListItem(field)} className="text-xs text-mint-700 font-bold mt-1">{tx("+ Add", "+ Agregar")}</button>
+            </div>
+        );
+    };
+
     const renderListEditor = (field, label) => (
         <div className="mb-3">
             <label className="block text-xs font-bold text-gray-600 mb-1">{label} <span className="text-gray-400 font-normal">({(form[field] || []).filter(s => String(s || '').trim()).length})</span></label>
@@ -277,8 +361,8 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
                 <div className="border-t pt-3 mt-3">
                     <h3 className="font-bold text-sm text-amber-800 mb-2">📝 {t("ingredients", language)} {countHint('ingredientsEn', 'ingredientsEs')}</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 md:gap-4">
-                        {renderListEditor("ingredientsEn", tx("English", "Inglés"))}
-                        {renderListEditor("ingredientsEs", tx("Spanish", "Español"))}
+                        {renderIngredientEditor("ingredientsEn", tx("English", "Inglés"))}
+                        {renderIngredientEditor("ingredientsEs", tx("Spanish", "Español"))}
                     </div>
                 </div>
 
