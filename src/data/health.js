@@ -26,6 +26,7 @@ import { db } from '../firebase';
 import {
     doc, collection, onSnapshot, serverTimestamp,
     getDoc as _fsGetDoc,
+    getDocFromServer as _fsGetDocFromServer,
     setDoc as _fsSetDoc,
     deleteDoc as _fsDeleteDoc,
     runTransaction as _fsRunTransaction,
@@ -36,6 +37,7 @@ import {
 // hanging silently. Same shadow-the-primitives pattern as chatDm/notify.
 import { watchdogWrite, watchdogRead } from './firestoreRevive';
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocFromServer = (...a) => watchdogRead(_fsGetDocFromServer(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
 const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
@@ -280,15 +282,38 @@ export function extractHealthDoc(imageUrls) {
         let settled = false;
         let unsub = null;
         let timer = null;
+        let pollTimer = null;
         const cleanup = () => {
             settled = true;
             if (unsub) { try { unsub(); } catch { /* noop */ } }
             if (timer) clearTimeout(timer);
+            if (pollTimer) clearInterval(pollTimer);
             // best-effort tidy-up so transient PII (image URLs + extracted
             // fields) doesn't linger; the record itself lands in health_records.
             deleteDoc(ref).catch(() => {});
         };
         const fail = (err) => { if (!settled) { cleanup(); reject(err); } };
+        const settleFrom = (d) => {
+            if (!d || settled) return;
+            if (d.status === 'done') { cleanup(); resolve(d.result || { docType: 'unreadable' }); }
+            else if (d.status === 'error') fail(new Error(d.error || 'read failed'));
+        };
+        // Backup poll (2026-09-01, Concepcion's 1-B: "taking forever to
+        // read the doc"): the CF finished the job in seconds but the
+        // phone's snapshot listener was STARVED on a post-camera wedged
+        // transport — the result sat server-side while the user stared at
+        // the spinner until the 120s ceiling. Every 10s, force a SERVER
+        // read of the job doc: on a healthy link it's a cheap no-op; on a
+        // wedged one it hangs → the read watchdog revives the transport at
+        // 8s, which also resurrects the listener. Either path delivers.
+        const startPoll = () => {
+            pollTimer = setInterval(() => {
+                if (settled) return;
+                getDocFromServer(ref)
+                    .then((snap) => settleFrom(snap.data()))
+                    .catch(() => { /* poll is best-effort; the listener + timeout still stand */ });
+            }, 10_000);
+        };
 
         // Offline fast-fail (2026-07-13 audit): with persistentLocalCache the
         // setDoc promise resolves only on SERVER ack — offline it just hangs,
@@ -310,17 +335,10 @@ export function extractHealthDoc(imageUrls) {
                 if (settled) return;
                 unsub = onSnapshot(
                     ref,
-                    (snap) => {
-                        const d = snap.data();
-                        if (!d || settled) return;
-                        if (d.status === 'done') { cleanup(); resolve(d.result || { docType: 'unreadable' }); }
-                        else if (d.status === 'error') {
-                            const err = new Error(d.error || 'read failed');
-                            fail(err);
-                        }
-                    },
+                    (snap) => settleFrom(snap.data()),
                     (err) => fail(err),
                 );
+                startPoll();
             })
             .catch((err) => fail(err));
 

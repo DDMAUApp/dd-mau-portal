@@ -25,15 +25,17 @@ import { db, storage } from '../firebase';
 import {
     collection, doc, onSnapshot, serverTimestamp,
     setDoc as _fsSetDoc, deleteDoc as _fsDeleteDoc,
+    getDocFromServer as _fsGetDocFromServer,
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 // 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern):
 // this file copied health.js's job-doc transport but never got its
 // watchdog upgrade, so the job write hung silently on a wedged
 // post-camera transport.
-import { watchdogWrite } from './firestoreRevive';
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const getDocFromServer = (...a) => watchdogRead(_fsGetDocFromServer(...a));
 
 const JOBS = 'recipe_import_jobs';
 const JOB_TIMEOUT_MS = 240_000;     // trigger ceiling is 300 s; Sonnet on 6 pages ≈ 30-90 s
@@ -59,13 +61,20 @@ export function runRecipeImportJob(payload) {
         let settled = false;
         let unsub = null;
         let timer = null;
+        let pollTimer = null;
         const cleanup = () => {
             settled = true;
             if (unsub) { try { unsub(); } catch { /* noop */ } }
             if (timer) clearTimeout(timer);
+            if (pollTimer) clearInterval(pollTimer);
             deleteDoc(ref).catch(() => {});
         };
         const fail = (err) => { if (!settled) { cleanup(); reject(err); } };
+        const settleFrom = (d) => {
+            if (!d || settled) return;
+            if (d.status === 'done') { cleanup(); resolve(d.result || { recipes: [], warnings: [] }); }
+            else if (d.status === 'error') fail(new Error(d.error || 'import failed'));
+        };
         let acked = false;
         setTimeout(() => {
             if (!acked && !settled) fail(new Error('no connection — check the internet and try again'));
@@ -76,12 +85,17 @@ export function runRecipeImportJob(payload) {
             .then(() => {
                 acked = true;
                 if (settled) return;
-                unsub = onSnapshot(ref, (snap) => {
-                    const d = snap.data();
-                    if (!d || settled) return;
-                    if (d.status === 'done') { cleanup(); resolve(d.result || { recipes: [], warnings: [] }); }
-                    else if (d.status === 'error') fail(new Error(d.error || 'import failed'));
-                }, (err) => fail(err));
+                unsub = onSnapshot(ref, (snap) => settleFrom(snap.data()), (err) => fail(err));
+                // Backup poll (2026-09-01 — same fix as health.js): a starved
+                // snapshot listener stranded finished jobs server-side. A
+                // forced server read every 10s either delivers the result or
+                // hangs → read watchdog revives the transport at 8s.
+                pollTimer = setInterval(() => {
+                    if (settled) return;
+                    getDocFromServer(ref)
+                        .then((snap) => settleFrom(snap.data()))
+                        .catch(() => { /* best-effort; listener + timeout still stand */ });
+                }, 10_000);
             })
             .catch((err) => fail(err));
         timer = setTimeout(() => fail(new Error('AI read timed out — try fewer pages at once')), JOB_TIMEOUT_MS);
