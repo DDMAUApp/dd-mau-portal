@@ -30,7 +30,17 @@
 
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
-import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import {
+    collection, doc, serverTimestamp,
+    addDoc as _fsAddDoc, getDoc as _fsGetDoc, setDoc as _fsSetDoc,
+} from 'firebase/firestore';
+// 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern):
+// applicants attach ID/resume photos with the camera, then Submit ran on
+// raw writes that hung silently on the post-camera wedged transport.
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 import { ref as sref, uploadBytes, deleteObject } from 'firebase/storage';
 import { notifyAdmins } from '../data/notify';
 import {

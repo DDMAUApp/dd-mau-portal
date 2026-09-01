@@ -18,12 +18,30 @@ import { toast } from '../toast';
 // no logic / state / data flow touched.
 import { Wrench } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
+import { fileToScaledBlob } from '../data/parseReceipt';
+
+// Crash-survival draft (2026-09-01 camera-crash sweep): tapping the photo
+// button opens the camera, which can get the WebView killed on a
+// memory-squeezed iPhone — the typed description/location/urgency came
+// back blank. Text fields mirror to localStorage; restored silently when
+// the form is still pristine.
+const MAINT_DRAFT_KEY = 'ddmau:maintenanceDraft';
+const MAINT_DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+const readMaintDraft = () => {
+    try {
+        const d = JSON.parse(localStorage.getItem(MAINT_DRAFT_KEY) || 'null');
+        if (!d || !d.at || (Date.now() - d.at) > MAINT_DRAFT_TTL_MS) return null;
+        if (!String(d.description || '').trim() && !d.location) return null;
+        return d;
+    } catch { return null; }
+};
+const clearMaintDraft = () => { try { localStorage.removeItem(MAINT_DRAFT_KEY); } catch { /* noop */ } };
 
 export default function MaintenanceRequest({ language, staffName, storeLocation }) {
-            const [description, setDescription] = useState("");
-            const [location, setLocation] = useState("");
-            const [urgency, setUrgency] = useState("normal");
-            const [reason, setReason] = useState("");
+            const [description, setDescription] = useState(() => readMaintDraft()?.description || "");
+            const [location, setLocation] = useState(() => readMaintDraft()?.location || "");
+            const [urgency, setUrgency] = useState(() => readMaintDraft()?.urgency || "normal");
+            const [reason, setReason] = useState(() => readMaintDraft()?.reason || "");
             const [photoFile, setPhotoFile] = useState(null);
             const [photoPreview, setPhotoPreview] = useState(null);
             const [submitting, setSubmitting] = useState(false);
@@ -81,13 +99,32 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                 return () => unsub();
             }, [staffName]);
 
-            const handlePhotoSelect = (e) => {
-                const file = e.target.files?.[0];
+            // Mirror the typed fields (debounced) — see MAINT_DRAFT_KEY above.
+            useEffect(() => {
+                const t = setTimeout(() => {
+                    if (!description.trim() && !location) return;
+                    try {
+                        localStorage.setItem(MAINT_DRAFT_KEY, JSON.stringify({
+                            description, location, urgency, reason, at: Date.now(),
+                        }));
+                    } catch { /* storage blocked/full */ }
+                }, 500);
+                return () => clearTimeout(t);
+            }, [description, location, urgency, reason]);
+
+            const handlePhotoSelect = async (e) => {
+                let file = e.target.files?.[0];
                 if (!file) return;
+                // 2026-09-01 camera-crash sweep: downscale on pick (receipts/
+                // health recipe). The old FileReader.readAsDataURL preview
+                // base64'd the WHOLE camera file and the <img> decoded it at
+                // full resolution — the memory spike class that killed the
+                // Hep A flow. Now both preview and upload use the ~300KB copy.
+                try {
+                    file = await fileToScaledBlob(file, 2000, 0.85);
+                } catch { /* non-decodable — keep the original (10MB gate at submit) */ }
                 setPhotoFile(file);
-                const reader = new FileReader();
-                reader.onload = (ev) => setPhotoPreview(ev.target.result);
-                reader.readAsDataURL(file);
+                setPhotoPreview(URL.createObjectURL(file));
             };
 
             const handleSubmit = async () => {
@@ -116,7 +153,7 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                                 { kind: 'error' });
                             return;
                         }
-                        const photoPath = "maintenance-photos/" + Date.now() + "_" + photoFile.name;
+                        const photoPath = "maintenance-photos/" + Date.now() + "_" + (photoFile.name || "photo.jpg");
                         photoRef = ref(storage, photoPath);
                         await uploadBytes(photoRef, photoFile);
                         photoUploaded = true;
@@ -135,6 +172,7 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                         date: now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0"),
                         status: "open"
                     });
+                    clearMaintDraft();
                     setDescription("");
                     setLocation("");
                     setUrgency("normal");

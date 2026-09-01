@@ -91,6 +91,7 @@ import SauceLogBohBanner from './SauceLogBohBanner';
 // mid-ordering).
 import CartPlanView from './CartPlanView';
 import { toast, undoToast } from '../toast';
+import { fileToScaledBlob } from '../data/parseReceipt';
 import { useAppData } from '../v2/AppDataContext';
 // CSV importer — lazy so the parser doesn't bloat the Operations chunk
 // for the common case where nobody clicks Import.
@@ -3769,20 +3770,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Photo capture and upload
             const handlePhotoCapture = async (e, taskId) => {
-                const file = e.target.files?.[0];
+                let file = e.target.files?.[0];
                 // Reset the input so the same file can be reselected after a failed upload.
                 if (e.target) e.target.value = "";
                 if (!file) return;
-                // 2026-05-30 audit fix — early-reject oversize photos. The
-                // storage rule caps at 10 MB but a 50 MB iPhone photo would
-                // tie up the upload spinner for minutes on cellular before
-                // the rule rejected it. Matches the limit in MaintenanceRequest.
-                if (file.size > 10 * 1024 * 1024) {
-                    toast(language === 'es'
-                        ? 'La foto es muy grande (máx 10 MB)'
-                        : 'Photo is too large (max 10 MB)',
-                        { kind: 'error' });
-                    return;
+                // 2026-09-01 camera-crash sweep: downscale before upload
+                // (receipts/health recipe) — a proof photo doesn't need
+                // 48MP, and the scaled ~300KB JPEG uploads in the fragile
+                // post-camera window instead of crawling. Also un-bricks
+                // iPhones whose full-res shots exceeded the old 10MB gate.
+                try {
+                    file = await fileToScaledBlob(file, 2000, 0.85);
+                } catch {
+                    // Non-decodable — keep the original behind the
+                    // 2026-05-30 gate (storage rule caps at 10 MB; a 50MB
+                    // upload would spin for minutes on cellular first).
+                    if (file.size > 10 * 1024 * 1024) {
+                        toast(language === 'es'
+                            ? 'La foto es muy grande (máx 10 MB)'
+                            : 'Photo is too large (max 10 MB)',
+                            { kind: 'error' });
+                        return;
+                    }
                 }
                 // Re-entry guard: a rapid second tap (mobile Safari double-fire) must not start a parallel upload.
                 // FIX (2026-05-14): ref instead of state — see comment on photoUploadInProgressRef.

@@ -27,7 +27,10 @@ function getCallable() {
 // full-size bitmap ever enters the JS heap. Fallback for engines without
 // resize support uses an object URL (still no giant string) and releases
 // everything promptly.
-export async function fileToScaledBase64(file, maxDim = 1600, quality = 0.82) {
+// Shared native-downsample draw for both exports below (2026-09-01: the
+// Health Department card upload needed the same memory-lean path — see
+// fileToScaledBlob).
+async function drawScaledCanvas(file, maxDim) {
     let w, h;
     const canvas = document.createElement('canvas');
     let drew = false;
@@ -78,9 +81,40 @@ export async function fileToScaledBase64(file, maxDim = 1600, quality = 0.82) {
             URL.revokeObjectURL(objUrl);
         }
     }
+    return canvas;
+}
+
+export async function fileToScaledBase64(file, maxDim = 1600, quality = 0.82) {
+    const canvas = await drawScaledCanvas(file, maxDim);
     const jpeg = canvas.toDataURL('image/jpeg', quality);
     canvas.width = 0; canvas.height = 0;   // free the canvas backing store
     return { base64: (jpeg.split(',')[1] || ''), mediaType: 'image/jpeg' };
+}
+
+// Same downsample → a JPEG Blob, for flows that upload to Storage instead
+// of inlining base64 (Health Department vaccine cards). A phone camera
+// shot is 2-8MB; scaled to 2000px it's ~300KB — 10-20× less time and
+// memory in the fragile just-came-back-from-the-camera window where iOS
+// kills the WebView under pressure. Throws when the file isn't a
+// decodable image (caller falls back to uploading the original).
+export async function fileToScaledBlob(file, maxDim = 2000, quality = 0.85) {
+    const canvas = await drawScaledCanvas(file, maxDim);
+    const blob = await new Promise((resolve, reject) =>
+        canvas.toBlob(b => (b ? resolve(b) : reject(new Error('toBlob produced no data'))), 'image/jpeg', quality));
+    canvas.width = 0; canvas.height = 0;   // free the canvas backing store
+    return blob;
+}
+
+// Variant that also reports the scaled dimensions (chat attachments store
+// width/height for layout). Dims are captured BEFORE the backing store is
+// zeroed.
+export async function fileToScaledBlobWithDims(file, maxDim = 1600, quality = 0.85) {
+    const canvas = await drawScaledCanvas(file, maxDim);
+    const width = canvas.width, height = canvas.height;
+    const blob = await new Promise((resolve, reject) =>
+        canvas.toBlob(b => (b ? resolve(b) : reject(new Error('toBlob produced no data'))), 'image/jpeg', quality));
+    canvas.width = 0; canvas.height = 0;   // free the canvas backing store
+    return { blob, width, height };
 }
 
 // Call the Cloud Function. Returns

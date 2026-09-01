@@ -16,9 +16,21 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { db, storage } from '../firebase';
 import {
-    collection, doc, addDoc, updateDoc, deleteDoc, getDoc, serverTimestamp,
+    collection, doc, serverTimestamp,
+    addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc,
+    deleteDoc as _fsDeleteDoc, getDoc as _fsGetDoc,
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+// 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern).
+// The Report save runs seconds after a camera round-trip, exactly when
+// the transport is most likely wedged; raw writes hung forever with no
+// pill, no revive, no escalation ("Reporting…" frozen).
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+import { fileToScaledBlob } from '../data/parseReceipt';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 import { recordAudit } from '../data/audit';
 import { isAdminId } from '../data/staff';
 import { notifyStaff } from '../data/notify';
@@ -56,17 +68,25 @@ export default function ChatPhotoIssueModal({
         };
     }, [photo?.previewUrl]);
 
-    function handlePhotoPick(e) {
-        const f = e.target.files?.[0];
+    async function handlePhotoPick(e) {
+        let f = e.target.files?.[0];
         e.target.value = '';
         if (!f) return;
-        // 2026-06-02 audit fix — early-reject oversize photos. The storage
-        // rule caps at 10 MB but the failure arrives minutes later on
-        // cellular. 10 MB matches MaintenanceRequest + the Onboarding
-        // pattern.
-        if (f.size > 10 * 1024 * 1024) {
-            toast(tx('Photo is too large (max 10 MB)', 'La foto es muy grande (máx 10 MB)'), { kind: 'error' });
-            return;
+        // 2026-09-01 camera-crash sweep: downscale BEFORE staging (same
+        // recipe as receipts/health). The scaled ~300KB JPEG uploads
+        // 10-20× faster in the fragile post-camera window AND the preview
+        // <img> decodes the small copy instead of ~190MB of 48MP RGBA.
+        try {
+            f = await fileToScaledBlob(f, 2000, 0.85);
+        } catch {
+            // Non-decodable — keep the original, but then the old
+            // 10 MB early-reject still applies (2026-06-02 audit: the
+            // storage rule caps at 10 MB and the failure arrives minutes
+            // later on cellular).
+            if (f.size > 10 * 1024 * 1024) {
+                toast(tx('Photo is too large (max 10 MB)', 'La foto es muy grande (máx 10 MB)'), { kind: 'error' });
+                return;
+            }
         }
         setPhoto({ file: f, previewUrl: URL.createObjectURL(f) });
     }

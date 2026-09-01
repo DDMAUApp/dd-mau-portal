@@ -22,9 +22,20 @@
 //   createdAt, active, acks: { [staffName]: ISO } }
 import { db } from '../firebase';
 import {
-    doc, getDoc, setDoc, addDoc, updateDoc, collection, query, orderBy,
+    doc, collection, query, orderBy,
     limit, onSnapshot, serverTimestamp, FieldPath,
+    getDoc as _fsGetDoc, setDoc as _fsSetDoc,
+    addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc,
 } from 'firebase/firestore';
+// 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern):
+// the Post flow (channel-ensure getDoc gate, /announcements setDoc, chat
+// copy addDoc, lastMessage updateDoc, ack updates) ran raw and hung
+// silently on a wedged transport.
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { channelDocId } from './chat';
 import { isAdminId, isManagerRoleTitle } from './staff';
 import { notifyStaff } from './notify';

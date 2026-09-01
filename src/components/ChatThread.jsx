@@ -108,6 +108,7 @@ import { fixText as aiFixText } from '../data/aiFixText';
 import TranslatableText, { renderWithMentions } from './TranslatableText';
 import { openTrainingModule } from '../data/trainingDeepLink';
 import ModalPortal from './ModalPortal';
+import { fileToScaledBlobWithDims } from '../data/parseReceipt';
 
 // Lazy-load the heavier modals — keeps the chat-thread chunk small for
 // the common case where the user just scrolls + types.
@@ -4672,36 +4673,16 @@ async function sendMessage({
     return ref.id;
 }
 
-// ── Image resize via canvas ──────────────────────────────────────
+// ── Image resize (2026-09-01 camera-crash sweep) ─────────────────
 // Cuts upload size + bandwidth dramatically. Phone cameras shoot
 // 4000px+ images; we don't need anything above ~1600px for a chat.
+// Delegates to parseReceipt's memory-lean downsample: the old local
+// version decoded the FULL bitmap first (createImageBitmap with no
+// resize options ≈ 190MB RGBA for a 48MP shot) in the fragile
+// just-back-from-the-camera window — the class that crashed the
+// receipt and Hep A flows.
 async function resizeImage(file, maxDim) {
-    const bitmap = await loadBitmap(file);
-    const { width: srcW, height: srcH } = bitmap;
-    const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
-    const w = Math.round(srcW * scale);
-    const h = Math.round(srcH * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close?.();
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
-    return { blob, width: w, height: h };
-}
-async function loadBitmap(file) {
-    if (typeof createImageBitmap === 'function') {
-        try { return await createImageBitmap(file); } catch {}
-    }
-    // Fallback for browsers without createImageBitmap (older iOS Safari)
-    return new Promise((resolve, reject) => {
-        const url = URL.createObjectURL(file);
-        const img = new Image();
-        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-        img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
-        img.src = url;
-    });
+    return fileToScaledBlobWithDims(file, maxDim, 0.85);
 }
 
 async function probeVideo(file) {

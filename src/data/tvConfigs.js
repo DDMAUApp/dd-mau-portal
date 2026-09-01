@@ -128,10 +128,19 @@
 
 import { db } from '../firebase';
 import {
-    doc, collection, getDoc, setDoc, deleteDoc, onSnapshot, serverTimestamp,
-    runTransaction, query, orderBy, limit as fsLimit, deleteField,
+    doc, collection, onSnapshot, serverTimestamp,
+    query, orderBy, limit as fsLimit, deleteField,
+    getDoc as _fsGetDoc, setDoc as _fsSetDoc, deleteDoc as _fsDeleteDoc,
+    runTransaction as _fsRunTransaction,
 } from 'firebase/firestore';
 import { recordAudit } from './audit';
+// 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern):
+// TV-config saves ran raw and hung silently on a wedged transport.
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
 
 const COLLECTION = 'tv_configs';
 // Subcollection of immutable snapshots — every time a TV config's

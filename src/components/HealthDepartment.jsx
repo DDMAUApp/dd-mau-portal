@@ -15,8 +15,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { canManageHealth } from '../data/staff';
+import { fileToScaledBlob } from '../data/parseReceipt';
 import {
     complianceStatus, hepA2Due, hepA2DueDateStr, buildAttentionQueue,
     EXEMPTION_WAIVER, upsertHealthRecord, loadHealthDocsConfig,
@@ -59,12 +60,32 @@ function StatusPill({ status, isEs }) {
 }
 
 // ── Smart upload flow (staff or manager-on-behalf) ──────────────────
+// Reload-survival draft (2026-09-01, Concepcion's Hep A card): taking the
+// photo can get the WebView killed by iOS (memory pressure) or wedge the
+// transport ("Reconnecting…") — the page came back with ALL state gone
+// even when the photo had already reached Storage, and the record save
+// never happened (she retried 4×, four orphan photos, zero records).
+// Persist a pointer to the uploaded file so the card can offer to finish.
+const HEALTH_DRAFT_KEY = 'ddmau:healthUploadDraft';
+const HEALTH_DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+const readHealthDraft = (staffId) => {
+    try {
+        const d = JSON.parse(localStorage.getItem(HEALTH_DRAFT_KEY) || 'null');
+        if (!d || String(d.staffId) !== String(staffId)) return null;
+        if (!d.at || (Date.now() - d.at) > HEALTH_DRAFT_TTL_MS) return null;
+        return d;
+    } catch { return null; }
+};
+const writeHealthDraft = (d) => { try { localStorage.setItem(HEALTH_DRAFT_KEY, JSON.stringify(d)); } catch { /* storage full/blocked */ } };
+const clearHealthDraft = () => { try { localStorage.removeItem(HEALTH_DRAFT_KEY); } catch { /* noop */ } };
+
 function UploadCard({ staffId, staffName, byName, language, onSaved }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [busy, setBusy] = useState('');           // '' | 'uploading' | 'reading'
     const [extract, setExtract] = useState(null);   // AI result awaiting confirm
     const [pending, setPending] = useState(null);   // {url, path, name}
+    const [draft, setDraft] = useState(() => readHealthDraft(staffId));
     const fileRef = useRef(null);
 
     const onFile = async (e) => {
@@ -73,12 +94,32 @@ function UploadCard({ staffId, staffName, byName, language, onSaved }) {
         if (!file) return;
         setBusy('uploading');
         try {
-            const path = `health/${staffId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+            const isImage = (file.type || '').startsWith('image/');
+            // Downscale camera shots BEFORE upload (2026-09-01 — same
+            // memory-lean recipe as the receipt scanner): a 2-8MB full-res
+            // photo took 10-20× longer to send in the fragile just-back-
+            // from-the-camera window where iOS kills the WebView. 2000px
+            // JPEG (~300KB) reads perfectly for the AI + the record.
+            // Non-decodable files (PDFs, odd formats) upload as-is.
+            let uploadData = file;
+            let contentType = file.type || 'image/jpeg';
+            let fileName = file.name || 'image.jpg';
+            if (isImage) {
+                try {
+                    uploadData = await fileToScaledBlob(file, 2000, 0.85);
+                    contentType = 'image/jpeg';
+                    fileName = fileName.replace(/\.[^.]+$/, '') + '.jpg';
+                } catch { /* decode failed — upload the original */ }
+            }
+            const path = `health/${staffId}/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
             const sref = storageRef(storage, path);
-            await uploadBytes(sref, file, { contentType: file.type || 'image/jpeg' });
+            await uploadBytes(sref, uploadData, { contentType });
             const url = await getDownloadURL(sref);
-            setPending({ url, path, name: file.name });
-            if ((file.type || '').startsWith('image/')) {
+            setPending({ url, path, name: fileName });
+            // From here the photo is safe in Storage — survive a crash.
+            writeHealthDraft({ staffId, url, path, name: fileName, at: Date.now() });
+            setDraft(null);
+            if (isImage) {
                 setBusy('reading');
                 try {
                     const res = await extractHealthDoc([url]);
@@ -96,6 +137,30 @@ function UploadCard({ staffId, staffName, byName, language, onSaved }) {
         } finally {
             setBusy('');
         }
+    };
+
+    // Finish the save for a photo that uploaded before a crash/reload.
+    const resumeDraft = async () => {
+        const d = draft;
+        if (!d || busy) return;
+        setPending({ url: d.url, path: d.path, name: d.name });
+        setDraft(null);
+        setBusy('reading');
+        try {
+            setExtract(await extractHealthDoc([d.url]));
+        } catch (err) {
+            console.warn('health extract failed:', err?.message);
+            setExtract({ docType: 'other', notes: 'auto-read unavailable — enter dates manually below' });
+        } finally {
+            setBusy('');
+        }
+    };
+    const discardDraft = () => {
+        const d = draft;
+        setDraft(null);
+        clearHealthDraft();
+        // Best-effort: remove the orphaned photo from Storage too.
+        if (d?.path) deleteObject(storageRef(storage, d.path)).catch(() => {});
     };
 
     const confirmSave = async (useDates) => {
@@ -117,6 +182,7 @@ function UploadCard({ staffId, staffName, byName, language, onSaved }) {
             toast(useDates && (extract?.hepAShot1Date || extract?.hepAShot2Date)
                 ? tx('✅ Card saved — shot dates filled in automatically', '✅ Tarjeta guardada — fechas de vacuna llenadas automáticamente')
                 : tx('✅ Document saved', '✅ Documento guardado'));
+            clearHealthDraft();
             setExtract(null); setPending(null);
             onSaved?.();
         } catch (err) {
@@ -136,6 +202,23 @@ function UploadCard({ staffId, staffName, byName, language, onSaved }) {
                     'Toma una foto de tu tarjeta de vacunación de Hepatitis A — las fechas se llenan automáticamente.')}
             </p>
             <input ref={fileRef} type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={onFile} />
+            {draft && !pending && !busy && (
+                <div className="mb-3 p-3 rounded-xl bg-amber-50 border border-amber-200">
+                    <p className="text-xs font-bold text-amber-800 mb-2">
+                        {tx('A photo you uploaded didn\'t finish saving.', 'Una foto que subiste no terminó de guardarse.')}
+                    </p>
+                    <div className="flex gap-2">
+                        <button onClick={resumeDraft}
+                            className="glass-button-primary flex-1 py-2 rounded-lg text-sm font-bold">
+                            {tx('Finish saving', 'Terminar de guardar')}
+                        </button>
+                        <button onClick={discardDraft}
+                            className="flex-1 py-2 rounded-lg text-sm font-semibold text-dd-text-2 border border-dd-line">
+                            {tx('Discard', 'Descartar')}
+                        </button>
+                    </div>
+                </div>
+            )}
             <button onClick={() => fileRef.current?.click()} disabled={!!busy}
                 className="glass-button-primary w-full py-3 rounded-xl font-bold text-sm disabled:opacity-60">
                 {busy === 'uploading' ? tx('Uploading…', 'Subiendo…')
@@ -166,7 +249,14 @@ function UploadCard({ staffId, staffName, byName, language, onSaved }) {
                                 ? tx('Looks right — save', 'Correcto — guardar')
                                 : tx('Save document', 'Guardar documento')}
                         </button>
-                        <button onClick={() => { setExtract(null); setPending(null); }}
+                        <button onClick={() => {
+                            // Abandoning: also drop the draft + the orphaned
+                            // Storage photo (pre-2026-09-01 this leaked one
+                            // photo per cancel/retry).
+                            clearHealthDraft();
+                            if (pending?.path) deleteObject(storageRef(storage, pending.path)).catch(() => {});
+                            setExtract(null); setPending(null);
+                        }}
                             className="glass-button-apple px-3 py-2 rounded-lg text-sm">
                             {tx('Cancel', 'Cancelar')}
                         </button>

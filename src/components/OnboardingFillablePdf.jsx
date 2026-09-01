@@ -15,7 +15,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import {
+    collection, query, where, onSnapshot, doc, serverTimestamp,
+    addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc,
+} from 'firebase/firestore';
+// 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern):
+// the W-4/I-9 submit writes ran raw and could hang silently AFTER the
+// PDF had already uploaded.
+import { watchdogWrite } from '../data/firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { ref as sref, uploadBytes, getDownloadURL, getBytes, listAll, deleteObject } from 'firebase/storage';
 import { LOCATION_INFO, pickSigStampBox } from '../data/onboarding';
 import { displayFieldLabel } from '../data/pdfFieldLabels';

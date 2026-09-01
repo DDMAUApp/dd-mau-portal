@@ -41,9 +41,17 @@
 
 import { db } from '../firebase';
 import {
-    doc, collection, getDoc, setDoc, deleteDoc, onSnapshot, serverTimestamp,
+    doc, collection, onSnapshot, serverTimestamp,
+    getDoc as _fsGetDoc, setDoc as _fsSetDoc, deleteDoc as _fsDeleteDoc,
 } from 'firebase/firestore';
 import { recordAudit } from './audit';
+// 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern):
+// menu-item saves (incl. photo attach) ran raw and hung silently on a
+// wedged transport.
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
 
 const COLLECTION = 'menu_items';
 

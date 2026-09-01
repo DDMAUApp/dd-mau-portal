@@ -17,6 +17,26 @@ import { postAnnouncement } from '../data/announcements';
 import { translateMessage, detectLanguageHint } from '../data/translation';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
+import { fileToScaledBlob } from '../data/parseReceipt';
+
+// ── Crash-survival draft (2026-09-01 camera-crash sweep) ─────────────
+// Attaching a photo opens the camera, which backgrounds the WebView; on
+// memory-squeezed iPhones iOS can kill the page and a fully-composed
+// announcement (body + reviewed Spanish + audience + ack settings) came
+// back BLANK. Mirror the typed state to localStorage while composing;
+// offer Resume on reopen. The photo File itself can't be serialized —
+// the banner says to re-attach it.
+const ANN_DRAFT_KEY = 'ddmau:announcementDraft';
+const ANN_DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+const readAnnDraft = () => {
+    try {
+        const d = JSON.parse(localStorage.getItem(ANN_DRAFT_KEY) || 'null');
+        if (!d || !d.at || (Date.now() - d.at) > ANN_DRAFT_TTL_MS) return null;
+        if (!String(d.body || '').trim() && !String(d.translation || '').trim()) return null;
+        return d;
+    } catch { return null; }
+};
+const clearAnnDraft = () => { try { localStorage.removeItem(ANN_DRAFT_KEY); } catch { /* noop */ } };
 
 export default function ChatAnnouncementComposer({
     language = 'en', staffName, staffList, viewer, isAdmin, isManager,
@@ -71,6 +91,43 @@ export default function ChatAnnouncementComposer({
     // overwrites the same /announcements doc instead of duplicating the
     // pop-up + push fan-out. Also names the photo upload path.
     const announcementIdRef = useRef(`ann_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+    // Crash-survival draft — see ANN_DRAFT_KEY above. Mirrors the typed
+    // state (debounced) while composing; Resume banner on reopen.
+    const [resumeDraft, setResumeDraft] = useState(() => readAnnDraft());
+    useEffect(() => {
+        const t = setTimeout(() => {
+            if (!body.trim() && !translation.trim()) return;
+            try {
+                localStorage.setItem(ANN_DRAFT_KEY, JSON.stringify({
+                    body, translation, translationEdited, skipTranslation, sourceLang,
+                    audience, customNames: [...customNames],
+                    ackRequired, ackDeadlineHours, crosspostManagers,
+                    annId: announcementIdRef.current, at: Date.now(),
+                }));
+            } catch { /* storage blocked/full */ }
+        }, 500);
+        return () => clearTimeout(t);
+    }, [body, translation, translationEdited, skipTranslation, sourceLang, audience,
+        customNames, ackRequired, ackDeadlineHours, crosspostManagers]);
+    const applyResumeDraft = () => {
+        const d = resumeDraft;
+        if (!d) return;
+        setBody(d.body || '');
+        setTranslation(d.translation || '');
+        setTranslationEdited(!!d.translationEdited);
+        setSkipTranslation(!!d.skipTranslation);
+        setSourceLang(d.sourceLang === 'es' ? 'es' : 'en');
+        setAudience(d.audience || 'all');
+        setCustomNames(new Set(d.customNames || []));
+        setAckRequired(!!d.ackRequired);
+        setAckDeadlineHours(d.ackDeadlineHours ?? 24);
+        setCrosspostManagers(!!d.crosspostManagers);
+        // Keep the same announcement id so the C11 retry-dedupe survives
+        // the reload too.
+        if (d.annId) announcementIdRef.current = d.annId;
+        setResumeDraft(null);
+    };
+    const dropResumeDraft = () => { setResumeDraft(null); clearAnnDraft(); };
     // 2026-07-27 audit C11 (leak) — the photo previewUrl was only revoked on
     // the manual ✕; closing the modal (or a successful post) leaked the blob
     // URL for the session. Ref mirror + unmount cleanup covers every exit.
@@ -201,10 +258,22 @@ export default function ChatAnnouncementComposer({
         );
     }
 
-    function handlePhotoPick(e) {
-        const f = e.target.files?.[0];
+    async function handlePhotoPick(e) {
+        let f = e.target.files?.[0];
         e.target.value = '';
         if (!f) return;
+        // 2026-09-01 camera-crash sweep: downscale before staging (receipts/
+        // health recipe) — the preview then decodes ~300KB, not 48MP RGBA,
+        // and the upload doesn't crawl in the post-camera window. Fallback
+        // keeps the original with the 10MB storage-rule gate.
+        try {
+            f = await fileToScaledBlob(f, 2000, 0.85);
+        } catch {
+            if (f.size > 10 * 1024 * 1024) {
+                toast(tx('Photo is too large (max 10 MB)', 'La foto es muy grande (máx 10 MB)'), { kind: 'error' });
+                return;
+            }
+        }
         const previewUrl = URL.createObjectURL(f);
         setPhoto({ file: f, previewUrl });
     }
@@ -270,6 +339,7 @@ export default function ChatAnnouncementComposer({
             });
             // Post landed — release the local photo preview blob (audit C11).
             if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
+            clearAnnDraft();
             onPosted?.({ announcementGroupId: res.id, recipientCount: res.recipients.length });
 
         } catch (e) {
@@ -299,6 +369,27 @@ export default function ChatAnnouncementComposer({
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {resumeDraft && (
+                        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+                            <p className="text-xs font-bold text-amber-800 mb-1">
+                                {tx('You have an unfinished announcement.', 'Tienes un anuncio sin terminar.')}
+                            </p>
+                            <p className="text-[11px] text-amber-700 mb-2 line-clamp-2">
+                                “{String(resumeDraft.body || resumeDraft.translation || '').slice(0, 120)}”
+                                {' '}{tx('(a photo has to be re-attached)', '(la foto debe adjuntarse de nuevo)')}
+                            </p>
+                            <div className="flex gap-2">
+                                <button onClick={applyResumeDraft}
+                                    className="flex-1 py-2 rounded-lg text-sm font-bold bg-dd-green text-white">
+                                    {tx('Resume', 'Continuar')}
+                                </button>
+                                <button onClick={dropResumeDraft}
+                                    className="flex-1 py-2 rounded-lg text-sm font-semibold text-dd-text-2 border border-dd-line">
+                                    {tx('Discard', 'Descartar')}
+                                </button>
+                            </div>
+                        </div>
+                    )}
                     {/* Audience */}
                     <div>
                         <label className="block text-[11px] font-bold uppercase tracking-widest text-dd-text-2 mb-1">

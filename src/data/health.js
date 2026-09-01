@@ -293,8 +293,13 @@ export function extractHealthDoc(imageUrls) {
         // Offline fast-fail (2026-07-13 audit): with persistentLocalCache the
         // setDoc promise resolves only on SERVER ack — offline it just hangs,
         // and the user waited the full 120s for a misleading 'read timeout'.
-        // If the write hasn't acked in 10s, surface the real problem now.
-        const OFFLINE_FAIL_MS = 10_000;
+        // If the write hasn't acked, surface the real problem.
+        // 25s, not 10s (2026-09-01, Concepcion's Hep A card): taking the
+        // photo backgrounds the WebView and WEDGES the transport — the
+        // revive watchdog fires at 8s and the write then lands at ~10-15s.
+        // The old 10s cutoff fired first and killed the read exactly when
+        // it was about to succeed.
+        const OFFLINE_FAIL_MS = 25_000;
         let acked = false;
         setTimeout(() => {
             if (!acked && !settled) fail(new Error('no connection — check the internet and try again'));

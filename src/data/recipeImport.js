@@ -22,12 +22,27 @@
 // are deleted from Storage as soon as the job settles.
 
 import { db, storage } from '../firebase';
-import { collection, doc, setDoc, onSnapshot, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import {
+    collection, doc, onSnapshot, serverTimestamp,
+    setDoc as _fsSetDoc, deleteDoc as _fsDeleteDoc,
+} from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+// 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern):
+// this file copied health.js's job-doc transport but never got its
+// watchdog upgrade, so the job write hung silently on a wedged
+// post-camera transport.
+import { watchdogWrite } from './firestoreRevive';
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
 
 const JOBS = 'recipe_import_jobs';
 const JOB_TIMEOUT_MS = 240_000;     // trigger ceiling is 300 s; Sonnet on 6 pages ≈ 30-90 s
-const OFFLINE_FAIL_MS = 10_000;
+// 25s, not 10s (2026-09-01 sweep — same fix as health.js): the photos
+// were just taken with the camera, the transport is wedged, the revive
+// fires at 8s and the write lands ~10-15s. A 10s cutoff killed the job
+// right before success AND the finally-block unstage then deleted every
+// staged photo, throwing away the whole multi-photo upload.
+const OFFLINE_FAIL_MS = 25_000;
 export const PAGES_PER_JOB = 6;      // images per Claude call (CF cap is 8)
 export const MAX_PAGES = 30;         // whole recipe book = 38 pages; cap keeps one import bounded
 // Staged under menu_imports/ — that Storage path already allows image/pdf
@@ -81,7 +96,18 @@ function isText(file)  { return (file.type || '').startsWith('text/') || /\.(txt
 
 async function loadImageForCanvas(file) {
     if (typeof createImageBitmap === 'function') {
-        try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { /* fall back */ }
+        // resizeWidth = native downsample DURING decode (2026-09-01 sweep):
+        // without it a 48MP camera page decoded to ~190MB of RGBA before
+        // the scale-down — the memory-spike class that killed the receipt
+        // and Hep A flows. Aspect is preserved; normalizeRecipeImage's own
+        // scale math below turns into a no-op for the common case, and the
+        // oversize check there still caps engines that ignore the option.
+        try {
+            return await createImageBitmap(file, {
+                imageOrientation: 'from-image',
+                resizeWidth: MAX_EDGE_PX, resizeQuality: 'high',
+            });
+        } catch { /* fall back */ }
     }
     const url = URL.createObjectURL(file);
     try {

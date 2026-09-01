@@ -196,8 +196,13 @@ export default function HealthBulkEditor({ staffList = [], language = 'en', byNa
     // AI as unreadable bytes).
     const downscaleImage = async (file) => {
         // Path 1: createImageBitmap (fast, works on most platforms).
+        // resizeWidth = native downsample DURING decode (2026-09-01 sweep):
+        // without it a 48MP photo decoded to ~190MB of RGBA before
+        // drawToJpeg scaled it — the memory-spike class that killed the
+        // receipt and Hep A flows. drawToJpeg's own scale math still caps
+        // engines that ignore the option.
         try {
-            const bmp = await createImageBitmap(file);
+            const bmp = await createImageBitmap(file, { resizeWidth: 2000, resizeQuality: 'high' });
             const out = await drawToJpeg(bmp, bmp.width, bmp.height);
             bmp.close?.();
             if (out) return { ...out, ok: true };

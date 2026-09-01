@@ -23,6 +23,7 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { storage } from '../firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { fileToScaledBlob } from '../data/parseReceipt';
 import { MENU_DATA } from '../data/menu';
 import {
     subscribeMenuOverrides, saveMenuOverride, deleteMenuOverride,
@@ -284,17 +285,23 @@ function EditModal({ editing, categories, onClose, byName, tx }) {
     const [hidden, setHidden] = useState(override?.hidden === true);
     const [saving, setSaving] = useState(false);
 
-    const handlePhotoSelect = (e) => {
-        const file = e.target.files?.[0];
+    const handlePhotoSelect = async (e) => {
+        let file = e.target.files?.[0];
         if (!file) return;
-        if (file.size > 4 * 1024 * 1024) {
-            toast(tx('Photo too large (max 4 MB).', 'Foto muy grande (máx 4 MB).'), { kind: 'error' });
-            return;
+        // 2026-09-01 camera-crash sweep: downscale on pick (receipts/health
+        // recipe) — the FileReader preview base64'd + full-res-decoded the
+        // whole camera file. A scaled 2000px JPEG also sails under the old
+        // 4MB gate, which used to reject modern phone photos outright.
+        try {
+            file = await fileToScaledBlob(file, 2000, 0.85);
+        } catch {
+            if (file.size > 4 * 1024 * 1024) {
+                toast(tx('Photo too large (max 4 MB).', 'Foto muy grande (máx 4 MB).'), { kind: 'error' });
+                return;
+            }
         }
         setPhotoFile(file);
-        const reader = new FileReader();
-        reader.onload = (ev) => setPhotoPreview(ev.target.result);
-        reader.readAsDataURL(file);
+        setPhotoPreview(URL.createObjectURL(file));
     };
 
     const save = async () => {
@@ -314,7 +321,7 @@ function EditModal({ editing, categories, onClose, byName, tx }) {
             // Photo upload (if a new file was picked).
             let finalPhotoUrl = photoUrl;
             if (photoFile) {
-                const ext = (photoFile.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+                const ext = ((photoFile.name || 'photo.jpg').split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
                 const path = `menu_photos/${finalSlug}_${Date.now()}.${ext}`;
                 const pref = storageRef(storage, path);
                 await uploadBytes(pref, photoFile);

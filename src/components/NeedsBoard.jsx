@@ -56,6 +56,7 @@ const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, Sparkles, Camera, X } from 'lucide-react';
+import { fileToScaledBlob } from '../data/parseReceipt';
 
 // Display labels per urgency level.
 const URGENCY_LEVELS = [
@@ -237,20 +238,26 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
     // pattern used in MaintenanceRequest + ChatThread — on iOS Safari +
     // Capacitor WKWebView this opens the system sheet with "Take Photo",
     // "Choose from Library", and "Choose File" options.
-    function handlePhotoSelect(e) {
-        const file = e.target.files?.[0];
+    async function handlePhotoSelect(e) {
+        let file = e.target.files?.[0];
         if (!file) return;
-        // Early-reject oversize photos (Storage rule caps at 10 MB but
-        // the failure arrives minutes later on cellular). Same threshold
-        // MaintenanceRequest uses.
-        if (file.size > 10 * 1024 * 1024) {
-            window.alert(tx('Photo is too large (max 10 MB)', 'Foto muy grande (máx 10 MB)'));
-            return;
+        // 2026-09-01 camera-crash sweep: downscale on pick (receipts/health
+        // recipe). The old FileReader preview base64'd the WHOLE camera file
+        // and decoded it at full resolution — the memory-spike class that
+        // killed the Hep A flow. Preview + upload now use the ~300KB copy.
+        try {
+            file = await fileToScaledBlob(file, 2000, 0.85);
+        } catch {
+            // Non-decodable — keep the original behind the 10 MB gate
+            // (Storage rule caps at 10 MB; the failure arrives minutes
+            // later on cellular).
+            if (file.size > 10 * 1024 * 1024) {
+                window.alert(tx('Photo is too large (max 10 MB)', 'Foto muy grande (máx 10 MB)'));
+                return;
+            }
         }
         setDraftPhoto(file);
-        const reader = new FileReader();
-        reader.onload = (ev) => setDraftPhotoPreview(ev.target.result);
-        reader.readAsDataURL(file);
+        setDraftPhotoPreview(URL.createObjectURL(file));
     }
     function clearPhoto() {
         setDraftPhoto(null);
@@ -351,7 +358,7 @@ export default function NeedsBoard({ language, staffName, storeLocation }) {
                 // sometimes hands us names with spaces, parens, accented
                 // characters, or no extension at all. Sanitize via
                 // sanitizeStorageFilename() before composing the path.
-                const safeName = sanitizeStorageFilename(draftPhoto.name);
+                const safeName = sanitizeStorageFilename(draftPhoto.name || 'photo.jpg');
                 photoPath = `needs/${effectiveLocation}/${Date.now()}_${safeName}`;
                 photoStorageRef = storageRef(storage, photoPath);
                 await uploadBytes(photoStorageRef, draftPhoto);

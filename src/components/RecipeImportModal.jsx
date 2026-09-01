@@ -8,7 +8,7 @@
 //
 // Stages: pick → reading → review → saving → done
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ModalPortal from './ModalPortal';
 import RecipeForm from './RecipeForm';
 import { importRecipes, MAX_PAGES, PAGES_PER_JOB } from '../data/recipeImport';
@@ -26,7 +26,25 @@ export default function RecipeImportModal({
     const tx = (en, es) => (isEs ? es : en);
     const [stage, setStage] = useState('pick');          // pick | reading | review | saving | done
     const [progress, setProgress] = useState('');
-    const [pasted, setPasted] = useState('');
+    // Pasted text survives a camera-kill reload (2026-09-01 sweep): taking
+    // a page photo can get the WebView killed and typed/pasted text came
+    // back blank. Queued photo Files can't be serialized — those are a
+    // quick re-pick; the typed work is what hurts to lose. 12h TTL.
+    const [pasted, setPasted] = useState(() => {
+        try {
+            const d = JSON.parse(localStorage.getItem('ddmau:recipeImportPasted') || 'null');
+            return (d && d.at && (Date.now() - d.at) < 12 * 60 * 60 * 1000) ? (d.text || '') : '';
+        } catch { return ''; }
+    });
+    useEffect(() => {
+        const t = setTimeout(() => {
+            try {
+                if (pasted.trim()) localStorage.setItem('ddmau:recipeImportPasted', JSON.stringify({ text: pasted, at: Date.now() }));
+                else localStorage.removeItem('ddmau:recipeImportPasted');
+            } catch { /* storage blocked/full */ }
+        }, 500);
+        return () => clearTimeout(t);
+    }, [pasted]);
     const [pickedFiles, setPickedFiles] = useState([]);   // File[] queued before "Read"
     const [items, setItems] = useState([]);               // [{ draft, checked, mode:'add'|'replace'|'skip', existingId }]
     const [warnings, setWarnings] = useState([]);
@@ -76,6 +94,8 @@ export default function RecipeImportModal({
             setItems(next);
             setWarnings(res.warnings || []);
             setStage('review');
+            // The pasted text was consumed by the read — drop the draft.
+            try { localStorage.removeItem('ddmau:recipeImportPasted'); } catch { /* noop */ }
             if (next.length === 0) {
                 toast(tx('No recipes found in that — try a clearer photo or paste the text.', 'No se encontraron recetas — intenta una foto más clara o pega el texto.'), { kind: 'error' });
             }
