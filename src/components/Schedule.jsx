@@ -32,6 +32,7 @@ import {
     arrayUnion, orderBy, limit, deleteField,
     addDoc as _fsAddDoc, deleteDoc as _fsDeleteDoc, updateDoc as _fsUpdateDoc,
     setDoc as _fsSetDoc, runTransaction as _fsRunTransaction, getDocs as _fsGetDocs,
+    getDoc as _fsGetDoc,
 } from 'firebase/firestore';
 import { watchdogWrite, watchdogRead, reviveFirestore } from '../data/firestoreRevive';
 
@@ -54,12 +55,14 @@ const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
 // but no reload escalation and no "Saving…" pill — a slow week prefetch on
 // store Wi-Fi must never reload the app or claim to be saving.
 const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, LOCATION_ABBR, isOnScheduleAt } from '../data/staff';
 import { assessOffer, assessCancelOffer, assessDenyClaim, assessDenySwapRequest } from '../data/offerRules';
 import { patchStaffRecordByName } from '../data/staffDoc';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { auditAvailabilityChange, auditPtoChange, auditShiftChange, auditScheduleConfig } from '../data/audit';
+import { pushUndo, planUndoOps, undoKindLabel } from '../data/scheduleUndo';
 import { enableFcmPush } from '../messaging';
 // (src/data/splh imports removed 2026-08-29 — the SPLH forecast pipeline
 // was dead code after the SplhAdvisor weather-only redesign; see SC4 note
@@ -1838,6 +1841,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 }, 0);
             }
             await writeP;
+            recordUndo({ kind: 'create', ids: [docRef.id], week: null, label: shiftUndoLabel(shiftData) });
         } catch (e) {
             console.error('Add shift failed:', e);
             toast(tx('Could not save shift: ', 'No se pudo guardar el turno: ') + e.message);
@@ -1905,8 +1909,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setConfirmDialog({
                 title: tx('Delete this shift?', '¿Eliminar este turno?'),
                 body: tx(
-                    `You are deleting ${sh.staffName || 'an unassigned'} shift on ${detail}. This can't be undone — are you sure?`,
-                    `Estás eliminando el turno de ${sh.staffName || 'sin asignar'} el ${detail}. No se puede deshacer — ¿estás seguro?`
+                    `You are deleting ${sh.staffName || 'an unassigned'} shift on ${detail}. Are you sure? (You can bring it back right after with the ↩ Undo button.)`,
+                    `Estás eliminando el turno de ${sh.staffName || 'sin asignar'} el ${detail}. ¿Estás seguro? (Puedes recuperarlo justo después con el botón ↩ Deshacer.)`
                 ),
                 confirmLabel: tx('Delete shift', 'Eliminar turno'),
                 tone: 'danger',
@@ -1914,14 +1918,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             return;
         }
-        // Two delete paths:
-        //   - opts.immediate (per-cube inline confirm flow): the user has
-        //     already tapped "yes" on a 1-click inline confirm right next
-        //     to the shift. Skip the 5-second undoToast and just commit —
-        //     the inline confirm IS the safety net. Feels instant.
-        //   - default (other call sites like drag-to-delete, bulk delete):
-        //     keep the 5-second undoToast so a fat-finger has a recovery
-        //     window.
+        // ONE delete path (2026-09-01 undo audit). There used to be two:
+        // an immediate commit for the per-cube inline confirm, and a
+        // 5-second delayed-commit undoToast for everything else. With the
+        // durable session undo, the delayed path is gone — every delete
+        // commits instantly (grid updates now), and the toast's Undo (plus
+        // the header ↩) really RESTORES the doc rather than buffering the
+        // delete. The confirm dialog above stays the safety gate.
         // Admin-fanout only when a PUBLISHED shift is deleted. Drafts
         // haven't been released to anyone, so silent-delete is correct
         // for both staff and admin — no point pinging co-managers about
@@ -1939,62 +1942,37 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 createdBy: staffName,
             }).catch(() => {});
         };
-        if (opts.immediate) {
-            try {
-                await deleteDoc(doc(db, 'shifts', shiftId));
-                // Prune the linked staffing_need so the Open Slots panel
-                // reflects this delete (no-op when sh.fromNeedId is absent).
-                await pruneNeedAfterShiftDelete(sh);
-                auditShiftChange({ shiftId, staffName: sh.staffName, action: 'deleted',
-                    before: { date: sh.date, startTime: sh.startTime, endTime: sh.endTime, side: sh.side || null }, surface: 'admin-dashboard' });
-                invalidateWeekCache(sh.date);
-                if (wasPublished && sh.staffName) {
-                    notify(sh.staffName, 'shift_deleted',
-                        { en: `🗑 Shift removed: ${detail}`, es: `🗑 Turno eliminado: ${detail}` },
-                        { en: 'Your manager removed this shift.', es: 'Tu gerente eliminó este turno.' },
-                        '/schedule',
-                        { tagSuffix: `shift:${shiftId}` }
-                    ).catch(() => {});
-                }
-                fanoutAdmins();
-                // Tell the caller the delete actually happened (publish
-                // preview uses this to drop the row only on real deletion).
-                opts.onDeleted?.();
-                toast(tx(`🗑 Deleted (${detail})`, `🗑 Eliminado (${detail})`));
-            } catch (e) {
-                console.error('Delete shift failed:', e);
-                toast(tx('Delete failed: ', 'Error al eliminar: ') + (e.message || e));
+        try {
+            await deleteDoc(doc(db, 'shifts', shiftId));
+            // Prune the linked staffing_need so the Open Slots panel
+            // reflects this delete (no-op when sh.fromNeedId is absent).
+            await pruneNeedAfterShiftDelete(sh);
+            const entry = { kind: 'delete', id: shiftId, snapshot: { ...sh }, label: shiftUndoLabel(sh) };
+            recordUndo(entry);
+            auditShiftChange({ shiftId, staffName: sh.staffName, action: 'deleted',
+                before: { date: sh.date, startTime: sh.startTime, endTime: sh.endTime, side: sh.side || null }, surface: 'admin-dashboard' });
+            invalidateWeekCache(sh.date);
+            if (wasPublished && sh.staffName) {
+                notify(sh.staffName, 'shift_deleted',
+                    { en: `🗑 Shift removed: ${detail}`, es: `🗑 Turno eliminado: ${detail}` },
+                    { en: 'Your manager removed this shift.', es: 'Tu gerente eliminó este turno.' },
+                    '/schedule',
+                    { tagSuffix: `shift:${shiftId}` }
+                ).catch(() => {});
             }
-            return;
+            fanoutAdmins();
+            // Tell the caller the delete actually happened (publish
+            // preview uses this to drop the row only on real deletion).
+            opts.onDeleted?.();
+            toast(tx(`🗑 Deleted (${detail})`, `🗑 Eliminado (${detail})`), {
+                duration: 8000,
+                actionLabel: tx('Undo', 'Deshacer'),
+                onAction: () => handleUndoEntry(entry),
+            });
+        } catch (e) {
+            console.error('Delete shift failed:', e);
+            toast(tx('Delete failed: ', 'Error al eliminar: ') + (e.message || e));
         }
-        // Default path — undo toast for other call sites.
-        undoToast(
-            tx(`🗑 Shift deleted (${detail})`, `🗑 Turno eliminado (${detail})`),
-            async () => {
-                try {
-                    await deleteDoc(doc(db, 'shifts', shiftId));
-                    // Same need-prune as the immediate path. If the user hits
-                    // Undo, this callback never runs, so the need stays filled.
-                    await pruneNeedAfterShiftDelete(sh);
-                    auditShiftChange({ shiftId, staffName: sh.staffName, action: 'deleted',
-                        before: { date: sh.date, startTime: sh.startTime, endTime: sh.endTime, side: sh.side || null }, surface: 'admin-dashboard' });
-                    invalidateWeekCache(sh.date);
-                    if (wasPublished && sh.staffName) {
-                        await notify(sh.staffName, 'shift_deleted',
-                            { en: 'Shift removed', es: 'Turno eliminado' },
-                            { en: `Your ${detail} shift has been removed.`,
-                              es: `Tu turno del ${detail} ha sido eliminado.` },
-                            null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
-                    }
-                    fanoutAdmins();
-                    opts.onDeleted?.();
-                } catch (e) {
-                    console.error('Delete shift failed:', e);
-                    toast(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message, { kind: 'error' });
-                }
-            },
-            { delayMs: 5000, undoLabel: tx('Undo', 'Deshacer'), kind: 'warn' }
-        );
     };
 
     // ── Drag-and-drop: move a shift to a different cell (date / staff). ──
@@ -2055,6 +2033,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             auditShiftChange({ shiftId, staffName: sh.staffName, action: 'edited',
                 before: { startTime: sh.startTime, endTime: sh.endTime }, after: { startTime, endTime }, surface: 'admin-dashboard' });
             invalidateWeekCache(sh.date);
+            recordUndo({ kind: 'update', id: shiftId, before: { ...sh }, after: { startTime, endTime },
+                revert: { startTime: sh.startTime, endTime: sh.endTime },
+                label: shiftUndoLabel(sh) });
             // Availability acknowledgment modal on conflict (replaces the
             // toast — toast was easy to miss while the manager kept
             // dragging). See setAvailabilityWarn comment.
@@ -2192,6 +2173,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 before: { staffName: oldStaff, date: oldDate }, after: { staffName: newStaffName, date: newDate }, surface: 'admin-dashboard' });
             invalidateWeekCache(oldDate);
             invalidateWeekCache(newDate);
+            recordUndo({ kind: 'update', id: shiftId, before: { ...shift },
+                after: { staffName: newStaffName, date: newDate },
+                // Revert = exactly what the move txn wrote: owner + date,
+                // the side sync, and (owner change only) the offer/claim
+                // status fields it cleared — their timestamps stay stripped.
+                revert: {
+                    staffName: oldStaff, date: oldDate,
+                    ...(newOwnerSide && newOwnerSide !== shift.side ? { side: shift.side ?? null } : {}),
+                    ...(newStaffName !== oldStaff ? {
+                        offerStatus: shift.offerStatus ?? null, offeredBy: shift.offeredBy ?? null,
+                        pendingClaimBy: shift.pendingClaimBy ?? null, coverNeeded: shift.coverNeeded ?? false,
+                        proposedSplit: shift.proposedSplit ?? null, approvedBy: shift.approvedBy ?? null,
+                    } : {}),
+                },
+                label: shiftUndoLabel(shift) });
             // Availability acknowledgment modal — same pattern as add and
             // drag-resize, surfaces if the move lands the shift outside
             // the (new) staff's window for the (new) day-of-week.
@@ -4046,13 +4042,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
         // Commit all the recurring shifts in batches of 400.
         try {
+            const generatedIds = [];
             const BATCH_LIMIT = 400;
             for (let i = 0; i < recurringBatchShifts.length; i += BATCH_LIMIT) {
                 const batch = writeBatch(db);
                 for (const sh of recurringBatchShifts.slice(i, i + BATCH_LIMIT)) {
-                    batch.set(doc(collection(db, 'shifts')), sh);
+                    const ref = doc(collection(db, 'shifts'));
+                    batch.set(ref, sh);
+                    generatedIds.push(ref.id);
                 }
                 await watchdogWrite(batch.commit());
+            }
+            if (generatedIds.length > 0) {
+                recordUndo({ kind: 'create', ids: generatedIds,
+                    week: { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) },
+                    tag: 'recurring', label: `×${generatedIds.length}` });
             }
         } catch (e) { console.error('Recurring shift batch failed:', e); }
         // Audit log (roll-up) — Andrew 2026-06-25.
@@ -4428,6 +4432,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const copyBusyRef = useRef(false);
     const undoCopyBusyRef = useRef(false);
     const [lastCopy, setLastCopy] = useState(null);
+    // Editor undo stack (Andrew 2026-09-01: "add a undo button on the make
+    // schedule page"). Session-scoped; entries pushed by add / times-edit /
+    // drag-move / delete / bulk generators; ↩ header button + Cmd/Ctrl+Z
+    // reverse the newest. Plan logic is pure + tested (scheduleUndo.js).
+    const [undoStack, setUndoStack] = useState([]);
+    const undoBusyRef = useRef(false);
+    const recordUndo = (entry) => setUndoStack(s => pushUndo(s, entry));
+    const shiftUndoLabel = (sh) =>
+        `${sh.staffName || '—'} · ${sh.date} · ${shortTime12h(sh.startTime)}–${shortTime12h(sh.endTime)}`;
     const handleSubmitPtoRequest = async (entry) => {
         // One in-flight submit at a time (2026-07-23): the modal button
         // stays enabled while addDoc awaits, so a double-tap on slow Wi-Fi
@@ -5537,6 +5550,199 @@ ${dayBlocks}
     //    want i want to be able to undo it") — the created doc ids are
     //    kept; the success toast's Undo button and a More-menu row delete
     //    exactly those docs while they're still drafts.
+    // ── Editor undo executor ───────────────────────────────────────────
+    // Reverses the newest undo-stack entry. Fresh reads first, then the
+    // pure planner (scheduleUndo.planUndoOps) decides the writes — it
+    // skips published creates, refuses on colleague drift, and never
+    // un-publishes. Pops the entry on success OR on a permanent refusal
+    // (drift); keeps it on a transient error so the tap can retry.
+    // Re-link a restored fromNeedId shift to its staffing_need (the delete
+    // pruned it). If the need is gone or already back at capacity, strip
+    // fromNeedId from the restored shift instead so a future delete can't
+    // mis-prune someone else's slot. Best-effort, never blocks the undo.
+    const relinkNeedAfterShiftRestore = async (shift, shiftId) => {
+        if (!shift?.fromNeedId) return;
+        let linked = false;
+        try {
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'staffing_needs', shift.fromNeedId);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) return;
+                const need = snap.data();
+                const filledStaff = Array.isArray(need.filledStaff) ? [...need.filledStaff] : [];
+                const filledShiftIds = Array.isArray(need.filledShiftIds) ? [...need.filledShiftIds] : [];
+                if (filledShiftIds.includes(shiftId)) { linked = true; return; }
+                if (need.count && filledStaff.length >= need.count) return; // re-filled meanwhile
+                filledStaff.push(shift.staffName || '');
+                filledShiftIds.push(shiftId);
+                txn.update(ref, { filledStaff, filledShiftIds });
+                linked = true;
+            });
+            if (!linked) {
+                await updateDoc(doc(db, 'shifts', shiftId), { fromNeedId: deleteField() });
+            }
+        } catch (e) {
+            console.warn('Need re-link after undo restore failed (non-fatal):', e);
+        }
+    };
+
+    const undoStackRef = useRef([]);
+    undoStackRef.current = undoStack;
+    const handleUndoEntry = async (entry) => {
+        // Membership check: the entry may already have been undone via a
+        // different affordance (header ↩ vs a toast's Undo button).
+        if (!entry || !undoStackRef.current.includes(entry)) return;
+        if (undoBusyRef.current) {
+            toast(tx('Still undoing — one moment…', 'Todavía deshaciendo — un momento…'));
+            return;
+        }
+        undoBusyRef.current = true;
+        try {
+            // Fresh reads of everything the entry touches. Bulk creates
+            // stay within one week → one range query; singles → getDoc.
+            const liveById = new Map();
+            if (entry.kind === 'create' && entry.week && entry.ids.length > 3) {
+                const snap = await getDocs(query(
+                    collection(db, 'shifts'),
+                    where('date', '>=', entry.week.startStr),
+                    where('date', '<', entry.week.endStr),
+                ));
+                snap.forEach(d => liveById.set(d.id, d.data()));
+            } else {
+                const ids = entry.kind === 'create' ? entry.ids : [entry.id];
+                for (const id of ids) {
+                    const s = await getDoc(doc(db, 'shifts', id));
+                    if (s.exists()) liveById.set(id, s.data());
+                }
+            }
+            const { ops, skippedPublished, drifted } = planUndoOps(entry, liveById);
+            if (drifted) {
+                setUndoStack(s => s.filter(en => en !== entry));
+                toast(tx('Someone else changed that shift since — undo skipped to protect their edit.',
+                         'Otra persona cambió ese turno desde entonces — no se deshizo para proteger su cambio.'),
+                    { kind: 'warn', duration: 8000 });
+                return;
+            }
+            const BATCH_LIMIT = 400;
+            for (let i = 0; i < ops.length; i += BATCH_LIMIT) {
+                const batch = writeBatch(db);
+                for (const op of ops.slice(i, i + BATCH_LIMIT)) {
+                    if (op.op === 'delete') batch.delete(doc(db, 'shifts', op.id));
+                    else if (op.op === 'merge') batch.set(doc(db, 'shifts', op.id),
+                        { ...op.data, updatedAt: serverTimestamp() }, { merge: true });
+                    else batch.set(doc(db, 'shifts', op.id),
+                        { ...op.data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+                }
+                await watchdogWrite(batch.commit());
+            }
+            // Staffing-need bookkeeping stays in sync in BOTH directions:
+            // undo-deleted shifts un-fill their slot; an undo that RESTORES
+            // a deleted fromNeedId shift re-fills it (or strips the link).
+            for (const op of ops) {
+                if (op.op === 'delete' && op.data?.fromNeedId) {
+                    await pruneNeedAfterShiftDelete({ id: op.id, ...op.data });
+                }
+            }
+            if (entry.kind === 'delete' && ops.length > 0 && entry.snapshot?.fromNeedId) {
+                await relinkNeedAfterShiftRestore(entry.snapshot, entry.id);
+            }
+            // Cache invalidation for every touched date.
+            const dates = new Set();
+            for (const op of ops) { if (op.data?.date) dates.add(op.data.date); }
+            if (entry.kind === 'update') {
+                if (entry.before?.date) dates.add(entry.before.date);
+                if (entry.after?.date) dates.add(entry.after.date);
+            }
+            dates.forEach(d => invalidateWeekCache(d));
+            // Staff notifications — only when the undo visibly changes a
+            // PUBLISHED shift (drafts are silent, and published creates
+            // are skipped, never deleted).
+            if (ops.length > 0 && entry.kind === 'update') {
+                const live = liveById.get(entry.id);
+                const isPub = live ? live.published !== false : entry.before?.published !== false;
+                // Notify the CURRENT owner (a swap may have moved the shift
+                // since a times edit) — fall back to the pre-edit owner.
+                const restoreRecipient = live?.staffName || entry.before?.staffName;
+                if (isPub && restoreRecipient) {
+                    notify(restoreRecipient, 'shift_time_changed',
+                        { en: 'Shift changed back', es: 'Turno restaurado' },
+                        { en: `Your ${entry.before.date} shift is back to ${formatTime12h(entry.before.startTime)}–${formatTime12h(entry.before.endTime)}.`,
+                          es: `Tu turno del ${entry.before.date} volvió a ${formatTime12h(entry.before.startTime)}–${formatTime12h(entry.before.endTime)}.` },
+                        null, { allowSelf: true, tagSuffix: `shift:${entry.id}` }).catch(() => {});
+                }
+                if (isPub && entry.after?.staffName && entry.after.staffName !== entry.before?.staffName) {
+                    notify(entry.after.staffName, 'shift_reassigned',
+                        { en: 'Shift update', es: 'Cambio de turno' },
+                        { en: `The ${entry.before?.date || ''} ${formatTime12h(entry.before?.startTime)}–${formatTime12h(entry.before?.endTime)} shift went back to ${entry.before?.staffName || 'its owner'}.`,
+                          es: `El turno ${entry.before?.date || ''} ${formatTime12h(entry.before?.startTime)}–${formatTime12h(entry.before?.endTime)} regresó a ${entry.before?.staffName || 'su dueño'}.` },
+                        null, { tagSuffix: `shift:${entry.id}` }).catch(() => {});
+                }
+            }
+            if (ops.length > 0 && entry.kind === 'delete' && entry.snapshot?.published !== false && entry.snapshot?.staffName) {
+                notify(entry.snapshot.staffName, 'shift_time_changed',
+                    { en: 'Shift restored', es: 'Turno restaurado' },
+                    { en: `Your ${entry.snapshot.date} ${formatTime12h(entry.snapshot.startTime)}–${formatTime12h(entry.snapshot.endTime)} shift is back on the schedule.`,
+                      es: `Tu turno del ${entry.snapshot.date} ${formatTime12h(entry.snapshot.startTime)}–${formatTime12h(entry.snapshot.endTime)} está de vuelta en el horario.` },
+                    null, { allowSelf: true, tagSuffix: `shift:${entry.id}` }).catch(() => {});
+            }
+            setUndoStack(s => s.filter(en => en !== entry));
+            if (entry.tag === 'copy') setLastCopy(null);
+            auditScheduleConfig({ action: 'undo_applied', targetType: 'shift',
+                targetName: entry.label || entry.kind,
+                after: { kind: entry.kind, tag: entry.tag || null, ops: ops.length, skippedPublished } }).catch(() => {});
+            const kindLabel = tx(undoKindLabel(entry, true), undoKindLabel(entry, false));
+            let msg;
+            if (ops.length === 0) {
+                msg = skippedPublished > 0
+                    ? tx(`Nothing undone — ${skippedPublished} already published (left in place).`,
+                         `Nada que deshacer — ${skippedPublished} ya publicado(s) (se dejaron).`)
+                    : tx(`Nothing to undo — those shifts were already gone.`,
+                         `Nada que deshacer — esos turnos ya no existían.`);
+            } else {
+                msg = tx(`↩ Undid: ${kindLabel}${entry.label ? ` — ${entry.label}` : ''}`,
+                         `↩ Deshecho: ${kindLabel}${entry.label ? ` — ${entry.label}` : ''}`);
+                if (skippedPublished > 0) {
+                    msg += ' ' + tx(`(${skippedPublished} already published — left in place)`,
+                                    `(${skippedPublished} ya publicado(s) — se dejaron)`);
+                }
+            }
+            toast(msg, { duration: 8000 });
+        } catch (e) {
+            console.error('Undo failed:', e);
+            // A synchronous SDK validation rejection is PERMANENT — retrying
+            // the same entry throws identically and would wedge the whole
+            // stack behind it. Drop it; transient errors keep the entry so
+            // the next tap retries.
+            if (/unsupported field value|invalid data|invalid-argument/i.test(String(e?.message || e?.code || ''))) {
+                setUndoStack(s => s.filter(en => en !== entry));
+                toast(tx('This change can\'t be undone automatically — fix it by editing the shift directly.',
+                         'Este cambio no se puede deshacer automáticamente — corrígelo editando el turno directamente.'),
+                    { kind: 'error', duration: 9000 });
+            } else {
+                toast(tx('Undo error: ', 'Error al deshacer: ') + e.message, { kind: 'error' });
+            }
+        } finally {
+            undoBusyRef.current = false;
+        }
+    };
+    const handleUndoLast = () => handleUndoEntry(undoStackRef.current[undoStackRef.current.length - 1]);
+    // Cmd/Ctrl+Z on desktop web (typing fields excluded). Ref-mirrored so
+    // the mount-once listener always sees the latest handler + stack.
+    const undoKeyRef = useRef(null);
+    undoKeyRef.current = { run: handleUndoLast, armed: canEdit && undoStack.length > 0 };
+    useEffect(() => {
+        const onKey = (e) => {
+            if (!(e.metaKey || e.ctrlKey) || e.shiftKey || String(e.key).toLowerCase() !== 'z') return;
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+            if (!undoKeyRef.current?.armed) return;
+            e.preventDefault();
+            undoKeyRef.current.run();
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, []);
+
     const handleUndoCopy = async (record) => {
         const lc = record;
         if (!lc || !Array.isArray(lc.ids) || lc.ids.length === 0) return;
@@ -5573,6 +5779,10 @@ ${dayBlocks}
                 await watchdogWrite(batch.commit());
             }
             setLastCopy(null);
+            // The generic undo stack holds this copy too — drop it so the
+            // header ↩ can't try to re-undo already-deleted drafts.
+            setUndoStack(s => s.filter(en =>
+                !(en.tag === 'copy' && Array.isArray(en.ids) && en.ids.some(id => idSet.has(id)))));
             auditScheduleConfig({ action: 'copy_undone', targetType: 'shift', targetName: 'undo copy last week',
                 after: { removed: removable.length, keptPublished, week: lc.weekStartStr, side: lc.side } }).catch(() => {});
             let msg = tx(`↩ Removed ${removable.length} copied draft(s).`,
@@ -5700,6 +5910,9 @@ ${dayBlocks}
             }
             const copyRecord = { ids: createdIds, weekStartStr: wkStartStr, weekEndStr: wkEndStr, side };
             setLastCopy(copyRecord);
+            recordUndo({ kind: 'create', ids: createdIds,
+                week: { startStr: wkStartStr, endStr: wkEndStr },
+                tag: 'copy', label: `×${createdIds.length}` });
             let msg = tx(`✅ Copied ${toCreate.length} ${sideLabel} shift(s) as drafts.`,
                          `✅ Se copiaron ${toCreate.length} turno(s) ${sideLabel} como borradores.`);
             if (skippedTotal > 0) {
@@ -5855,15 +6068,21 @@ ${dayBlocks}
             // 500 ops in a single round-trip; we chunk in 400s to leave
             // safety headroom. Auto-fill now completes in ≤1s for
             // typical weeks.
+            const autoFillIds = [];
             const BATCH_LIMIT = 400;
             for (let i = 0; i < created.length; i += BATCH_LIMIT) {
                 const batch = writeBatch(db);
                 const slice = created.slice(i, i + BATCH_LIMIT);
                 for (const sh of slice) {
-                    batch.set(doc(collection(db, 'shifts')), sh);
+                    const ref = doc(collection(db, 'shifts'));
+                    batch.set(ref, sh);
+                    autoFillIds.push(ref.id);
                 }
                 await watchdogWrite(batch.commit());
             }
+            recordUndo({ kind: 'create', ids: autoFillIds,
+                week: { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) },
+                tag: 'autofill', label: `×${autoFillIds.length}` });
             // Audit log (roll-up) — Andrew 2026-06-25.
             auditScheduleConfig({ action: 'auto_filled', targetType: 'shift', targetName: 'auto-fill engine',
                 after: { generated: created.length, skipped: skipped.length } }).catch(() => {});
@@ -6527,6 +6746,20 @@ ${dayBlocks}
                     const draftCount = visibleShifts.filter(s => s.published === false).length;
                     return (
                     <>
+                        {undoStack.length > 0 && (
+                            <button onClick={handleUndoLast}
+                                title={tx(`Undo: ${undoKindLabel(undoStack[undoStack.length - 1], true)}`,
+                                          `Deshacer: ${undoKindLabel(undoStack[undoStack.length - 1], false)}`)}
+                                className="relative inline-flex items-center gap-1.5 px-3 py-2 rounded-lg glass-sheet text-dd-text hover:bg-dd-bg active:scale-95 text-xs font-bold transition shadow-sm">
+                                <Undo2 size={14} strokeWidth={2.25} aria-hidden="true" className="text-amber-600" />
+                                {tx('Undo', 'Deshacer')}
+                                {undoStack.length > 1 && (
+                                    <span className="bg-amber-100 text-amber-800 text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
+                                        {undoStack.length}
+                                    </span>
+                                )}
+                            </button>
+                        )}
                         <button onClick={handlePublishDrafts}
                             title={tx('Publish all draft shifts in current week + side', 'Publicar todos los borradores')}
                             className={`relative inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm ${draftCount > 0 ? 'bg-dd-green/90 text-white hover:bg-dd-green-700 animate-pulse backdrop-blur-sm' : 'glass-sheet text-dd-text-2'}`}>
