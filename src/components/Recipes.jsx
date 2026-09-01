@@ -18,6 +18,7 @@ import { matchesRecipeQuery } from '../data/recipeSearch';
 import { useAiSearch } from '../data/aiSearch';
 import { printRecipeIngredients } from '../data/labelPrinting';
 import { scaleIngredient, parseQuantity } from '../data/recipeScale';
+import { splitIngredientLine } from '../data/ingredientParts';
 import { toast } from '../toast';
 import RecipeForm from './RecipeForm';
 // 2026-05-20 — date-code label printing on Epson TM-L100. Lazy so
@@ -126,6 +127,10 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // We commit (parseQuantity → setRecipeMultipliers) on blur/Enter so that
     // mid-typing characters like "1/" don't snap to a preset.
     const [multiplierDrafts, setMultiplierDrafts] = useState({}); // { recipeId: string }
+    // ⚖️ Ratio scaling — "match what you have" per recipe (see ratioAnchors
+    // in the card render). Session-only, like the multiplier itself.
+    const [ratioDrafts, setRatioDrafts] = useState({});           // { recipeId: { idx, have } }
+    const [ratioAppliedByRecipe, setRatioAppliedByRecipe] = useState({}); // { recipeId: { have, unit, rest, mult } }
     const commitMultiplierDraft = (recipeId) => {
         const raw = multiplierDrafts[recipeId];
         if (raw === undefined) return;
@@ -756,6 +761,31 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         const usingFallbackLang = isEs
             ? !(recipe.ingredientsEs?.length) && !!(recipe.ingredientsEn?.length)
             : !(recipe.ingredientsEn?.length) && !!(recipe.ingredientsEs?.length);
+        // ⚖️ Ratio anchors (Andrew 2026-09-01: "recipe asks for 10 lb of
+        // cabbage but the weight is always different — if I make it with
+        // 6.75 lb it will recalculate everything else"). Every ingredient
+        // line whose leading amount parses can anchor the ratio; the
+        // multiplier becomes have ÷ recipe-amount and rides the existing
+        // scaling everywhere (lines, yield, print).
+        const ratioLang = (isEs && !usingFallbackLang) ? 'es' : 'en';
+        const ratioAnchors = ingredients.map((line, idx) => {
+            const p = splitIngredientLine(line, ratioLang);
+            const base = parseQuantity(p.qty);
+            if (!base || base <= 0) return null;
+            const short = p.rest.length > 28 ? p.rest.slice(0, 28) + '…' : p.rest;
+            return { idx, base, unit: p.unit, rest: p.rest, label: `${p.qty}${p.unit ? ' ' + p.unit : ''} ${short}` };
+        }).filter(Boolean);
+        const ratioDraft = ratioDrafts[recipe.id] || { idx: '', have: '' };
+        const ratioApplied = ratioAppliedByRecipe[recipe.id];
+        const applyRatio = (draft) => {
+            const d = draft || ratioDraft;
+            const opt = ratioAnchors.find(o => o.idx === Number(d.idx));
+            const have = parseQuantity(d.have);
+            if (!opt || !have || have <= 0) return;
+            const m = have / opt.base;
+            setRecipeMultipliers(prev => ({ ...prev, [recipe.id]: m }));
+            setRatioAppliedByRecipe(prev => ({ ...prev, [recipe.id]: { have: d.have, unit: opt.unit, rest: opt.rest, mult: m } }));
+        };
         return (
             <div key={recipe.id}
                 ref={(el) => { if (el) cardRefs.current.set(recipe.id, el); else cardRefs.current.delete(recipe.id); }}
@@ -898,7 +928,54 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                             <span className="text-xs text-purple-500 font-bold">x</span>
                                         </div>
                                     </div>
-                                    {mult !== 1 && (
+                                    {/* ⚖️ Match what you have — anchor the whole recipe to the
+                                        real amount of one ingredient (10 lb cabbage on paper,
+                                        6.75 lb on the scale → everything ×0.675). */}
+                                    {ratioAnchors.length > 0 && (
+                                        <div className="mt-2 pt-2 border-t border-purple-200">
+                                            <div className="text-[11px] font-bold text-purple-700 mb-1.5">
+                                                ⚖️ {isEs ? 'Ajustar a lo que tienes' : 'Match what you have'}
+                                            </div>
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <select
+                                                    value={ratioDraft.idx}
+                                                    onChange={(e) => setRatioDrafts(prev => ({ ...prev, [recipe.id]: { ...ratioDraft, idx: e.target.value } }))}
+                                                    className="flex-1 min-w-[9rem] max-w-full border border-purple-300 rounded-lg px-2 py-1.5 text-xs font-bold text-purple-700 bg-white focus:outline-none focus:ring-2 focus:ring-purple-400">
+                                                    <option value="">{isEs ? 'Elige ingrediente…' : 'Pick ingredient…'}</option>
+                                                    {ratioAnchors.map(o => (
+                                                        <option key={o.idx} value={o.idx}>{o.label}</option>
+                                                    ))}
+                                                </select>
+                                                <span className="text-xs text-purple-500 font-bold whitespace-nowrap">{isEs ? 'tengo' : 'I have'}</span>
+                                                <input
+                                                    type="text"
+                                                    inputMode="decimal"
+                                                    placeholder="6.75"
+                                                    value={ratioDraft.have}
+                                                    onChange={(e) => setRatioDrafts(prev => ({ ...prev, [recipe.id]: { ...ratioDraft, have: e.target.value } }))}
+                                                    onKeyDown={(e) => { if (e.key === 'Enter') applyRatio(); }}
+                                                    className="w-16 text-center border border-purple-300 rounded-lg px-2 py-1.5 text-xs font-bold text-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                                />
+                                                {(() => {
+                                                    const opt = ratioAnchors.find(o => o.idx === Number(ratioDraft.idx));
+                                                    return opt?.unit ? <span className="text-xs text-purple-500 font-bold">{opt.unit}</span> : null;
+                                                })()}
+                                                <button
+                                                    onClick={() => applyRatio()}
+                                                    disabled={!(ratioAnchors.find(o => o.idx === Number(ratioDraft.idx)) && parseQuantity(ratioDraft.have) > 0)}
+                                                    className="px-3 py-1.5 rounded-full text-xs font-bold bg-purple-600 text-white disabled:opacity-40 active:scale-95 transition">
+                                                    {isEs ? 'Calcular' : 'Recalculate'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {mult !== 1 && ratioApplied && Math.abs(mult - ratioApplied.mult) < 1e-9 ? (
+                                        <div className="mt-2 text-xs text-purple-700 font-medium">
+                                            ⚖️ {isEs
+                                                ? `Recalculado para ${ratioApplied.have}${ratioApplied.unit ? ' ' + ratioApplied.unit : ''} de ${ratioApplied.rest} — todo lo demás ×${Math.round(mult * 1000) / 1000}, en morado.`
+                                                : `Recalculated for ${ratioApplied.have}${ratioApplied.unit ? ' ' + ratioApplied.unit : ''} of ${ratioApplied.rest} — everything else ×${Math.round(mult * 1000) / 1000}, shown in purple.`}
+                                        </div>
+                                    ) : mult !== 1 && (
                                         <div className="mt-2 text-xs text-purple-700 font-medium">
                                             📐 {isEs
                                                 ? `Mostrando cantidades para ${mult}x la receta — las cantidades escaladas van en morado.`
