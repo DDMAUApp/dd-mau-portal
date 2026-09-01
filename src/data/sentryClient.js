@@ -203,6 +203,19 @@ export async function initSentry() {
         else if (import.meta.env?.MODE) environment = import.meta.env.MODE;
     } catch {}
 
+    // 2026-09-01 (Andrew: "sentry has a error take a look" — it was a
+    // localhost dev-session error): .env.local carries the real DSN, so
+    // dev sessions were reporting to the SAME Sentry project and paging
+    // Andrew about mid-edit HMR states. Dev errors still go to
+    // /error_logs (tagged env:'dev'); Sentry is prod-only.
+    if (environment === 'dev') {
+        if (typeof console !== 'undefined') {
+            // eslint-disable-next-line no-console
+            console.info('[sentry] dev session — Sentry reporting disabled (errors still log to /error_logs)');
+        }
+        return;
+    }
+
     // Load the SDK now — its own lazy chunk. We're past first paint by the time
     // initSentry() runs (scheduled at idle from main.jsx).
     await loadSentry();
