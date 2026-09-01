@@ -77,7 +77,7 @@ import {
     Search, User, Users, Megaphone, Plus, MoreHorizontal, Bell,
     Hourglass, RefreshCw,
     // More-menu items
-    Printer, Calendar, Copy, Repeat, Ban,
+    Printer, Calendar, Copy, Repeat, Ban, Undo2,
 } from 'lucide-react';
 import ModalPortal from './ModalPortal';
 import { printViaNative, downloadFile } from '../capacitor-bridge';
@@ -97,7 +97,7 @@ import {
     SLOT_ROLE_GROUPS, SLOT_ROLE_BY_ID, isRoleEligible,
     SHIFT_PRESETS_FOH, SHIFT_PRESETS_BOH, getShiftPresets, sanitizeShiftPresets,
     roleColors, toDateStr, parseLocalDate, startOfWeek, addDays, weeksBetween,
-    pruneAvailabilityWeeks, formatDateShort,
+    pruneAvailabilityWeeks, formatDateShort, planWeekCopy,
     blockedDatesInRange, stripShiftTimestamps, rehydrateShiftTimestamps,
     formatTime12h, ptoIsPartial, ptoWindowLabel, timeRangesOverlap, selectGhostShifts,
     hoursBetween, dayPaidHours, isDoubleDay, formatHours, hoursColor,
@@ -4421,6 +4421,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const publishBusyRef = useRef(false);
     const addTimeOffBusyRef = useRef(false);
     const fillNeedBusyRef = useRef(false);
+    // Copy-last-week guards + undo record (2026-09-01 copy-week audit).
+    // lastCopy = { ids, weekStartStr, weekEndStr, side } of the most
+    // recent copy this session, so it can be undone from the success
+    // toast or the More menu.
+    const copyBusyRef = useRef(false);
+    const undoCopyBusyRef = useRef(false);
+    const [lastCopy, setLastCopy] = useState(null);
     const handleSubmitPtoRequest = async (entry) => {
         // One in-flight submit at a time (2026-07-23): the modal button
         // stays enabled while addDoc awaits, so a double-tap on slow Wi-Fi
@@ -5510,22 +5517,99 @@ ${dayBlocks}
     };
 
     // ── Phase 3: copy last week's shifts into this week ──
+    // 2026-09-01 copy-week audit (5-lens review, all findings verified):
+    //  • Display-side filter — copy exactly what the viewed tab SHOWS
+    //    (shift.side || home side, same rule as visibleShifts), not roster
+    //    membership. The old sideStaffNames test let an FOH-only editor
+    //    mint BOH drafts it couldn't edit or delete, silently dropped
+    //    cross-side covers / cross-location fills / hideFromSchedule
+    //    owners' shifts, and counted invisible shifts in the confirm.
+    //  • copyBusyRef — a double-tap during the silent source read queued a
+    //    full second run whose dedupe read raced the first run's commit
+    //    (both snapshots resolve before either batch lands → the whole
+    //    week duplicated). Same class as ptoSubmitBusyRef/publishBusyRef.
+    //  • Overlap skip — Generate/auto-fill guard by time-overlap; copy
+    //    only checked the exact person|date|times key, so Generate-then-
+    //    Copy double-booked anyone whose last-week times differed from
+    //    the rule's. planWeekCopy (scheduleCore, unit-tested) now owns
+    //    date-shift + all skip rules.
+    //  • Undo (Andrew 2026-09-01: "when we copy and see its not what we
+    //    want i want to be able to undo it") — the created doc ids are
+    //    kept; the success toast's Undo button and a More-menu row delete
+    //    exactly those docs while they're still drafts.
+    const handleUndoCopy = async (record) => {
+        const lc = record;
+        if (!lc || !Array.isArray(lc.ids) || lc.ids.length === 0) return;
+        if (!canEditSide(lc.side)) return;
+        if (undoCopyBusyRef.current) {
+            toast(tx('Still undoing — one moment…', 'Todavía deshaciendo — un momento…'));
+            return;
+        }
+        undoCopyBusyRef.current = true;
+        try {
+            // Fresh server read, then delete ONLY docs this copy created
+            // (by id) and ONLY while still drafts — anything the manager
+            // already published stays put. A doc deleted by hand in the
+            // meantime simply isn't found; nothing else can be touched.
+            const idSet = new Set(lc.ids);
+            const snap = await getDocs(query(
+                collection(db, 'shifts'),
+                where('date', '>=', lc.weekStartStr),
+                where('date', '<', lc.weekEndStr),
+            ));
+            const removable = [];
+            let keptPublished = 0;
+            snap.forEach(d => {
+                if (!idSet.has(d.id)) return;
+                if (d.data().published === false) removable.push(d.id);
+                else keptPublished++;
+            });
+            const BATCH_LIMIT = 400;
+            for (let i = 0; i < removable.length; i += BATCH_LIMIT) {
+                const batch = writeBatch(db);
+                for (const id of removable.slice(i, i + BATCH_LIMIT)) {
+                    batch.delete(doc(db, 'shifts', id));
+                }
+                await watchdogWrite(batch.commit());
+            }
+            setLastCopy(null);
+            auditScheduleConfig({ action: 'copy_undone', targetType: 'shift', targetName: 'undo copy last week',
+                after: { removed: removable.length, keptPublished, week: lc.weekStartStr, side: lc.side } }).catch(() => {});
+            let msg = tx(`↩ Removed ${removable.length} copied draft(s).`,
+                         `↩ Se quitaron ${removable.length} borrador(es) copiados.`);
+            if (keptPublished > 0) {
+                msg += ' ' + tx(`${keptPublished} already published — left in place.`,
+                                `${keptPublished} ya publicado(s) — se dejaron.`);
+            }
+            toast(msg, { duration: 8000 });
+        } catch (e) {
+            console.error('Undo copy failed:', e);
+            toast(tx('Undo error: ', 'Error al deshacer: ') + e.message);
+        } finally {
+            undoCopyBusyRef.current = false;
+        }
+    };
+
     const handleCopyLastWeek = async () => {
-        // Copies last week's shifts for the currently-viewed side. Gate
-        // against the editor toggle for that specific side.
-        if (!canEditSide(side)) return;
+        // Copies the currently-viewed side of last week. Gate against the
+        // editor toggle for that specific side — with the display-side
+        // filter below, every created draft's side equals this gated side.
+        if (!canEditSide(side)) {
+            toast(tx('You need editor access for this side to copy.',
+                     'Necesitas acceso de editor para este lado para copiar.'));
+            return;
+        }
+        if (copyBusyRef.current) {
+            toast(tx('Still copying — one moment…', 'Todavía copiando — un momento…'));
+            return;
+        }
+        copyBusyRef.current = true;
         const lastWeekStart = addDays(weekStart, -7);
         const lastWeekStartStr = toDateStr(lastWeekStart);
         const lastWeekEndStr = toDateStr(weekStart);
         try {
-            // 2026-05-24 audit fix: was using onSnapshot-as-getDocs which
-            // has a real race — the SDK can invoke the callback BEFORE
-            // the assignment `unsub = …` completes (Firestore fires
-            // cached snapshots synchronously). Then `unsub` is undefined,
-            // the listener leaks, and any future write to /shifts in
-            // that date range re-fires the resolve() (which is a no-op
-            // since the Promise already settled, but the leak persists).
-            // getDocs is the right tool for a one-shot read.
+            // 2026-05-24 audit fix: getDocs (the line-56 watchdogRead
+            // shadow), not onSnapshot-as-getDocs, for a one-shot read.
             const q = query(
                 collection(db, 'shifts'),
                 where('date', '>=', lastWeekStartStr),
@@ -5534,97 +5618,108 @@ ${dayBlocks}
             const snap = await getDocs(q);
             const sourceShifts = [];
             snap.forEach(d => sourceShifts.push({ id: d.id, ...d.data() }));
-            // Filter to side + location
             const filtered = sourceShifts.filter(sh => {
                 if (storeLocation !== 'both' && sh.location !== storeLocation) return false;
-                return sideStaffNames.has(sh.staffName);
+                // Deleted-staff ghost guard (2026-05-09 class), then the
+                // grid's own display rule — see the audit note above.
+                if (!staffByName.has(sh.staffName)) return false;
+                return (sh.side || resolveStaffSide(staffByName.get(sh.staffName))) === side;
             });
+            const sideLabel = side === 'boh' ? 'BOH' : 'FOH';
             if (filtered.length === 0) {
-                toast(tx('No shifts found in last week.', 'No hay turnos en la semana anterior.'));
+                toast(tx(`No ${sideLabel} shifts found in last week.`,
+                         `No hay turnos ${sideLabel} en la semana anterior.`));
                 return;
             }
             if (!confirm(tx(
-                `Copy ${filtered.length} shift(s) from last week into this week (${toDateStr(weekStart)})? They'll be created as DRAFTS.`,
-                `¿Copiar ${filtered.length} turno(s) de la semana anterior a esta semana (${toDateStr(weekStart)})? Se crearán como BORRADORES.`,
+                `Copy last week's ${filtered.length} ${sideLabel} shift(s) into this week (${toDateStr(weekStart)}) as DRAFTS? Shifts already in place, time-off days, and closed days are skipped.`,
+                `¿Copiar los ${filtered.length} turno(s) ${sideLabel} de la semana anterior a esta semana (${toDateStr(weekStart)}) como BORRADORES? Se omiten turnos ya existentes, días libres y días cerrados.`,
             ))) return;
-            // Create new docs with date shifted +7. Batched (audit
-            // 2026-05-22) — same reasoning as auto-fill: 50 sequential
-            // addDocs was 10+ seconds dead time on copy-week.
-            // Dedupe vs shifts ALREADY in the target week (2026-07-23):
-            // tapping Copy twice — or copying FOH then BOH when a
-            // cross-side staffer is on both rosters — used to create every
-            // shift again. Key = person+date+times; the Set also grows as
-            // we queue creates so duplicates WITHIN one run are caught too.
+            // Dedupe vs a FRESH server read of the target week UNIONed
+            // with local state (2026-07-23 + 2026-07-26: double-tap and
+            // two-iPad copies used to duplicate the week; a fresh-mount
+            // `shifts` can be a minutes-old localStorage cache).
             const wkStartStr = toDateStr(weekStart);
             const wkEndStr = toDateStr(addDays(weekStart, 7));
-            // 2026-07-26 audit: dedupe against a FRESH server read of the
-            // target week, not just local state — on a fresh mount `shifts`
-            // can be a minutes-old localStorage cache, and two managers
-            // tapping Copy on two iPads each saw "no duplicates" and both
-            // committed the whole week twice. Local state still unions in
-            // (covers this device's un-acked writes).
             const targetSnap = await getDocs(query(
                 collection(db, 'shifts'),
                 where('date', '>=', wkStartStr),
                 where('date', '<', wkEndStr),
             ));
-            const existingKeys = new Set();
-            targetSnap.forEach(d => {
-                const sh = d.data();
-                existingKeys.add(`${sh.staffName}|${sh.date}|${sh.startTime}|${sh.endTime}`);
-            });
+            const existingShifts = [];
+            targetSnap.forEach(d => existingShifts.push(d.data()));
             for (const sh of shifts) {
-                if (sh.date >= wkStartStr && sh.date < wkEndStr) {
-                    existingKeys.add(`${sh.staffName}|${sh.date}|${sh.startTime}|${sh.endTime}`);
-                }
+                if (sh.date >= wkStartStr && sh.date < wkEndStr) existingShifts.push(sh);
             }
-            const toCreate = [];
-            for (const sh of filtered) {
-                const oldDate = parseLocalDate(sh.date);
-                if (!oldDate) continue;
-                const newDate = new Date(oldDate);
-                newDate.setDate(newDate.getDate() + 7);
-                const newDateStr = toDateStr(newDate);
-                if (dateClosed(newDateStr, sh.location)) continue;
-                if (isStaffOffOn(sh.staffName, newDateStr)) continue;
-                const dupeKey = `${sh.staffName}|${newDateStr}|${sh.startTime}|${sh.endTime}`;
-                if (existingKeys.has(dupeKey)) continue;
-                existingKeys.add(dupeKey);
-                toCreate.push({
-                    staffName: sh.staffName,
-                    date: newDateStr,
-                    startTime: sh.startTime,
-                    endTime: sh.endTime,
-                    location: sh.location,
-                    // Preserve the per-shift side override on copy. Without
-                    // this, a cross-side shift (FOH cook covering BOH)
-                    // would revert to the staff's home side on the new
-                    // week's draft, silently breaking the assignment.
-                    side: sh.side || null,
-                    isShiftLead: !!sh.isShiftLead,
-                    isDouble: !!sh.isDouble,
-                    notes: sh.notes || '',
-                    published: false, // DRAFT
-                    createdBy: staffName,
-                    createdAt: serverTimestamp(),
-                    updatedAt: serverTimestamp(),
-                });
-            }
+            const { toCreate, skipped } = planWeekCopy({
+                sourceShifts: filtered,
+                existingShifts,
+                createdBy: staffName,
+                isClosed: dateClosed,
+                isOff: isStaffOffOn,
+            });
+            // Batched writes (audit 2026-05-22 — sequential addDocs was
+            // 10+ seconds of dead time). Ids kept for Undo.
+            const createdIds = [];
             const BATCH_LIMIT = 400;
             for (let i = 0; i < toCreate.length; i += BATCH_LIMIT) {
                 const batch = writeBatch(db);
                 for (const sh of toCreate.slice(i, i + BATCH_LIMIT)) {
-                    batch.set(doc(collection(db, 'shifts')), sh);
+                    const ref = doc(collection(db, 'shifts'));
+                    batch.set(ref, { ...sh, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+                    createdIds.push(ref.id);
                 }
                 await watchdogWrite(batch.commit());
             }
-            // Audit log (roll-up) — Andrew 2026-06-25.
+            // Audit log (roll-up) — Andrew 2026-06-25; week/side/skips added 2026-09-01.
             auditScheduleConfig({ action: 'copied_week', targetType: 'shift', targetName: 'copy last week',
-                after: { count: toCreate.length } }).catch(() => {});
-            toast(tx(`✅ Copied ${toCreate.length} shifts as drafts.`, `✅ Se copiaron ${toCreate.length} turnos como borradores.`));
+                after: { count: toCreate.length, week: wkStartStr, side, location: storeLocation,
+                         skipped: skipped.existing + skipped.overlap + skipped.pto + skipped.closed } }).catch(() => {});
+            // Availability heads-up (multi-week overrides included) —
+            // surfaced, not skipped: the manager may still want the row
+            // there to adjust. The grid badges mark the exact shifts.
+            let availConflicts = 0;
+            for (const sh of toCreate) {
+                const rec = staffByName.get(sh.staffName);
+                if (rec && checkAvailabilityConflict(rec, sh.date, sh.startTime, sh.endTime)) availConflicts++;
+            }
+            const skipParts = [];
+            if (skipped.existing + skipped.overlap > 0) {
+                skipParts.push(tx(`${skipped.existing + skipped.overlap} already scheduled`,
+                                  `${skipped.existing + skipped.overlap} ya programado(s)`));
+            }
+            if (skipped.pto > 0) skipParts.push(tx(`${skipped.pto} on time off`, `${skipped.pto} con día libre`));
+            if (skipped.closed > 0) skipParts.push(tx(`${skipped.closed} on closed days`, `${skipped.closed} en días cerrados`));
+            const skippedTotal = skipped.badDate + skipped.closed + skipped.pto + skipped.existing + skipped.overlap;
+            const skipDetail = skipParts.join(', ');
+            if (toCreate.length === 0) {
+                toast(tx(`Nothing new to copy — all ${filtered.length} were skipped${skipDetail ? ` (${skipDetail})` : ''}.`,
+                         `Nada nuevo que copiar — se omitieron los ${filtered.length}${skipDetail ? ` (${skipDetail})` : ''}.`),
+                    { kind: 'info', duration: 8000 });
+                return;
+            }
+            const copyRecord = { ids: createdIds, weekStartStr: wkStartStr, weekEndStr: wkEndStr, side };
+            setLastCopy(copyRecord);
+            let msg = tx(`✅ Copied ${toCreate.length} ${sideLabel} shift(s) as drafts.`,
+                         `✅ Se copiaron ${toCreate.length} turno(s) ${sideLabel} como borradores.`);
+            if (skippedTotal > 0) {
+                msg += ' ' + tx(`Skipped ${skippedTotal}: ${skipDetail}.`, `Se omitieron ${skippedTotal}: ${skipDetail}.`);
+            }
+            if (availConflicts > 0) {
+                msg += ' ' + tx(`⚠ ${availConflicts} land on days marked unavailable.`,
+                                `⚠ ${availConflicts} caen en días marcados no disponibles.`);
+            }
+            toast(msg, {
+                kind: 'success',
+                duration: 12000,
+                actionLabel: tx('Undo', 'Deshacer'),
+                onAction: () => { handleUndoCopy(copyRecord); },
+            });
         } catch (e) {
             console.error('Copy week failed:', e);
             toast(tx('Copy error: ', 'Error al copiar: ') + e.message);
+        } finally {
+            copyBusyRef.current = false;
         }
     };
 
@@ -6579,6 +6674,19 @@ ${dayBlocks}
                                             </span>
                                             {tx('Copy last week', 'Copiar semana anterior')}
                                         </button>
+                                        {/* Undo the last copy (session-scoped) — only while
+                                            viewing the week it was copied into, and only for
+                                            an editor of the copied side. Deletes just the
+                                            still-draft docs that copy created. */}
+                                        {lastCopy && lastCopy.weekStartStr === toDateStr(weekStart) && canEditSide(lastCopy.side) && (
+                                            <button onClick={() => { setShowMoreActions(false); handleUndoCopy(lastCopy); }}
+                                                className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                                <span className="w-6 h-6 rounded-md bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
+                                                    <Undo2 size={12} strokeWidth={2.25} aria-hidden="true" />
+                                                </span>
+                                                {tx(`Undo copy (${lastCopy.ids.length})`, `Deshacer copia (${lastCopy.ids.length})`)}
+                                            </button>
+                                        )}
                                         <button onClick={() => { setShowMoreActions(false); setShowApplyTemplate(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
                                             <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">

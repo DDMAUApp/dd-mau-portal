@@ -407,3 +407,75 @@ export function shortTime12h(t) {
     const h12 = ((h + 11) % 12) + 1;
     return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
 }
+
+// ── Copy-last-week planner (2026-09-01 copy-week audit) ────────────────
+// Pure planning for Schedule's "Copy last week": shift every source shift
+// forward 7 days and decide create-vs-skip. Extracted from the component
+// so the skip rules are unit-tested (same pattern as the Phase-1
+// scheduleCore extraction). The caller pre-filters sourceShifts to the
+// viewed store + side and supplies the target week's existing shifts
+// (fresh server read UNIONed with local state).
+//
+// Skip rules, in order per shift:
+//   badDate  — unparseable source date (defensive; never counted in UI)
+//   closed   — target date is closed for the shift's location
+//   pto      — the person has approved time off on the target date
+//   existing — exact person|date|start|end already exists in the target
+//   overlap  — the person already has ANY overlapping shift that day
+//              (Generate/auto-fill guard by overlap; copy must too, or
+//              Generate-then-Copy double-books anyone whose last-week
+//              times differ from the rule's). Half-open — a legitimate
+//              split double (10–3 + 3–8) still copies.
+// Queued creates feed back into the dedupe so two source shifts can't
+// land on the same slot within one run.
+export function planWeekCopy({ sourceShifts, existingShifts, createdBy, isClosed = () => false, isOff = () => false }) {
+    const existingKeys = new Set();
+    const intervals = new Map(); // `${name}|${date}` → [{startTime, endTime}]
+    const note = (name, date, startTime, endTime) => {
+        if (!name || !date || !startTime || !endTime) return;
+        const k = `${name}|${date}`;
+        if (!intervals.has(k)) intervals.set(k, []);
+        intervals.get(k).push({ startTime, endTime });
+    };
+    for (const sh of (existingShifts || [])) {
+        if (!sh || !sh.staffName || !sh.date) continue;
+        existingKeys.add(`${sh.staffName}|${sh.date}|${sh.startTime}|${sh.endTime}`);
+        note(sh.staffName, sh.date, sh.startTime, sh.endTime);
+    }
+    const toCreate = [];
+    const skipped = { badDate: 0, closed: 0, pto: 0, existing: 0, overlap: 0 };
+    for (const sh of (sourceShifts || [])) {
+        // parseLocalDate returns a truthy Invalid Date for malformed
+        // strings — the getTime() check is what actually catches those.
+        const oldDate = parseLocalDate(sh.date);
+        if (!oldDate || Number.isNaN(oldDate.getTime())) { skipped.badDate++; continue; }
+        const newDate = new Date(oldDate);
+        newDate.setDate(newDate.getDate() + 7);
+        const newDateStr = toDateStr(newDate);
+        if (isClosed(newDateStr, sh.location)) { skipped.closed++; continue; }
+        if (isOff(sh.staffName, newDateStr)) { skipped.pto++; continue; }
+        if (existingKeys.has(`${sh.staffName}|${newDateStr}|${sh.startTime}|${sh.endTime}`)) { skipped.existing++; continue; }
+        const clash = (intervals.get(`${sh.staffName}|${newDateStr}`) || [])
+            .some(e => timeRangesOverlap(e.startTime, e.endTime, sh.startTime, sh.endTime));
+        if (clash) { skipped.overlap++; continue; }
+        existingKeys.add(`${sh.staffName}|${newDateStr}|${sh.startTime}|${sh.endTime}`);
+        note(sh.staffName, newDateStr, sh.startTime, sh.endTime);
+        toCreate.push({
+            staffName: sh.staffName,
+            date: newDateStr,
+            startTime: sh.startTime,
+            endTime: sh.endTime,
+            // `|| null` — a legacy no-location source shift used to put
+            // `undefined` into batch.set, which THROWS client-side and
+            // killed the whole copy (same class as the split-approval fix).
+            location: sh.location || null,
+            side: sh.side || null,
+            isShiftLead: !!sh.isShiftLead,
+            isDouble: !!sh.isDouble,
+            notes: sh.notes || '',
+            published: false, // DRAFT
+            createdBy: createdBy || null,
+        });
+    }
+    return { toCreate, skipped };
+}

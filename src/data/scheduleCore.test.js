@@ -293,3 +293,135 @@ describe('golden week', () => {
         expect(DAYS_EN[d.getDay()]).toBe('Sun');
     });
 });
+
+// ── planWeekCopy (2026-09-01 copy-week audit) ──────────────────────────────
+// Pins the confirmed audit findings: the +7 date shift, exact-key dedupe,
+// the NEW overlap skip (Generate-then-Copy double-booked Maria when her
+// hand-adjusted last-week times differed from the rule's), the closed/PTO
+// skips, and the `location || null` guard (legacy no-location source shift
+// used to put `undefined` into batch.set → whole copy threw in 'both' view).
+import { planWeekCopy } from './scheduleCore';
+
+describe('planWeekCopy', () => {
+    const src = (over = {}) => ({
+        staffName: 'Maria', date: '2026-08-24', startTime: '10:00', endTime: '16:00',
+        location: 'webster', side: null, isShiftLead: false, isDouble: false, notes: '',
+        ...over,
+    });
+
+    it('shifts every source date forward exactly 7 days (incl. month end)', () => {
+        const { toCreate } = planWeekCopy({
+            sourceShifts: [src(), src({ date: '2026-08-29', startTime: '11:00' })],
+            existingShifts: [], createdBy: 'Andrew',
+        });
+        expect(toCreate.map(s => s.date)).toEqual(['2026-08-31', '2026-09-05']);
+        expect(toCreate[0]).toMatchObject({
+            staffName: 'Maria', startTime: '10:00', endTime: '16:00',
+            location: 'webster', published: false, createdBy: 'Andrew',
+        });
+    });
+
+    it('DST fall-back week still lands +7 calendar days (Nov 1 2026)', () => {
+        // 2026-10-28 + 7 crosses the US DST transition (Nov 1).
+        const { toCreate } = planWeekCopy({
+            sourceShifts: [src({ date: '2026-10-28' })], existingShifts: [],
+        });
+        expect(toCreate[0].date).toBe('2026-11-04');
+    });
+
+    it('skips exact person|date|times duplicates already in the target week', () => {
+        const { toCreate, skipped } = planWeekCopy({
+            sourceShifts: [src()],
+            existingShifts: [{ staffName: 'Maria', date: '2026-08-31', startTime: '10:00', endTime: '16:00' }],
+        });
+        expect(toCreate).toHaveLength(0);
+        expect(skipped.existing).toBe(1);
+    });
+
+    it('AUDIT: skips OVERLAPPING (not just identical) existing shifts — Generate-then-Copy', () => {
+        // Recurring rule generated Mon 10:00-15:00; last week's hand-adjusted
+        // shift was 10:00-16:00. Old exact-key dedupe passed it → double-book.
+        const { toCreate, skipped } = planWeekCopy({
+            sourceShifts: [src({ startTime: '10:00', endTime: '16:00' })],
+            existingShifts: [{ staffName: 'Maria', date: '2026-08-31', startTime: '10:00', endTime: '15:00' }],
+        });
+        expect(toCreate).toHaveLength(0);
+        expect(skipped.overlap).toBe(1);
+    });
+
+    it('a legitimate split double (10-3 + 3-8, touching edges) still copies both', () => {
+        const { toCreate, skipped } = planWeekCopy({
+            sourceShifts: [
+                src({ startTime: '10:00', endTime: '15:00' }),
+                src({ startTime: '15:00', endTime: '20:00' }),
+            ],
+            existingShifts: [],
+        });
+        expect(toCreate).toHaveLength(2);
+        expect(skipped.overlap).toBe(0);
+    });
+
+    it('two overlapping SOURCE shifts in one run: only the first lands', () => {
+        const { toCreate, skipped } = planWeekCopy({
+            sourceShifts: [
+                src({ startTime: '10:00', endTime: '16:00' }),
+                src({ startTime: '11:00', endTime: '17:00' }),
+            ],
+            existingShifts: [],
+        });
+        expect(toCreate).toHaveLength(1);
+        expect(skipped.overlap).toBe(1);
+    });
+
+    it('overlap guard is cross-location (one person cannot be at two stores at once)', () => {
+        const { toCreate, skipped } = planWeekCopy({
+            sourceShifts: [src({ location: 'webster' })],
+            existingShifts: [{ staffName: 'Maria', date: '2026-08-31', startTime: '12:00', endTime: '18:00', location: 'maryland' }],
+        });
+        expect(toCreate).toHaveLength(0);
+        expect(skipped.overlap).toBe(1);
+    });
+
+    it('skips closed dates and PTO days, counting each bucket', () => {
+        const { toCreate, skipped } = planWeekCopy({
+            sourceShifts: [
+                src(),                                     // → closed
+                src({ staffName: 'Jose', date: '2026-08-25' }), // → PTO
+                src({ staffName: 'Ana', date: '2026-08-26' }),  // → copies
+            ],
+            existingShifts: [],
+            isClosed: (dateStr) => dateStr === '2026-08-31',
+            isOff: (name) => name === 'Jose',
+        });
+        expect(toCreate.map(s => s.staffName)).toEqual(['Ana']);
+        expect(skipped.closed).toBe(1);
+        expect(skipped.pto).toBe(1);
+    });
+
+    it('AUDIT: legacy no-location source shift copies with location:null, never undefined', () => {
+        const { toCreate } = planWeekCopy({
+            sourceShifts: [src({ location: undefined })], existingShifts: [],
+        });
+        expect(toCreate).toHaveLength(1);
+        expect(toCreate[0].location).toBeNull();
+        // No undefined values anywhere in the payload (batch.set throws on them).
+        for (const v of Object.values(toCreate[0])) expect(v).not.toBeUndefined();
+    });
+
+    it('preserves side override, shift-lead, double, and notes on the draft', () => {
+        const { toCreate } = planWeekCopy({
+            sourceShifts: [src({ side: 'boh', isShiftLead: true, isDouble: true, notes: 'covering' })],
+            existingShifts: [],
+        });
+        expect(toCreate[0]).toMatchObject({ side: 'boh', isShiftLead: true, isDouble: true, notes: 'covering' });
+    });
+
+    it('unparseable source date is skipped defensively, not thrown', () => {
+        const { toCreate, skipped } = planWeekCopy({
+            sourceShifts: [src({ date: 'garbage' }), src({ date: '2026-08-26' })],
+            existingShifts: [],
+        });
+        expect(toCreate).toHaveLength(1);
+        expect(skipped.badDate).toBe(1);
+    });
+});
