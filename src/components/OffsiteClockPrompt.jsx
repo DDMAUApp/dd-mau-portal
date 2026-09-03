@@ -155,6 +155,10 @@ export default function OffsiteClockPrompt({
         // TTL expires. We bump `tick` here so the useMemo above
         // re-evaluates and sees the new snooze immediately —
         // otherwise the modal stays open after the tap.
+        // Also clear any in-flight busy state (2026-09-02 audit): if a
+        // clock-in write is hanging, Not-yet is the way OUT — the modal
+        // must close, and the hung write settles (or revives) on its own.
+        setBusyId(null);
         snoozeOffsitePrompt(currentShift.id);
         setTick(n => n + 1);
     }
@@ -215,9 +219,13 @@ export default function OffsiteClockPrompt({
                     <div className="grid grid-cols-2 gap-2 pt-1">
                         <button
                             onClick={handleNotYet}
-                            disabled={!!busyId}
-                            className="px-4 py-3 rounded-xl bg-white text-gray-700 font-black text-base border-2 border-gray-300 hover:bg-gray-50 active:scale-[0.99] disabled:opacity-50"
+                            className="px-4 py-3 rounded-xl bg-white text-gray-700 font-black text-base border-2 border-gray-300 hover:bg-gray-50 active:scale-[0.99]"
                         >
+                            {/* 2026-09-02 whole-app audit: NEVER disabled.
+                                This modal blocks the whole app; if the
+                                clock-in write hangs (honest offline), the
+                                escape hatch must stay tappable or staff
+                                are trapped on the overlay. */}
                             {tx('Not yet', 'Aún no')}
                         </button>
                         <button

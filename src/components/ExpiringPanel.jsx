@@ -14,9 +14,14 @@ import ModalPortal from './ModalPortal';
 import { toast } from '../toast';
 import { db } from '../firebase';
 import {
-    collection, query, where, orderBy, limit, onSnapshot,
-    doc, updateDoc, addDoc, serverTimestamp,
+    collection, query, where, orderBy, limit, onSnapshot, doc, serverTimestamp, updateDoc as _fsUpdateDoc, addDoc as _fsAddDoc,
 } from 'firebase/firestore';
+// 2026-09-02 whole-app audit -- watchdog shadows (house pattern A):
+// user-pressed saves in this file ran raw and hung forever on a wedged
+// transport (no pill, no revive, no escalation). Zero call-site changes.
+import { watchdogWrite } from '../data/firestoreRevive';
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 
 const dayStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 

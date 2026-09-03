@@ -34,7 +34,7 @@ import {
     setDoc as _fsSetDoc, runTransaction as _fsRunTransaction, getDocs as _fsGetDocs,
     getDoc as _fsGetDoc,
 } from 'firebase/firestore';
-import { watchdogWrite, watchdogRead, reviveFirestore } from '../data/firestoreRevive';
+import { watchdogWrite, watchdogRead, reviveFirestore, resilientSnapshot } from '../data/firestoreRevive';
 
 // ── Wedged-connection watchdog (2026-08-08, Andrew: "delete a shift
 // times out… add a shift doesnt respond until i refresh") ──────────────
@@ -974,10 +974,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Single doc that holds per-location "we are closed every X" rules.
     // Most restaurants have one or two of these (DD Mau: Sundays).
     // Cheap subscription — one doc, low churn.
+
     useEffect(() => {
-        const unsub = onSnapshot(doc(db, 'config', 'schedule_settings'), (snap) => {
+        // resilientSnapshot (2026-09-02 whole-app audit): a terminal
+        // transport error used to KILL this listener for the session.
+        const unsub = resilientSnapshot('sched:settings', (onHealthy, onError) => onSnapshot(doc(db, 'config', 'schedule_settings'), (snap) => {
+            onHealthy();
             setScheduleSettings(snap.exists() ? snap.data() : {});
-        }, (err) => console.warn('schedule_settings snapshot error:', err));
+        }, (err) => { console.warn('schedule_settings snapshot error:', err); onError(err); }));
         return unsub;
     }, []);
 
@@ -985,15 +989,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // 2026-05-16. Pending + recently-decided. Cheap subscription —
     // typically <20 active at a time, decisions auto-prune to past.
     useEffect(() => {
-        const unsub = onSnapshot(
+        // resilientSnapshot (2026-09-02 whole-app audit): a terminal
+        // transport error used to KILL this listener for the session.
+        const unsub = resilientSnapshot('sched:swap_requests', (onHealthy, onError) => onSnapshot(
             query(collection(db, 'swap_requests'), where('requestedDate', '>=', sixMonthsAgo)),
             (snap) => {
+                onHealthy();
                 const items = [];
                 snap.forEach(d => items.push({ id: d.id, ...d.data() }));
                 setSwapRequests(items);
             },
-            (err) => console.error('swap_requests snapshot error:', err)
-        );
+            (err) => { console.error('swap_requests snapshot error:', err); onError(err); }
+        ));
         return unsub;
     }, [sixMonthsAgo]);
 
@@ -1003,22 +1010,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // pre-plan next year's events.
     useEffect(() => {
         const q = query(collection(db, 'calendar_events'), where('date', '>=', sixMonthsAgo));
-        const unsub = onSnapshot(q, (snap) => {
+        // resilientSnapshot (2026-09-02 whole-app audit): a terminal
+        // transport error used to KILL this listener for the session.
+        const unsub = resilientSnapshot('sched:calendar_events', (onHealthy, onError) => onSnapshot(q, (snap) => {
+            onHealthy();
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setCalendarEvents(items);
-        }, (err) => console.error('calendar_events snapshot error:', err));
+        }, (err) => { console.error('calendar_events snapshot error:', err); onError(err); }));
         return unsub;
     }, [sixMonthsAgo]);
 
     // ── Listen for date blocks (restaurant closed days, no-time-off days) ──
     useEffect(() => {
         const q = query(collection(db, 'date_blocks'), where('date', '>=', sixMonthsAgo));
-        const unsub = onSnapshot(q, (snap) => {
+        // resilientSnapshot (2026-09-02 whole-app audit): a terminal
+        // transport error used to KILL this listener for the session.
+        const unsub = resilientSnapshot('sched:date_blocks', (onHealthy, onError) => onSnapshot(q, (snap) => {
+            onHealthy();
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setDateBlocks(items);
-        }, (err) => console.error('date_blocks snapshot error:', err));
+        }, (err) => { console.error('date_blocks snapshot error:', err); onError(err); }));
         return unsub;
     }, [sixMonthsAgo]);
 
@@ -1039,16 +1052,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             for (const it of byDate) if (!seen.has(it.id)) seen.set(it.id, it);
             setTimeOff([...seen.values()]);
         };
-        const unsub1 = onSnapshot(
+        // resilientSnapshot (2026-09-02 whole-app audit): a terminal
+        // transport error used to KILL this listener for the session.
+        const unsub1 = resilientSnapshot('sched:time_off_start', (onHealthy, onError) => onSnapshot(
             query(collection(db, 'time_off'), where('startDate', '>=', sixMonthsAgo)),
-            (snap) => { byStartDate = []; snap.forEach((d) => byStartDate.push({ id: d.id, ...d.data() })); merge(); },
-            (err) => console.error('time_off(startDate) snapshot error:', err),
-        );
-        const unsub2 = onSnapshot(
+            (snap) => { onHealthy(); byStartDate = []; snap.forEach((d) => byStartDate.push({ id: d.id, ...d.data() })); merge(); },
+            (err) => { console.error('time_off(startDate) snapshot error:', err); onError(err); },
+        ));
+        const unsub2 = resilientSnapshot('sched:time_off_date', (onHealthy, onError) => onSnapshot(
             query(collection(db, 'time_off'), where('date', '>=', sixMonthsAgo)),
-            (snap) => { byDate = []; snap.forEach((d) => byDate.push({ id: d.id, ...d.data() })); merge(); },
-            (err) => console.error('time_off(date) snapshot error:', err),
-        );
+            (snap) => { onHealthy(); byDate = []; snap.forEach((d) => byDate.push({ id: d.id, ...d.data() })); merge(); },
+            (err) => { console.error('time_off(date) snapshot error:', err); onError(err); },
+        ));
         return () => { try { unsub1(); } catch {} try { unsub2(); } catch {} };
     }, [sixMonthsAgo]);
 
@@ -1057,11 +1072,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Same single-field `date` inequality — no new composite index needed.
     useEffect(() => {
         const q = query(collection(db, 'staffing_needs'), where('date', '>=', sixWeeksAgo));
-        const unsub = onSnapshot(q, (snap) => {
+        // resilientSnapshot (2026-09-02 whole-app audit): a terminal
+        // transport error used to KILL this listener for the session.
+        const unsub = resilientSnapshot('sched:staffing_needs', (onHealthy, onError) => onSnapshot(q, (snap) => {
+            onHealthy();
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setStaffingNeeds(items);
-        }, (err) => console.error('staffing_needs snapshot error:', err));
+        }, (err) => { console.error('staffing_needs snapshot error:', err); onError(err); }));
         return unsub;
     }, [sixWeeksAgo]);
 
@@ -1071,11 +1089,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // while still preventing an unbounded read if a future bug starts
     // minting templates in a loop.
     useEffect(() => {
-        const unsub = onSnapshot(query(collection(db, 'schedule_templates'), limit(200)), (snap) => {
+        // resilientSnapshot (2026-09-02 whole-app audit): a terminal
+        // transport error used to KILL this listener for the session.
+        const unsub = resilientSnapshot('sched:templates', (onHealthy, onError) => onSnapshot(query(collection(db, 'schedule_templates'), limit(200)), (snap) => {
+            onHealthy();
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setScheduleTemplates(items);
-        }, (err) => console.error('schedule_templates snapshot error:', err));
+        }, (err) => { console.error('schedule_templates snapshot error:', err); onError(err); }));
         return unsub;
     }, []);
 
@@ -1150,11 +1171,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // staff_count × rules_per_staff (≈ 25 × 4 = 100 today). 200 cap
     // protects against runaway growth or a bulk-import bug.
     useEffect(() => {
-        const unsub = onSnapshot(query(collection(db, 'recurring_shifts'), limit(200)), (snap) => {
+        // resilientSnapshot (2026-09-02 whole-app audit): a terminal
+        // transport error used to KILL this listener for the session.
+        const unsub = resilientSnapshot('sched:recurring', (onHealthy, onError) => onSnapshot(query(collection(db, 'recurring_shifts'), limit(200)), (snap) => {
+            onHealthy();
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setRecurringShifts(items);
-        }, (err) => console.error('recurring_shifts snapshot error:', err));
+        }, (err) => { console.error('recurring_shifts snapshot error:', err); onError(err); }));
         return unsub;
     }, []);
 
@@ -1865,21 +1889,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // weren't created from a staffing_need.
     const pruneNeedAfterShiftDelete = async (shift) => {
         if (!shift?.fromNeedId) return;
-        const need = staffingNeeds.find(n => n.id === shift.fromNeedId);
-        if (!need) return;
-        const filledStaff = Array.isArray(need.filledStaff) ? need.filledStaff : [];
-        const filledShiftIds = Array.isArray(need.filledShiftIds) ? need.filledShiftIds : [];
-        // Prefer matching by shift ID — precise even when the same person
-        // fills multiple slots in one need (e.g. they're tagged twice).
-        // Fall back to staffName match for legacy slots where
-        // filledShiftIds wasn't tracked (old data pre-2026-04).
-        let idx = filledShiftIds.indexOf(shift.id);
-        if (idx < 0) idx = filledStaff.indexOf(shift.staffName);
-        if (idx < 0) return;
+        // Transactional against the LIVE need doc (2026-09-02 whole-app
+        // audit): the old whole-array replace was built from this device's
+        // possibly-stale staffingNeeds state, so two near-simultaneous
+        // deletes (or a delete racing a fill on another iPad) clobbered
+        // each other's array edits and desynced the index-paired arrays.
         try {
-            await updateDoc(doc(db, 'staffing_needs', shift.fromNeedId), {
-                filledStaff: filledStaff.filter((_, i) => i !== idx),
-                filledShiftIds: filledShiftIds.filter((_, i) => i !== idx),
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'staffing_needs', shift.fromNeedId);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) return;
+                const need = snap.data();
+                const filledStaff = Array.isArray(need.filledStaff) ? need.filledStaff : [];
+                const filledShiftIds = Array.isArray(need.filledShiftIds) ? need.filledShiftIds : [];
+                // Prefer matching by shift ID — precise even when the same
+                // person fills multiple slots. Name fallback covers legacy
+                // slots without filledShiftIds (pre-2026-04).
+                let idx = filledShiftIds.indexOf(shift.id);
+                if (idx < 0) idx = filledStaff.indexOf(shift.staffName);
+                if (idx < 0) return;
+                txn.update(ref, {
+                    filledStaff: filledStaff.filter((_, i) => i !== idx),
+                    filledShiftIds: filledShiftIds.filter((_, i) => i !== idx),
+                });
             });
         } catch (e) {
             console.warn('Need prune after shift delete failed (non-fatal):', e);
@@ -2253,6 +2285,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //   - On deny: requester is notified, doc marked status='denied'.
     const handleRequestSwap = async ({ myShift, theirShift, note }) => {
         if (!myShift || !theirShift) return;
+        // One in-flight submit (2026-09-02 audit — ptoSubmitBusyRef class):
+        // a double-tap on slow Wi-Fi filed the same swap request twice.
+        if (swapSubmitBusyRef.current) {
+            toast(tx('Still submitting your request — one moment…', 'Aún enviando tu solicitud — un momento…'));
+            return;
+        }
+        swapSubmitBusyRef.current = true;
+        try {
         if (myShift.staffName !== staffName) {
             toast(tx('That shift isn\'t yours.', 'Ese turno no es tuyo.'), { kind: 'error' });
             return;
@@ -2318,6 +2358,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             console.error('handleRequestSwap failed:', e);
             toast(tx('Could not send request: ', 'No se pudo enviar: ') + (e.message || e), { kind: 'error' });
         }
+        } finally {
+            swapSubmitBusyRef.current = false;
+        }
     };
 
     // Manager approves: atomically swap staffName on both shifts via a
@@ -2356,6 +2399,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 }
                 const fromData = fromSnap.data();
                 const toData = toSnap.data();
+                // Side gate (2026-09-02 audit): a single-side editor must
+                // not approve swaps touching the other side's shifts.
+                if (!canEditSide(fromData.side) || !canEditSide(toData.side)) {
+                    throw new Error(tx_msg(
+                        'You need editor access for both shifts\' sides to approve this swap.',
+                        'Necesitas acceso de editor para ambos lados para aprobar este cambio.',
+                    ));
+                }
                 // Verify ownership hasn't drifted since the request was filed.
                 if (fromData.staffName !== request.fromStaff || toData.staffName !== request.toStaff) {
                     throw new Error(tx_msg(
@@ -2376,8 +2427,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         'Un turno fue reprogramado desde que se hizo la solicitud. Pide que la vuelvan a solicitar.',
                     ));
                 }
-                tx.update(fromRef, { staffName: request.toStaff, updatedAt: serverTimestamp(), updatedBy: staffName });
-                tx.update(toRef,   { staffName: request.fromStaff, updatedAt: serverTimestamp(), updatedBy: staffName });
+                // Refuse while a LIVE claim is pending on either shift — a
+                // swap under an in-flight claim races the claim approval
+                // (2026-09-02 whole-app audit).
+                if (fromData.pendingClaimBy || toData.pendingClaimBy) {
+                    throw new Error(tx_msg(
+                        'One of the shifts has a pending pickup — resolve that first.',
+                        'Uno de los turnos tiene una solicitud de tomar turno pendiente — resuélvela primero.',
+                    ));
+                }
+                // Owner change = full offer/claim state reset, mirroring
+                // handleDropShift's owner-change block. Without it, an open
+                // offer rode along to the NEW owner ("X is offering this
+                // shift" for a shift X no longer owns) and stale approvedBy
+                // blocked the next offer cycle forever.
+                const ownerChangeReset = {
+                    offerStatus: null, offeredBy: null, offeredAt: null,
+                    offerNote: null, offerUrgent: false,
+                    coverNeeded: false, coverNeededAt: null,
+                    pendingClaimBy: null, claimedAt: null,
+                    proposedSplit: null, approvedBy: null,
+                };
+                tx.update(fromRef, { staffName: request.toStaff, ...ownerChangeReset, updatedAt: serverTimestamp(), updatedBy: staffName });
+                tx.update(toRef,   { staffName: request.fromStaff, ...ownerChangeReset, updatedAt: serverTimestamp(), updatedBy: staffName });
                 tx.update(reqRef,  { status: 'approved', approvedBy: staffName, approvedAt: serverTimestamp() });
             });
             if (outcome === 'cleared') {
@@ -2429,6 +2501,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // No state to roll back since nothing changed on the shifts.
     const handleDenySwapRequest = async (request) => {
         if (!canEdit) return;
+        // Side gate (2026-09-02 audit) — mirrors approve; snapshots carry
+        // side (null falls back to page-level canEdit inside canEditSide).
+        if (!canEditSide(request.fromShiftSnapshot?.side) || !canEditSide(request.toShiftSnapshot?.side)) {
+            toast(tx('You need editor access for both shifts\' sides to handle this swap.',
+                     'Necesitas acceso de editor para ambos lados para manejar este cambio.'));
+            return;
+        }
         try {
             // Transaction (Phase F): two managers working the queue can race
             // — if co-manager approved this request a second ago, the swap
@@ -2506,6 +2585,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //                   flow, unified into one composer)
     const handleOfferShift = (shift) => {
         if (!shift) return;
+        // Past-shift guard (2026-09-02 whole-app audit): offering, taking,
+        // or requesting cover for a shift that already happened is always a
+        // mistap (usually from a past-week view) — block with a clear note.
+        if (shift.date < toDateStr(new Date())) {
+            toast(tx('That shift is in the past.', 'Ese turno ya pasó.'), { kind: 'error' });
+            return;
+        }
         setOfferTarget(shift);
     };
     const commitOfferShift = async (shift, { note, urgent }) => {
@@ -2631,6 +2717,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Manager still gets the final word at approval time.
     const handleRequestCover = async (shift) => {
         if (!shift) return;
+        // Past-shift guard (2026-09-02 whole-app audit): offering, taking,
+        // or requesting cover for a shift that already happened is always a
+        // mistap (usually from a past-week view) — block with a clear note.
+        if (shift.date < toDateStr(new Date())) {
+            toast(tx('That shift is in the past.', 'Ese turno ya pasó.'), { kind: 'error' });
+            return;
+        }
         const shiftSide = shift.side || resolveStaffSide((staffList || []).find(s => s.name === shift.staffName));
         const sideLabel = shiftSide === 'boh' ? 'BOH' : 'FOH';
         const ok = confirm(tx(
@@ -2939,6 +3032,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // approval handler turns it into two shifts atomically.
     const handleTakeShift = (shift) => {
         if (!shift) return;
+        // Past-shift guard (2026-09-02 whole-app audit): offering, taking,
+        // or requesting cover for a shift that already happened is always a
+        // mistap (usually from a past-week view) — block with a clear note.
+        if (shift.date < toDateStr(new Date())) {
+            toast(tx('That shift is in the past.', 'Ese turno ya pasó.'), { kind: 'error' });
+            return;
+        }
         setTakeTarget(shift);
     };
     const commitTakeShift = async (shift, { partial } = {}) => {
@@ -3649,12 +3749,25 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
         }
         // Step 2: prune the need now that the shift is gone.
+        // Transactional against the LIVE doc (2026-09-02 audit) — the old
+        // whole-array replace from this render's `need` prop clobbered
+        // concurrent fills/unfills from other devices. Re-locate the slot
+        // by shiftId on the live arrays (name fallback for legacy slots).
         try {
-            const newFilled = (need.filledStaff || []).filter((_, i) => i !== idx);
-            const newIds = (need.filledShiftIds || []).filter((_, i) => i !== idx);
-            await updateDoc(doc(db, 'staffing_needs', need.id), {
-                filledStaff: newFilled,
-                filledShiftIds: newIds,
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'staffing_needs', need.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) return;
+                const live = snap.data();
+                const filledStaff = Array.isArray(live.filledStaff) ? live.filledStaff : [];
+                const filledShiftIds = Array.isArray(live.filledShiftIds) ? live.filledShiftIds : [];
+                let liveIdx = shiftId ? filledShiftIds.indexOf(shiftId) : -1;
+                if (liveIdx < 0) liveIdx = filledStaff.indexOf(staffMemberName);
+                if (liveIdx < 0) return;
+                txn.update(ref, {
+                    filledStaff: filledStaff.filter((_, i) => i !== liveIdx),
+                    filledShiftIds: filledShiftIds.filter((_, i) => i !== liveIdx),
+                });
             });
         } catch (e) {
             console.error('Unfill: prune failed (shift already deleted)', e);
@@ -4422,6 +4535,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // ── Phase 3: staff submits a PTO request (status='pending') ──
     // Validates against no-PTO blackout dates before submitting.
     const ptoSubmitBusyRef = useRef(false);
+    const swapSubmitBusyRef = useRef(false);
     const publishBusyRef = useRef(false);
     const addTimeOffBusyRef = useRef(false);
     const fillNeedBusyRef = useRef(false);
@@ -5325,7 +5439,12 @@ ${dayBlocks}
     // looks wrong).
     const handlePublishDrafts = () => {
         if (!canEdit) return;
-        const drafts = visibleShifts.filter(s => s.published === false);
+        // Per-shift side gate (2026-09-02 audit): visibleShifts can carry
+        // the viewer's OWN cross-side shifts and (in edge views) shifts a
+        // single-side editor may not release. Publish exactly what this
+        // editor is allowed to publish; canEditSide(null) falls back to
+        // page-level canEdit for legacy no-side shifts.
+        const drafts = visibleShifts.filter(s => s.published === false && canEditSide(s.side));
         if (drafts.length === 0) {
             toast(tx('No drafts to publish.', 'Sin borradores para publicar.'));
             return;

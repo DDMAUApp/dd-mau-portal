@@ -43,10 +43,19 @@
 import { taskDueOnDay, normalizeRecurDays, normalizeRecurDates, cleanRecurrenceFields, normalizeAssignDays } from './checklistRecurrence';
 import { db } from '../firebase';
 import {
-    collection, doc, getDoc, getDocs, onSnapshot, query, where, limit,
-    addDoc, updateDoc, setDoc, deleteDoc, serverTimestamp, arrayUnion,
-    runTransaction,
+    collection, doc, onSnapshot, query, where, limit, serverTimestamp, arrayUnion, getDoc as _fsGetDoc, getDocs as _fsGetDocs, addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc, setDoc as _fsSetDoc, deleteDoc as _fsDeleteDoc, runTransaction as _fsRunTransaction,
 } from 'firebase/firestore';
+// 2026-09-02 whole-app audit -- watchdog shadows (house pattern A):
+// user-pressed saves in this file ran raw and hung forever on a wedged
+// transport (no pill, no revive, no escalation). Zero call-site changes.
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
 
 // ── Date helpers (string-based, DST-safe) ──────────────────────────────
 // All plan math runs on LOCAL 'YYYY-MM-DD' strings; day arithmetic goes

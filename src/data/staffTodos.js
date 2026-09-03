@@ -31,9 +31,15 @@
 
 import { db } from '../firebase';
 import {
-    collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, query, limit,
-    serverTimestamp, FieldPath,
+    collection, doc, onSnapshot, query, limit, serverTimestamp, FieldPath, addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc, deleteDoc as _fsDeleteDoc,
 } from 'firebase/firestore';
+// 2026-09-02 whole-app audit -- watchdog shadows (house pattern A):
+// user-pressed saves in this file ran raw and hung forever on a wedged
+// transport (no pill, no revive, no escalation). Zero call-site changes.
+import { watchdogWrite } from './firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
 
 // SessionStorage key that Schedule.jsx reads on mount to auto-open one
 // of its self-serve modals (availability / birthday). Set when the staff

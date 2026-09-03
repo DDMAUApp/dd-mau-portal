@@ -11,7 +11,14 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { db } from '../firebase';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import {
+    doc, onSnapshot, updateDoc as _fsUpdateDoc,
+} from 'firebase/firestore';
+// 2026-09-02 whole-app audit -- watchdog shadows (house pattern A):
+// user-pressed saves in this file ran raw and hung forever on a wedged
+// transport (no pill, no revive, no escalation). Zero call-site changes.
+import { watchdogWrite } from '../data/firestoreRevive';
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { isAdmin } from '../data/staff';
 import { SAUCE_URGENCY_BY_ID } from '../data/sauces';
 

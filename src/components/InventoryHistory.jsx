@@ -1,6 +1,15 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import {
+    doc, collection, query, orderBy, limit, getDoc as _fsGetDoc, setDoc as _fsSetDoc, getDocs as _fsGetDocs,
+} from 'firebase/firestore';
+// 2026-09-02 whole-app audit -- watchdog shadows (house pattern A):
+// user-pressed saves in this file ran raw and hung forever on a wedged
+// transport (no pill, no revive, no escalation). Zero call-site changes.
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { printViaNative } from '../capacitor-bridge';

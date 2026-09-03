@@ -1668,6 +1668,14 @@ export default function App() {
     // don't have permission for.
     useEffect(() => {
         if (!staffName) return;
+        // 2026-09-02 whole-app audit: NEVER evaluate access against the
+        // DEFAULT_STAFF placeholder. On every reload (incl. deploy
+        // broadcasts) this effect ran before the live /config/staff
+        // snapshot, saw no opsAccess/canCountMoney/etc. on the seed data,
+        // and silently bounced kitchen iPads off Operations to Home —
+        // fleet-wide, on every deploy. Same gate as the Bug #3 fix below;
+        // the effect re-runs with real flags once staffListReady flips.
+        if (!staffListReady) return;
         if ((activeTab === "admin" || activeTab === "labor" || activeTab === "menuscreens" || activeTab === "health" || activeTab === "errorreport" || activeTab === "labels") && !staffIsAdmin) {
             setActiveTab("home");
         }
@@ -1686,7 +1694,7 @@ export default function App() {
         if (activeTab === "recipes" && !hasRecipesAccess) setActiveTab("home");
         // Onboarding holds PII — same defensive bounce if access removed.
         if (activeTab === "onboarding" && !hasOnboardingAccess) setActiveTab("home");
-    }, [staffName, staffIsAdmin, isManager, canMoney, hasOpsAccess, hasRecipesAccess, hasOnboardingAccess, activeTab]);
+    }, [staffName, staffListReady, staffIsAdmin, isManager, canMoney, hasOpsAccess, hasRecipesAccess, hasOnboardingAccess, activeTab]);
     // 2026-08-25 (Yulissa) — staff ASSIGNED to both stores (staff record
     // location 'both') get the same header toggle admins have, limited to
     // webster ↔ maryland (never the 'both' view: page after page treats
@@ -2591,7 +2599,12 @@ export default function App() {
             if (activeTab === 'onboarding' && hasOnboardingAccess) return <PageErrorBoundary tabName="Onboarding" language={language}><Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} onBack={() => setActiveTab('admin')} /></PageErrorBoundary>;
             // Tab not accessible — flag for one-shot toast (see useEffect
             // above) and bounce home (uses same mobile/desktop split).
-            deniedTabRef.current = activeTab;
+            // 2026-09-02 audit: only flag a REAL denial — while the staff
+            // list is still the DEFAULT_STAFF placeholder the flags are
+            // stale, and a navigation in that window fired a false
+            // "no access" toast (the render self-heals once real data
+            // lands, so staying quiet is correct).
+            if (staffListReady) deniedTabRef.current = activeTab;
             // 2026-07-27: this fall-through MUST pass the SAME props as the
             // primary home render above — it used to omit canMoney /
             // hasOnboardingAccess / hiddenPages / setStaffList, so during

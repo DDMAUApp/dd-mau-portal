@@ -5341,7 +5341,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         )}
                         {/* Admin-only: set / edit the trusted price */}
                         {currentIsAdmin && (
-                            <button type="button" onClick={() => setPriceEditItem(item)}
+                            <button type="button" onClick={() => {
+                                // M16 class (2026-09-02 whole-app audit): in
+                                // 'both' mode a saved price went to phantom
+                                // item_prices_both that no store reads.
+                                if (storeLocation === 'both') {
+                                    toast(language === 'es'
+                                        ? 'Elige Webster o Maryland (arriba) para editar precios'
+                                        : 'Pick Webster or Maryland (top toggle) to edit prices', { kind: 'error' });
+                                    return;
+                                }
+                                setPriceEditItem(item);
+                            }}
                                 className="text-xs px-1.5 py-0.5 rounded border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50"
                                 title={esLang ? 'Fijar precio confiable' : 'Set trusted price'}>
                                 {trusted ? '✎' : (esLang ? '💲 Fijar' : '💲 Set price')}
@@ -8273,14 +8284,30 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "split" ? "bg-purple-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                         {language === "es" ? "Dividir" : "Split"}
                                     </button>
-                                    <button onClick={() => setInvViewMode("pricing")}
+                                    <button onClick={() => {
+                                        if (storeLocation === 'both') {
+                                            toast(language === 'es'
+                                                ? 'Elige Webster o Maryland (arriba) para ver precios'
+                                                : 'Pick Webster or Maryland (top toggle) for pricing', { kind: 'error' });
+                                            return;
+                                        }
+                                        setInvViewMode("pricing");
+                                    }}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "pricing" ? "bg-blue-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                         {language === "es" ? "Precios" : "Pricing"}
                                     </button>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1.5">
                                     {currentIsAdmin && (
-                                        <button onClick={() => setShowCsvImport(true)}
+                                        <button onClick={() => {
+                                            if (storeLocation === 'both') {
+                                                toast(language === 'es'
+                                                    ? 'Elige Webster o Maryland (arriba) para importar CSV'
+                                                    : 'Pick Webster or Maryland (top toggle) to import CSV', { kind: 'error' });
+                                                return;
+                                            }
+                                            setShowCsvImport(true);
+                                        }}
                                             title={language === "es" ? "Importar CSV del proveedor" : "Import vendor CSV"}
                                             className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold hover:bg-blue-100 transition">
                                             📥 {language === "es" ? "Importar CSV" : "Import CSV"}

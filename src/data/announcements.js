@@ -31,7 +31,7 @@ import {
 // the Post flow (channel-ensure getDoc gate, /announcements setDoc, chat
 // copy addDoc, lastMessage updateDoc, ack updates) ran raw and hung
 // silently on a wedged transport.
-import { watchdogWrite, watchdogRead } from './firestoreRevive';
+import { watchdogWrite, watchdogRead, resilientSnapshot } from './firestoreRevive';
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
@@ -250,14 +250,18 @@ export async function postAnnouncement({
 // component filters by audience + own-ack client-side.
 export function subscribeAnnouncements(cb) {
     const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(20));
-    return onSnapshot(q, (snap) => {
+    // resilientSnapshot (2026-09-02 whole-app audit): a single transport
+    // error used to KILL this listener for the whole session — pop-up
+    // announcements silently stopped arriving until the app relaunched.
+    return resilientSnapshot('announcements', (onHealthy, onError) => onSnapshot(q, (snap) => {
+        onHealthy();
         const out = [];
         snap.forEach(d => out.push({ id: d.id, ...d.data() }));
         cb(out);
     }, (err) => {
         console.warn('subscribeAnnouncements error:', err);
-        cb([]);
-    });
+        onError(err);
+    }));
 }
 
 // "Got it" — stamp this staffer's ack on the announcement doc AND mirror

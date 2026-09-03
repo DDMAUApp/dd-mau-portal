@@ -52,9 +52,16 @@
 
 import { db } from '../firebase';
 import {
-    collection, doc, addDoc, updateDoc, query, where, onSnapshot,
-    serverTimestamp, Timestamp, getDoc, getDocs, orderBy, limit,
+    collection, doc, query, where, onSnapshot, serverTimestamp, Timestamp, orderBy, limit, addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc, getDoc as _fsGetDoc, getDocs as _fsGetDocs,
 } from 'firebase/firestore';
+// 2026-09-02 whole-app audit -- watchdog shadows (house pattern A):
+// user-pressed saves in this file ran raw and hung forever on a wedged
+// transport (no pill, no revive, no escalation). Zero call-site changes.
+import { watchdogWrite, watchdogRead } from './firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import { recordAudit } from './audit';
 
 export const OFFSITE_STATUS = Object.freeze({

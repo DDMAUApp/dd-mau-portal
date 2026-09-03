@@ -27,7 +27,13 @@
 
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, writeBatch, updateDoc as _fsUpdateDoc } from 'firebase/firestore';
+// 2026-09-02 whole-app audit — watchdog shadows (house pattern A):
+// the bell's mark-read writes ran raw and hung silently on a wedged
+// transport; Schedule's twin drawer was hardened in August, this one
+// was missed.
+import { watchdogWrite } from '../data/firestoreRevive';
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { useAppData } from './AppDataContext';
 import { enableFcmPush } from '../messaging';
 import { toast } from '../toast';
@@ -170,12 +176,19 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
     };
 
     const markAllRead = async () => {
-        const unread = items.filter(i => !i.read);
+        // 2026-09-02 whole-app audit: mark ALL unreads the badge counts
+        // (the full context stream, newest 100), not just the 50 rendered
+        // rows — unreads at rank 51-100 made the badge unclearable while
+        // the visible list looked fully read.
+        const unread = (allNotifs || []).filter(i => !i.read);
         if (unread.length === 0) return;
         try {
-            const batch = writeBatch(db);
-            unread.forEach(i => batch.update(doc(db, 'notifications', i.id), { read: true }));
-            await batch.commit();
+            const CHUNK = 450;
+            for (let i = 0; i < unread.length; i += CHUNK) {
+                const batch = writeBatch(db);
+                unread.slice(i, i + CHUNK).forEach(n => batch.update(doc(db, 'notifications', n.id), { read: true }));
+                await watchdogWrite(batch.commit());
+            }
         } catch (e) { console.warn('markAllRead failed:', e); }
     };
 
