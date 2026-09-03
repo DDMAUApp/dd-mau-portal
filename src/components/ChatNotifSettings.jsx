@@ -169,20 +169,11 @@ export default function ChatNotifSettings({
                         </p>
                     </div>
 
-                    {/* Digest mode */}
-                    <div className="p-3 rounded-lg border border-dd-line">
-                        <div className="text-sm font-black text-dd-text mb-1">📦 {tx('Digest mode', 'Modo resumen')}</div>
-                        <div className="text-[11px] text-dd-text-2 mb-2">{tx('How often to deliver non-urgent pushes.', 'Frecuencia de pushes no urgentes.')}</div>
-                        <select
-                            value={policy.digestMode || 'realtime'}
-                            onChange={(e) => setPolicy(p => ({ ...p, digestMode: e.target.value }))}
-                            className="w-full px-3 py-2 rounded-lg border border-dd-line bg-white text-sm"
-                        >
-                            <option value="realtime">{tx('Realtime (each message)', 'Tiempo real (cada mensaje)')}</option>
-                            <option value="hourly">{tx('Hourly digest', 'Resumen cada hora')}</option>
-                            <option value="daily">{tx('Daily digest', 'Resumen diario')}</option>
-                        </select>
-                    </div>
+                    {/* Digest mode — REMOVED 2026-09-02 (chat audit): the
+                        select wrote digestMode to chat_prefs but no
+                        batcher exists server-side, so it was a dead
+                        switch promising behavior that never happened.
+                        Rebuild the UI alongside a real digest pump. */}
 
                     {/* Auto-translate */}
                     {/* Bilingual team — Andrew kept this for staff who

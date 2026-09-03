@@ -205,10 +205,16 @@ export async function postAnnouncement({
     );
 
     // 3. Push fan-out to the audience (closed apps get the ping; the
-    // pop-up greets them at open). Best-effort per recipient.
+    // pop-up greets them at open).
+    // 2026-09-02 chat audit: AWAITED, not fire-and-forget. The old
+    // unawaited loop meant "Posted ✅" while dozens of ping writes were
+    // still queued client-side — a poster who backgrounded or closed the
+    // app right after silently dropped part of the audience's pushes.
+    // Promise.allSettled bounds the wait (each write is watchdogged) and
+    // the failure count is surfaced instead of swallowed.
     const recipients = audienceRecipients(aud, staffList)
         .filter(n => n !== staffName);
-    for (const r of recipients) {
+    const pingResults = await Promise.allSettled(recipients.map(r =>
         notifyStaff({
             forStaff: r,
             type: 'announcement',
@@ -222,7 +228,11 @@ export async function postAnnouncement({
             // point is reaching CLOSED-app staff — who are, by definition,
             // usually off shift. Announcements are rare and manager-authored.
             forceDeliver: true,
-        }).catch(() => {});
+        })
+    ));
+    const pingFailures = pingResults.filter(r => r.status === 'rejected').length;
+    if (pingFailures > 0) {
+        console.warn(`announcement ping fan-out: ${pingFailures}/${recipients.length} failed`);
     }
 
     recordAudit({

@@ -210,6 +210,10 @@ export default function ChatCoverageRequestModal({
                 notifyStaff({
                     forStaff: name,
                     type: 'coverage_request',
+                    // 2026-09-02 chat audit: the whole POINT of a coverage
+                    // broadcast is reaching people who are NOT working
+                    // right now — the off-shift gate was eating it.
+                    forceDeliver: true,
                     title: '🙋 ' + tx('Coverage needed', 'Cobertura necesaria'),
                     body: `${staffName} · ${pickedShift.date} ${pickedShift.startTime}-${pickedShift.endTime}`,
                     deepLink: 'chat',

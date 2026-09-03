@@ -46,7 +46,7 @@ const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import {
     AUTO_CHANNELS, channelDocId, channelMembersFor, dmDocId,
     tierOf, canEditChat, previewOf, isChatUnread, formatChatTime,
-    matchesAudienceFilter, audienceMembersFor, AUDIENCE_AUTO_KEYS,
+    matchesAudienceFilter, audienceMembersFor, AUDIENCE_AUTO_KEYS, audienceAutoLabel,
 } from '../data/chat';
 import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
 import { findLiveDmId } from '../data/chatDm';
@@ -562,61 +562,14 @@ export default function ChatCenter({
         return () => { cancelled = true; };
     }, [staffList, isAdmin, viewer]);
 
-    // ── One-shot admin migration: purge all auto-created channels ───
-    // 2026-05-16 — Andrew asked us to nuke the system channels we
-    // created so he can build his own groups from scratch. Runs once
-    // per admin device (idempotent + localStorage-gated). Each
-    // channel gets a soft-delete (members: [], deletedAt) PLUS a
-    // tombstone in /chats_purged so the auto-sync can never resurrect
-    // them. Custom groups (type=group) and DMs are untouched.
-    useEffect(() => {
-        if (!isAdmin || !staffName) return;
-        const FLAG_KEY = 'ddmau:chat_autochannels_purged_v1';
-        try { if (localStorage.getItem(FLAG_KEY)) return; } catch {}
-        let cancelled = false;
-        (async () => {
-            try {
-                const q = query(collection(db, 'chats'), where('type', '==', 'channel'));
-                const snap = await getDocs(q);
-                if (cancelled || snap.empty) {
-                    try { localStorage.setItem(FLAG_KEY, String(Date.now())); } catch {}
-                    return;
-                }
-                let count = 0;
-                // Two batched writes per channel — chat doc + tombstone.
-                // Firestore batch cap is 500 ops; we play safe with 50
-                // channels per batch (DD Mau has ~10).
-                const batch = writeBatch(db);
-                for (const d of snap.docs) {
-                    const data = d.data() || {};
-                    batch.update(d.ref, {
-                        members: [],
-                        deletedAt: serverTimestamp(),
-                        deletedBy: staffName,
-                        deletedReason: 'admin_clear_autochannels',
-                    });
-                    batch.set(doc(db, 'chats_purged', d.id), {
-                        purgedAt: serverTimestamp(),
-                        purgedBy: staffName,
-                        chatType: 'channel',
-                        channelKey: data.channelKey || null,
-                        chatName: data.name || null,
-                        reason: 'admin_clear_autochannels',
-                    });
-                    count++;
-                }
-                // watchdogRead posture = QUIET (2026-08-29): background
-                // housekeeping must never feed the "Saving…" pill or arm the
-                // reload escalation (revive-on-hang + error flow-through kept).
-                await watchdogRead(batch.commit());
-                try { localStorage.setItem(FLAG_KEY, String(Date.now())); } catch {}
-            } catch (e) {
-                console.warn('one-shot autochannel purge failed:', e);
-                // Don't set the flag on failure so the next mount can retry.
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [isAdmin, staffName]);
+    // ── (REMOVED 2026-09-02) One-shot purge of auto-created channels ──
+    // The May-2026 migration that soft-deleted the system channels lived
+    // here, gated only by a PER-DEVICE localStorage flag — so any admin
+    // device with fresh storage re-ran it and nuked EVERY type='channel'
+    // doc, including the 📣 Announcements channel created months later
+    // (caught 2026-09-02 when a test session wiped it). The migration's
+    // work is long done (legacy channels tombstoned in /chats_purged);
+    // the code is gone so it can never fire again.
 
     // ── Mark chat notifications read on entering this tab ───────
     // The /notifications docs of type chat_message + chat_mention
@@ -1563,6 +1516,20 @@ function NewChatModal({
     // list. Default 'all' = no narrowing. Andrew asked for these so
     // building a group chat is one tap to "just FOH-Webster please".
     const [audienceFilter, setAudienceFilter] = useState('all');
+    // 2026-09-02 chat audit — the auto-add stamp is now EXPLICIT consent,
+    // not a side effect of whichever browse chip was active at Create
+    // (that silently turned a filter tap into permanent membership
+    // policy). Managers/admins only; defaults OFF.
+    const [autoAdd, setAutoAdd] = useState(false);
+    // Location-scope the bare foh/boh keys to the creator's store for
+    // non-admins (their candidate list is location-filtered, so the
+    // sync must not widen the group beyond what they could pick).
+    const scopedAudienceKey = useMemo(() => {
+        const k = audienceFilter;
+        if (isAdmin || !viewer?.location || viewer.location === 'both') return k;
+        if (k === 'foh' || k === 'boh') return `${k}-${viewer.location}`;
+        return k;
+    }, [audienceFilter, isAdmin, viewer]);
     const [busy, setBusy] = useState(false);
 
     const candidates = useMemo(() => {
@@ -1679,11 +1646,15 @@ function NewChatModal({
                     name: finalName,
                     emoji: groupEmoji,
                     members: [staffName, ...picked],
-                    // Group built through an audience chip remembers the
-                    // audience (Andrew 2026-09-01): new staff matching it
-                    // are auto-added by the sync loop. Changeable later in
-                    // the group's settings.
-                    ...(audienceFilter && audienceFilter !== 'all' ? { autoAudience: audienceFilter } : {}),
+                    // Group built through an audience chip follows that
+                    // audience ONLY when the creator ticked the ✨ auto-add
+                    // box (2026-09-02 audit — the old unconditional stamp
+                    // turned a browse-chip tap into permanent membership
+                    // policy). Key is location-scoped for non-admins so a
+                    // Webster manager's FOH group can't back-fill Maryland
+                    // staff. Changeable later in the group's settings.
+                    ...(autoAdd && audienceFilter !== 'all' && (viewerTier === 'admin' || viewerTier === 'manager')
+                        ? { autoAudience: scopedAudienceKey } : {}),
                     admins: [], // creator is implicit admin via createdBy
                     createdBy: staffName,
                     createdByTier: viewerTier,
@@ -1756,6 +1727,18 @@ function NewChatModal({
                                 ? `Solo ${viewerTier === 'admin' ? 'admins' : viewerTier === 'manager' ? 'managers y admins' : 'tú y los admins'} podrán editar este grupo.`
                                 : `Only ${viewerTier === 'admin' ? 'admins' : viewerTier === 'manager' ? 'managers and admins' : 'you and admins'} can edit this group.`}
                         </div>
+                        {audienceFilter !== 'all' && (viewerTier === 'admin' || viewerTier === 'manager') && (
+                            <label className="flex items-center gap-2 px-1 py-1 cursor-pointer">
+                                <input type="checkbox" checked={autoAdd}
+                                    onChange={(e) => setAutoAdd(e.target.checked)}
+                                    className="w-4 h-4" />
+                                <span className="text-[12px] font-bold text-dd-text">
+                                    ✨ {isEs
+                                        ? `Auto-agregar personal nuevo de ${audienceAutoLabel(scopedAudienceKey, true)}`
+                                        : `Auto-add new ${audienceAutoLabel(scopedAudienceKey, false)} staff`}
+                                </span>
+                            </label>
+                        )}
                     </div>
                 )}
 

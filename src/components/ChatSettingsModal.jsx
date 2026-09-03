@@ -20,7 +20,7 @@ import { db } from '../firebase';
 // 2026-07-13 audit: setDoc is CALLED below (chats_purged tombstone, line
 // ~328) but was missing from this import — the purge flow threw
 // "setDoc is not defined" at runtime. Same class as the 07-11 addDoc bug.
-import { doc, setDoc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, query, limit, deleteField, arrayUnion } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, query, limit, deleteField, arrayUnion, arrayRemove } from 'firebase/firestore';
 import {
     canEditChat, SEEN_VISIBILITY_OPTIONS, getSeenByVisibility,
     AUDIENCE_AUTO_KEYS, audienceAutoLabel, audienceMembersFor,
@@ -171,8 +171,13 @@ export default function ChatSettingsModal({
         setMembers(next);
         setMemberBusy(true);
         try {
+            // 2026-09-02 chat audit: atomic arrayUnion, NOT a whole-array
+            // replace from this modal's (possibly minutes-old) snapshot —
+            // the replace clobbered concurrent adds from other admins and
+            // the auto-audience sync, and resurrected members that
+            // offboarding had removed while the modal sat open.
             await updateDoc(doc(db, 'chats', chat.id), {
-                members: Array.from(new Set([chat.createdBy, ...next].filter(Boolean))),
+                members: arrayUnion(name),
             });
             recordAudit({
                 action: 'chat.member.add',
@@ -205,10 +210,23 @@ export default function ChatSettingsModal({
         const nextCo = prevCo.filter(n => n !== name);
         setCoAdmins(nextCo);
         setMemberBusy(true);
+        // Heads-up when auto-add would immediately undo this removal
+        // (the person still matches the group's audience).
+        if (autoAudience && staffList) {
+            const stillMatches = (staffList || []).some(s => s?.name === name
+                && audienceMembersFor(autoAudience, [s]).length > 0);
+            if (stillMatches) {
+                toast(tx(
+                    `Heads up: auto-add is on (${audienceAutoLabel(autoAudience, isEs)}) — ${name} matches it and will be re-added. Turn auto-add off first to keep them out.`,
+                    `Ojo: auto-agregar está activo (${audienceAutoLabel(autoAudience, isEs)}) — ${name} coincide y será agregado de nuevo. Apaga auto-agregar primero.`,
+                ), { kind: 'warn', duration: 9000 });
+            }
+        }
         try {
+            // Atomic arrayRemove — see addMemberNow's note.
             await updateDoc(doc(db, 'chats', chat.id), {
-                members: Array.from(new Set([chat.createdBy, ...next].filter(Boolean))),
-                admins: nextCo.filter(n => next.includes(n)),
+                members: arrayRemove(name),
+                admins: arrayRemove(name),
             });
             recordAudit({
                 action: 'chat.member.remove',

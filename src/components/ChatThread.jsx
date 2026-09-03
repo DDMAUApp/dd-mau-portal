@@ -367,6 +367,7 @@ function ChatThreadInner({
         // chat's first snapshot lands.
         setMessageLimit(50);
         setHasMore(true);
+        serverConfirmedRef.current = false;   // mark-read honesty gate
         // Paint this chat's last-known messages instantly from the module cache
         // (only fall back to the spinner when we have nothing to show). The
         // onSnapshot below revalidates within ms.
@@ -419,6 +420,7 @@ function ChatThreadInner({
             try {
                 const snap = await getDocsFromServer(q);
                 if (!alive || gotSnapshot) return;
+                serverConfirmedRef.current = true;   // server truth
                 const list = [];
                 snap.forEach(d => list.push({ id: d.id, ...d.data() }));
                 list.reverse();
@@ -431,6 +433,7 @@ function ChatThreadInner({
         const unsub = onSnapshot(q, (snap) => {
             if (!alive) return;
             gotSnapshot = true;
+            if (!snap.metadata.fromCache) serverConfirmedRef.current = true;
             clearTimeout(timeoutId);
             const list = [];
             // 2026-08-11 (chat forensics C2) — stamp `_pending` from snapshot
@@ -587,6 +590,7 @@ function ChatThreadInner({
             // bottom (atBottom defaults true), so the normal "open = read"
             // case is unchanged.
             if (!atBottomRef.current) return;
+            if (!serverConfirmedRef.current) return;   // cache paint — not seen yet
             quietUpdateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
                 .catch(e => console.warn('markRead failed:', e));
         }, 1500);
@@ -666,6 +670,7 @@ function ChatThreadInner({
         const ref = doc(db, 'chats', chat.id);
         const t = setTimeout(() => {
             if (!atBottomRef.current) return;
+            if (!serverConfirmedRef.current) return;   // cache paint — not seen yet
             quietUpdateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
                 .catch(() => { /* best-effort */ });
         }, 1500);
@@ -928,6 +933,15 @@ function ChatThreadInner({
     // Same-tick double-tap guards for the 86 post/resolve paths (2026-07-22
     // audit M13) — state-based guards only bite after a re-render.
     const posting86Ref = useRef(false);
+    const pollSubmittingRef = useRef(false);
+    // 2026-09-02 chat audit — mark-read honesty gate: a thread painted
+    // from the module cache (or the SDK's local cache) shows STALE
+    // messages; stamping lastRead then claimed the viewer saw messages
+    // that hadn't even loaded (false Seen-by, wrongly-cleared unread).
+    // Mark-read waits until this device has server-confirmed data for
+    // THIS chat: set by a !fromCache snapshot or a successful rescue
+    // fetch, reset on every chat switch.
+    const serverConfirmedRef = useRef(false);
     const resolving86Ref = useRef(false);
     // ── Inline edit state ───────────────────────────────────────────
     // editingMessageId: which bubble is currently in the "swap text
@@ -1420,6 +1434,11 @@ function ChatThreadInner({
         if (!pendingAttachment) return;
         if (sendingRef.current) return;
         const att = pendingAttachment;
+        // 2026-09-02 chat audit: capture the caption NOW. It used to be
+        // read AFTER the upload awaited — leaving the thread mid-upload
+        // unmounted the composer and the media message silently sent
+        // without its caption.
+        const caption = getDraft().trim();
         sendingRef.current = true;
         setSending(true);
         setUploadProgress({ kind: att.kind, pct: 0 });
@@ -1468,7 +1487,7 @@ function ChatThreadInner({
             await sendMessage({
                 chat, staffName, viewer, staffList,
                 type: att.kind,
-                text: getDraft().trim(),  // optional caption (photos/videos);
+                text: caption,            // optional caption (photos/videos);
                                      //   voice memos pre-2026-05-27 always
                                      //   sent text:'' — we now allow a
                                      //   caption on voice too, since the
@@ -1966,7 +1985,12 @@ function ChatThreadInner({
     // useful — the renderer hides the bubble text since the PollCard
     // shows it more prominently.
     async function handleCreatePoll(payload) {
-        if (!payload || pollSubmitting) return;
+        // Same-tick double-tap guard (2026-09-02 chat audit): the state
+        // flag re-renders too late to stop a fast double-tap, which
+        // posted the poll twice and double-pushed the whole channel.
+        // Ref mirrors the posting86Ref pattern.
+        if (!payload || pollSubmitting || pollSubmittingRef.current) return;
+        pollSubmittingRef.current = true;
         setPollSubmitting(true);
         try {
             await sendMessage({
@@ -1984,6 +2008,7 @@ function ChatThreadInner({
             console.warn('poll create failed:', e);
             toast(tx('Could not post poll', 'No se pudo publicar'), { kind: 'error' });
         } finally {
+            pollSubmittingRef.current = false;
             setPollSubmitting(false);
         }
     }

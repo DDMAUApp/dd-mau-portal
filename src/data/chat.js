@@ -217,9 +217,10 @@ export function matchesAudienceFilter(s, key) {
     }
 }
 
-// Keys a group's autoAudience may hold ('all' deliberately excluded from
-// auto-sync — an everyone-group is what channels/announcements are for,
-// but it stays selectable in settings for completeness).
+// Keys a group's autoAudience may hold. 'all' is never stamped at
+// CREATE time (the ✨ toggle only offers real audiences) but IS honored
+// by the sync when an editor explicitly picks Everyone in the group's
+// settings — that is a deliberate whole-team choice.
 export const AUDIENCE_AUTO_KEYS = [
     'foh', 'boh', 'managers', 'webster', 'maryland',
     'foh-webster', 'foh-maryland', 'boh-webster', 'boh-maryland', 'all',

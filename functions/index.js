@@ -412,6 +412,50 @@ exports.dispatchNotification = onDocumentCreated(
             "announcement",
         ]);
 
+        // ── Master notification-policy gate (2026-09-02 chat audit) ──
+        // ChatNotifSettings has written pushEnabled + quietHours to
+        // /chat_prefs since July but nothing ENFORCED them — dead
+        // switches. One prefs read here also serves the channel-mute
+        // gate below. Fail OPEN on read errors (over-notify beats drop).
+        let userPrefs = {};
+        try {
+            const prefsSnap = await db.doc(`chat_prefs/${forStaff}`).get();
+            userPrefs = prefsSnap.exists ? (prefsSnap.data() || {}) : {};
+        } catch (e) {
+            logger.warn(`chat_prefs read failed for ${forStaff} (failing open):`, e?.message);
+        }
+        if (notif.forceDeliver !== true) {
+            if (userPrefs.pushEnabled === false) {
+                try {
+                    await snap.ref.update({ pushSuppressed: true, pushSuppressedReason: "push_disabled" });
+                } catch { /* stamp is best-effort */ }
+                return;
+            }
+            const qh = userPrefs.quietHours;
+            if (qh && qh.start && qh.end) {
+                // Restaurant-local time; the server runs UTC. Handles
+                // windows that wrap midnight (22:00 → 06:00).
+                const now = new Date().toLocaleTimeString("en-GB",
+                    { timeZone: "America/Chicago", hour12: false, hour: "2-digit", minute: "2-digit" });
+                const inWindow = qh.start <= qh.end
+                    ? (now >= qh.start && now < qh.end)
+                    : (now >= qh.start || now < qh.end);
+                // The settings UI promises: "Chat messages, emergency 86
+                // alerts, and ack-required announcements still pierce
+                // quiet hours." Enforce exactly that promise.
+                const PIERCES_QUIET = new Set([
+                    "chat_message", "chat_mention", "chat_reply",
+                    "eighty_six_alert", "announcement",
+                ]);
+                if (inWindow && !PIERCES_QUIET.has(notif.type)) {
+                    try {
+                        await snap.ref.update({ pushSuppressed: true, pushSuppressedReason: "quiet_hours" });
+                    } catch { /* stamp is best-effort */ }
+                    return;
+                }
+            }
+        }
+
         // ── Per-channel mute gate ───────────────────────────────────
         // Runs BEFORE the off-shift gate so even always-deliver chat
         // types respect a user's explicit mute. Reads
@@ -427,10 +471,8 @@ exports.dispatchNotification = onDocumentCreated(
             const chatId = notif.tag.split(":")[1];
             if (chatId) {
                 try {
-                    const prefsSnap = await db.doc(`chat_prefs/${forStaff}`).get();
-                    const channelPref = prefsSnap.exists
-                        ? (prefsSnap.data()?.channelPrefs || {})[chatId]
-                        : null;
+                    // Re-uses the hoisted prefs read from the master gate.
+                    const channelPref = (userPrefs.channelPrefs || {})[chatId] || null;
                     // 2026-05-28 — chat_reply is treated like a mention
                     // for channel-pref purposes: it's directly addressed
                     // AT the recipient, so a user on the "mentions only"
@@ -6287,15 +6329,24 @@ exports.onChatMessageCreated = onDocumentCreated(
                 : String(msg.text || "");
 
         // 1) Chat-list preview + activity bump (was client step 2).
+        // 2026-09-02 chat audit: stamp lastActivityAt/lastMessage.ts with
+        // the MESSAGE's own createdAt, not a fresh serverTimestamp. On a
+        // cold start this function commits seconds after the message; a
+        // reader with the thread open marks read in ~1.7s, and a fresh
+        // stamp landing AFTER their mark-read flipped the chat back to
+        // unread-and-pinned for someone who had just read it (the "green
+        // dot that won't clear" class). The message's createdAt always
+        // precedes any reader's mark-read, so readMs >= lastActivityAt.
+        const msgTs = msg.createdAt || FieldValue.serverTimestamp();
         try {
             await db.doc(`chats/${chatId}`).update({
                 lastMessage: {
                     text: preview.slice(0, 200),
                     sender,
-                    ts: FieldValue.serverTimestamp(),
+                    ts: msgTs,
                     type,
                 },
-                lastActivityAt: FieldValue.serverTimestamp(),
+                lastActivityAt: msgTs,
                 [`typingByName.${sender}`]: null,
                 [`lastReadByName.${sender}`]: FieldValue.serverTimestamp(),
             });

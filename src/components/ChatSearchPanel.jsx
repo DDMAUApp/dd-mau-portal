@@ -112,6 +112,9 @@ export default function ChatSearchPanel({
             const chat = chats.find(c => c.id === chatId);
             if (!chat) continue;
             for (const m of list) {
+                // 2026-09-02 chat audit: deleted messages must not
+                // resurface through search (mirrors ChatPinsDrawer).
+                if (m.deleted === true) continue;
                 if (cutoff) {
                     const ms = m.createdAt?.toMillis ? m.createdAt.toMillis()
                         : (m.createdAt?.seconds ? m.createdAt.seconds * 1000 : 0);

@@ -39,6 +39,10 @@ export async function claimCoverage({ chatId, messageId, claimerName, claimerId 
         notifyStaff({
             forStaff: snapshot.requesterId,
             type: 'coverage_request',
+            // 2026-09-02 chat audit: the requester is usually OFF-shift
+            // (that's why they asked for coverage) and the off-shift gate
+            // ate this — force it through.
+            forceDeliver: true,
             title: '✋ ' + 'Coverage claimed',
             body: `${claimerName} wants to take your ${snapshot.shiftSnapshot?.date || ''} shift`,
             deepLink: 'chat',
