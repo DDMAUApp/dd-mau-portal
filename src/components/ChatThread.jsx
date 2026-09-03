@@ -49,6 +49,7 @@ import {
     updateDoc as _fsUpdateDoc,
     deleteDoc as _fsDeleteDoc,
     getDoc as _fsGetDoc,
+    getDocsFromServer as _fsGetDocsFromServer,
 } from 'firebase/firestore';
 // 2026-08-11 (chat forensics C1) — shadow-the-primitives watchdog coverage.
 // Chat was the last major surface WITHOUT the wedged-transport watchdog
@@ -74,6 +75,7 @@ const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
 // owned by the idle-guarded liveness probe.
 const quietUpdateDoc = (...a) => watchdogRead(_fsUpdateDoc(...a));
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocsFromServer = (...a) => watchdogRead(_fsGetDocsFromServer(...a));
 import { ref as sref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
 // Pure formatters lifted out 2026-05-23 — see chatThreadHelpers.js
@@ -403,8 +405,32 @@ function ChatThreadInner({
         // window so React stops logging warnings and we stop
         // overwriting fresh state from the new effect.
         let alive = true;
+        let gotSnapshot = false;
+        // Starved-listener rescue (2026-09-01, Andrew: "click on a chat
+        // group im in and its not loading"). A wedged transport gives the
+        // listener NO emit and NO error — the only exits were the 15s
+        // Retry screen and the 3-min probe. At 6s with nothing painted,
+        // force a SERVER read of the same query: on a slow-but-alive link
+        // it paints the thread now; on a wedged one it HANGS → the read
+        // watchdog revives the transport at 8s and both the read and the
+        // listener come back. The live snapshot supersedes when it lands.
+        const rescueId = setTimeout(async () => {
+            if (!alive || gotSnapshot) return;
+            try {
+                const snap = await getDocsFromServer(q);
+                if (!alive || gotSnapshot) return;
+                const list = [];
+                snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                list.reverse();
+                setMessages(list);
+                setLoading(false);
+                setLoadError(null);
+                clearTimeout(timeoutId);
+            } catch { /* revive already kicked; the timeout + Retry still stand */ }
+        }, 6000);
         const unsub = onSnapshot(q, (snap) => {
             if (!alive) return;
+            gotSnapshot = true;
             clearTimeout(timeoutId);
             const list = [];
             // 2026-08-11 (chat forensics C2) — stamp `_pending` from snapshot
@@ -471,6 +497,7 @@ function ChatThreadInner({
         return () => {
             alive = false;
             clearTimeout(timeoutId);
+            clearTimeout(rescueId);
             unsub();
         };
     }, [chat?.id, messageLimit, subscriptionGen]);

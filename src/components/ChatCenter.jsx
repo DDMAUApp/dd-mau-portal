@@ -25,7 +25,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, memo, lazy, Suspense
 import { db } from '../firebase';
 import {
     collection, doc, query, where, onSnapshot,
-    serverTimestamp, orderBy, limit, writeBatch, deleteField,
+    serverTimestamp, orderBy, limit, writeBatch, deleteField, arrayUnion,
     addDoc as _fsAddDoc,
     setDoc as _fsSetDoc,
     updateDoc as _fsUpdateDoc,
@@ -46,6 +46,7 @@ const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import {
     AUTO_CHANNELS, channelDocId, channelMembersFor, dmDocId,
     tierOf, canEditChat, previewOf, isChatUnread, formatChatTime,
+    matchesAudienceFilter, audienceMembersFor, AUDIENCE_AUTO_KEYS,
 } from '../data/chat';
 import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
 import { findLiveDmId } from '../data/chatDm';
@@ -521,6 +522,45 @@ export default function ChatCenter({
         })();
         return () => { cancelled = true; };
     }, [staffList]);
+
+    // ── Group auto-audience sync (Andrew 2026-09-01) ─────────────────
+    // Groups carrying autoAudience (stamped by the New-chat audience
+    // chips, or set in group settings) automatically GAIN any staff who
+    // matches — a new FOH hire lands in the FOH group without anyone
+    // touching membership. ADD-only: the sync never removes anyone.
+    // Note the flip side: hand-removing someone who still matches the
+    // audience won't stick — the sync re-adds them. To keep a matching
+    // person out, set the group's auto-add to Off in its settings first.
+    // Runs for managers/admins only (their devices are always around) so
+    // dozens of staff phones don't race the same writes.
+    useEffect(() => {
+        if (!Array.isArray(staffList) || staffList.length === 0) return;
+        const isMgr = isAdmin || /manager|owner/i.test(viewer?.role || '');
+        if (!isMgr) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const snap = await getDocs(query(
+                    collection(db, 'chats'),
+                    where('autoAudience', 'in', AUDIENCE_AUTO_KEYS),
+                ));
+                for (const d of snap.docs) {
+                    if (cancelled) return;
+                    const data = d.data();
+                    if (data.type !== 'group' || data.deletedAt) continue;
+                    const want = audienceMembersFor(data.autoAudience, staffList);
+                    const cur = Array.isArray(data.members) ? data.members : [];
+                    const missing = want.filter(n => !cur.includes(n));
+                    if (missing.length > 0) {
+                        await updateDoc(doc(db, 'chats', d.id), { members: arrayUnion(...missing) });
+                    }
+                }
+            } catch (e) {
+                console.warn('group auto-audience sync failed:', e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [staffList, isAdmin, viewer]);
 
     // ── One-shot admin migration: purge all auto-created channels ───
     // 2026-05-16 — Andrew asked us to nuke the system channels we
@@ -1503,30 +1543,9 @@ function EmptyState({ isEs, onStart }) {
     );
 }
 
-// Audience-filter predicate — pure helper used by NewChatModal's
-// chip strip. Kept inline (not exported from chat.js) so the picker
-// can mix role + location combinations without round-tripping through
-// channelMembersFor's rule strings. Mirrors the same regex matches.
-function matchesAudienceFilter(s, key) {
-    if (!s || !key || key === 'all') return true;
-    const role = s.role || '';
-    const isFoh = s.scheduleSide === 'foh' || s.side === 'foh' || /foh|front|server|cashier|host|bartender/i.test(role);
-    const isBoh = s.scheduleSide === 'boh' || s.side === 'boh' || /boh|kitchen|cook|prep|dish/i.test(role);
-    const isMgr = isAdminId(s.id) || /manager|owner/i.test(role);
-    const atLoc = (loc) => s.location === loc || s.location === 'both';
-    switch (key) {
-        case 'foh':           return isFoh;
-        case 'boh':           return isBoh;
-        case 'managers':      return isMgr;
-        case 'webster':       return atLoc('webster');
-        case 'maryland':      return atLoc('maryland');
-        case 'foh-webster':   return isFoh && atLoc('webster');
-        case 'foh-maryland':  return isFoh && atLoc('maryland');
-        case 'boh-webster':   return isBoh && atLoc('webster');
-        case 'boh-maryland':  return isBoh && atLoc('maryland');
-        default:              return true;
-    }
-}
+// Audience-filter predicate — moved to chat.js (2026-09-01) so the
+// group auto-add sync and ChatSettingsModal share the exact predicate
+// the picker chips use. Imported above as matchesAudienceFilter.
 
 // ── New chat modal ──────────────────────────────────────────────
 // Three modes: DM (pick 1) / Group (pick 2+) / Cancel.
@@ -1660,6 +1679,11 @@ function NewChatModal({
                     name: finalName,
                     emoji: groupEmoji,
                     members: [staffName, ...picked],
+                    // Group built through an audience chip remembers the
+                    // audience (Andrew 2026-09-01): new staff matching it
+                    // are auto-added by the sync loop. Changeable later in
+                    // the group's settings.
+                    ...(audienceFilter && audienceFilter !== 'all' ? { autoAudience: audienceFilter } : {}),
                     admins: [], // creator is implicit admin via createdBy
                     createdBy: staffName,
                     createdByTier: viewerTier,

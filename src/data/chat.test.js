@@ -510,3 +510,40 @@ describe('canEditMessage / isMessageEditable / isWithinEditWindow', () => {
         expect(canEditMessage(ann, viewerCash, now)).toBe(false);
     });
 });
+
+// ── Group auto-audience (2026-09-01) ────────────────────────────────────
+// "when a new staff gets added to the FOH … the chat group that was
+// created for the FOH filter that staff should get added automatic."
+// The predicate is shared with the New-chat picker chips, so what the
+// group creator SAW is exactly who auto-joins later.
+import { matchesAudienceFilter, audienceMembersFor, AUDIENCE_AUTO_KEYS, audienceAutoLabel } from './chat';
+
+describe('matchesAudienceFilter / audienceMembersFor', () => {
+    const staff = [
+        { id: 1, name: 'Ana', scheduleSide: 'foh', role: 'Server', location: 'webster' },
+        { id: 2, name: 'Beto', scheduleSide: 'boh', role: 'Cook', location: 'maryland' },
+        { id: 3, name: 'Caro', role: 'Cashier', location: 'both' },          // FOH by role, floats
+        { id: 4, name: 'Dan', scheduleSide: 'foh', role: 'Server', location: 'maryland' },
+        { id: 5, name: 'Mia', role: 'Manager', location: 'webster' },
+    ];
+    it('foh matches side OR role, any store', () => {
+        expect(audienceMembersFor('foh', staff)).toEqual(['Ana', 'Caro', 'Dan']);
+    });
+    it('side+location combos scope correctly and include both-location floaters', () => {
+        expect(audienceMembersFor('foh-webster', staff)).toEqual(['Ana', 'Caro']);
+        expect(audienceMembersFor('foh-maryland', staff)).toEqual(['Caro', 'Dan']);
+        expect(audienceMembersFor('boh-maryland', staff)).toEqual(['Beto']);
+    });
+    it('a NEW FOH hire starts matching immediately', () => {
+        const withHire = [...staff, { id: 9, name: 'Nuevo', scheduleSide: 'foh', role: 'Server', location: 'webster' }];
+        expect(audienceMembersFor('foh-webster', withHire)).toContain('Nuevo');
+        expect(matchesAudienceFilter(withHire[5], 'foh')).toBe(true);
+        expect(matchesAudienceFilter(withHire[5], 'boh')).toBe(false);
+    });
+    it('every AUDIENCE_AUTO_KEY has a label in both languages', () => {
+        for (const k of AUDIENCE_AUTO_KEYS) {
+            expect(audienceAutoLabel(k, false)).toBeTruthy();
+            expect(audienceAutoLabel(k, true)).toBeTruthy();
+        }
+    });
+});

@@ -185,6 +185,68 @@ function isManagerRole(s) {
     return s.role && /manager|owner/i.test(s.role);
 }
 
+// ── Group auto-audience (Andrew 2026-09-01: "when a new staff gets added
+// to the FOH staff … the chat group that was created for the FOH filter
+// that staff should get added automatic") ────────────────────────────────
+// A GROUP created through the New-chat audience filter (or flipped on in
+// its settings) carries `autoAudience: <key>`. ChatCenter's sync loop then
+// ADDS any staff matching the key who isn't a member yet — it never
+// auto-removes, so manual membership edits stick.
+//
+// The predicate is the same one the New-chat picker's chips use, so "the
+// group I made with the FOH filter" and "who joins it automatically"
+// always agree.
+export function matchesAudienceFilter(s, key) {
+    if (!s || !key || key === 'all') return true;
+    const role = s.role || '';
+    const isFoh = s.scheduleSide === 'foh' || s.side === 'foh' || /foh|front|server|cashier|host|bartender/i.test(role);
+    const isBoh = s.scheduleSide === 'boh' || s.side === 'boh' || /boh|kitchen|cook|prep|dish/i.test(role);
+    const isMgr = isAdminId(s.id) || /manager|owner/i.test(role);
+    const atLoc = (loc) => s.location === loc || s.location === 'both';
+    switch (key) {
+        case 'foh':           return isFoh;
+        case 'boh':           return isBoh;
+        case 'managers':      return isMgr;
+        case 'webster':       return atLoc('webster');
+        case 'maryland':      return atLoc('maryland');
+        case 'foh-webster':   return isFoh && atLoc('webster');
+        case 'foh-maryland':  return isFoh && atLoc('maryland');
+        case 'boh-webster':   return isBoh && atLoc('webster');
+        case 'boh-maryland':  return isBoh && atLoc('maryland');
+        default:              return true;
+    }
+}
+
+// Keys a group's autoAudience may hold ('all' deliberately excluded from
+// auto-sync — an everyone-group is what channels/announcements are for,
+// but it stays selectable in settings for completeness).
+export const AUDIENCE_AUTO_KEYS = [
+    'foh', 'boh', 'managers', 'webster', 'maryland',
+    'foh-webster', 'foh-maryland', 'boh-webster', 'boh-maryland', 'all',
+];
+export function audienceAutoLabel(key, isEs) {
+    const L = {
+        all:            ['Everyone', 'Todos'],
+        foh:            ['FOH (both stores)', 'FOH (ambas tiendas)'],
+        boh:            ['BOH (both stores)', 'BOH (ambas tiendas)'],
+        managers:       ['Managers', 'Gerentes'],
+        webster:        ['Webster (all staff)', 'Webster (todo el personal)'],
+        maryland:       ['Maryland Hts (all staff)', 'Maryland Hts (todo el personal)'],
+        'foh-webster':  ['FOH · Webster', 'FOH · Webster'],
+        'foh-maryland': ['FOH · Maryland Hts', 'FOH · Maryland Hts'],
+        'boh-webster':  ['BOH · Webster', 'BOH · Webster'],
+        'boh-maryland': ['BOH · Maryland Hts', 'BOH · Maryland Hts'],
+    }[key];
+    return L ? L[isEs ? 1 : 0] : key;
+}
+
+// Everyone currently matching a group's autoAudience key.
+export function audienceMembersFor(key, staffList) {
+    return (Array.isArray(staffList) ? staffList : [])
+        .filter(s => s && s.name && matchesAudienceFilter(s, key))
+        .map(s => s.name);
+}
+
 function isFohRole(s) {
     if (s.scheduleSide === 'foh' || s.side === 'foh') return true;
     if (s.role && /foh|front|server|cashier|host|bartender/i.test(s.role)) return true;

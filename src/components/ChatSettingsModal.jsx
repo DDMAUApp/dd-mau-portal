@@ -20,8 +20,11 @@ import { db } from '../firebase';
 // 2026-07-13 audit: setDoc is CALLED below (chats_purged tombstone, line
 // ~328) but was missing from this import — the purge flow threw
 // "setDoc is not defined" at runtime. Same class as the 07-11 addDoc bug.
-import { doc, setDoc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, query, limit } from 'firebase/firestore';
-import { canEditChat, SEEN_VISIBILITY_OPTIONS, getSeenByVisibility } from '../data/chat';
+import { doc, setDoc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, query, limit, deleteField, arrayUnion } from 'firebase/firestore';
+import {
+    canEditChat, SEEN_VISIBILITY_OPTIONS, getSeenByVisibility,
+    AUDIENCE_AUTO_KEYS, audienceAutoLabel, audienceMembersFor,
+} from '../data/chat';
 import { canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
@@ -46,6 +49,37 @@ export default function ChatSettingsModal({
     // (matches iMessage / WhatsApp). See SEEN_VISIBILITY_OPTIONS in
     // data/chat.js for the option set.
     const [seenByVisibility, setSeenByVisibility] = useState(() => getSeenByVisibility(chat));
+    // Auto-add audience (groups only) — see the ✨ section below.
+    const [autoAudience, setAutoAudience] = useState(chat.autoAudience || '');
+    async function updateAutoAudience(next) {
+        if (next === autoAudience) return;
+        const prev = autoAudience;
+        setAutoAudience(next);
+        try {
+            if (!next) {
+                await updateDoc(doc(db, 'chats', chat.id), { autoAudience: deleteField() });
+            } else {
+                // Stamp the audience AND catch the group up right now —
+                // everyone currently matching who isn't a member joins
+                // immediately (the ChatCenter sync loop keeps it current
+                // from here on).
+                const want = audienceMembersFor(next, staffList);
+                const missing = want.filter(n => !(members || []).includes(n));
+                await updateDoc(doc(db, 'chats', chat.id), {
+                    autoAudience: next,
+                    ...(missing.length > 0 ? { members: arrayUnion(...missing) } : {}),
+                });
+                if (missing.length > 0) setMembers(m => [...m, ...missing]);
+                toast(missing.length > 0
+                    ? tx(`Auto-add on — ${missing.length} matching staff joined now.`, `Auto-agregar activado — ${missing.length} del personal se unieron ahora.`)
+                    : tx('Auto-add on — new matching staff will join automatically.', 'Auto-agregar activado — el personal nuevo que coincida se unirá automáticamente.'));
+            }
+        } catch (e) {
+            console.warn('auto-audience update failed:', e);
+            setAutoAudience(prev);
+            toast(tx('Save failed', 'Error al guardar'), { kind: 'error' });
+        }
+    }
     const [showAdd, setShowAdd] = useState(false);
     const [busy, setBusy] = useState(false);
 
@@ -484,6 +518,35 @@ export default function ChatSettingsModal({
                     </div>
                         );
                     })()}
+
+                    {/* Auto-add new staff (Andrew 2026-09-01): a GROUP can
+                        follow an audience — new hires matching it are
+                        added automatically by the sync loop in ChatCenter.
+                        Add-only; it never removes anyone. Auto-saved on
+                        change, same pattern as read receipts. */}
+                    {!isDm && !isChannel && canEdit && (
+                        <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-widest text-dd-text-2 mb-1">
+                                ✨ {tx('Auto-add new staff', 'Auto-agregar personal nuevo')}
+                            </label>
+                            <p className="text-[10px] text-dd-text-2 mb-2 italic">
+                                {tx(
+                                    'When new staff are added that match this audience, they join this group automatically. It never removes anyone.',
+                                    'Cuando se agrega personal nuevo que coincide con esta audiencia, se une al grupo automáticamente. Nunca quita a nadie.',
+                                )}
+                            </p>
+                            <select
+                                value={autoAudience}
+                                onChange={(e) => updateAutoAudience(e.target.value)}
+                                className="w-full border-2 border-dd-line rounded-lg px-3 py-2 text-[13px] font-bold text-dd-text bg-white focus:outline-none focus:border-dd-green/60"
+                            >
+                                <option value="">{tx('Off — members are managed by hand', 'Apagado — miembros manuales')}</option>
+                                {AUDIENCE_AUTO_KEYS.map(k => (
+                                    <option key={k} value={k}>{audienceAutoLabel(k, isEs)}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
 
                     {/* Members section — explicit Add Staff button +
                         labeled Remove on each row. All changes are
