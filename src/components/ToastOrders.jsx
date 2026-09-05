@@ -1,10 +1,220 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { subscribePrinterConfig, printFreeText } from '../data/labelPrinting';
 import { printViaNative } from '../capacitor-bridge';
+import { reuseSnapshotDocs } from '../data/snapshotReuse';
+import { fmtIso } from '../data/dateFmt';
+
+// ── Module-scope pure helpers (hoisted 2026-09-05 perf pass so the
+//    memoized OrderRow below can use them without re-creating them
+//    every parent render) ─────────────────────────────────────────
+
+const statusColor = (status) => {
+    if (!status) return "bg-gray-100 text-gray-600";
+    const s = status.toUpperCase();
+    if (s === "CLOSED" || s === "COMPLETED") return "bg-green-100 text-green-700";
+    if (s === "OPEN" || s === "IN_PROGRESS") return "bg-blue-100 text-blue-700";
+    if (s === "VOID" || s === "VOIDED") return "bg-red-100 text-red-700";
+    return "bg-amber-100 text-amber-700";
+};
+
+const orderTypeLabel = (type) => {
+    if (!type) return "";
+    const t = type.toUpperCase().trim();
+    // Toast dining option names (resolved from config)
+    if (t === "TO GO" || t === "TOGO" || t === "TO-GO") return "🥡 To Go";
+    if (t === "CALL IN" || t === "CALL-IN" || t === "CALLIN") return "📞 Call In";
+    if (t === "DINE IN" || t === "DINE-IN" || t === "DINEIN" || t === "FOR HERE" || t === "HERE") return "🍽️ Dine In";
+    if (t.includes("TAKE") || t.includes("PICKUP") || t.includes("PICK UP") || t.includes("PICK-UP")) return "🥡 Pickup";
+    if (t.includes("DELIVER")) return "🚗 Delivery";
+    if (t.includes("ONLINE") || t.includes("WEB")) return "📱 Online";
+    if (t.includes("PHONE")) return "📞 Phone";
+    if (t.includes("CURBSIDE")) return "🚗 Curbside";
+    if (t.includes("CATERING")) return "🎉 Catering";
+    // If it's a clean name from Toast config, just show it with a generic icon
+    if (type.length < 30 && !type.includes("-") && type !== type.toUpperCase()) return `📋 ${type}`;
+    return type;
+};
+
+// Format an order for an 80mm thermal receipt. Plain text — the
+// printFreeText helper renders it through ePOS-Print XML (Epson)
+// or AirPrint (Brother). Order # in big text up top, customer +
+// promised time, then items with a leading qty and indented
+// modifiers, then notes. Keep it scannable for a runner / line
+// cook with one glance.
+const buildOrderLabelText = (ord) => {
+    const lines = [];
+    const promised = fmtIso(ord.promisedDate, 'en-US', {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+    });
+    // Header
+    lines.push(`#${ord.orderNumber || ''}`);
+    if (ord.orderType) lines.push(ord.orderType);
+    lines.push(''); // blank
+    // Customer block
+    if (ord.customerName) lines.push(`NAME: ${ord.customerName}`);
+    if (ord.phone)        lines.push(`PHONE: ${ord.phone}`);
+    if (promised)         lines.push(`READY: ${promised}`);
+    if (ord.address)      lines.push(`DELIVER: ${ord.address}`);
+    if (ord.customerName || ord.phone || promised || ord.address) lines.push('');
+    // Items
+    lines.push('--- ORDER ---');
+    for (const item of (ord.items || [])) {
+        const qty = item.qty || 1;
+        lines.push(`${qty}x ${item.name || ''}`);
+        for (const m of (item.modifiers || [])) {
+            lines.push(`   - ${m}`);
+        }
+    }
+    // Notes
+    if (ord.specialInstructions) {
+        lines.push('');
+        lines.push(`NOTES: ${ord.specialInstructions}`);
+    }
+    return lines.join('\n');
+};
+
+// ── Memoized order row (2026-09-05 — Andrew: "loading the orders …
+//    very slow and glitchy … after use its hard to load"). The Railway
+//    scraper rewrites every one of today's order docs EVERY MINUTE
+//    (delete-then-re-insert), and previously every snapshot + every
+//    15s ticker re-rendered every row — each with several un-cached
+//    Intl date calls. Combined with reuseSnapshotDocs() keeping object
+//    identity for unchanged docs, this memo makes those passes free:
+//    a row only re-renders when ITS doc content, expansion, or print
+//    state actually changed. ─────────────────────────────────────────
+const OrderRow = memo(function OrderRow({ ord, ordKey, expanded, isEn, kitchenReady, printingThis, onToggle, onPrint, onLabelPrint }) {
+    const locale = isEn ? "en-US" : "es-US";
+    const timeStr = fmtIso(ord.createdDate, locale, { hour: "numeric", minute: "2-digit" });
+
+    return (
+        <div
+            className={`bg-white border-2 rounded-lg p-3 mb-2 cursor-pointer transition ${expanded ? "border-mint-400 shadow-md" : "border-gray-200 hover:border-mint-300 ddmau-toastcard-cv"}`}
+            onClick={() => onToggle(ordKey)}>
+
+            {/* Top row */}
+            <div className="flex justify-between items-start">
+                <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold text-gray-800">
+                            #{ord.orderNumber || ord.orderGuid?.slice(-6).toUpperCase()}
+                        </p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusColor(ord.status)}`}>
+                            {ord.status || "—"}
+                        </span>
+                        {ord.orderType && (
+                            <span className="text-xs text-gray-500">{orderTypeLabel(ord.orderType)}</span>
+                        )}
+                    </div>
+                    {ord.customerName && (
+                        <p className="text-sm text-gray-700 mt-1 font-medium">{ord.customerName}</p>
+                    )}
+                    {ord.serverName && (
+                        <p className="text-xs text-gray-500 mt-0.5">{isEn ? "Server" : "Mesero"}: {ord.serverName}</p>
+                    )}
+                    {!expanded && (
+                        <p className="text-xs text-gray-400 mt-1">
+                            {timeStr && `${timeStr} • `}{ord.itemCount || 0} {isEn ? "items" : "artículos"}
+                            {ord.address ? ` • 📍 ${isEn ? "Delivery" : "Entrega"}` : ""}
+                        </p>
+                    )}
+                </div>
+            </div>
+
+            {/* Expanded details */}
+            {expanded && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                    {timeStr && (
+                        <div className="mb-3">
+                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Order Time:" : "Hora:"}</p>
+                            <p className="text-xs text-gray-600">{timeStr}</p>
+                        </div>
+                    )}
+
+                    {ord.customerName && (ord.phone || ord.email) && (
+                        <div className="mb-3">
+                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Contact:" : "Contacto:"}</p>
+                            {ord.phone && <p className="text-xs text-gray-600">📞 {ord.phone}</p>}
+                            {ord.email && <p className="text-xs text-gray-600">✉️ {ord.email}</p>}
+                        </div>
+                    )}
+
+                    {ord.address && (
+                        <div className="mb-3">
+                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Delivery Address:" : "Dirección de Entrega:"}</p>
+                            <p className="text-xs text-gray-600 bg-blue-50 rounded px-2 py-1.5">📍 {ord.address}</p>
+                        </div>
+                    )}
+
+                    {ord.promisedDate && (
+                        <div className="mb-3">
+                            <p className="text-xs font-bold text-gray-500">{isEn ? "Promised:" : "Prometido:"}</p>
+                            <p className="text-xs text-gray-600">
+                                {fmtIso(ord.promisedDate, locale, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </p>
+                        </div>
+                    )}
+
+                    {ord.specialInstructions && (
+                        <div className="mb-3">
+                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Notes:" : "Notas:"}</p>
+                            <p className="text-xs text-gray-600 bg-amber-50 rounded px-2 py-1.5">📝 {ord.specialInstructions}</p>
+                        </div>
+                    )}
+
+                    {/* Line items */}
+                    {ord.items && ord.items.length > 0 && (
+                        <div>
+                            <p className="text-xs font-bold text-gray-500 mb-1.5">{isEn ? "Items:" : "Artículos:"}</p>
+                            <div className="grid grid-cols-1 gap-1">
+                                {ord.items.map((item, ni) => (
+                                    <div key={ni} className="text-xs bg-gray-50 rounded px-2 py-1.5">
+                                        <span className="text-gray-700 font-medium">
+                                            {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
+                                        </span>
+                                        {item.modifiers && item.modifiers.length > 0 && (
+                                            <p className="text-gray-400 text-xs mt-0.5 pl-2">
+                                                ↳ {item.modifiers.join(", ")}
+                                            </p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Print buttons. Browser-print (full 8.5×11
+                        HTML receipt → window.print() → OS dialog)
+                        is always available. The thermal label
+                        button appears only when the kitchen
+                        printer for the current location is set
+                        up + enabled in admin (Andrew 2026-05-29). */}
+                    <div className={`mt-3 grid ${kitchenReady ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onPrint(ord); }}
+                            className="py-2 rounded-lg text-sm font-bold border-2 border-mint-300 text-mint-700 bg-white hover:bg-mint-50 transition">
+                            🖨️ {isEn ? "Print Order" : "Imprimir Pedido"}
+                        </button>
+                        {kitchenReady && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onLabelPrint(ord); }}
+                                disabled={printingThis}
+                                className="py-2 rounded-lg text-sm font-bold border-2 border-purple-300 text-purple-700 bg-white hover:bg-purple-50 disabled:opacity-50 transition">
+                                {printingThis
+                                    ? (isEn ? '… Printing' : '… Imprimiendo')
+                                    : `🏷 ${isEn ? 'Print to label printer' : 'Imprimir etiqueta'}`}
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+});
 
 export default function ToastOrders({ language, staffName = '', storeLocation }) {
     const [orders, setOrders] = useState([]);
@@ -28,6 +238,9 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
     // triggerOrdersSync Cloud Function. Lets us distinguish "cron is
     // firing but scraper isn't responding" from "cron itself stopped."
     const [triggerLastAt, setTriggerLastAt] = useState(null);
+    // /ops/orders_sync — the scraper's per-pass freshness doc (see the
+    // listener below for the trust rules).
+    const [ordersSyncDoc, setOrdersSyncDoc] = useState(null);
     // Re-render every 15s so the "N min ago" labels stay fresh
     // without having to wait for a Firestore snapshot.
     const [, forceTick] = useState(0);
@@ -53,18 +266,17 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
         }, 3000);
     };
 
-    // Auto-refresh every 60 seconds. The mount flag is initialized via
-    // `useRef(true)` on the line above and flipped to false in the cleanup —
-    // a separate "set mount flag on initial render" useEffect was redundant
-    // and has been removed (it ran AFTER this effect set up the interval and
-    // duplicated the cleanup, which masked any subtle ordering bugs).
+    // 2026-09-05 — the 60s auto-trigger interval that used to live here
+    // is GONE. Since 2026-05-16 the triggerOrdersSync Cloud Function cron
+    // (functions/index.js) writes ops/orders_trigger every minute whether
+    // or not anyone has this tab open, and the Railway scraper fetches
+    // orders every cycle regardless — so the client interval added one
+    // redundant Firestore write per minute per open tab and nothing else.
+    // The manual "Sync Now" button (triggerRefresh) stays.
     useEffect(() => {
-        const interval = setInterval(() => {
-            triggerRefresh();
-        }, 60000);
+        isMountedRef.current = true;
         return () => {
             isMountedRef.current = false;
-            clearInterval(interval);
             if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
         };
     }, []);
@@ -80,7 +292,20 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
                 : (t?.seconds ? t.seconds * 1000 : 0);
             if (ms) setTriggerLastAt(ms);
         }, (err) => console.warn("orders_trigger snapshot failed:", err));
-        return () => unsub();
+        // /ops/orders_sync is the scraper's per-pass freshness doc
+        // (2026-09-05): since the scraper diff-upserts now, per-doc
+        // syncedAt only refreshes when an order actually changes. The
+        // raw doc is kept in state and TRUSTED PER LOCATION down in the
+        // health computation — its netSalesByLocation map only carries
+        // locations whose fetch+write succeeded, and only the NEW
+        // scraper writes it at all. The old scraper stamped updatedAt
+        // even on total failure, so a bare updatedAt must never feed
+        // the banner (that would mute the exact "scraper down" alarm
+        // the banner exists for).
+        const unsub2 = onSnapshot(doc(db, "ops", "orders_sync"), (snap) => {
+            setOrdersSyncDoc(snap.exists() ? (snap.data() || null) : null);
+        }, (err) => console.warn("orders_sync snapshot failed:", err));
+        return () => { unsub(); unsub2(); };
     }, []);
 
     // Tick every 15s so the "N min ago" displays update without
@@ -110,6 +335,9 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
     const ordersLocationRef = useRef(ordersLocation);
     useEffect(() => { ordersRef.current = orders; }, [orders]);
     useEffect(() => { ordersLocationRef.current = ordersLocation; }, [ordersLocation]);
+    // Grace timer for the scraper's transient empty snapshot (see the
+    // defensive guard in the listener below).
+    const emptyGraceRef = useRef(null);
 
     useEffect(() => {
         // FIX (Andrew 2026-05-20): "every time i use the orders page
@@ -140,57 +368,81 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
             const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             docs.sort((a, b) => (b.createdDate || "").localeCompare(a.createdDate || ""));
 
-            // DEFENSIVE GUARD (Andrew 2026-05-20): the Toast scraper on
-            // Railway sometimes does a delete-then-re-insert pass when
-            // refreshing today's orders (we control the scraper but
-            // can't change its behavior from here). That causes a
-            // transient empty snapshot followed by a full one. Without
-            // this guard the UI flashes the "No orders yet today"
-            // empty state for a beat before refilling.
-            //
-            // Rule: if the new snapshot is EMPTY and we previously had
-            // orders for THIS SAME location and the most-recent one
-            // landed within the last 10 min, ignore the empty snapshot
-            // and wait for the next one. Snapshots that come in WITH
-            // data are always trusted (they're authoritative).
-            const currentOrders = ordersRef.current;
-            const currentOrdersLocation = ordersLocationRef.current;
-            if (docs.length === 0
-                && currentOrdersLocation === location
-                && currentOrders.length > 0) {
-                const latestSyncedAt = currentOrders[0]?.syncedAt;
-                const latestMs = latestSyncedAt
-                    ? Date.parse(latestSyncedAt)
-                    : 0;
-                const ageMin = latestMs ? (Date.now() - latestMs) / 60000 : 999;
-                if (ageMin < 10) {
-                    // Stale-but-recent. Hold the previous orders in
-                    // place; the next snapshot will catch up.
-                    return;
-                }
+            // Freshest sync stamp comes from the RAW snapshot docs, not
+            // the reused state below — reuseSnapshotDocs deliberately
+            // keeps OLD doc objects (with old syncedAt) for unchanged
+            // orders, and the stale-scraper banner must still see that
+            // a sync pass just happened.
+            let newestSync = null;
+            for (const d of docs) {
+                if (d.syncedAt && (!newestSync || d.syncedAt > newestSync)) newestSync = d.syncedAt;
             }
 
-            setOrders(docs);
+            // DEFENSIVE GUARD (Andrew 2026-05-20, reworked 2026-09-05):
+            // the Toast scraper on Railway deletes then re-inserts ALL
+            // of today's orders on every sync pass (every minute), which
+            // produces a transient EMPTY snapshot before the refill.
+            // Without a guard the UI flashes "No orders yet today"
+            // every minute. The old rule only held the list when the
+            // newest order was <10 min old, so during any lull longer
+            // than 10 minutes the page blanked-and-refilled once a
+            // minute — Andrew's "glitchy". New rule: on an empty
+            // snapshot for the SAME location that previously had
+            // orders, hold the list and arm an 8s grace timer; if the
+            // refill lands (it arrives well under a second later) the
+            // timer is cancelled, and only a silence of 8s+ — a REAL
+            // empty day/void-everything state — clears the list.
+            if (docs.length === 0
+                && ordersLocationRef.current === location
+                && ordersRef.current.length > 0) {
+                if (!emptyGraceRef.current) {
+                    emptyGraceRef.current = setTimeout(() => {
+                        emptyGraceRef.current = null;
+                        setOrders([]);
+                        setOrdersLocation(location);
+                        setSwitching(false);
+                        setLoading(false);
+                    }, 8000);
+                }
+                return;
+            }
+            if (emptyGraceRef.current) {
+                clearTimeout(emptyGraceRef.current);
+                emptyGraceRef.current = null;
+            }
+
+            // Identity-preserving update: unchanged docs keep their old
+            // object, a fully-unchanged list keeps the old ARRAY — so
+            // the per-minute scraper rewrite (only syncedAt differs)
+            // causes ZERO re-render, and the memoized rows skip
+            // everything but genuinely changed orders otherwise.
+            setOrders(prev => reuseSnapshotDocs(prev, docs));
             setOrdersLocation(location);
             setSwitching(false);
             setLoading(false);
-            if (docs.length > 0 && docs[0].syncedAt) {
-                setLastSync(docs[0].syncedAt);
-            }
+            // Max-wins against the ops/orders_sync stamp (both ISO-8601
+            // UTC strings, so string compare is chronological).
+            if (newestSync) setLastSync(prev => (!prev || newestSync > prev) ? newestSync : prev);
         }, (err) => {
             console.error("Toast orders query error:", err);
             setLoading(false);
             setSwitching(false);
         });
-        return () => unsub();
+        return () => {
+            unsub();
+            if (emptyGraceRef.current) {
+                clearTimeout(emptyGraceRef.current);
+                emptyGraceRef.current = null;
+            }
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location]);
 
     // ── Sync-health computation ──────────────────────────────────
     // Two age measures power the banner:
-    //   • syncAgeMin: how long since the most recent order landed.
-    //     Sourced from docs[0].syncedAt, i.e. the latest doc the
-    //     Toast scraper wrote.
+    //   • syncAgeMin: how long since the scraper's last successful
+    //     sync pass. Sourced from ops/orders_sync.updatedAt (stamped
+    //     every pass) with per-doc syncedAt as a fallback, max wins.
     //   • triggerAgeMin: how long since the Cloud Function cron
     //     wrote ops/orders_trigger. Tells us whether the cron itself
     //     is alive even when no orders are landing.
@@ -200,8 +452,21 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
     // otherwise the "no syncing in 4h" alert would fire every
     // morning at open and every night after close.
     const now = Date.now();
-    const lastSyncMs = lastSync
-        ? (typeof lastSync === 'string' ? Date.parse(lastSync) : 0)
+    // orders_sync.updatedAt counts ONLY when the doc proves a successful
+    // pass for the VIEWED location (netSalesByLocation is written by the
+    // new scraper for succeeded locations only). Old-scraper stamps lack
+    // the field and are ignored — per-doc syncedAt then ages naturally
+    // and the banner fires exactly as it did before this change.
+    const syncDocStamp = (ordersSyncDoc
+        && ordersSyncDoc.netSalesByLocation
+        && ordersSyncDoc.netSalesByLocation[location] != null
+        && typeof ordersSyncDoc.updatedAt === 'string')
+        ? ordersSyncDoc.updatedAt : null;
+    const lastSyncEff = (lastSync && syncDocStamp)
+        ? (lastSync > syncDocStamp ? lastSync : syncDocStamp)
+        : (lastSync || syncDocStamp);
+    const lastSyncMs = lastSyncEff
+        ? (typeof lastSyncEff === 'string' ? Date.parse(lastSyncEff) : 0)
         : 0;
     const syncAgeMin = lastSyncMs ? Math.floor((now - lastSyncMs) / 60000) : null;
     const triggerAgeMin = triggerLastAt ? Math.floor((now - triggerLastAt) / 60000) : null;
@@ -221,33 +486,6 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
         if (m < 60) return isEn ? `${m} min ago` : `hace ${m} min`;
         const h = Math.floor(m / 60);
         return isEn ? `${h}h ago` : `hace ${h}h`;
-    };
-
-    const statusColor = (status) => {
-        if (!status) return "bg-gray-100 text-gray-600";
-        const s = status.toUpperCase();
-        if (s === "CLOSED" || s === "COMPLETED") return "bg-green-100 text-green-700";
-        if (s === "OPEN" || s === "IN_PROGRESS") return "bg-blue-100 text-blue-700";
-        if (s === "VOID" || s === "VOIDED") return "bg-red-100 text-red-700";
-        return "bg-amber-100 text-amber-700";
-    };
-
-    const orderTypeLabel = (type) => {
-        if (!type) return "";
-        const t = type.toUpperCase().trim();
-        // Toast dining option names (resolved from config)
-        if (t === "TO GO" || t === "TOGO" || t === "TO-GO") return "🥡 To Go";
-        if (t === "CALL IN" || t === "CALL-IN" || t === "CALLIN") return "📞 Call In";
-        if (t === "DINE IN" || t === "DINE-IN" || t === "DINEIN" || t === "FOR HERE" || t === "HERE") return "🍽️ Dine In";
-        if (t.includes("TAKE") || t.includes("PICKUP") || t.includes("PICK UP") || t.includes("PICK-UP")) return "🥡 Pickup";
-        if (t.includes("DELIVER")) return "🚗 Delivery";
-        if (t.includes("ONLINE") || t.includes("WEB")) return "📱 Online";
-        if (t.includes("PHONE")) return "📞 Phone";
-        if (t.includes("CURBSIDE")) return "🚗 Curbside";
-        if (t.includes("CATERING")) return "🎉 Catering";
-        // If it's a clean name from Toast config, just show it with a generic icon
-        if (type.length < 30 && !type.includes("-") && type !== type.toUpperCase()) return `📋 ${type}`;
-        return type;
     };
 
     // ── Kitchen label printer (Epson TM-L100 / Brother QL) ─────────
@@ -272,48 +510,7 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
     }, [location]);
     const kitchenReady = !!kitchenPrinter && kitchenPrinter.enabled !== false;
 
-    // Format an order for an 80mm thermal receipt. Plain text — the
-    // printFreeText helper renders it through ePOS-Print XML (Epson)
-    // or AirPrint (Brother). Order # in big text up top, customer +
-    // promised time, then items with a leading qty and indented
-    // modifiers, then notes. Keep it scannable for a runner / line
-    // cook with one glance.
-    const buildOrderLabelText = (ord) => {
-        const lines = [];
-        const promised = ord.promisedDate
-            ? new Date(ord.promisedDate).toLocaleString('en-US', {
-                weekday: 'short', month: 'short', day: 'numeric',
-                hour: 'numeric', minute: '2-digit',
-            })
-            : '';
-        // Header
-        lines.push(`#${ord.orderNumber || ''}`);
-        if (ord.orderType) lines.push(ord.orderType);
-        lines.push(''); // blank
-        // Customer block
-        if (ord.customerName) lines.push(`NAME: ${ord.customerName}`);
-        if (ord.phone)        lines.push(`PHONE: ${ord.phone}`);
-        if (promised)         lines.push(`READY: ${promised}`);
-        if (ord.address)      lines.push(`DELIVER: ${ord.address}`);
-        if (ord.customerName || ord.phone || promised || ord.address) lines.push('');
-        // Items
-        lines.push('--- ORDER ---');
-        for (const item of (ord.items || [])) {
-            const qty = item.qty || 1;
-            lines.push(`${qty}x ${item.name || ''}`);
-            for (const m of (item.modifiers || [])) {
-                lines.push(`   - ${m}`);
-            }
-        }
-        // Notes
-        if (ord.specialInstructions) {
-            lines.push('');
-            lines.push(`NOTES: ${ord.specialInstructions}`);
-        }
-        return lines.join('\n');
-    };
-
-    const handleLabelPrint = async (ord) => {
+    const handleLabelPrint = useCallback(async (ord) => {
         if (!kitchenReady) return;
         // Toast scraper writes the field as `orderGuid` (see scraper.py
         // ~line 2324). The earlier `ord.guid` lookup was always undefined,
@@ -354,20 +551,22 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
         } finally {
             setLabelPrinting(null);
         }
-    };
+    }, [kitchenReady, location, staffName, isEn]);
 
-    const handlePrint = (ord) => {
+    const handlePrint = useCallback((ord) => {
         const locName = location === "webster" ? "Big Bend Blvd" : "Dorsett Rd";
-        const locAddr = location === "webster"
-            ? "8148 Big Bend Blvd<br>Webster Groves, MO 63119<br>(314) 968-3275"
-            : "11982 Dorsett Rd<br>Maryland Heights, MO 63034<br>(314) 942-2300";
+        // FIX (Andrew 2026-09-05, invoice print: "is shows br before the
+        // time"): the address used to embed literal "<br>" INSIDE the
+        // string that later went through esc(), which escapes < and > —
+        // so the printout showed the text "<br>" instead of a line
+        // break. Escape each line separately, join with a real <br>.
+        const locAddrHtml = (location === "webster"
+            ? ["8148 Big Bend Blvd", "Webster Groves, MO 63119", "(314) 968-3275"]
+            : ["11982 Dorsett Rd", "Maryland Heights, MO 63034", "(314) 942-2300"]
+        ).map(esc).join("<br>");
 
-        const timeStr = ord.createdDate
-            ? new Date(ord.createdDate).toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
-            : "";
-        const promisedStr = ord.promisedDate
-            ? new Date(ord.promisedDate).toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
-            : "";
+        const timeStr = fmtIso(ord.createdDate, "en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+        const promisedStr = fmtIso(ord.promisedDate, "en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
         // FIX (review 2026-05-14, real): every interpolated string (item
         // names, modifiers, customer name, address, notes, server name,
@@ -403,7 +602,7 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
                 <div style="font-size:20px;font-weight:bold;color:#333;margin-bottom:2px;">DD Mau</div>
                 <div style="font-size:11px;color:#888;margin-bottom:12px;">Vietnamese Eatery</div>
                 <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">${esc(locName)}</div>
-                <div style="font-size:13px;color:#444;line-height:1.5;">${esc(locAddr)}</div>
+                <div style="font-size:13px;color:#444;line-height:1.5;">${locAddrHtml}</div>
             </td>
             <td style="vertical-align:top;text-align:right;">
                 <div style="font-size:22px;font-weight:bold;margin-bottom:10px;">Order</div>
@@ -447,7 +646,13 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
         printWindow.document.close();
         printWindow.focus();
         printWindow.print();
-    };
+    }, [location, isEn]);
+
+    // Stable expand/collapse callback so the memoized rows don't see a
+    // new function identity every render.
+    const handleToggleRow = useCallback((key) => {
+        setExpandedOrder(prev => (prev === key ? null : key));
+    }, []);
 
     return (
         <div>
@@ -486,8 +691,8 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
                         </div>
                         <div className="text-xs text-amber-800 mt-0.5">
                             {isEn
-                                ? `Last new order ${fmtAge(syncAgeMin)}. Trigger cron ${fmtAge(triggerAgeMin)}. Try "Sync Now"; if no orders land in a minute, restart the Toast scraper on Railway.`
-                                : `Último pedido ${fmtAge(syncAgeMin)}. Cron ${fmtAge(triggerAgeMin)}. Toca "Sincronizar"; si no entra nada, reinicia el scraper en Railway.`}
+                                ? `Last sync ${fmtAge(syncAgeMin)}. Trigger cron ${fmtAge(triggerAgeMin)}. Try "Sync Now"; if nothing lands in a minute, restart the Toast scraper on Railway.`
+                                : `Última sincronización ${fmtAge(syncAgeMin)}. Cron ${fmtAge(triggerAgeMin)}. Toca "Sincronizar"; si no entra nada, reinicia el scraper en Railway.`}
                         </div>
                     </div>
                 </div>
@@ -501,8 +706,8 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
                         </div>
                         <div className="text-xs text-red-800 mt-0.5">
                             {isEn
-                                ? `No new orders in ${fmtAge(syncAgeMin)}. Cron is ${triggerAgeMin != null && triggerAgeMin < 3 ? 'still firing every minute' : `quiet for ${fmtAge(triggerAgeMin)} — also broken`}. Restart the Toast orders service on Railway (most common: OAuth token expired).`
-                                : `Sin pedidos nuevos en ${fmtAge(syncAgeMin)}. El cron ${triggerAgeMin != null && triggerAgeMin < 3 ? 'sigue activo' : `también está callado (${fmtAge(triggerAgeMin)})`}. Reinicia el servicio de Toast en Railway.`}
+                                ? `No sync in ${fmtAge(syncAgeMin)}. Cron is ${triggerAgeMin != null && triggerAgeMin < 3 ? 'still firing every minute' : `quiet for ${fmtAge(triggerAgeMin)} — also broken`}. Restart the Toast orders service on Railway (most common: OAuth token expired).`
+                                : `Sin sincronización en ${fmtAge(syncAgeMin)}. El cron ${triggerAgeMin != null && triggerAgeMin < 3 ? 'sigue activo' : `también está callado (${fmtAge(triggerAgeMin)})`}. Reinicia el servicio de Toast en Railway.`}
                         </div>
                     </div>
                 </div>
@@ -516,10 +721,10 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
                             <p className="text-sm font-bold text-mint-800">{orders.length} {isEn ? "orders today" : "pedidos hoy"}</p>
                             <p className="text-xs text-mint-600">{isEn ? "Takeout, delivery & online" : "Para llevar, entrega y en línea"}</p>
                         </div>
-                        {lastSync && (
+                        {lastSyncEff && (
                             <div className="text-right">
                                 <p className={`text-xs font-bold ${health === 'live' ? 'text-mint-700' : health === 'slow' ? 'text-amber-700' : health === 'stale' ? 'text-red-700' : 'text-mint-500'}`}>
-                                    {health === 'live' ? '🟢' : health === 'slow' ? '🟡' : health === 'stale' ? '🔴' : '⚪'} {isEn ? "Last sync" : "Última"} {new Date(lastSync).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                                    {health === 'live' ? '🟢' : health === 'slow' ? '🟡' : health === 'stale' ? '🔴' : '⚪'} {isEn ? "Last sync" : "Última"} {fmtIso(lastSyncEff, "en-US", { hour: "numeric", minute: "2-digit" })}
                                 </p>
                                 {syncAgeMin != null && (
                                     <p className="text-[10px] text-mint-500">{fmtAge(syncAgeMin)}</p>
@@ -565,133 +770,19 @@ export default function ToastOrders({ language, staffName = '', storeLocation })
                         // expand toggles on `null` and every row with a missing guid
                         // expands/collapses together.
                         const ordKey = ord.orderGuid || ord.id || `idx-${i}`;
-                        const expanded = expandedOrder === ordKey;
-                        const timeStr = ord.createdDate
-                            ? new Date(ord.createdDate).toLocaleTimeString(isEn ? "en-US" : "es-US", { hour: "numeric", minute: "2-digit" })
-                            : "";
-
                         return (
-                            <div key={ordKey}
-                                className={`bg-white border-2 rounded-lg p-3 mb-2 cursor-pointer transition ${expanded ? "border-mint-400 shadow-md" : "border-gray-200 hover:border-mint-300"}`}
-                                onClick={() => setExpandedOrder(expanded ? null : ordKey)}>
-
-                                {/* Top row */}
-                                <div className="flex justify-between items-start">
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-2">
-                                            <p className="text-sm font-bold text-gray-800">
-                                                #{ord.orderNumber || ord.orderGuid?.slice(-6).toUpperCase()}
-                                            </p>
-                                            <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusColor(ord.status)}`}>
-                                                {ord.status || "—"}
-                                            </span>
-                                            {ord.orderType && (
-                                                <span className="text-xs text-gray-500">{orderTypeLabel(ord.orderType)}</span>
-                                            )}
-                                        </div>
-                                        {ord.customerName && (
-                                            <p className="text-sm text-gray-700 mt-1 font-medium">{ord.customerName}</p>
-                                        )}
-                                        {ord.serverName && (
-                                            <p className="text-xs text-gray-500 mt-0.5">{isEn ? "Server" : "Mesero"}: {ord.serverName}</p>
-                                        )}
-                                        {!expanded && (
-                                            <p className="text-xs text-gray-400 mt-1">
-                                                {timeStr && `${timeStr} • `}{ord.itemCount || 0} {isEn ? "items" : "artículos"}
-                                                {ord.address ? ` • 📍 ${isEn ? "Delivery" : "Entrega"}` : ""}
-                                            </p>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Expanded details */}
-                                {expanded && (
-                                    <div className="mt-3 pt-3 border-t border-gray-100">
-                                        {timeStr && (
-                                            <div className="mb-3">
-                                                <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Order Time:" : "Hora:"}</p>
-                                                <p className="text-xs text-gray-600">{timeStr}</p>
-                                            </div>
-                                        )}
-
-                                        {ord.customerName && (ord.phone || ord.email) && (
-                                            <div className="mb-3">
-                                                <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Contact:" : "Contacto:"}</p>
-                                                {ord.phone && <p className="text-xs text-gray-600">📞 {ord.phone}</p>}
-                                                {ord.email && <p className="text-xs text-gray-600">✉️ {ord.email}</p>}
-                                            </div>
-                                        )}
-
-                                        {ord.address && (
-                                            <div className="mb-3">
-                                                <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Delivery Address:" : "Dirección de Entrega:"}</p>
-                                                <p className="text-xs text-gray-600 bg-blue-50 rounded px-2 py-1.5">📍 {ord.address}</p>
-                                            </div>
-                                        )}
-
-                                        {ord.promisedDate && (
-                                            <div className="mb-3">
-                                                <p className="text-xs font-bold text-gray-500">{isEn ? "Promised:" : "Prometido:"}</p>
-                                                <p className="text-xs text-gray-600">
-                                                    {new Date(ord.promisedDate).toLocaleString(isEn ? "en-US" : "es-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                                                </p>
-                                            </div>
-                                        )}
-
-                                        {ord.specialInstructions && (
-                                            <div className="mb-3">
-                                                <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Notes:" : "Notas:"}</p>
-                                                <p className="text-xs text-gray-600 bg-amber-50 rounded px-2 py-1.5">📝 {ord.specialInstructions}</p>
-                                            </div>
-                                        )}
-
-                                        {/* Line items */}
-                                        {ord.items && ord.items.length > 0 && (
-                                            <div>
-                                                <p className="text-xs font-bold text-gray-500 mb-1.5">{isEn ? "Items:" : "Artículos:"}</p>
-                                                <div className="grid grid-cols-1 gap-1">
-                                                    {ord.items.map((item, ni) => (
-                                                        <div key={ni} className="text-xs bg-gray-50 rounded px-2 py-1.5">
-                                                            <span className="text-gray-700 font-medium">
-                                                                {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
-                                                            </span>
-                                                            {item.modifiers && item.modifiers.length > 0 && (
-                                                                <p className="text-gray-400 text-xs mt-0.5 pl-2">
-                                                                    ↳ {item.modifiers.join(", ")}
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Print buttons. Browser-print (full 8.5×11
-                                            HTML receipt → window.print() → OS dialog)
-                                            is always available. The thermal label
-                                            button appears only when the kitchen
-                                            printer for the current location is set
-                                            up + enabled in admin (Andrew 2026-05-29). */}
-                                        <div className={`mt-3 grid ${kitchenReady ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); handlePrint(ord); }}
-                                                className="py-2 rounded-lg text-sm font-bold border-2 border-mint-300 text-mint-700 bg-white hover:bg-mint-50 transition">
-                                                🖨️ {isEn ? "Print Order" : "Imprimir Pedido"}
-                                            </button>
-                                            {kitchenReady && (
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleLabelPrint(ord); }}
-                                                    disabled={labelPrinting === (ord.orderGuid || ord.orderNumber)}
-                                                    className="py-2 rounded-lg text-sm font-bold border-2 border-purple-300 text-purple-700 bg-white hover:bg-purple-50 disabled:opacity-50 transition">
-                                                    {labelPrinting === (ord.orderGuid || ord.orderNumber)
-                                                        ? (isEn ? '… Printing' : '… Imprimiendo')
-                                                        : `🏷 ${isEn ? 'Print to label printer' : 'Imprimir etiqueta'}`}
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
+                            <OrderRow
+                                key={ordKey}
+                                ord={ord}
+                                ordKey={ordKey}
+                                expanded={expandedOrder === ordKey}
+                                isEn={isEn}
+                                kitchenReady={kitchenReady}
+                                printingThis={labelPrinting != null && labelPrinting === (ord.orderGuid || ord.orderNumber)}
+                                onToggle={handleToggleRow}
+                                onPrint={handlePrint}
+                                onLabelPrint={handleLabelPrint}
+                            />
                         );
                     })}
 

@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, persistentSingleTabManager } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, persistentSingleTabManager, getPersistentCacheIndexManager, enablePersistentCacheIndexAutoCreation } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
 
@@ -122,6 +122,24 @@ export const db = initializeFirestore(app, {
         : { experimentalAutoDetectLongPolling: true }),
     ...(_localCache ? { localCache: _localCache } : {}),
 });
+// 2026-09-05 — local cache query indexes (Andrew: "loading the orders and
+// invoices are very slow … after use its hard to load"). With the
+// persistent IndexedDB cache, every listener ATTACH first executes its
+// query against the local cache — and without local indexes that is a
+// full scan of every cached doc in the collection. Churn-heavy
+// collections accumulate thousands of cached docs over weeks
+// (toast_orders caches ~each viewed day's orders forever until LRU GC),
+// so tab opens got slower the longer a device had been in use. Index
+// auto-creation watches real query patterns and builds local indexes for
+// the expensive ones, turning those scans into indexed lookups. Advisory
+// + safe: null manager on the memory-cache fallback, and failures only
+// mean "no local indexes" (the pre-existing behavior).
+try {
+    const _idxMgr = getPersistentCacheIndexManager(db);
+    if (_idxMgr) enablePersistentCacheIndexAutoCreation(_idxMgr);
+} catch (e) {
+    console.warn('[firestore] cache index auto-creation unavailable:', e?.message);
+}
 export const storage = getStorage(app);
 // Cloud Functions client (region must match the deploy region in
 // functions/index.js — us-central1). Currently used by chat

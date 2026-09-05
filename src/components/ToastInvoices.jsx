@@ -1,9 +1,158 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { printViaNative } from '../capacitor-bridge';
+import { reuseSnapshotDocs } from '../data/snapshotReuse';
+import { fmtIso } from '../data/dateFmt';
+
+// Delivery detection (Andrew 2026-09-05: Gabriel Vuagniaux's DELIVERY
+// invoice printed as "Pickup Time" with no address). The scraper only
+// captured the customer's BILLING address (customer.address — usually
+// empty for delivery orders); the actual delivery address lives on the
+// invoice's embedded order. The scraper now writes `deliveryAddress` +
+// `isDelivery`; older docs re-sync within 30 min. `address` stays as
+// the billing-address fallback so nothing regresses while docs refresh.
+// When the scraper has stamped an explicit isDelivery boolean, trust it
+// outright — a pickup invoice whose customer merely has a billing
+// address on file must NOT be labeled a delivery. Docs from before the
+// stamp (no boolean) fall back to the old address-presence heuristic.
+const invIsDelivery = (inv) => typeof inv.isDelivery === 'boolean'
+    ? inv.isDelivery
+    : !!(inv.deliveryAddress || inv.address);
+const invAddress = (inv) => {
+    if (inv.deliveryAddress) return inv.deliveryAddress;
+    if (typeof inv.isDelivery === 'boolean') return inv.isDelivery ? (inv.address || "") : "";
+    return inv.address || "";
+};
+
+const statusColor = (status) => {
+    if (!status) return "bg-gray-100 text-gray-600";
+    const s = status.toUpperCase();
+    if (s === "PAID" || s === "CLOSED") return "bg-green-100 text-green-700";
+    if (s === "SENT" || s === "OPEN") return "bg-blue-100 text-blue-700";
+    if (s === "OVERDUE" || s === "PAST_DUE") return "bg-red-100 text-red-700";
+    if (s === "DRAFT") return "bg-gray-100 text-gray-500";
+    return "bg-amber-100 text-amber-700";
+};
+
+// Memoized invoice card (2026-09-05 perf pass — see OrderRow in
+// ToastOrders.jsx for the full story). Every 30-min scraper pass
+// rewrites every invoice doc (fresh syncedAt) and every tap used to
+// re-render all ~200 cards with several un-cached Intl date calls
+// each; with reuseSnapshotDocs + this memo, a card only re-renders
+// when its own content or expansion changed.
+const InvoiceCard = memo(function InvoiceCard({ inv, expanded, isEn, onToggle, onPrint }) {
+    const locale = isEn ? "en-US" : "es-US";
+    const delivery = invIsDelivery(inv);
+    const address = invAddress(inv);
+
+    return (
+        <div
+            className={`bg-white border-2 rounded-lg p-3 mb-2 cursor-pointer transition ${expanded ? "border-mint-400 shadow-md" : "border-gray-200 hover:border-mint-300 ddmau-toastcard-cv"}`}
+            onClick={() => onToggle(inv.invoiceGuid)}>
+
+            {/* Top row: invoice number + total */}
+            <div className="flex justify-between items-start">
+                <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold text-gray-800">
+                            #{inv.invoiceNumber || inv.invoiceGuid?.slice(-6).toUpperCase()}
+                        </p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusColor(inv.status)}`}>
+                            {inv.status || "—"}
+                        </span>
+                    </div>
+                    {/* Customer / Company */}
+                    <p className="text-sm text-gray-700 mt-1 font-medium">
+                        {inv.companyName || inv.customerName || (isEn ? "No customer" : "Sin cliente")}
+                    </p>
+                    {inv.companyName && inv.customerName && (
+                        <p className="text-xs text-gray-400">{inv.customerName}</p>
+                    )}
+                    {/* Item count preview */}
+                    {!expanded && (
+                        <p className="text-xs text-gray-400 mt-1">
+                            {inv.itemCount || 0} {isEn ? "items" : "artículos"}
+                            {delivery ? ` • 📍 ${isEn ? "Delivery" : "Entrega"}` : ""}
+                        </p>
+                    )}
+                </div>
+            </div>
+
+            {/* Expanded details */}
+            {expanded && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                    {/* Contact info */}
+                    {(inv.phone || inv.email) && (
+                        <div className="mb-3">
+                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Contact:" : "Contacto:"}</p>
+                            {inv.phone && <p className="text-xs text-gray-600">📞 {inv.phone}</p>}
+                            {inv.email && <p className="text-xs text-gray-600">✉️ {inv.email}</p>}
+                        </div>
+                    )}
+
+                    {/* Delivery address */}
+                    {address && (
+                        <div className="mb-3">
+                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Delivery Address:" : "Dirección de Entrega:"}</p>
+                            <p className="text-xs text-gray-600 bg-blue-50 rounded px-2 py-1.5">📍 {address}</p>
+                        </div>
+                    )}
+
+                    {/* Dates */}
+                    <div className="mb-3 flex gap-4">
+                        {inv.promisedDate && (
+                            <div>
+                                <p className="text-xs font-bold text-gray-500">{isEn ? "Due:" : "Fecha:"}</p>
+                                <p className="text-xs text-gray-600">
+                                    {fmtIso(inv.promisedDate, locale, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                </p>
+                            </div>
+                        )}
+                        {inv.paymentDueDate && (
+                            <div>
+                                <p className="text-xs font-bold text-gray-500">{isEn ? "Payment Due:" : "Pago:"}</p>
+                                <p className="text-xs text-gray-600">
+                                    {fmtIso(inv.paymentDueDate, locale, { month: "short", day: "numeric" })}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Line items */}
+                    {inv.items && inv.items.length > 0 && (
+                        <div>
+                            <p className="text-xs font-bold text-gray-500 mb-1.5">{isEn ? "Items:" : "Artículos:"}</p>
+                            <div className="grid grid-cols-1 gap-1">
+                                {inv.items.map((item, ni) => (
+                                    <div key={ni} className="text-xs bg-gray-50 rounded px-2 py-1.5">
+                                        <span className="text-gray-700 font-medium">
+                                            {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
+                                        </span>
+                                        {item.modifiers && item.modifiers.length > 0 && (
+                                            <p className="text-gray-400 text-xs mt-0.5 pl-2">
+                                                ↳ {item.modifiers.join(", ")}
+                                            </p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Print button */}
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onPrint(inv); }}
+                        className="mt-3 w-full py-2 rounded-lg text-sm font-bold border-2 border-mint-300 text-mint-700 bg-white hover:bg-mint-50 transition">
+                        🖨️ {isEn ? "Print Order" : "Imprimir Pedido"}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+});
 
 export default function ToastInvoices({ language }) {
     const [invoices, setInvoices] = useState([]);
@@ -16,21 +165,27 @@ export default function ToastInvoices({ language }) {
     const refreshTimeoutRef = useRef(null);
     const isMountedRef = useRef(true);
 
-    const handlePrint = (inv) => {
+    const handlePrint = useCallback((inv) => {
         const locName = location === "webster" ? "Big Bend Blvd" : "Dorsett Rd";
-        const locAddr = location === "webster"
-            ? "8148 Big Bend Blvd<br>Webster Groves, MO 63119<br>(314) 968-3275"
-            : "11982 Dorsett Rd<br>Maryland Heights, MO 63034<br>(314) 942-2300";
+        // FIX (Andrew 2026-09-05: "is shows br before the time"): the
+        // address + pickup strings used to embed a literal "<br>" INSIDE
+        // text that later went through esc() — esc escapes < and >, so
+        // the printout showed the characters "<br>" instead of a line
+        // break. Escape each line separately, join with a real <br>.
+        const locAddrHtml = (location === "webster"
+            ? ["8148 Big Bend Blvd", "Webster Groves, MO 63119", "(314) 968-3275"]
+            : ["11982 Dorsett Rd", "Maryland Heights, MO 63034", "(314) 942-2300"]
+        ).map(esc).join("<br>");
 
-        const invoiceDate = inv.createdDate
-            ? new Date(inv.createdDate).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" })
-            : "";
-        const orderDate = inv.promisedDate
-            ? new Date(inv.promisedDate).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" })
-            : invoiceDate;
-        const pickupStr = inv.promisedDate
-            ? new Date(inv.promisedDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-              + "<br>" + new Date(inv.promisedDate).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+        const delivery = invIsDelivery(inv);
+        const address = invAddress(inv);
+
+        const invoiceDate = fmtIso(inv.createdDate, "en-US", { month: "numeric", day: "numeric", year: "2-digit" });
+        const orderDate = fmtIso(inv.promisedDate, "en-US", { month: "numeric", day: "numeric", year: "2-digit" }) || invoiceDate;
+        const pickupDateStr = fmtIso(inv.promisedDate, "en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+        const pickupTimeStr = fmtIso(inv.promisedDate, "en-US", { hour: "numeric", minute: "2-digit" });
+        const pickupHtml = pickupDateStr
+            ? esc(pickupDateStr) + "<br>" + esc(pickupTimeStr)
             : "";
 
         // FIX (review 2026-05-14, real): every interpolated string is
@@ -67,7 +222,7 @@ export default function ToastInvoices({ language }) {
                 <div style="font-size:20px;font-weight:bold;color:#333;margin-bottom:2px;">DD Mau</div>
                 <div style="font-size:11px;color:#888;margin-bottom:12px;">Vietnamese Eatery</div>
                 <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">${esc(locName)}</div>
-                <div style="font-size:13px;color:#444;line-height:1.5;">${esc(locAddr)}</div>
+                <div style="font-size:13px;color:#444;line-height:1.5;">${locAddrHtml}</div>
             </td>
             <td style="vertical-align:top;text-align:right;">
                 <div style="font-size:22px;font-weight:bold;margin-bottom:10px;">Invoice</div>
@@ -90,15 +245,15 @@ export default function ToastInvoices({ language }) {
                 ${inv.companyName ? `<div style="font-size:13px;color:#444;">${esc(inv.companyName)}</div>` : ""}
             </td>
             <td style="vertical-align:top;">
-                ${pickupStr ? `<div style="font-weight:bold;margin-bottom:4px;">${inv.address ? "Delivery Time" : "Pickup Time"}</div>
-                <div style="font-size:13px;color:#444;line-height:1.5;">${esc(pickupStr)}</div>` : ""}
+                ${pickupHtml ? `<div style="font-weight:bold;margin-bottom:4px;">${delivery ? "Delivery Time" : "Pickup Time"}</div>
+                <div style="font-size:13px;color:#444;line-height:1.5;">${pickupHtml}</div>` : ""}
             </td>
         </tr></table>
 
         <!-- Delivery address -->
-        ${inv.address ? `<div style="margin-bottom:20px;">
+        ${address ? `<div style="margin-bottom:20px;">
             <div style="font-weight:bold;margin-bottom:4px;">Delivery Address</div>
-            <div style="font-size:13px;color:#444;">${esc(inv.address)}</div>
+            <div style="font-size:13px;color:#444;">${esc(address)}</div>
         </div>` : ""}
 
         <!-- Order table -->
@@ -131,7 +286,7 @@ export default function ToastInvoices({ language }) {
         printWindow.document.close();
         printWindow.focus();
         printWindow.print();
-    };
+    }, [location, isEn]);
 
     const triggerRefresh = async () => {
         setRefreshing(true);
@@ -177,7 +332,12 @@ export default function ToastInvoices({ language }) {
         );
         const unsub = onSnapshot(q, (snap) => {
             const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            setInvoices(docs);
+            // Identity-preserving update (2026-09-05 perf pass): the
+            // scraper rewrites EVERY invoice doc each 30-min pass (only
+            // syncedAt changes), which used to hand React 200 new
+            // objects → full re-render of every card. Unchanged docs
+            // keep their object, an unchanged list keeps the array.
+            setInvoices(prev => reuseSnapshotDocs(prev, docs));
             setLoading(false);
         }, (err) => {
             console.error("Toast invoices query error:", err);
@@ -189,29 +349,29 @@ export default function ToastInvoices({ language }) {
         return () => unsub();
     }, [location]);
 
-    // Group invoices by promised date (delivery/pickup date)
-    const grouped = {};
-    invoices.forEach(inv => {
-        let d = "No Date";
-        if (inv.promisedDate) {
-            d = inv.promisedDate.split("T")[0];
-        } else if (inv.createdDate) {
-            d = inv.createdDate.split("T")[0];
-        }
-        if (!grouped[d]) grouped[d] = [];
-        grouped[d].push(inv);
-    });
-    const dates = Object.keys(grouped).sort().reverse();
+    // Group invoices by promised date (delivery/pickup date).
+    // useMemo'd — with the identity-preserving listener above, this
+    // only recomputes when the list genuinely changed, not on every
+    // expand/collapse render.
+    const { grouped, dates } = useMemo(() => {
+        const grouped = {};
+        invoices.forEach(inv => {
+            let d = "No Date";
+            if (inv.promisedDate) {
+                d = inv.promisedDate.split("T")[0];
+            } else if (inv.createdDate) {
+                d = inv.createdDate.split("T")[0];
+            }
+            if (!grouped[d]) grouped[d] = [];
+            grouped[d].push(inv);
+        });
+        const dates = Object.keys(grouped).sort().reverse();
+        return { grouped, dates };
+    }, [invoices]);
 
-    const statusColor = (status) => {
-        if (!status) return "bg-gray-100 text-gray-600";
-        const s = status.toUpperCase();
-        if (s === "PAID" || s === "CLOSED") return "bg-green-100 text-green-700";
-        if (s === "SENT" || s === "OPEN") return "bg-blue-100 text-blue-700";
-        if (s === "OVERDUE" || s === "PAST_DUE") return "bg-red-100 text-red-700";
-        if (s === "DRAFT") return "bg-gray-100 text-gray-500";
-        return "bg-amber-100 text-amber-700";
-    };
+    const handleToggleCard = useCallback((guid) => {
+        setExpandedInvoice(prev => (prev === guid ? null : guid));
+    }, []);
 
     return (
         <div>
@@ -273,114 +433,16 @@ export default function ToastInvoices({ language }) {
                                 </div>
 
                                 {/* Invoice cards */}
-                                {dayInvoices.map((inv, i) => {
-                                    const expanded = expandedInvoice === inv.invoiceGuid;
-
-                                    return (
-                                        <div key={inv.invoiceGuid || i}
-                                            className={`bg-white border-2 rounded-lg p-3 mb-2 cursor-pointer transition ${expanded ? "border-mint-400 shadow-md" : "border-gray-200 hover:border-mint-300"}`}
-                                            onClick={() => setExpandedInvoice(expanded ? null : inv.invoiceGuid)}>
-
-                                            {/* Top row: invoice number + total */}
-                                            <div className="flex justify-between items-start">
-                                                <div className="flex-1">
-                                                    <div className="flex items-center gap-2">
-                                                        <p className="text-sm font-bold text-gray-800">
-                                                            #{inv.invoiceNumber || inv.invoiceGuid?.slice(-6).toUpperCase()}
-                                                        </p>
-                                                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusColor(inv.status)}`}>
-                                                            {inv.status || "—"}
-                                                        </span>
-                                                    </div>
-                                                    {/* Customer / Company */}
-                                                    <p className="text-sm text-gray-700 mt-1 font-medium">
-                                                        {inv.companyName || inv.customerName || (isEn ? "No customer" : "Sin cliente")}
-                                                    </p>
-                                                    {inv.companyName && inv.customerName && (
-                                                        <p className="text-xs text-gray-400">{inv.customerName}</p>
-                                                    )}
-                                                    {/* Item count preview */}
-                                                    {!expanded && (
-                                                        <p className="text-xs text-gray-400 mt-1">
-                                                            {inv.itemCount || 0} {isEn ? "items" : "artículos"}
-                                                            {inv.address ? ` • 📍 ${isEn ? "Delivery" : "Entrega"}` : ""}
-                                                        </p>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* Expanded details */}
-                                            {expanded && (
-                                                <div className="mt-3 pt-3 border-t border-gray-100">
-                                                    {/* Contact info */}
-                                                    {(inv.phone || inv.email) && (
-                                                        <div className="mb-3">
-                                                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Contact:" : "Contacto:"}</p>
-                                                            {inv.phone && <p className="text-xs text-gray-600">📞 {inv.phone}</p>}
-                                                            {inv.email && <p className="text-xs text-gray-600">✉️ {inv.email}</p>}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Delivery address */}
-                                                    {inv.address && (
-                                                        <div className="mb-3">
-                                                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Delivery Address:" : "Dirección de Entrega:"}</p>
-                                                            <p className="text-xs text-gray-600 bg-blue-50 rounded px-2 py-1.5">📍 {inv.address}</p>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Dates */}
-                                                    <div className="mb-3 flex gap-4">
-                                                        {inv.promisedDate && (
-                                                            <div>
-                                                                <p className="text-xs font-bold text-gray-500">{isEn ? "Due:" : "Fecha:"}</p>
-                                                                <p className="text-xs text-gray-600">
-                                                                    {new Date(inv.promisedDate).toLocaleDateString(isEn ? "en-US" : "es-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                                                                </p>
-                                                            </div>
-                                                        )}
-                                                        {inv.paymentDueDate && (
-                                                            <div>
-                                                                <p className="text-xs font-bold text-gray-500">{isEn ? "Payment Due:" : "Pago:"}</p>
-                                                                <p className="text-xs text-gray-600">
-                                                                    {new Date(inv.paymentDueDate).toLocaleDateString(isEn ? "en-US" : "es-US", { month: "short", day: "numeric" })}
-                                                                </p>
-                                                            </div>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Line items */}
-                                                    {inv.items && inv.items.length > 0 && (
-                                                        <div>
-                                                            <p className="text-xs font-bold text-gray-500 mb-1.5">{isEn ? "Items:" : "Artículos:"}</p>
-                                                            <div className="grid grid-cols-1 gap-1">
-                                                                {inv.items.map((item, ni) => (
-                                                                    <div key={ni} className="text-xs bg-gray-50 rounded px-2 py-1.5">
-                                                                        <span className="text-gray-700 font-medium">
-                                                                            {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
-                                                                        </span>
-                                                                        {item.modifiers && item.modifiers.length > 0 && (
-                                                                            <p className="text-gray-400 text-xs mt-0.5 pl-2">
-                                                                                ↳ {item.modifiers.join(", ")}
-                                                                            </p>
-                                                                        )}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Print button */}
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); handlePrint(inv); }}
-                                                        className="mt-3 w-full py-2 rounded-lg text-sm font-bold border-2 border-mint-300 text-mint-700 bg-white hover:bg-mint-50 transition">
-                                                        🖨️ {isEn ? "Print Order" : "Imprimir Pedido"}
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
+                                {dayInvoices.map((inv, i) => (
+                                    <InvoiceCard
+                                        key={inv.invoiceGuid || i}
+                                        inv={inv}
+                                        expanded={expandedInvoice === inv.invoiceGuid}
+                                        isEn={isEn}
+                                        onToggle={handleToggleCard}
+                                        onPrint={handlePrint}
+                                    />
+                                ))}
                             </div>
                         );
                     })}

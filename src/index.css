@@ -1758,6 +1758,18 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     contain-intrinsic-size: auto 96px;
 }
 
+/* 2026-09-05 — Toast orders/invoices card perf (Andrew: "loading the
+   orders and invoices are very slow and glitchy"). Up to 500 order rows
+   / 200 invoice cards mount unvirtualized. Skip layout/paint for
+   off-screen collapsed cards; 92px matches a typical collapsed card
+   incl. its mb-2. Applied ONLY while collapsed — an expanded card keeps
+   normal layout so its true height drives the scroll position (same
+   rule as .ddmau-recipe-cv). */
+.ddmau-toastcard-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 92px;
+}
+
 @media (max-width: 767px) {
     /* Other-person message bubble — light card with hairline border.
        (Mentioned messages keep their amber tint via the JSX
