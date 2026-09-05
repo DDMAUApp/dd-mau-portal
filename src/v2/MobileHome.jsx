@@ -154,13 +154,25 @@ export default function MobileHome({
         ).length;
     }, [shifts14, storeLocation, isManager, isAdmin]);
 
-    const eighty6Count = useMemo(() => eightySixByLoc[queryLoc]?.count || 0, [eightySixByLoc, queryLoc]);
+    // 2026-09-05: 'both' mode sums BOTH stores (context subscribes to both).
+    const eighty6Count = useMemo(() => (
+        storeLocation === 'both'
+            ? (eightySixByLoc.webster?.count || 0) + (eightySixByLoc.maryland?.count || 0)
+            : eightySixByLoc[queryLoc]?.count || 0
+    ), [eightySixByLoc, queryLoc, storeLocation]);
     // 2026-06-20 (QA audit L5) — eightySixByLoc[queryLoc] seeds null until the
     // ops/86 doc loads. Without this flag the KPI showed "86 items 0" in green
     // (tone 'good') during cold-start load — falsely implying "all clear" before
     // the real, possibly-blocking count arrived. Desktop HomeV2 already shows a
     // neutral placeholder; mirror it here.
-    const eighty6Loading = useMemo(() => eightySixByLoc[queryLoc] == null, [eightySixByLoc, queryLoc]);
+    const eighty6Loading = useMemo(() => (
+        // Both mode: loading until BOTH stores answered — same L5 rule;
+        // a green tile off half the data is the exact false-all-clear
+        // this flag exists to prevent.
+        storeLocation === 'both'
+            ? eightySixByLoc.webster == null || eightySixByLoc.maryland == null
+            : eightySixByLoc[queryLoc] == null
+    ), [eightySixByLoc, queryLoc, storeLocation]);
 
     const pendingPto = useMemo(() => {
         if (!isManager && !isAdmin) return 0;

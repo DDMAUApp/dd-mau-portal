@@ -45,7 +45,16 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
     // state even though we couldn't actually read the doc. Now any
     // subscription error surfaces a Retry banner; transient network
     // errors are recoverable without a full app refresh.
-    const docKey = `86_${storeLocation === 'both' ? 'webster' : storeLocation}`;
+    //
+    // 2026-09-05 (Andrew: "the both restaurants dont show both
+    // restaurants 86 list") — real two-store merge. In 'both' mode the
+    // primary hook pins to Webster and a SECOND hook subscribes to
+    // Maryland (null ref factory in single-store mode = the hook skips
+    // subscribing entirely, so single-store staff pay nothing extra).
+    // Items from the two boards are merged below with a per-row store
+    // chip; count is the sum; updatedAt is the fresher of the two.
+    const isBoth = storeLocation === 'both';
+    const docKey = `86_${isBoth ? 'webster' : storeLocation}`;
     const {
         data: eightySixDoc,
         loading,
@@ -55,6 +64,16 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
         () => doc(db, 'ops', docKey),
         [docKey],
         { label: `86-${docKey}`, feature: '86' },
+    );
+    const {
+        data: eightySixDocM,
+        loading: loadingM,
+        error: eightySixErrorM,
+        retry: retryEightySixM,
+    } = useFirestoreDoc(
+        () => (isBoth ? doc(db, 'ops', '86_maryland') : null),
+        [isBoth],
+        { label: '86-86_maryland-both', feature: '86' },
     );
     // TG5 (2026-08-29): per-key last-known cache so toggling W↔M paints the
     // previous board for THAT key instantly instead of a skeleton while
@@ -73,25 +92,52 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
     useEffect(() => {
         if (!loading && !eightySixError) lastKnown.current[docKey] = eightySixDoc;
     }, [loading, eightySixError, eightySixDoc, docKey]);
+    useEffect(() => {
+        // Secondary (Maryland-in-both-mode) cache entry, same TG5 rules.
+        // Only while the subscription is actually armed — in single-store
+        // mode the hook idles at loading:true and must not write.
+        if (isBoth && !loadingM && !eightySixErrorM) lastKnown.current['86_maryland'] = eightySixDocM;
+    }, [isBoth, loadingM, eightySixErrorM, eightySixDocM]);
     const displayDoc = !loading ? eightySixDoc : lastKnown.current[docKey];
-    // Skeleton ONLY when this key has never loaded — a cached null (empty
-    // board) renders the green "All available!" state, not a skeleton, and
-    // a not-yet-loaded key can never flash "All available!" mid-toggle.
-    const showSkeleton = loading && !(docKey in lastKnown.current);
-    // Derive the legacy field shape from the doc so the rest of the
-    // component reads unchanged. When the doc doesn't exist or hasn't
-    // loaded, we fall back to empty defaults — the same behavior as
-    // the previous onSnapshot's else branch.
-    const items = displayDoc?.items || [];
-    const count = displayDoc?.count || 0;
-    const updatedAt = displayDoc?.updatedAt || null;
-    // Attribution map written by scripts/sync-toast-86-attribution.mjs.
-    // Shape: { [itemName]: { outBy: [staffName,...], outAt: Timestamp,
-    //                        inBy: [...], inAt: Timestamp } }
-    // Items that haven't been seen transition yet (legacy / from before
-    // the sync script started running) won't have an entry — display
-    // gracefully degrades to no name shown.
-    const attribution = displayDoc?.attribution || {};
+    const displayDocM = isBoth
+        ? (!loadingM ? eightySixDocM : lastKnown.current['86_maryland'])
+        : null;
+    // Skeleton ONLY when a needed key has never loaded — a cached null
+    // (empty board) renders the green "All available!" state, not a
+    // skeleton, and a not-yet-loaded key can never flash "All available!"
+    // mid-toggle.
+    const showSkeleton = (loading && !(docKey in lastKnown.current))
+        || (isBoth && loadingM && !('86_maryland' in lastKnown.current));
+    // Merge the per-store docs into the legacy field shape the rest of
+    // the component reads. Each source's items are tagged with their
+    // store (_locKey/_locLabel) and their own attribution row (_attr) —
+    // per-item attribution instead of one shared map, because the same
+    // item name can be 86'd at both stores with different people/times.
+    // Attribution map shape (written by sync-toast-86-attribution.mjs):
+    //   { [itemName]: { outBy: [staffName,...], outAt: Timestamp, ... } }
+    const sources = isBoth
+        ? [
+            { d: displayDoc, locKey: 'webster', locLabel: 'Webster' },
+            { d: displayDocM, locKey: 'maryland', locLabel: 'Maryland' },
+        ]
+        : [{ d: displayDoc, locKey: storeLocation, locLabel: null }];
+    const items = sources.flatMap(({ d, locKey, locLabel }) => {
+        const attr = d?.attribution || {};
+        return (d?.items || []).map(i => ({
+            ...i,
+            _locKey: locKey,
+            _locLabel: locLabel,
+            _attr: attr?.[i?.name] || (i?.guid ? attr?.[i.guid] : null) || null,
+        }));
+    });
+    const count = sources.reduce((sum, { d }) => sum + (d?.count || 0), 0);
+    const updatedAt = sources.reduce((best, { d }) => {
+        const ts = d?.updatedAt;
+        if (!ts) return best;
+        if (!best) return ts;
+        const ms = (t) => { try { return t.toDate ? t.toDate().getTime() : new Date(t).getTime(); } catch { return 0; } };
+        return ms(ts) > ms(best) ? ts : best;
+    }, null);
     // Toast menu items map (guid → human name), written by
     // sync-toast-86-attribution.mjs. Used to resolve any row whose
     // items[].name is still a raw Toast GUID before the script has
@@ -329,12 +375,11 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
         } catch { return "—"; }
     };
 
-    // 2026-07-26 platform audit H9: in "Both" mode this page only reads
-    // the WEBSTER doc — the old "Both Locations" label made a green
-    // "All available" read as covering Maryland too, which it never did.
-    // Label honestly until a real two-store merge is built.
+    // 2026-09-05: "Both Locations" is finally honest — the real
+    // two-store merge above reads BOTH docs in 'both' mode (H9's old
+    // "switch store for Maryland" label workaround is gone).
     const locationLabel = storeLocation === 'maryland' ? tx('Maryland Heights', 'Maryland Heights')
-                        : storeLocation === 'both'     ? tx('Webster Groves — switch store for Maryland', 'Webster Groves — cambia de tienda para Maryland')
+                        : storeLocation === 'both'     ? tx('Both Locations', 'Ambas Ubicaciones')
                         :                                tx('Webster Groves', 'Webster Groves');
 
     // 2026-05-26 — Andrew: "the 2 and 3 should be on the list but it
@@ -418,27 +463,31 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                 silent setLoading(false) and the page showed "All
                 items available!" even though we never actually heard
                 back from Firestore. */}
-            {eightySixError && (
+            {(eightySixError || (isBoth && eightySixErrorM)) && (
                 <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
                     <div className="text-2xl shrink-0">⚠️</div>
                     <div className="flex-1 min-w-0">
                         <div className="text-sm font-bold text-red-800">
-                            {tx("Couldn't load 86 board", 'No se pudo cargar el tablero 86')}
+                            {isBoth && !eightySixError
+                                ? tx("Couldn't load the Maryland 86 board", 'No se pudo cargar el tablero 86 de Maryland')
+                                : isBoth && eightySixError && !eightySixErrorM
+                                    ? tx("Couldn't load the Webster 86 board", 'No se pudo cargar el tablero 86 de Webster')
+                                    : tx("Couldn't load 86 board", 'No se pudo cargar el tablero 86')}
                         </div>
                         <div className="text-[12px] text-red-700/80 mt-0.5">
-                            {eightySixError === 'timeout'
+                            {(eightySixError || eightySixErrorM) === 'timeout'
                                 ? tx('Network is slow — try again in a moment.', 'Red lenta — intenta de nuevo.')
                                 : tx('Tap retry. If it keeps failing, tell Andrew.', 'Toca reintentar. Si sigue, avísale a Andrew.')}
                         </div>
                         <div className="mt-2 flex items-center gap-2">
                             <button
-                                onClick={retryEightySix}
+                                onClick={() => { if (eightySixError) retryEightySix(); if (isBoth && eightySixErrorM) retryEightySixM(); }}
                                 className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700 active:scale-95 transition"
                             >
                                 ↻ {tx('Retry', 'Reintentar')}
                             </button>
                             <code className="text-[10px] text-red-700/60 font-mono break-all">
-                                {String(eightySixError).slice(0, 60)}
+                                {String(eightySixError || eightySixErrorM).slice(0, 60)}
                             </code>
                         </div>
                     </div>
@@ -472,7 +521,6 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                             count={out.length}
                             tone="danger"
                             items={out}
-                            attribution={attribution}
                             formatTime={formatDateTime}
                             isEs={isEs}
                             relativeAgo={relativeAgo}
@@ -484,7 +532,6 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                             count={low.length}
                             tone="warn"
                             items={low}
-                            attribution={attribution}
                             formatTime={formatDateTime}
                             isEs={isEs}
                             relativeAgo={relativeAgo}
@@ -635,12 +682,16 @@ function Eighty6SettingsModal({ settings, recipients, isEs, sending, onClose, on
 }
 
 function Section({
-    title, count, tone, items, attribution = {}, formatTime, isEs,
+    title, count, tone, items, formatTime, isEs,
     // relativeAgo renders the "· 4h ago" trailer on the attribution
     // line so admins see how long an item's been out at a glance.
     // 2026-05-27 — otherOutSlugs / otherLocationLabel were removed
     // alongside the cross-location hint; the parent stopped passing
     // them too. See the comment block in the JSX below.
+    // 2026-09-05 — the shared `attribution` map prop is gone: each item
+    // now carries its OWN store's attribution row as `_attr` (resolved
+    // in the parent merge), because in Both mode the same item name can
+    // be 86'd at both stores with different people/times.
     relativeAgo = () => null,
 }) {
     const accent = tone === 'danger' ? 'bg-red-500' : 'bg-amber-500';
@@ -676,12 +727,10 @@ function Section({
         //     anything else): the staffer typing 🚫 in chat IS the
         //     attribution, so show "Marked by Maria at 4:23pm" as before.
         //
-        // Attribution map was originally keyed by item.name. If the
-        // name has since been repaired from a GUID to the human name
-        // (sync-toast-86-attribution.mjs in-place rename), the
-        // existing attribution row is still under the old GUID key.
-        // Try the guid sidecar as a fallback. Belt and suspenders.
-        const attr = attribution?.[item.name] || (item.guid ? attribution?.[item.guid] : null);
+        // Attribution row resolved in the parent merge (item._attr) —
+        // keyed by item.name with a guid-sidecar fallback there, same
+        // belt-and-suspenders as the old shared-map lookup.
+        const attr = item._attr || null;
         const outAtRaw = attr?.outAt || item?.addedAt || item?.outAt;
         const timeStr = outAtRaw ? formatTime(outAtRaw) : null;
 
@@ -734,9 +783,20 @@ function Section({
                 {items.map((item, idx) => (
                     <li key={idx} className={`flex items-start justify-between gap-3 px-4 py-3 transition ${itemBg}`}>
                         <div className="min-w-0 flex-1">
-                            <span className={`font-bold truncate block ${item._isUnresolved ? 'text-amber-700 italic' : 'text-dd-text'}`}>
-                                {item._displayName || item.name}
-                            </span>
+                            <div className="flex items-center gap-2 min-w-0">
+                                <span className={`font-bold truncate ${item._isUnresolved ? 'text-amber-700 italic' : 'text-dd-text'}`}>
+                                    {item._displayName || item.name}
+                                </span>
+                                {/* Store chip — only set in Both mode, so
+                                    single-store staff see no change. Sits
+                                    OUTSIDE the truncating span so a long
+                                    item name can never clip it. */}
+                                {item._locLabel && (
+                                    <span className={`flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${item._locKey === 'maryland' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                                        {item._locLabel}
+                                    </span>
+                                )}
+                            </div>
                             {/* Attribution line — "Marked by X at Y".
                                 Two sources: the per-item addedBy/addedAt
                                 fields (captured when staff hits 🚫 in chat),

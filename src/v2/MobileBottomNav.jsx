@@ -74,8 +74,11 @@ export default function MobileBottomNav({
         ).length;
     }, [shifts14, storeLocation, isManager, isAdmin]);
     const eighty6Count = useMemo(() => {
-        const loc = storeLocation === 'both' ? 'webster' : storeLocation;
-        return eightySixByLoc[loc]?.count || 0;
+        // 2026-09-05: 'both' mode sums BOTH stores.
+        if (storeLocation === 'both') {
+            return (eightySixByLoc.webster?.count || 0) + (eightySixByLoc.maryland?.count || 0);
+        }
+        return eightySixByLoc[storeLocation]?.count || 0;
     }, [eightySixByLoc, storeLocation]);
 
     // Slot 3 — dynamic destination based on what the staffer can access.

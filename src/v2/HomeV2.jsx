@@ -208,10 +208,31 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
         return { loading: data === null, data };
     }, [laborByLoc, queryLoc]);
     const eighty6 = useMemo(() => {
+        // 2026-09-05 (Andrew: "the both restaurants dont show both
+        // restaurants 86 list"): in 'both' mode merge BOTH stores —
+        // the context already subscribes to both docs. Loading only
+        // until at least one store has answered.
+        if (storeLocation === 'both') {
+            const w = eightySixByLoc.webster;
+            const m = eightySixByLoc.maryland;
+            // Loading until BOTH stores have answered — the L5 rule: a
+            // green "All in stock ✓" must never render off half the data.
+            if (w === null || m === null) return { loading: true, count: 0, items: [] };
+            // Tag preview names with the store so an item 86'd at both
+            // stores doesn't read as a duplicated glitch ("Pork Belly,
+            // Pork Belly") in the card body.
+            const tag = (list, t) => (list || []).map(i =>
+                (typeof i === 'string' ? { name: `${i} (${t})` } : { ...i, name: `${i?.name || ''} (${t})` }));
+            return {
+                loading: false,
+                count: (w?.count || 0) + (m?.count || 0),
+                items: [...tag(w?.items, 'W'), ...tag(m?.items, 'M')],
+            };
+        }
         const d = eightySixByLoc[queryLoc];
         if (d === null) return { loading: true, count: 0, items: [] };
         return { loading: false, count: d?.count || 0, items: d?.items || [] };
-    }, [eightySixByLoc, queryLoc]);
+    }, [eightySixByLoc, queryLoc, storeLocation]);
     const shifts = useMemo(() => ({ loading: false, list: shifts14 }), [shifts14]);
     const pendingPto = useMemo(() => timeOff.filter(t => t.status === 'pending'), [timeOff]);
 
