@@ -162,13 +162,46 @@ function centralDateFmt() {
 /** Today's earlier sessions for a person, from a clock_sessions doc.
  *  Returns [] unless the doc is for TODAY (Central) — so a stale doc from a
  *  prior day never bleeds in. */
+// Longest span a single clock-in → clock-out session can plausibly have.
+// The restaurant runs ~10am-10pm; anything past this is a fabricated
+// session (2026-09-08: a 65h roster outage made the recorder pair
+// Saturday clock-ins with Tuesday's first punches).
+export const MAX_SESSION_HOURS = 16;
+
+/** Parse a Toast/ISO timestamp (accepts the "+0000" form) → ms, or NaN. */
+function isoMs(s) {
+    if (!s) return NaN;
+    return new Date(String(s).replace(/\+0000$/, '+00:00')).getTime();
+}
+
+/**
+ * A completed session is only trusted for the panel when it STARTED on
+ * the given Central date and its span is sane (0 < span ≤ 16h). The
+ * recorder now applies the same rules server-side; this is the display-
+ * side guard so a bad doc can never push "In at" onto another day's time.
+ */
+export function isSaneSessionForDate(session, dateCT) {
+    if (!session || !session.clockIn) return false;
+    const a = isoMs(session.clockIn);
+    const b = isoMs(session.clockOut);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+    const hours = (b - a) / 3600000;
+    if (!(hours > 0 && hours <= MAX_SESSION_HOURS)) return false;
+    return centralDateFmt().format(new Date(a)) === dateCT;
+}
+
 export function earlierSessionsFor(sessionsDoc, toastEmployeeId) {
     if (!sessionsDoc || !toastEmployeeId) return [];
     // CI3 — cached formatter; was a fresh Intl.DateTimeFormat per entry.
     const todayCT = centralDateFmt().format(new Date());
     if (sessionsDoc.date !== todayCT) return [];
     const emp = sessionsDoc.employees && sessionsDoc.employees[String(toastEmployeeId)];
-    return (emp && Array.isArray(emp.sessions)) ? emp.sessions : [];
+    const sessions = (emp && Array.isArray(emp.sessions)) ? emp.sessions : [];
+    // Per-session guard (2026-09-08, Andrew: "the in at times it doesnt
+    // match up") — the doc-level date check above only proves the DOC is
+    // today's; each session must also have started today with a sane span,
+    // otherwise its clockIn becomes the row's "In at" time.
+    return sessions.filter(s => isSaneSessionForDate(s, todayCT));
 }
 
 /**

@@ -46,6 +46,72 @@ function ctHourKey(d) {
     }).format(d);
 }
 
+// ── Session sanity (2026-09-08) ─────────────────────────────────────────────
+// Two bugs corrupted /timecards + /clock_sessions sessions:
+//   1. The scraper's schemaVersion-2 roster keeps clocked-OUT people on the
+//      list with clockedInAt = their FIRST punch of the day, not the session
+//      that just ended. The diff logic read that as "a new session began"
+//      and closed the active session at an EARLIER time → negative-span
+//      sessions on every clock-out break since 2026-07-24 (48% of docs).
+//   2. A 65h roster outage (2026-09-05 → 09-08) made the first fresh diff
+//      pair Saturday clock-ins with Tuesday punches → 66-72h "sessions".
+// Every session write now passes saneSession(); the before→after diff is
+// ignored for closing purposes when the two snapshots are far apart.
+const MAX_SESSION_HOURS = 16;
+const STALE_BEFORE_HOURS = 3;
+
+function isoMs(s) {
+    return s ? new Date(String(s).replace(/\+0000$/, "+00:00")).getTime() : NaN;
+}
+
+function saneSession(clockIn, clockOut) {
+    const a = isoMs(clockIn);
+    const b = isoMs(clockOut);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+    const h = (b - a) / 3600000;
+    return h > 0 && h <= MAX_SESSION_HOURS;
+}
+
+// The scraper's hoursToday is scoped to calendar-TODAY (entries that started
+// today), while a timecard is keyed by the clock-in day. They only describe
+// the same day when the clock-in happened today — across midnight (or a
+// forgotten clock-out) the roster reports hoursToday 0 for yesterday's card,
+// which must never overwrite that card's real hours.
+function sameCtDay(iso, now = new Date()) {
+    const ms = isoMs(iso);
+    if (!Number.isFinite(ms)) return false;
+    return ctDateKey(new Date(ms)) === ctDateKey(now);
+}
+
+// Union two break lists by their `in` stamp, preferring the entry that has an
+// `out` (the later, completed observation). The scraper's clocked-out summary
+// entry always carries breaksToday: [] — a naive overwrite wiped the day's
+// breaks the moment someone clocked out.
+function mergeBreaks(a, b) {
+    const byIn = new Map();
+    for (const list of [a, b]) {
+        if (!Array.isArray(list)) continue;
+        for (const br of list) {
+            if (!br || !br.in) continue;
+            const cur = byIn.get(br.in);
+            // Later list (the live roster) wins unless it would replace a
+            // completed break with an incomplete one.
+            if (!cur || br.out || !cur.out) byIn.set(br.in, br);
+        }
+    }
+    return [...byIn.values()].sort((x, y) => String(x.in).localeCompare(String(y.in)));
+}
+
+// The before→after roster diff only describes real transitions when the two
+// snapshots are close in time. After an outage the "before" is hours old and
+// every difference is an artifact, not a punch.
+function beforeIsStale(before, after) {
+    const a = isoMs(after && after.updatedAt);
+    const b = isoMs(before && before.updatedAt);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+    return (a - b) > STALE_BEFORE_HOURS * 3600000;
+}
+
 // A shift's scheduled start as UTC ms, from its 'YYYY-MM-DD' date + 'HH:MM'
 // local (Central) time — DST-aware via the same Intl offset trick as
 // sendShiftReminders (functions/index.js).
@@ -172,19 +238,39 @@ async function recordClockedInAttendance(location, before, after) {
     const byName = await todaysShiftsByName(db, dateKey);
     if (!byName.size) return 0;
 
-    let wrote = 0;
-    const batch = db.batch();
+    // Earliest arrival wins (2026-09-08): an active entry after a clock-out
+    // break carries the RETURN time as clockedInAt, and the hourly reconcile
+    // reprocesses everyone — either used to overwrite an on_time arrival with
+    // a "late" one. Never move a stored arrival later.
+    const candidates = [];
     for (const e of toProcess) {
         if (!e || !e.employeeName || !e.clockedInAt) continue;
+        candidates.push({ e, id: `${location}_${dateKey}_${normName(e.employeeName)}` });
+    }
+    const existingById = new Map();
+    if (candidates.length) {
+        try {
+            const snaps = await db.getAll(...candidates.map(c => db.collection("attendance").doc(c.id)));
+            for (const s of snaps) if (s.exists) existingById.set(s.id, s.data());
+        } catch (err) { /* fail open: behave as before */ }
+    }
+
+    let wrote = 0;
+    const batch = db.batch();
+    for (const { e, id } of candidates) {
         const clockInMs = new Date(e.clockedInAt).getTime();
         if (!clockInMs) continue;
+        const stored = existingById.get(id);
+        // Strict: an EQUAL arrival still re-runs classification (the hourly pass
+        // self-heals shifts edited/published after the clock-in); only a LATER
+        // punch (return from a break) is ignored.
+        if (stored && stored.clockedInAt && isoMs(stored.clockedInAt) < clockInMs) continue;
         const k = normName(e.employeeName);
         const sh = pickBestShift(byName.get(k) || [], clockInMs);
         if (!sh) continue; // worked without a scheduled shift — not part of the punctuality log
         const startMs = shiftStartMs(sh.date, sh.startTime);
         if (startMs == null) continue;
         const { status, minutesLate } = classify(clockInMs, startMs);
-        const id = `${location}_${dateKey}_${k}`;
         batch.set(db.collection("attendance").doc(id), {
             location, date: dateKey, staffName: sh.staffName, staffKey: k,
             shiftId: sh.id, scheduledStart: sh.startTime || null, scheduledEnd: sh.endTime || null,
@@ -278,31 +364,55 @@ async function markNoShows(dateKey) {
 //
 // Idempotent: sessions are de-duped by their (stable) clockIn timestamp, so the
 // same diff seen twice writes nothing new. Best-effort — never touches the feed.
-async function recordCompletedSessions(location, before, after) {
+// Pure: which sessions COMPLETED between two roster snapshots. Exported for
+// tests — the transition table here is the one that produced 48% corrupt
+// timecards when it was wrong.
+function planCompletedSessions(before, after) {
     const afterEntries = Array.isArray(after?.entries) ? after.entries : [];
     const beforeEntries = Array.isArray(before?.entries) ? before.entries : [];
-    if (!beforeEntries.length || !afterEntries.length) return 0;
+    if (!beforeEntries.length || !afterEntries.length) return [];
 
     const beforeById = {};
     for (const e of beforeEntries) if (e && e.toastEmployeeId) beforeById[e.toastEmployeeId] = e;
+
+    // Stale before-snapshot (outage recovery): a prev session that started
+    // on an EARLIER day is an artifact; one that started today is still a
+    // real session whose end we may have just observed (daytime outage).
+    const stale = beforeIsStale(before, after);
 
     const completed = [];
     for (const e of afterEntries) {
         if (!e || !e.toastEmployeeId || !e.clockedInAt) continue;
         const prev = beforeById[e.toastEmployeeId];
         if (!prev || !prev.clockedInAt) continue;
-        // A different clockedInAt means a NEW session began → the prior one ended.
-        if (prev.clockedInAt !== e.clockedInAt) {
-            completed.push({
-                id: String(e.toastEmployeeId),
-                name: prev.employeeName || e.employeeName || "",
-                clockIn: prev.clockedInAt,
-                // prefer the recorded clock-out; fall back to when the next session
-                // started if the scraper hadn't stamped clockedOutAt yet.
-                clockOut: prev.clockedOutAt || e.clockedInAt,
-            });
+        if (stale && !sameCtDay(prev.clockedInAt)) continue;
+        // Only an ACTIVE previous session can end here. A prev that was
+        // already clocked out carries clockedInAt = first punch of the day
+        // (schemaVersion 2), which is NOT a session start — the old code
+        // read that as a new session and produced negative spans.
+        if (prev.clockedOut === true) continue;
+        let clockOut = null;
+        if (e.clockedOut === true) {
+            // active → clocked out: the active session ended at clockedOutAt.
+            clockOut = e.clockedOutAt || null;
+        } else if (prev.clockedInAt !== e.clockedInAt) {
+            // active → active with a new start: re-clock-in without an
+            // observed clock-out — close the old one where the new began.
+            clockOut = e.clockedInAt;
         }
+        if (!clockOut || !saneSession(prev.clockedInAt, clockOut)) continue;
+        completed.push({
+            id: String(e.toastEmployeeId),
+            name: prev.employeeName || e.employeeName || "",
+            clockIn: prev.clockedInAt,
+            clockOut,
+        });
     }
+    return completed;
+}
+
+async function recordCompletedSessions(location, before, after) {
+    const completed = planCompletedSessions(before, after);
     if (!completed.length) return 0;
 
     const db = getFirestore();
@@ -377,10 +487,17 @@ function _tcRef(db, location, dateKey, toastEmployeeId) {
 async function _tcCloseSession(db, location, prevEntry, clockOutIso) {
     const clockIn = prevEntry.clockedInAt;
     if (!clockIn) return;
+    // An impossible span (or a null clockOut = "clear only") never becomes a
+    // session, but the transaction still runs so openClockIn is released —
+    // an early return here left cards showing "On the clock" forever.
+    const recordSession = saneSession(clockIn, clockOutIso);
     const dateKey = ctDateKey(new Date(clockIn));
     const ref = _tcRef(db, location, dateKey, prevEntry.toastEmployeeId);
     await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
+        // A clear-only close on a card that was never written has nothing
+        // to release — don't materialize an empty 0h card for that day.
+        if (!recordSession && !snap.exists) return;
         const data = snap.exists ? snap.data() : {
             location, date: dateKey,
             toastEmployeeId: String(prevEntry.toastEmployeeId),
@@ -391,7 +508,9 @@ async function _tcCloseSession(db, location, prevEntry, clockOutIso) {
         };
         if (!Array.isArray(data.sessions)) data.sessions = [];
         const existing = data.sessions.find(s => s.clockIn === clockIn);
-        if (!existing) {
+        if (!recordSession) {
+            // nothing to record — fall through to the openClockIn release below
+        } else if (!existing) {
             data.sessions.push({ clockIn, clockOut: clockOutIso || null });
             data.sessions.sort((a, b) => String(a.clockIn).localeCompare(String(b.clockIn)));
         } else if (clockOutIso) {
@@ -402,7 +521,7 @@ async function _tcCloseSession(db, location, prevEntry, clockOutIso) {
             // Update instead: prefer the recorded clockedOutAt; otherwise
             // keep the LATER of the two (the real out can't precede a
             // transient one).
-            if (prevEntry.clockedOutAt) {
+            if (prevEntry.clockedOutAt && saneSession(clockIn, prevEntry.clockedOutAt)) {
                 existing.clockOut = prevEntry.clockedOutAt;
             } else if (!existing.clockOut || String(clockOutIso) > String(existing.clockOut)) {
                 existing.clockOut = clockOutIso;
@@ -410,10 +529,12 @@ async function _tcCloseSession(db, location, prevEntry, clockOutIso) {
         }
         // This session is no longer the open one.
         if (data.openClockIn === clockIn) data.openClockIn = null;
-        if (Array.isArray(prevEntry.breaksToday) && prevEntry.breaksToday.length >= (data.breaks?.length || 0)) {
-            data.breaks = prevEntry.breaksToday;
+        if (Array.isArray(prevEntry.breaksToday) && prevEntry.breaksToday.length) {
+            data.breaks = mergeBreaks(data.breaks, prevEntry.breaksToday);
         }
-        if (prevEntry.hoursToday != null) data.hoursToday = prevEntry.hoursToday;
+        // The roster's hoursToday only describes THIS card when the clock-in
+        // was today (see sameCtDay) — across midnight it is a 0 for the wrong day.
+        if (prevEntry.hoursToday != null && sameCtDay(clockIn)) data.hoursToday = prevEntry.hoursToday;
         data.updatedAt = new Date().toISOString();
         tx.set(ref, data);
     });
@@ -429,13 +550,70 @@ async function recordDurableTimecards(location, before, after) {
     const afterIds = new Set(afterEntries.filter(e => e && e.toastEmployeeId).map(e => String(e.toastEmployeeId)));
     let wrote = 0;
 
-    // 1. Upsert the live picture for everyone currently on the clock.
+    // Stale before-snapshot (outage recovery): closes derived from it would
+    // be fabrications. Live upserts below still run; closes are skipped.
+    const stale = beforeIsStale(before, after);
+
+    // 1. Upsert the live picture for everyone on today's roster.
     for (const e of afterEntries) {
         if (!e || !e.toastEmployeeId || !e.clockedInAt || !e.employeeName) continue;
         const prev = beforeById[e.toastEmployeeId];
-        // Re-clock-in: the PREVIOUS session just closed — record it first.
-        if (prev && prev.clockedInAt && prev.clockedInAt !== e.clockedInAt) {
-            try { await _tcCloseSession(db, location, prev, prev.clockedOutAt || e.clockedInAt); wrote++; } catch (err) { /* best-effort */ }
+        const prevOpen = !!(prev && prev.clockedInAt && prev.clockedOut !== true);
+        // A stale before-snapshot only invalidates prev sessions from an
+        // EARLIER day; a same-day one is real (daytime outage).
+        const prevActive = prevOpen && (!stale || sameCtDay(prev.clockedInAt));
+        // Stale + earlier-day prev: release its openClockIn without inventing
+        // a session (the daily Toast reconcile rebuilds that card).
+        const prevClearOnly = prevOpen && !prevActive;
+
+        if (e.clockedOut === true) {
+            // Clocked out today (schemaVersion 2 summary entry: clockedInAt =
+            // FIRST punch of the day, clockedOutAt = last punch). Close the
+            // session that was active, then record the day summary WITHOUT
+            // treating clockedInAt as an open session.
+            if (prevActive && e.clockedOutAt) {
+                try { await _tcCloseSession(db, location, prev, e.clockedOutAt); wrote++; } catch (err) { /* best-effort */ }
+            } else if (prevClearOnly) {
+                try { await _tcCloseSession(db, location, prev, null); wrote++; } catch (err) { /* best-effort */ }
+            }
+            // The summary MUST land on the transition tick even when nothing
+            // else "changed" (single-session days: the active elapsed and
+            // Toast's final hours differ by < 0.05h, so _tcChanged is false
+            // and the card would keep last-tick elapsed hours forever).
+            const justWentOut = !prev || prev.clockedOut !== true;
+            if (!justWentOut && !_tcChanged(prev, e)) continue;
+            try {
+                const dateKey = ctDateKey(new Date(e.clockedInAt));
+                const summary = {
+                    location, date: dateKey,
+                    toastEmployeeId: String(e.toastEmployeeId),
+                    employeeName: e.employeeName,
+                    staffKey: normName(e.employeeName),
+                    openClockIn: null,
+                    clockedOutAt: e.clockedOutAt || null,
+                    onBreakSince: null,
+                    hoursThisWeek: e.hoursThisWeek != null ? e.hoursThisWeek : null,
+                    jobName: e.jobName || null,
+                    updatedAt: new Date().toISOString(),
+                };
+                // Omit (never null) fields the summary can't speak for: the
+                // scraper's out-entry carries breaksToday [] and hoursToday
+                // is only this card's when the clock-in was today.
+                if (Array.isArray(e.breaksToday) && e.breaksToday.length) summary.breaks = e.breaksToday;
+                if (e.hoursToday != null && sameCtDay(e.clockedInAt)) summary.hoursToday = e.hoursToday;
+                await _tcRef(db, location, dateKey, e.toastEmployeeId).set(summary, { merge: true });
+                wrote++;
+            } catch (err) { /* best-effort */ }
+            continue;
+        }
+
+        // Active entry. A re-clock-in without an observed clock-out closes
+        // the previous ACTIVE session where the new one began. A prev that
+        // was already clocked out has nothing left to close.
+        if (prevActive && prev.clockedInAt !== e.clockedInAt) {
+            try { await _tcCloseSession(db, location, prev, e.clockedInAt); wrote++; } catch (err) { /* best-effort */ }
+        } else if (prevClearOnly && prev.clockedInAt !== e.clockedInAt) {
+            try { await _tcCloseSession(db, location, prev, null); wrote++; } catch (err) { /* best-effort */ }
         }
         if (!_tcChanged(prev, e)) continue;
         const dateKey = ctDateKey(new Date(e.clockedInAt));
@@ -453,28 +631,37 @@ async function recordDurableTimecards(location, before, after) {
                     sessions: cur.data().sessions.filter(s => s.clockIn !== e.clockedInAt),
                 }, { merge: true });
             }
-            await reopenRef.set({
+            const live = {
                 location, date: dateKey,
                 toastEmployeeId: String(e.toastEmployeeId),
                 employeeName: e.employeeName,
                 staffKey: normName(e.employeeName),
                 openClockIn: e.clockedInAt,
                 onBreakSince: e.onBreakSince || null,
-                breaks: Array.isArray(e.breaksToday) ? e.breaksToday : [],
-                hoursToday: e.hoursToday != null ? e.hoursToday : null,
+                // Union with what the card already holds — a split shift's
+                // second session must not discard the first session's breaks.
+                breaks: mergeBreaks(cur.exists ? cur.data().breaks : [], e.breaksToday),
                 hoursThisWeek: e.hoursThisWeek != null ? e.hoursThisWeek : null,
                 jobName: e.jobName || null,
                 updatedAt: new Date().toISOString(),
-            }, { merge: true });
+            };
+            if (e.hoursToday != null && sameCtDay(e.clockedInAt)) live.hoursToday = e.hoursToday;
+            await reopenRef.set(live, { merge: true });
             wrote++;
         } catch (err) { /* best-effort — never break the feed trigger */ }
     }
 
-    // 2. Anyone in BEFORE but gone from AFTER just clocked out — close them.
+    // 2. Anyone ACTIVE in BEFORE but gone from AFTER just clocked out — close
+    //    them (a clocked-out prev was already closed). Under a stale before,
+    //    an earlier-day prev only gets its openClockIn released.
     for (const prev of beforeEntries) {
         if (!prev || !prev.toastEmployeeId || !prev.clockedInAt) continue;
+        if (prev.clockedOut === true) continue;
         if (afterIds.has(String(prev.toastEmployeeId))) continue;
-        try { await _tcCloseSession(db, location, prev, prev.clockedOutAt || new Date().toISOString()); wrote++; } catch (err) { /* best-effort */ }
+        const clockOut = (!stale || sameCtDay(prev.clockedInAt))
+            ? (prev.clockedOutAt || new Date().toISOString())
+            : null;
+        try { await _tcCloseSession(db, location, prev, clockOut); wrote++; } catch (err) { /* best-effort */ }
     }
     return wrote;
 }
@@ -483,4 +670,6 @@ module.exports = {
     normName, ctDateKey, shiftStartMs, pickBestShift, classify,
     recordClockedInAttendance, markNoShows, recordCompletedSessions,
     recordDurableTimecards,
+    // test seams (2026-09-08)
+    planCompletedSessions, saneSession, beforeIsStale, sameCtDay, mergeBreaks, MAX_SESSION_HOURS,
 };
