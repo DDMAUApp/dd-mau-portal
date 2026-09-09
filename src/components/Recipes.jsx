@@ -7,10 +7,12 @@ import {
 } from 'firebase/firestore';
 // 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
 // see firestoreRevive.js). Same pattern as Schedule/ChatThread.
-import { watchdogWrite } from '../data/firestoreRevive';
+import { watchdogWrite, watchdogTransaction } from '../data/firestoreRevive';
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
-const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
+// Transactions commit over unary XHR, not the write stream — they must not
+// count as write-stream progress for the stuck-write watchdog (2026-09-09).
+const runTransaction = (...a) => watchdogTransaction(_fsRunTransaction(...a));
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone, sortAllergens } from '../data/allergens';

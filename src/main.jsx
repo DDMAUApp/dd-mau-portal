@@ -1,3 +1,4 @@
+import { runReloadStashes } from './data/reloadStash';
 import React, { Component } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
@@ -59,6 +60,18 @@ if (typeof Node === 'function' && Node.prototype) {
 // deleteDatabase branch stays reserved for the INTERNAL ASSERTION class.
 const FS_ASSERT = /INTERNAL ASSERTION FAILED|without an in-progress transaction|IndexedDbTransactionError/i;
 let _fsHealing = false;
+// 2026-09-09: the crash-heal reload was invisible in telemetry and dropped
+// every page's in-memory state. Park a report (flushed by App.jsx on boot)
+// and let pages stash their state. reloadStash has no firebase import.
+function _beforeHealReload(reason, meta) {
+    // The reason doubles as the stash record's reason: 'fs-heal-wiped' tells
+    // the inventory rehydrate the mutation queue was just destroyed, so it
+    // must not present those taps as still saving.
+    try { runReloadStashes(reason); } catch { /* best-effort */ }
+    try {
+        sessionStorage.setItem('ddmau:pendingReloadReport', JSON.stringify({ reason, at: Date.now(), ...meta }));
+    } catch { /* best-effort */ }
+}
 async function healFirestoreCrash() {
     const KEY = 'ddmau:fsHeal';
     let s = {};
@@ -79,6 +92,7 @@ async function healFirestoreCrash() {
         } catch { /* best-effort */ }
     }
     try { hideSplash(); } catch { /* noop */ }
+    try { _beforeHealReload(n >= 2 ? 'fs-heal-wiped' : 'fs-heal-assert', { n, wiped: n >= 2 }); } catch { /* noop */ }
     try { window.location.reload(); } catch { /* noop */ }
 }
 function maybeHealFirestore(msg) {
@@ -103,6 +117,7 @@ function maybeHealFirestore(msg) {
         if (n > 3) return;                   // reloads aren't helping — stop looping
         _fsHealing = true;
         try { hideSplash(); } catch { /* noop */ }
+        try { _beforeHealReload('fs-heal-idbtxn', { n, wiped: false }); } catch { /* noop */ }
         try { window.location.reload(); } catch { /* noop */ }
         return;
     }

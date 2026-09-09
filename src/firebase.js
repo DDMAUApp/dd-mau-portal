@@ -134,6 +134,13 @@ export const db = initializeFirestore(app, {
 // the expensive ones, turning those scans into indexed lookups. Advisory
 // + safe: null manager on the memory-cache fallback, and failures only
 // mean "no local indexes" (the pre-existing behavior).
+// 2026-09-09 decision (inventory "reconnecting/reloading" investigation): KEPT.
+// The verified mechanism was the write watchdog judging per-write AGE during
+// a tap burst + an undrained reload — independent of this feature, which adds
+// only a bounded once-a-minute index backfill on the SDK queue (no per-write
+// work in @firebase/firestore 4.8.0). The new firestoreRevive telemetry
+// (feature 'firestoreRevive:revive' / ':reload') is the measurement; revisit
+// only if rows cluster on large-cache devices with high sinceLastSettleMs.
 try {
     const _idxMgr = getPersistentCacheIndexManager(db);
     if (_idxMgr) enablePersistentCacheIndexAutoCreation(_idxMgr);

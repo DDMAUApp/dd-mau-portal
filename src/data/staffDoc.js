@@ -40,7 +40,7 @@
 // no resume event, so the roster transaction just never settled). Every
 // transaction below now revives the transport after 8s and escalates to
 // a reload if the SDK itself is wedged — same ladder as Schedule.jsx.
-import { watchdogWrite } from './firestoreRevive';
+import { watchdogWrite, watchdogTransaction } from './firestoreRevive';
 
 export const STAFF_DOC = { rev: undefined };
 
@@ -134,7 +134,7 @@ export async function mutateStaffList(mutate) {
         const { doc, runTransaction } = await import('firebase/firestore');
         const { db } = await import('../firebase');
         let out = null;
-        await watchdogWrite(runTransaction(db, async (tx) => {
+        await watchdogTransaction(runTransaction(db, async (tx) => {
             const ref = doc(db, 'config', 'staff');
             const snap = await tx.get(ref);
             if (!snap.exists()) throw rosterError('no_doc');
@@ -198,7 +198,7 @@ export async function appendStaffRecord({ name, record = {}, preferredPin = null
         const { doc, runTransaction, serverTimestamp } = await import('firebase/firestore');
         const { db } = await import('../firebase');
         let assigned = null;
-        await watchdogWrite(runTransaction(db, async (tx) => {
+        await watchdogTransaction(runTransaction(db, async (tx) => {
             const ref = doc(db, 'config', 'staff');
             const snap = await tx.get(ref);
             if (!snap.exists()) throw rosterError('no_doc');
@@ -239,7 +239,7 @@ export async function removeStaffRecord({ id, byName }) {
         const { doc, collection, runTransaction, serverTimestamp } = await import('firebase/firestore');
         const { db } = await import('../firebase');
         let out = null;
-        await watchdogWrite(runTransaction(db, async (tx) => {
+        await watchdogTransaction(runTransaction(db, async (tx) => {
             const ref = doc(db, 'config', 'staff');
             const snap = await tx.get(ref);
             if (!snap.exists()) throw rosterError('no_doc');

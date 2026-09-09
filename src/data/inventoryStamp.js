@@ -23,17 +23,16 @@
 
 const CHI = 'America/Chicago';
 
-const chiDay = (d) => new Intl.DateTimeFormat('en-CA', {
-    timeZone: CHI, year: 'numeric', month: '2-digit', day: '2-digit',
-}).format(d);
-
-const chiTime = (d) => d.toLocaleTimeString('en-US', {
-    timeZone: CHI, hour: 'numeric', minute: '2-digit',
-});
-
-const chiMonthDay = (d) => d.toLocaleDateString('en-US', {
-    timeZone: CHI, month: 'short', day: 'numeric',
-});
+// Formatters built ONCE (2026-09-09 perf): a fresh Intl.DateTimeFormat per
+// call was the single most expensive thing in an inventory render — ~250 rows
+// × several stamps × every tap. Output is byte-identical (node-verified by
+// the pinned strings in inventoryStamp.test.js).
+const _dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: CHI, year: 'numeric', month: '2-digit', day: '2-digit' });
+const _timeFmt = new Intl.DateTimeFormat('en-US', { timeZone: CHI, hour: 'numeric', minute: '2-digit' });
+const _monthDayFmt = new Intl.DateTimeFormat('en-US', { timeZone: CHI, month: 'short', day: 'numeric' });
+const chiDay = (d) => _dayFmt.format(d);
+const chiTime = (d) => _timeFmt.format(d);
+const chiMonthDay = (d) => _monthDayFmt.format(d);
 
 /**
  * "Jul 31, 3:45 PM" — the date is ALWAYS shown (Andrew 2026-07-31: "lets add
@@ -208,11 +207,21 @@ function fmtQty(q) {
  * render it are memo'd, and a fresh array identity every render would defeat
  * the memo across a long list. Strings compare by value.
  */
-export function formatCountStampLines(meta, now = new Date()) {
-    return listContributors(meta, now)
+// Memo keyed by the meta OBJECT (2026-09-09 perf): snapshot-delivered
+// countMeta[id] objects keep their identity across the several non-snapshot
+// renders between taps, and the output does not depend on `now` (the date is
+// always shown — see formatCountTime), so a per-object cache is exact. Only
+// the default-`now` call path is memoized; an explicit `now` bypasses it.
+const _linesMemo = new WeakMap();
+export function formatCountStampLines(meta, now) {
+    const useMemo = now === undefined && meta && typeof meta === 'object';
+    if (useMemo && _linesMemo.has(meta)) return _linesMemo.get(meta);
+    const out = listContributors(meta, now === undefined ? new Date() : now)
         .map(({ name, qty, when }) => {
             const head = qty == null ? name : `${name} ${fmtQty(qty)}`;
             return when ? `${head} — ${when}` : head;
         })
         .join('\n');
+    if (useMemo) _linesMemo.set(meta, out);
+    return out;
 }

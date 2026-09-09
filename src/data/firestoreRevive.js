@@ -30,7 +30,8 @@
 // once) collapse into ONE cycle. Everything is fail-soft: a failed cycle
 // only logs — it can never break a page.
 
-import { disableNetwork, enableNetwork, doc, getDocFromServer } from 'firebase/firestore';
+import { disableNetwork, enableNetwork, doc, getDocFromServer, getDocFromCache } from 'firebase/firestore';
+import { runReloadStashes } from './reloadStash';
 import { db } from '../firebase';
 import { logError } from './logger';
 
@@ -58,13 +59,43 @@ export function __setReloadImplForTests(fn) { _reloadImpl = fn; }
  * button spins forever. sessionStorage-guarded so it can never loop.
  * Returns true if a reload was actually triggered.
  */
-export function escalateReload(reason = 'write-stuck') {
+// Before the reload: let every page stash its in-memory state, then give the
+// SDK's serial queue up to this long to commit already-queued local writes to
+// IndexedDB (a cache read enqueued NOW resolves only after everything ahead of
+// it ran). A timeout means the persistence layer itself is the wedge — the
+// reload's actual premise — so we reload anyway.
+export const DRAIN_CAP_MS = 5 * 1000;
+export const PENDING_REPORT_KEY = 'ddmau:pendingReloadReport';
+
+export async function escalateReload(reason = 'write-stuck', ctx = {}) {
     try {
         const last = Number(sessionStorage.getItem(RELOAD_GUARD_KEY)) || 0;
         if (Date.now() - last < RELOAD_GUARD_MS) return false;
         sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
     } catch { /* storage broken — still reload; worst case iOS re-suspends */ }
-    console.warn(`[firestoreRevive] still stuck after revive (${reason}) — reloading app to rebuild the SDK`);
+    const report = { reason, at: Date.now(), ...getWatchdogTelemetry(), ...ctx };
+    // Stash BEFORE the drain (pages flush their pending taps into the SDK
+    // queue so the drain covers them) and AGAIN after it (taps made during
+    // the up-to-5 s drain still reach the rehydrated sheet).
+    try { report.stashed = runReloadStashes(reason); } catch { /* best-effort */ }
+    let drained = false;
+    const t0 = Date.now();
+    try {
+        drained = await Promise.race([
+            // Any settle (resolve OR "not in cache" rejection) proves the
+            // queue reached this op ⇒ every queued local write is durable.
+            getDocFromCache(doc(db, 'config', 'minVersion')).then(() => true, () => true),
+            new Promise((res) => setTimeout(() => res(false), DRAIN_CAP_MS)),
+        ]);
+    } catch { drained = false; }
+    report.drained = drained;
+    report.drainMs = Date.now() - t0;
+    try { runReloadStashes(reason); } catch { /* best-effort */ }
+    // The transport is suspect by definition, so the report is parked in
+    // sessionStorage and flushed through logError on the next boot (App.jsx,
+    // once identity is set) — exactly ONE error_logs row per reload.
+    try { sessionStorage.setItem(PENDING_REPORT_KEY, JSON.stringify(report)); } catch { /* ignore */ }
+    console.warn(`[firestoreRevive] still stuck after revive (${reason}) — reloading app to rebuild the SDK`, report);
     _reloadImpl();
     return true;
 }
@@ -73,15 +104,27 @@ export function escalateReload(reason = 'write-stuck') {
 // cap the caller reloads anyway (the tab is wedged; nothing they type can
 // save without a reload either). Shared by BOTH escalation paths (probe +
 // write) — every reload this module can trigger waits for idle first.
-async function _waitInputIdle(capMs = 60_000) {
+// 2026-09-09 (Andrew: "sometimes i lose what ive clicked already"): a
+// focused text field was the ONLY thing that counted as busy, so someone
+// tapping +/- BUTTONS on the inventory sheet was "idle" and got reloaded
+// mid-count. Any pointer/key/touch activity in the last INTERACTION_IDLE_MS
+// now counts too (listeners installed by installFirestoreRevive).
+export const INTERACTION_IDLE_MS = 5_000;
+let _lastInteractionAt = 0;
+export function markInteraction() { _lastInteractionAt = Date.now(); }
+export function isInputBusy() {
+    const el = typeof document !== 'undefined' ? document.activeElement : null;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return true;
+    return Date.now() - _lastInteractionAt < INTERACTION_IDLE_MS;
+}
+export async function waitInputIdle(capMs = 60_000) {
     const cap = Date.now() + capMs;
     while (Date.now() < cap) {
-        const el = typeof document !== 'undefined' ? document.activeElement : null;
-        const busy = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
-        if (!busy) return;
-        await new Promise(r => setTimeout(r, 3000));
+        if (!isInputBusy()) return;
+        await new Promise(r => setTimeout(r, 1000));
     }
 }
+const _waitInputIdle = waitInputIdle;
 
 // A healthy Firestore write acks in <2s even on store Wi-Fi. 8s without
 // settling means the transport is gone, not slow.
@@ -102,6 +145,65 @@ let _reviving = false;
 let _inFlight = 0;
 let _stuck = 0;
 const _writeSubs = new Set();
+
+// ── Progress tracking (2026-09-09) ─────────────────────────────────────
+// The watchdog used to judge each write by its own AGE. During a burst of
+// inventory taps Firestore acks batches strictly in order through a 10-deep
+// pipeline, so the tail of a perfectly healthy drain sat "unsettled" past
+// 8 s and was declared a dead transport — the revive then tore down the
+// draining stream (re-sending in-flight increments) and the reload followed.
+// A wedged transport settles NOTHING; a busy one settles something every few
+// hundred ms. So the signal is "when did ANY watchdogged write last settle",
+// not "how old is this one". watchdogRead settles never count (a cache-served
+// read resolves while the transport is dead).
+let _lastWriteSettleAt = 0;
+// A fresh transport dial counts as progress too (review 2026-09-09 r3):
+// after an honest offline stretch the last settle stamp is from BEFORE the
+// outage, so the first hang step after `online` stalled at once — pill,
+// then a reload before the re-dialed stream had acked anything. The 8 s
+// dead-stream window restarts from the dial instead.
+let _lastReviveDoneAt = 0;
+const _progressAt = () => Math.max(_lastWriteSettleAt, _lastReviveDoneAt);
+let _writeToken = 0;
+const _inFlightStarts = new Map();
+// Tokens of in-flight PROGRESS writes (mutation-queue writes only) — the
+// probe gates key off these, never off transactions/unary reads.
+const _inFlightProgress = new Set();
+
+/**
+ * Pure step decision: 'wait' (re-arm for delayMs) while some write settled
+ * inside the window — the queue is draining — else 'stall'. A write open for
+ * more than 8× the window stalls regardless (safety valve).
+ */
+export function nextWatchdogStep({ now, startedAt, lastSettleAt, hangMs, valve = true }) {
+    // Safety valve (8× the window) — only for promises that do NOT feed
+    // progress (transactions): mutation-queue writes ack strictly in order,
+    // so an older one can never be outlived by newer settles; the valve
+    // would only misfire on a backlog draining after an offline stretch.
+    if (valve && Number.isFinite(startedAt) && now - startedAt > hangMs * 8) return { action: 'stall' };
+    if (lastSettleAt && now - lastSettleAt < hangMs) {
+        return { action: 'wait', delayMs: Math.max(250, hangMs - (now - lastSettleAt)) };
+    }
+    return { action: 'stall' };
+}
+
+export function getWatchdogTelemetry() {
+    const now = Date.now();
+    let oldest = null;
+    for (const t of _inFlightStarts.values()) if (oldest == null || t < oldest) oldest = t;
+    let onLine = null, visibility = null, path = null;
+    try { onLine = typeof navigator !== 'undefined' ? navigator.onLine : null; } catch { /* ignore */ }
+    try { visibility = typeof document !== 'undefined' ? document.visibilityState : null; } catch { /* ignore */ }
+    try { path = typeof location !== 'undefined' ? location.pathname : null; } catch { /* ignore */ }
+    return {
+        inFlight: _inFlight,
+        stuck: _stuck,
+        sinceLastSettleMs: _lastWriteSettleAt ? now - _lastWriteSettleAt : null,
+        sinceLastReviveMs: _lastReviveDoneAt ? now - _lastReviveDoneAt : null,
+        oldestWriteAgeMs: oldest != null ? now - oldest : null,
+        onLine, visibility, path,
+    };
+}
 
 function _notifyWriteSubs() {
     const snapshot = { inFlight: _inFlight, stuck: _stuck };
@@ -131,8 +233,17 @@ export async function reviveFirestore(reason = 'manual') {
     try {
         // eslint-disable-next-line no-console
         console.info(`[firestoreRevive] cycling network (${reason})`);
+        // Telemetry (2026-09-09): revives were invisible — only a console line.
+        // Resume/online cycles are routine and stay quiet; anything the
+        // watchdogs trigger is worth a row so false positives are measurable.
+        if (reason !== 'resume' && reason !== 'online') {
+            try {
+                logError({ error: new Error(`revive: ${reason}`), severity: 'warning', feature: 'firestoreRevive:revive', meta: { reason, ...getWatchdogTelemetry() } });
+            } catch { /* never block the cycle */ }
+        }
         await disableNetwork(db);
         await enableNetwork(db);
+        _lastReviveDoneAt = Date.now();
         return true;
     } catch (e) {
         console.warn('[firestoreRevive] cycle failed (non-fatal):', e?.message || e);
@@ -149,53 +260,106 @@ export async function reviveFirestore(reason = 'manual') {
  * promise unchanged (same value, same rejection), so call sites keep
  * their exact semantics:   await watchdogWrite(addDoc(...))
  */
-export function watchdogWrite(promise, hangMs = WRITE_HANG_MS) {
+export function watchdogWrite(promise, hangMs = WRITE_HANG_MS, { progress = true } = {}) {
     let settled = false;
+    let hangTimer = null;
     let escalateTimer = null;
     let markedStuck = false;
+    const token = ++_writeToken;
+    const startedAt = Date.now();
     _inFlight += 1;
+    _inFlightStarts.set(token, startedAt);
+    if (progress) _inFlightProgress.add(token);
     _notifyWriteSubs();
-    const timer = setTimeout(() => {
+
+    // Escalation (2026-08-08, Andrew: "it just keeps spinning. i refresh
+    // the app and it works"): if the network cycle didn't unstick the
+    // write, the wedge is in the persistence layer and only a reload
+    // rebuilds it. Do the reload for him — guarded to once per 2 min.
+    // 2026-08-29 (Andrew: chat text "gets erased" while the pill shows):
+    // this reload used to fire mid-KEYSTROKE — now it waits for input-idle
+    // (typing AND tapping, 2026-09-09) and RE-CHECKS settled + progress —
+    // a write that landed during the wait, ANY write settling meanwhile
+    // (the queue is draining), or an honest offline drop stands it down.
+    // The RELOAD is gated on real write-stream silence for every promise
+    // kind (valve: false): a hung transaction on a device whose taps are
+    // still landing reloads once the burst pauses — never under the user's
+    // fingers (review 2026-09-09 r3). The 8× valve only drives the revive.
+    const escalateStep = async () => {
+        if (settled) return;
+        const step = nextWatchdogStep({ now: Date.now(), startedAt, lastSettleAt: _progressAt(), hangMs: WRITE_ESCALATE_MS, valve: false });
+        if (step.action === 'wait') { escalateTimer = setTimeout(escalateStep, step.delayMs); return; }
+        await _waitInputIdle(60_000);
+        if (settled) return;
+        // Honestly offline: never abandon the write — keep watching so the
+        // wedge check resumes the moment the network is back (review 2026-09-09).
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            escalateTimer = setTimeout(escalateStep, WRITE_ESCALATE_MS);
+            return;
+        }
+        // Post-idle progress re-check goes through the same valve so the
+        // reload backstop can be deferred, never suppressed forever.
+        const again = nextWatchdogStep({ now: Date.now(), startedAt, lastSettleAt: _progressAt(), hangMs: WRITE_ESCALATE_MS, valve: false });
+        if (again.action === 'wait') { escalateTimer = setTimeout(escalateStep, again.delayMs); return; }
+        const reloaded = await escalateReload('write-stuck-after-revive', { writeAgeMs: Date.now() - startedAt });
+        // 2-min guard refused (a reload just happened): keep watching.
+        if (!reloaded && !settled) escalateTimer = setTimeout(escalateStep, WRITE_ESCALATE_MS);
+    };
+
+    const hangStep = () => {
         if (settled) return;
         // Honestly OFFLINE (2026-08-10): a queued write hanging is expected,
         // not a wedge — reviving does nothing and a forced reload could
         // white-screen a device with no connection. The offline pill tells
-        // the user; the write flushes when the network returns.
-        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+        // the user; the write flushes when the network returns. Re-arm
+        // rather than abandon (review 2026-09-09): an orphaned in-flight
+        // write used to silence the liveness probe for the rest of the tab.
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            hangTimer = setTimeout(hangStep, hangMs);
+            return;
+        }
+        // Progress check (2026-09-09): some OTHER watchdogged write settled
+        // inside the window ⇒ the transport is alive and merely backed up
+        // (a burst of taps). Re-arm instead of tearing the stream down.
+        const step = nextWatchdogStep({ now: Date.now(), startedAt, lastSettleAt: _progressAt(), hangMs, valve: !progress });
+        if (step.action === 'wait') { hangTimer = setTimeout(hangStep, step.delayMs); return; }
         markedStuck = true;
         _stuck += 1;
         _notifyWriteSubs();
         reviveFirestore('slow-write');
-        // Escalation (2026-08-08, Andrew: "it just keeps spinning. i refresh
-        // the app and it works"): if the network cycle didn't unstick the
-        // write, the wedge is in the persistence layer and only a reload
-        // rebuilds it. Do the reload for him — guarded to once per 2 min.
-        // 2026-08-29 (Andrew: chat text "gets erased" while the pill shows):
-        // this reload used to fire mid-KEYSTROKE — an auto mark-read hanging
-        // on store Wi-Fi would yank the app out from under a half-typed
-        // message 18s later. Now it waits for input-idle (same pattern as
-        // the probe path) and RE-CHECKS settled — a write that landed during
-        // the wait, or an honest offline drop, stands the reload down.
-        escalateTimer = setTimeout(async () => {
-            if (settled) return;
-            await _waitInputIdle(60_000);
-            if (settled) return;
-            if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-            escalateReload('write-stuck-after-revive');
-        }, WRITE_ESCALATE_MS);
-    }, hangMs);
-    const onSettle = () => {
+        escalateTimer = setTimeout(escalateStep, WRITE_ESCALATE_MS);
+    };
+    hangTimer = setTimeout(hangStep, hangMs);
+
+    const onSettle = (ok) => {
         settled = true;
-        clearTimeout(timer);
+        // Progress = a MUTATION-QUEUE write the server acked. Rejections are
+        // not transport evidence, and transactions/unary RPCs travel over
+        // XHR, not the WebChannel write stream this watchdog guards — they
+        // opt out via watchdogTransaction (review 2026-09-09: counting them
+        // let a dead write stream hide behind live transactions for ~64 s).
+        if (progress && ok === true) _lastWriteSettleAt = Date.now();
+        clearTimeout(hangTimer);
         if (escalateTimer) clearTimeout(escalateTimer);
         _inFlight = Math.max(0, _inFlight - 1);
+        _inFlightStarts.delete(token);
+        _inFlightProgress.delete(token);
         if (markedStuck) _stuck = Math.max(0, _stuck - 1);
         _notifyWriteSubs();
     };
     // Attach via then() so we neither swallow rejections nor create an
     // unhandled-rejection duplicate (errors still flow to the caller).
-    promise.then(onSettle, onSettle);
+    promise.then(() => onSettle(true), () => onSettle(false));
     return promise;
+}
+
+/**
+ * watchdogWrite for runTransaction(): same revive/escalate/pill behavior,
+ * but its settle is NOT counted as write-stream progress (transactions
+ * commit over unary XHR and can succeed while the write stream is dead).
+ */
+export function watchdogTransaction(promise, hangMs = WRITE_HANG_MS) {
+    return watchdogWrite(promise, hangMs, { progress: false });
 }
 
 /**
@@ -207,9 +371,19 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS) {
  */
 export function watchdogRead(promise, hangMs = WRITE_HANG_MS) {
     let settled = false;
-    const timer = setTimeout(() => {
-        if (!settled) reviveFirestore('slow-read');
-    }, hangMs);
+    let timer = null;
+    const step = () => {
+        if (settled) return;
+        // A read queued behind a healthy tap burst is not a wedge: while
+        // writes keep settling, re-arm instead of tearing the stream down.
+        const progressAt = _progressAt();
+        if (progressAt && Date.now() - progressAt < hangMs) {
+            timer = setTimeout(step, Math.max(250, hangMs - (Date.now() - progressAt)));
+            return;
+        }
+        reviveFirestore('slow-read');
+    };
+    timer = setTimeout(step, hangMs);
     const onSettle = () => { settled = true; clearTimeout(timer); };
     promise.then(onSettle, onSettle);
     return promise;
@@ -279,6 +453,13 @@ async function _maybeProbeReload() {
 function _onProbeHang() {
     // Hidden tabs hang because the WebView is frozen, not wedged.
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    // A burst overlapping this hang ⇒ the probe merely queued behind it
+    // (2026-09-09). Not a strike. Gated on a progress write STILL in flight
+    // right now, or one the server acked inside the last 8 s — not on any
+    // write that merely STARTED in the 18 s window (r3: one instant tap
+    // shielded a dead listen stream from its once-per-session backstop).
+    if (_inFlightProgress.size > 0) return;
+    if (_lastWriteSettleAt && Date.now() - _lastWriteSettleAt < WRITE_HANG_MS) return;
     _probeStrikes += 1;
     if (_probeStrikes < PROBE_STRIKES_TO_RELOAD) return;
     // Honestly offline — hanging is expected; the online listener revives.
@@ -289,6 +470,14 @@ function _onProbeHang() {
 export async function probeFirestoreLiveness() {
     if (_probeInFlight) return;               // never stack probes
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    // A burst still draining (a write younger than the probe budget) would
+    // only queue the probe behind it and manufacture a hang — skip. A write
+    // OLDER than that with nothing settling is the wedge itself, and the
+    // probe must run (review 2026-09-09: an orphaned write used to disable
+    // the probe for the rest of the tab).
+    let newest = 0;
+    for (const tok of _inFlightProgress) { const t = _inFlightStarts.get(tok) || 0; if (t > newest) newest = t; }
+    if (newest && Date.now() - newest < PROBE_STUCK_MS) return;
     _probeInFlight = true;
     try {
         // config/minVersion: tiny, always present, already hot in cache
@@ -400,6 +589,11 @@ export function installFirestoreRevive() {
         if (document.visibilityState === 'hidden') onHide();
         else onShow();
     });
+    // Tap/keystroke activity feeds isInputBusy() (2026-09-09) — capture +
+    // passive so it costs nothing and sees events any element swallows.
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
+        document.addEventListener(ev, markInteraction, { capture: true, passive: true });
+    }
 
     // Network came back (Wi-Fi rejoin, cable, VPN) — the SDK usually
     // redials on its own, but a wedged transport doesn't. Cheap to cycle.

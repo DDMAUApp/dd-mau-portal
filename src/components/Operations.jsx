@@ -9,6 +9,7 @@ import {
     getDocsFromServer as _fsGetDocsFromServer,
     updateDoc as _fsUpdateDoc,
     addDoc as _fsAddDoc,
+    writeBatch,
 } from 'firebase/firestore';
 // 2026-08-11 (full-app audit) — shadow-the-primitives watchdog coverage,
 // same pattern as Schedule.jsx / ChatThread.jsx / AdminPanel.jsx. Operations
@@ -49,8 +50,10 @@ import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel, isDuplicateInventoryName } from '../data/inventory';
 import { formatCountStampLines, contributionWrites } from '../data/inventoryStamp';
-import { reconcileCounts } from '../data/inventoryReconcile';
-import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot } from '../data/inventoryStability';
+import { reconcileCountsDetailed, RELEASE_TIMEOUT_MS } from '../data/inventoryReconcile';
+import { createTapCoalescer } from '../data/inventoryTapCoalescer';
+import { registerReloadStash, peekReloadStash, peekReloadStashMeta, clearReloadStash, planStashRehydrate, resolveLostHolds } from '../data/reloadStash';
+import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot, shouldApplyInventorySnapshot } from '../data/inventoryStability';
 import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
 // Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
 // returns the priority-ranked price (manual > receipt > … > legacy scraped).
@@ -472,6 +475,29 @@ const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden
     );
 });
 
+// InventorySyncBadge — the per-row save state, shared by every inventory view
+// (2026-09-09; the Location view never showed one and the category view had
+// no 'conflict'). saving = amber pulse; saved = emerald (auto-clears 2 s);
+// error = sticky red "tap again"; conflict = sticky orange "changed elsewhere".
+const InventorySyncBadge = memo(function InventorySyncBadge({ status, language, size = 10 }) {
+    if (!status) return null;
+    const es = language === "es";
+    const cls = `text-[${size}px] inline-flex items-center gap-1 leading-tight`;
+    if (status === 'saving') return (
+        <p className={`${cls} text-amber-700`}><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />{es ? "Guardando…" : "Saving…"}</p>
+    );
+    if (status === 'saved') return (
+        <p className={`${cls} text-emerald-700`}><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{es ? "Guardado" : "Saved"}</p>
+    );
+    if (status === 'error') return (
+        <p className={`${cls} text-red-700 font-bold`}><span className="w-1.5 h-1.5 rounded-full bg-red-500" />{es ? "Error al guardar — toca de nuevo" : "Save failed — tap again"}</p>
+    );
+    if (status === 'conflict') return (
+        <p className={`${cls} text-orange-700 font-bold`}><span className="w-1.5 h-1.5 rounded-full bg-orange-500" />{es ? "Cambió en otro dispositivo — revisa" : "Changed elsewhere — check the count"}</p>
+    );
+    return null;
+});
+
 // LocationItemRow — one row of the Location view's count list. Memoized so
 // changing the count on one item only repaints THAT row instead of all 300.
 //
@@ -496,6 +522,10 @@ const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden
 // defeating the memo across the whole (long) location list.
 const LocationItemRow = memo(function LocationItemRow({
     id, name, catName, subcat, pack, count, language, onUpdate, stamp,
+    // Per-row save state (2026-09-09): the default Location view never showed
+    // it — only the category/vendor views had the dots — so an unconfirmed
+    // hold after a forced reload (or a plain failed save) was invisible here.
+    syncStatus,
 }) {
     return (
         <div className={`ddmau-inv-cv flex items-center justify-between gap-2 px-3 py-2 ${count > 0 ? 'bg-green-50/50' : ''}`}>
@@ -540,6 +570,7 @@ const LocationItemRow = memo(function LocationItemRow({
                         {"\u{2713}"} {stamp}
                     </p>
                 )}
+                <InventorySyncBadge status={syncStatus} language={language} size={10} />
             </div>
         </div>
     );
@@ -598,6 +629,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const lastAppliedClearedAtRef = useRef(null);
             useEffect(() => { inventoryRef.current = inventory; }, [inventory]);
             useEffect(() => { vendorCountsRef.current = vendorCounts; }, [vendorCounts]);
+            // countMeta mirror + the tap coalescer (2026-09-09). Declared HERE,
+            // above every hook that reads them — same temporal-dead-zone rule
+            // as the vendorCounts note above. The coalescer is created once;
+            // its flush delegates to flushWriteRef (assigned every render next
+            // to updateInventoryCount) so it always runs the latest closure.
+            const invCountMetaRef = useRef(invCountMeta);
+            useEffect(() => { invCountMetaRef.current = invCountMeta; }, [invCountMeta]);
+            // Last server counts map seen by the listener — lets the post-reload
+            // expiry pass below re-run the reconcile without a new snapshot.
+            const lastServerCountsRef = useRef(null);
+            const flushWriteRef = useRef(null);
+            const tapCoalescerRef = useRef(null);
+            if (!tapCoalescerRef.current) {
+                tapCoalescerRef.current = createTapCoalescer({ flush: (id, info) => flushWriteRef.current?.(id, info) });
+            }
             // ── Dated delivery cart (2026-06-30) ─────────────────────────────
             // The cart is an order FOR a specific delivery day. When the first
             // item lands in an empty cart we ask which day; the cart persists +
@@ -632,11 +678,39 @@ export default function Operations({ language, staffList, staffName, storeLocati
             //          release only on an exact server match.
             // A ref (not state) so recording a pending bump never triggers a render.
             const pendingCountsRef = useRef({});
+            // Holds a crash-heal WIPE could not carry over ({ id: {expected, mode} }):
+            // resolved against the first server snapshot (see the listener).
+            const lostHoldsRef = useRef(null);
             // Reconcile a server counts map against still-in-flight optimistic bumps.
             // Mutates pendingCountsRef (releasing confirmed/expired items) and returns
             // the map to actually display.
             const reconcileServerCounts = useCallback(
-                (serverCounts) => reconcileCounts(serverCounts, pendingCountsRef.current, Date.now()),
+                (serverCounts) => {
+                    const { counts, expiredIds = [], confirmedIds = [] } = reconcileCountsDetailed(serverCounts, pendingCountsRef.current, Date.now());
+                    if (expiredIds.length || confirmedIds.length) {
+                        setInventorySyncStatus(prev => {
+                            const next = { ...prev };
+                            // Confirmed by the server: a rehydrated (or ack-beaten)
+                            // 'saving' dot resolves to 'saved'; a real failure's
+                            // sticky 'error' is never overwritten.
+                            for (const id of confirmedIds) if (next[id] === 'saving') next[id] = 'saved';
+                            // Held value the server never reached in 12 s: usually
+                            // another device changed it meanwhile, sometimes a lost
+                            // write — flag it as "changed elsewhere", not as a
+                            // failed save (that copy invited a duplicate re-tap).
+                            for (const id of expiredIds) if (next[id] !== 'error') next[id] = 'conflict';
+                            return next;
+                        });
+                        if (confirmedIds.length) {
+                            setTimeout(() => setInventorySyncStatus(prev => {
+                                let changed = false; const next = { ...prev };
+                                for (const id of confirmedIds) if (next[id] === 'saved') { delete next[id]; changed = true; }
+                                return changed ? next : prev;
+                            }), 2000);
+                        }
+                    }
+                    return counts;
+                },
                 [],
             );
 
@@ -2507,6 +2581,67 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
+                // Rehydrate from a reload stash (2026-09-09): a forced reload
+                // (revive watchdog, crash heal, deploy broadcast) parked the
+                // sheet — counts, meta, in-flight taps, sub-tab. Paint it back
+                // BEFORE the listener attaches so the page never shows zeros
+                // while the persisted mutation queue drains.
+                try {
+                    const st = peekReloadStash('inventory');
+                    const stMeta = st ? peekReloadStashMeta('inventory') : null;
+                    if (st && st.loc !== storeLocation) {
+                        // A stash for the OTHER store must not linger and repaint a
+                        // minutes-old sheet on a later toggle — it's consumed here.
+                        clearReloadStash('inventory');
+                    } else if (st && st.loc === storeLocation) {
+                        clearReloadStash('inventory');
+                        // After a crash heal that WIPED the SDK cache the queued
+                        // taps are gone for good: the planner drops those phantom
+                        // values (the server's numbers paint instead) and reports
+                        // them as lostIds → sticky "Save failed — tap again".
+                        const plan = planStashRehydrate(st, { loc: storeLocation, now: Date.now(), wiped: !!(stMeta && stMeta.reason === 'fs-heal-wiped') });
+                        if (plan) {
+                            // Seed the remote-clear marker FIRST: the doc's stored
+                            // clearedAt would otherwise read as "advanced" vs null on
+                            // the first snapshot and wipe the holds we just restored.
+                            lastAppliedClearedAtRef.current = plan.clearedAt;
+                            inventoryRef.current = plan.counts;
+                            invCountMetaRef.current = plan.countMeta;
+                            pendingCountsRef.current = plan.pending;
+                            if (st.vendorCounts && typeof st.vendorCounts === 'object') {
+                                vendorCountsRef.current = { ...st.vendorCounts };
+                                setVendorCounts({ ...st.vendorCounts });
+                            }
+                            console.info('[inventory] rehydrated from reload stash', { held: plan.savingIds.length, subTab: plan.subTab });
+                            // The 12 s release valve only runs when a snapshot arrives.
+                            // After a quiet reload nothing may arrive, so a hold the
+                            // server never confirms would sit on screen forever —
+                            // re-run the reconcile once the valve is due.
+                            if (plan.savingIds.length) {
+                                setTimeout(() => {
+                                    if (!Object.keys(pendingCountsRef.current).length) return;
+                                    if (!lastServerCountsRef.current) return;
+                                    setInventory(reconcileServerCounts(lastServerCountsRef.current));
+                                }, RELEASE_TIMEOUT_MS + 1000);
+                            }
+                            setInventory(plan.counts);
+                            setInvCountMeta(plan.countMeta);
+                            if (plan.savingIds.length) {
+                                setInventorySyncStatus(prev => ({ ...prev, ...Object.fromEntries(plan.savingIds.map(id => [id, 'saving'])) }));
+                            }
+                            if (plan.lostIds && plan.lostIds.length) {
+                                // Not "Save failed" yet: a hold can outlive its own
+                                // ack during a burst, so the first SERVER snapshot
+                                // decides (landed → Saved, else the sticky error).
+                                lostHoldsRef.current = plan.lost && Object.keys(plan.lost).length ? plan.lost : null;
+                                console.warn('[inventory] crash heal wiped the queue — verifying taps against the server', plan.lostIds);
+                                setInventorySyncStatus(prev => ({ ...prev, ...Object.fromEntries(plan.lostIds.map(id => [id, 'saving'])) }));
+                            }
+                            if (plan.subTab) setActiveTab(plan.subTab);
+                        }
+                    }
+                } catch { /* best-effort */ }
+
                 const inventoryDocRef = doc(db, "ops", "inventory_" + storeLocation);
                 // Track last customInventory hash so we can short-circuit
                 // the heavy id-migration merge below when only counts
@@ -2518,21 +2653,25 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // that arrive mid-burst and would clobber optimistic counts.
                 let invServerSynced = false;
                 const unsubInventorySnapshot = onSnapshot(inventoryDocRef, { includeMetadataChanges: true }, (docSnap) => {
-                    // Skip our own optimistic local writes — wait for the server-confirmed snapshot.
-                    // This avoids the prior race where a remote write arriving in the same tick
-                    // as our local write got swallowed as if it were our own echo.
-                    if (docSnap.metadata.hasPendingWrites) return;
-                    // Skip stale cache-only echoes AFTER first sync (2026-06-30): during a rapid +1
-                    // burst, the SDK delivers an intermediate cached snapshot where hasPendingWrites
-                    // has already flipped false for the writes it knows about, but `data.counts` does
-                    // NOT yet reflect the still-in-flight increment() ops on the other tapped items.
-                    // With a Counted/Low filter active, setInventory(data.counts) on that stale map
-                    // drops those items out of the filter — their whole location bucket empties and
-                    // the rows vanish — until the authoritative server snapshot (~2-3s later) restores
-                    // them. We still allow the very FIRST cache snapshot through so a warm/offline
-                    // cold-start paints last-saved counts (this listener is the only counts loader).
-                    if (docSnap.metadata.fromCache && invServerSynced) return;
-                    if (!docSnap.metadata.fromCache) invServerSynced = true;
+                    // Snapshot admission (2026-09-09) — decided by the pure
+                    // shouldApplyInventorySnapshot (inventoryStability.js, tested):
+                    //   • our own pending-write echoes are skipped on a WARM sheet
+                    //     (the 2026-06-30 mid-burst Counted/Low filter flicker guard)
+                    //   • stale cache echoes after first sync are skipped
+                    //   • a COLD sheet takes its first paint from whatever the cache
+                    //     holds — pending overlay included. That is the device's true
+                    //     state; the old unconditional hasPendingWrites skip ran BEFORE
+                    //     the cold-start allowance, so after a forced reload with a
+                    //     persisted mutation queue the sheet painted as zeros until
+                    //     the whole backlog acked ("i lose what ive clicked").
+                    const admit = shouldApplyInventorySnapshot({
+                        hasPendingWrites: docSnap.metadata.hasPendingWrites,
+                        fromCache: docSnap.metadata.fromCache,
+                        serverSynced: invServerSynced,
+                        localHasAny: hasAnyCount(inventoryRef.current, vendorCountsRef.current),
+                    });
+                    if (!admit.apply) return;
+                    if (admit.markSynced) invServerSynced = true;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         // ── STABILITY GUARD (2026-07-14, Andrew: "it keeps deleting
@@ -2572,11 +2711,46 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // optimistic bumps too — otherwise reconcileServerCounts
                         // holds a just-tapped item at its pre-clear value for up
                         // to 12s and it "reappears" over the cleared cart.
-                        if (remoteClearAdvanced) pendingCountsRef.current = {};
+                        if (remoteClearAdvanced) {
+                            // …and release their "Saving…" dots too: nothing will
+                            // ever confirm or expire a hold that no longer exists
+                            // (r3: a rehydrated dot pulsed forever over a 0).
+                            const dropped = Object.keys(pendingCountsRef.current).concat(lostHoldsRef.current ? Object.keys(lostHoldsRef.current) : []);
+                            pendingCountsRef.current = {};
+                            lostHoldsRef.current = null;
+                            if (dropped.length) {
+                                setInventorySyncStatus(prev => {
+                                    let changed = false; const next = { ...prev };
+                                    for (const id of dropped) if (next[id] === 'saving') { delete next[id]; changed = true; }
+                                    return changed ? next : prev;
+                                });
+                            }
+                        }
                         // Reconcile instead of overwrite: if this snapshot is stale
                         // for an item the user JUST bumped (e.g. a mid-burst server
                         // read that hasn't applied all of our increments yet), hold
                         // the optimistic value so the count never visibly reverts.
+                        lastServerCountsRef.current = inCounts;
+                        if (lostHoldsRef.current && !docSnap.metadata.fromCache) {
+                            const { landedIds, lostIds } = resolveLostHolds(lostHoldsRef.current, inCounts);
+                            lostHoldsRef.current = null;
+                            if (lostIds.length) console.warn('[inventory] crash heal wiped unacked taps', lostIds);
+                            if (landedIds.length || lostIds.length) {
+                                setInventorySyncStatus(prev => {
+                                    const next = { ...prev };
+                                    for (const id of landedIds) if (next[id] === 'saving') next[id] = 'saved';
+                                    for (const id of lostIds) next[id] = 'error';
+                                    return next;
+                                });
+                                if (landedIds.length) {
+                                    setTimeout(() => setInventorySyncStatus(prev => {
+                                        let changed = false; const next = { ...prev };
+                                        for (const id of landedIds) if (next[id] === 'saved') { delete next[id]; changed = true; }
+                                        return changed ? next : prev;
+                                    }), 2000);
+                                }
+                            }
+                        }
                         setInventory(reconcileServerCounts(inCounts));
                         setInvCountMeta(data.countMeta || {});
                         setVendorCounts(inVendor);
@@ -2738,23 +2912,71 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 }, (err) => console.warn('splitConfig snapshot subscribe failed', err));
 
-                // Inventory audit log — last 50 changes for this location.
-                // Drives the expandable "Recent changes" panel below the
-                // Save & Reset button. Server-side timestamp orders writes
-                // across devices; we display the most recent first.
+                return () => {
+                    unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubActiveList();
+                    // A store switch / unmount must not strand a half-window of
+                    // taps in memory — push them into the SDK queue now (the
+                    // flush writes to the store captured when the window opened).
+                    try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
+                };
+            }, [storeLocation]);
+
+            // Inventory audit log — last 50 changes for this location, driving
+            // the expandable "Recent changes" panel. 2026-09-09: attached ONLY
+            // while that panel is open — as an always-on listener its snapshot
+            // (own-write echo + serverTimestamp resolution) re-rendered the
+            // whole page twice per tap.
+            useEffect(() => {
+                if (!showInventoryAudits || !storeLocation || storeLocation === 'both') {
+                    setInventoryAudits([]);
+                    return undefined;
+                }
                 const auditQ = query(
                     collection(db, "inventory_audits_" + storeLocation),
                     orderBy("at", "desc"),
                     limit(50),
                 );
-                const unsubInvAudits = onSnapshot(auditQ, (snap) => {
+                const unsub = onSnapshot(auditQ, (snap) => {
+                    // Read-only panel: cached / pending rows are fine to show.
                     const rows = [];
                     snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
                     setInventoryAudits(rows);
                 }, (err) => console.warn('inventory audits subscribe failed', err));
+                return () => unsub();
+            }, [storeLocation, showInventoryAudits]);
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubInvAudits(); unsubActiveList(); };
-            }, [storeLocation]);
+            // Reload stash (2026-09-09): the revive watchdog reload, the crash
+            // heal and forceRefresh (deploy broadcast / version poll / chunk
+            // reload) call runReloadStashes() first; the rehydrate at the top of
+            // the inventory listener paints this back. Flush the coalescer so the
+            // stash and the SDK queue agree.
+            useEffect(() => registerReloadStash('inventory', () => {
+                try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
+                return {
+                    loc: storeLocation,
+                    counts: inventoryRef.current,
+                    countMeta: invCountMetaRef.current,
+                    vendorCounts: vendorCountsRef.current,
+                    pendingCounts: pendingCountsRef.current,
+                    subTab: activeTab,
+                    clearedAt: lastAppliedClearedAtRef.current,
+                };
+            }), [storeLocation, activeTab]);
+            // Backgrounding / tab switch: hand any open tap window to the SDK
+            // queue (IndexedDB) right away rather than holding it in memory.
+            useEffect(() => {
+                const onHide = () => {
+                    if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') return;
+                    try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
+                };
+                const onPageHide = () => { try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ } };
+                window.addEventListener('pagehide', onPageHide);
+                document.addEventListener('visibilitychange', onHide);
+                return () => {
+                    window.removeEventListener('pagehide', onPageHide);
+                    document.removeEventListener('visibilitychange', onHide);
+                };
+            }, []);
 
             // ── Vendor-price subscriptions (GLOBAL, not per-location) ──
             // FIX (review 2026-05-14, perf): these 6 subscriptions used to live
@@ -4291,104 +4513,71 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     };
                 });
 
-                // ── Audit trail (best-effort, fire-and-forget) ──────
-                // Every count change writes an immutable row to
-                // inventory_audits_{location}. Use case Andrew flagged:
-                // "why weren't eggs ordered but it was on the list before"
-                // — with many hands on the inventory page, individual
-                // tweaks (someone bumping eggs down then forgetting) can
-                // be reconstructed. Audit is append-only via rules.
-                //
-                // 2026-05-22: stopped awaiting the addDoc here. Awaiting
-                // it serialized two Firestore writes per +1 tap (audit,
-                // then main update), so rapid tapping felt sluggish. The
-                // audit doc isn't user-visible — fire-and-forget is fine.
-                if (prevCount !== nextCount) {
-                    try {
-                        // Resolve a human-readable item name for the audit row
-                        // so future renames don't make the log inscrutable.
-                        // O(1) via the memoized invLookup instead of scanning
-                        // all ~243 items on every count tap.
-                        const f = invLookup[itemId];
-                        const itemName = (f && (f.nameEn || f.name)) || itemId;
-                        addDoc(collection(db, 'inventory_audits_' + storeLocation), {
-                            itemId,
-                            itemName,
-                            previous: prevCount,
-                            next: nextCount,
-                            delta: nextCount - prevCount,
-                            byStaff: staffName,
-                            at: serverTimestamp(),
-                            atLocal: timeStr,
-                            dateKey: now.toISOString().slice(0, 10),
-                        }).catch(e => console.warn('inventory audit write failed', e));
-                    } catch (e) {
-                        console.warn('inventory audit write failed', e);
-                    }
-                }
+                // Coalesced write (2026-09-09, Andrew: "it keeps reconnecting
+                // and reloading the page"): the audit row + the ops-doc patch
+                // for this item are batched by tapCoalescerRef — ONE Firestore
+                // write per burst window instead of two per tap (see
+                // inventoryTapCoalescer.js for why that matters to the stuck-
+                // write watchdog). Everything above — optimistic state, the
+                // pending hold, meta, the 'saving' dot — is unchanged, per tap.
+                tapCoalescerRef.current.tap(itemId, {
+                    prevCount, nextCount,
+                    kind: !isDelta ? 'abs' : delta > 0 ? 'inc' : 'dec',
+                    priorMeta: invCountMetaRef.current[itemId],
+                    ctx: { loc: storeLocation, staffName },
+                });
+            };
 
-                const ref = doc(db, "ops", "inventory_" + storeLocation);
-                // Targeted update via dotted paths so concurrent edits on other items aren't clobbered.
-                // When a delta is provided (+1 / -1 from the bump buttons), use
-                // Firestore's atomic FieldValue.increment so simultaneous taps
-                // from two devices both land. Falls back to absolute set for
-                // the text-input path.
+            // The flush behind the coalescer — assigned EVERY render so it closes
+            // over current state; the coalescer always calls the latest one.
+            // Writes one batch: the audit row + the ops-doc patch. `ctx` is the
+            // store/staff captured when the window OPENED, so a flush that lands
+            // after a Webster→Maryland switch still hits the original doc.
+            flushWriteRef.current = async (itemId, { prevCount, nextCount, tapDelta, mode, priorMeta, ctx }) => {
+                // tapDelta = this device's own signed taps in the window. The
+                // 'inc' write and the personal tally use IT — never
+                // nextCount − prevCount, which another device's snapshot can
+                // shift mid-window (review 2026-09-09: over-count).
+                const ownDelta = Number.isFinite(tapDelta) ? tapDelta : (nextCount - prevCount);
+                const loc = ctx?.loc || storeLocation;
+                const who = ctx?.staffName || staffName;
+                if (!loc || loc === 'both') return;
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                const nowIso = now.toISOString();
+                // The pending hold follows the WINDOW: latest value, and 'abs'
+                // once any −/typed tap occurred (increment() has no floor, so
+                // the write is a clamped absolute in that case).
+                if (pendingCountsRef.current[itemId]) {
+                    pendingCountsRef.current[itemId] = { expected: nextCount, ts: Date.now(), mode };
+                }
+                const ref = doc(db, "ops", "inventory_" + loc);
+                // Targeted update via dotted paths so concurrent edits on other
+                // items aren't clobbered. 'inc' = atomic increment of the window's
+                // delta so two devices adding both land; 'abs' = clamped absolute.
                 const update = {
-                    // +1 uses atomic increment so two devices adding both land. But
-                    // DECREMENT uses a clamped ABSOLUTE write (nextCount, already >=0
-                    // because the prevCount<=0 guard blocked the step): Firestore's
-                    // increment() has NO floor, so a -1 on a (locally-lagged) value
-                    // could drive the server count to -1. Absolute-clamped can't.
-                    [`counts.${itemId}`]: !isDelta ? count
-                        : delta > 0 ? increment(delta)
-                            : Math.max(0, nextCount),
-                    date: new Date().toISOString(),
+                    [`counts.${itemId}`]: mode === 'inc' ? increment(ownDelta) : Math.max(0, nextCount),
+                    date: nowIso,
                 };
-                // Count meta. Zeroing an item clears the whole record —
-                // Firestore forbids deleting a field AND writing its children
-                // in one update, so these two shapes are mutually exclusive.
+                // Count meta. Zeroing an item clears the whole record — Firestore
+                // forbids deleting a field AND writing its children in one update.
                 if (nextCount === 0) {
                     update[`countMeta.${itemId}`] = deleteField();
                 } else {
-                    // by/at/atISO are the LAST writer (kept for back-compat and
-                    // for items only one person touched).
-                    update[`countMeta.${itemId}.by`] = staffName;
+                    update[`countMeta.${itemId}.by`] = who;
                     update[`countMeta.${itemId}.at`] = timeStr;
                     update[`countMeta.${itemId}.atISO`] = nowIso;
-                    // Per-person tally (Andrew 2026-07-31: "if multiple people
-                    // add items make sure to also add that person too"). Keyed
-                    // by a SLUG, never the raw name — a name containing a dot
-                    // ("Andres Portillo Mo.") would otherwise be parsed as a
-                    // nested path and shatter the map; the display name rides
-                    // along in `n`.
-                    //
-                    // contributionWrites also handles the migration case that
-                    // erased people: an item counted before this feature has
-                    // its counter only in the legacy `by` field, so it credits
-                    // them with the count already on the item. `delta` entries
-                    // use atomic increment (two devices counting at once both
-                    // land); `absolute` entries are the one-time seed, where
-                    // there is no prior value to increment.
-                    for (const w of contributionWrites(invCountMeta[itemId], {
-                        staffName, prevCount, nextCount, nowIso,
-                    })) {
+                    // Per-person tally (Andrew 2026-07-31) — contributionWrites
+                    // diffs against the meta as of the window start; slug keys,
+                    // never raw names (a dotted name would shatter the map).
+                    for (const w of contributionWrites(priorMeta, { staffName: who, prevCount, nextCount: prevCount + ownDelta, nowIso })) {
                         update[`countMeta.${itemId}.who.${w.key}.n`] = w.name;
-                        update[`countMeta.${itemId}.who.${w.key}.q`] =
-                            w.delta != null ? increment(w.delta) : w.absolute;
-                        // A migrated counter may have no real timestamp — only
-                        // the old display string. Persist whichever we have and
-                        // never fabricate one.
+                        update[`countMeta.${itemId}.who.${w.key}.q`] = w.delta != null ? increment(w.delta) : w.absolute;
                         if (w.iso) update[`countMeta.${itemId}.who.${w.key}.t`] = w.iso;
                         if (w.atText) update[`countMeta.${itemId}.who.${w.key}.at`] = w.atText;
                     }
                 }
-                try {
-                    await updateDoc(ref, update);
-                    // Flip to "saved" and schedule a clear so the grid
-                    // settles back to neutral. The 2s window is long
-                    // enough that a user finishing a rapid +1+1+1 burst
-                    // sees the green confirmation, short enough that
-                    // the next interaction starts from a clean slate.
+                const markSaved = () => {
                     setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'saved' }));
                     setTimeout(() => {
                         setInventorySyncStatus(prev => {
@@ -4398,59 +4587,58 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             return next;
                         });
                     }, 2000);
-                    // Low-stock threshold-cross push. Fires when an
-                    // item dropped FROM above-min TO at-or-below
-                    // min on this save. Threshold-crossing semantics
-                    // (rather than "below min" predicate) naturally
-                    // dedups: bumping count from 2→1 when min=3
-                    // doesn't re-spam because we were already below.
-                    // Only fires for the negative direction — going
-                    // up never triggers an alert. Fire-and-forget;
-                    // a failed notification doesn't block the save.
-                    notifyLowStockIfCrossed({
-                        itemId,
-                        prevCount,
-                        nextCount,
-                        delta: nextCount - prevCount,
-                    }).catch(() => {});
+                };
+                // Audit trail — one immutable row per burst (was per tap).
+                // Andrew's use case ("why weren't eggs ordered") still holds:
+                // previous → next per person per window.
+                const f = invLookup[itemId];
+                const auditRow = (ownDelta !== 0 || prevCount !== nextCount) ? {
+                    itemId,
+                    itemName: (f && (f.nameEn || f.name)) || itemId,
+                    previous: prevCount,
+                    next: nextCount,
+                    delta: nextCount - prevCount,   // what the sheet showed (panel renders prev → next (delta))
+                    ownDelta,                       // this device's own taps in the window
+                    byStaff: who,
+                    at: serverTimestamp(),
+                    atLocal: timeStr,
+                    dateKey: nowIso.slice(0, 10),
+                } : null;
+                try {
+                    const batch = writeBatch(db);
+                    if (auditRow) batch.set(doc(collection(db, 'inventory_audits_' + loc)), auditRow);
+                    batch.update(ref, update);
+                    await watchdogWrite(batch.commit());
+                    markSaved();
+                    // Low-stock threshold-cross push (negative direction only;
+                    // fire-and-forget).
+                    notifyLowStockIfCrossed({ itemId, prevCount, nextCount, delta: nextCount - prevCount }).catch(() => {});
                 } catch (err) {
-                    // Doc may not exist yet on first write to a fresh location.
                     if (err?.code === "not-found") {
+                        // Doc may not exist yet on first write to a fresh location —
+                        // seed it from the ref mirrors (they already carry this tap).
                         try {
-                            // Rebuild the full counts map from the ref mirror —
-                            // it already carries this tap's value (advanced
-                            // synchronously above). The old no-op functional-
-                            // setter read had the same React 18 deferral bug as
-                            // prevCount: the updater may not have run yet, so
-                            // fullCounts could snapshot {} and seed an empty doc.
-                            const fullCounts = { ...inventoryRef.current };
-                            // invCountMeta has NO ref mirror — keep the no-op
-                            // updater read for it (best-effort: it can lag one
-                            // commit under the same deferral, which for a fresh
-                            // location's very first write means at worst a
-                            // missing by/at stamp, never a wrong count).
-                            let fullMeta = {};
-                            setInvCountMeta(prev => { fullMeta = prev; return prev; });
-                            await setDoc(ref, { counts: fullCounts, countMeta: fullMeta, customInventory, date: new Date().toISOString() });
-                            setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'saved' }));
-                            setTimeout(() => {
-                                setInventorySyncStatus(prev => {
-                                    if (prev[itemId] !== 'saved') return prev;
-                                    const next = { ...prev };
-                                    delete next[itemId];
-                                    return next;
-                                });
-                            }, 2000);
+                            // Seed ONLY this item: other items' still-open tap
+                            // windows will land their own increment() next (a
+                            // full-map seed would pre-apply them → double count).
+                            await setDoc(ref, {
+                                counts: { [itemId]: Math.max(0, nextCount) },
+                                countMeta: invCountMetaRef.current[itemId] ? { [itemId]: invCountMetaRef.current[itemId] } : {},
+                                customInventory,
+                                date: new Date().toISOString(),
+                            }, { merge: true }); // two items seeding at once must not overwrite each other
+                            markSaved();
+                            // The batch was atomic, so its audit row died with the
+                            // not-found — re-issue it (fire-and-forget) so a fresh
+                            // location's first tap is still in "Recent changes".
+                            if (auditRow) setDoc(doc(collection(db, 'inventory_audits_' + loc)), auditRow).catch(() => {});
                         } catch (e) {
                             console.error("Error creating inventory:", e);
                             setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'error' }));
                         }
                     } else {
                         console.error("Error updating inventory:", err);
-                        // Sticky error state — no auto-clear. Stays
-                        // visible until the user successfully retries
-                        // the change, so a silently-failed save can't
-                        // hide behind subsequent successful ones.
+                        // Sticky error state — visible until a successful retry.
                         setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'error' }));
                     }
                 }
@@ -4631,6 +4819,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const saveAndResetInventory = async () => {
+                // Land any open tap window FIRST so its increment is queued ahead
+                // of the reset write (review 2026-09-09: an open window used to
+                // re-add the item after the reset).
+                try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
                 // 'both' mode has no real inventory doc — see updateInventoryCount (M16).
                 if (storeLocation === 'both') {
                     toast(language === 'es'
@@ -4642,6 +4834,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 try {
                     // Save snapshot to history
                     await saveInventorySnapshot(inventory, customInventory);
+                    // Taps made during that round trip opened new windows — land them
+                    // too, ahead of the reset write below (review 2026-09-09).
+                    try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
                     // Reset all counts to 0
                     const resetCounts = {};
                     customInventory.forEach(cat => {
@@ -4688,6 +4883,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Confirm-gated; persists counts:{} + vendorCounts:{} to the canonical
             // doc (updateDoc preserves customInventory + schema).
             const clearAllInventoryCounts = async () => {
+                // Same ordering rule as saveAndResetInventory: open windows land
+                // before the clear, even if the confirm below is cancelled.
+                try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
                 // 'both' mode has no real inventory doc — see updateInventoryCount (M16).
                 if (storeLocation === 'both') {
                     toast(language === 'es'
@@ -8851,6 +9049,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                     no reason to keep staring at it). */}
                                                 {rows.length > 0 && (
                                                     <button onClick={async () => {
+                                                        // Open tap windows land before any reset (review 2026-09-09).
+                                                        try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
                                                         // Same save-first bias as the main Clear button
                                                         // (Andrew 2026-07-23): offer to land the list in
                                                         // history before it's destroyed. Save path = the
@@ -9459,24 +9659,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                     or network failed; will stay visible
                                                                                     until the next successful save for
                                                                                     this item, so failed writes don't hide. */}
-                                                                            {inventorySyncStatus[item.id] === 'saving' && (
-                                                                                <p className="text-[11px] text-amber-700 mt-0.5 inline-flex items-center gap-1">
-                                                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                                                                                    {language === "es" ? "Guardando…" : "Saving…"}
-                                                                                </p>
-                                                                            )}
-                                                                            {inventorySyncStatus[item.id] === 'saved' && (
-                                                                                <p className="text-[11px] text-emerald-700 mt-0.5 inline-flex items-center gap-1">
-                                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                                                                    {language === "es" ? "Guardado" : "Saved"}
-                                                                                </p>
-                                                                            )}
-                                                                            {inventorySyncStatus[item.id] === 'error' && (
-                                                                                <p className="text-[11px] text-red-700 mt-0.5 inline-flex items-center gap-1 font-bold">
-                                                                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                                                                                    {language === "es" ? "Error al guardar — toca de nuevo" : "Save failed — tap again"}
-                                                                                </p>
-                                                                            )}
+                                                                            <div className="mt-0.5"><InventorySyncBadge status={inventorySyncStatus[item.id]} language={language} size={11} /></div>
                                                                             {/* Last ordered badge — read-only, sourced from
                                                                                 inventoryHistory snapshots. Most recent date
                                                                                 this item had qty > 0 in a saved snapshot.
@@ -9834,6 +10017,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         language={language}
                                                         onUpdate={stableUpdateInventoryCount}
                                                         stamp={formatCountStampLines(invCountMeta[item.id])}
+                                                        syncStatus={inventorySyncStatus[item.id]}
                                                     />
                                                 ))}
                                             </div>
@@ -10009,6 +10193,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                 className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                         </div>
+                                                                        <InventorySyncBadge status={inventorySyncStatus[item.id]} language={language} size={10} />
                                                                         {stampLines && (
                                                                             <p className="text-[10px] text-mint-700 leading-tight text-right whitespace-pre-line">
                                                                                 {"\u{2713}"} {stampLines}
@@ -10213,12 +10398,17 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                         </div>
                                                                                     )}
                                                                                 </div>
-                                                                                <div className="flex items-center gap-1 flex-shrink-0">
+                                                                                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                                                                <div className="flex items-center gap-1">
                                                                                     <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
                                                                                         className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
                                                                                     <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
                                                                                     <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                         className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
+                                                                                </div>
+                                                                                {/* Save state (2026-09-09) — this view had none, so a
+                                                                                    failed or conflicted save was invisible here. */}
+                                                                                <InventorySyncBadge status={inventorySyncStatus[item.id]} language={language} size={10} />
                                                                                 </div>
                                                                             </div>
                                                                             )}
@@ -10341,7 +10531,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 transition">
                                         <span className="flex items-center gap-2 text-sm font-bold text-blue-800">
                                             📜 {language === "es" ? "Cambios recientes" : "Recent changes"}
-                                            <span className="text-xs font-bold text-blue-600">({inventoryAudits.length})</span>
+                                            {showInventoryAudits && <span className="text-xs font-bold text-blue-600">({inventoryAudits.length})</span>}
                                         </span>
                                         <span className="text-blue-700 text-xs">{showInventoryAudits ? "▼" : "▶"}</span>
                                     </button>

@@ -42,3 +42,29 @@ export function isRemoteClearAdvanced(incomingClearedAt, lastAppliedClearedAt) {
 export function shouldIgnoreInventorySnapshot({ incomingHasAny, localHasAny, recentlyCleared, remoteClearAdvanced }) {
     return !incomingHasAny && localHasAny && !recentlyCleared && !remoteClearAdvanced;
 }
+
+// ── Snapshot admission (2026-09-09) ────────────────────────────────────────
+// Which inventory-doc snapshots the listener should APPLY. Replaces two
+// separate early returns in Operations.jsx that had a blind spot after a
+// forced reload: with a persisted mutation queue every snapshot carries
+// hasPendingWrites until the whole backlog acks, and the old unconditional
+// `if (hasPendingWrites) return` ran BEFORE the cold-start allowance — so the
+// sheet painted as zeros for the entire drain even though the cache already
+// held the tapped counts.
+//   hasPendingWrites — snapshot includes this device's un-acked writes
+//   fromCache        — served from the local cache, not the server
+//   serverSynced     — a server-confirmed snapshot has been applied before
+//   localHasAny      — the on-screen sheet already has counts
+// Rules:
+//   (a) pending + (warm sheet or already synced) → skip. Byte-for-byte the
+//       2026-06-30 behavior that stops a mid-burst cache echo from flickering
+//       Counted/Low-filtered rows out of the list.
+//   (b) fromCache + synced → skip (stale cache echo after first sync).
+//   (c) otherwise apply. A COLD sheet takes its first paint from whatever
+//       the cache holds — pending overlay included — because that IS the
+//       device's true state. markSynced only on a clean server snapshot.
+export function shouldApplyInventorySnapshot({ hasPendingWrites, fromCache, serverSynced, localHasAny }) {
+    if (hasPendingWrites && (serverSynced || localHasAny)) return { apply: false, markSynced: false };
+    if (fromCache && serverSynced) return { apply: false, markSynced: false };
+    return { apply: true, markSynced: !fromCache && !hasPendingWrites };
+}

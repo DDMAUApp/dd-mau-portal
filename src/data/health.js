@@ -35,12 +35,14 @@ import {
 // chokepoint for the Health Department page AND the onboarding Hep A
 // bridge (hepAHealthSync.js): a wedged transport left compliance saves
 // hanging silently. Same shadow-the-primitives pattern as chatDm/notify.
-import { watchdogWrite, watchdogRead } from './firestoreRevive';
+import { watchdogWrite, watchdogRead, watchdogTransaction } from './firestoreRevive';
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 const getDocFromServer = (...a) => watchdogRead(_fsGetDocFromServer(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
-const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
+// Transactions commit over unary XHR, not the write stream — they must not
+// count as write-stream progress for the stuck-write watchdog (2026-09-09).
+const runTransaction = (...a) => watchdogTransaction(_fsRunTransaction(...a));
 
 export const HEALTH_DOCS_CONFIG = ['config', 'health_docs'];
 

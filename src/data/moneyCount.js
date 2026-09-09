@@ -33,7 +33,9 @@ const getDoc = (...a) => watchdogRead(_getDoc(...a));
 // and the Save button spun eternally with no pill and no recovery. A read
 // that GATES a user-pressed save deserves write posture: pill + revive +
 // reload escalation.
-const getDocForWrite = (...a) => watchdogWrite(_getDoc(...a));
+// A read — keep the pill/revive/escalation but never count it as write-stream
+// progress (a cache-served read resolves while the transport is dead).
+const getDocForWrite = (...a) => watchdogWrite(_getDoc(...a), undefined, { progress: false });
 const deleteDoc = (...a) => watchdogWrite(_deleteDoc(...a));
 
 // The ONLY real stores. Cash is NEVER merged across locations: every count /

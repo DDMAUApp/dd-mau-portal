@@ -49,3 +49,27 @@ export function reconcileCounts(serverCounts, pending, now) {
     }
     return merged;
 }
+
+/**
+ * Same merge, but also reports which ids were RELEASED by the safety valve
+ * without the server ever confirming them — a tap that never landed. The
+ * caller flips those rows to a sticky 'error' dot instead of silently
+ * showing the lower server value (2026-09-09).
+ * @returns {{ counts: Object<string,number>, expiredIds: string[], confirmedIds: string[] }}
+ */
+export function reconcileCountsDetailed(serverCounts, pending, now) {
+    const src = serverCounts || {};
+    const ids = pending ? Object.keys(pending) : [];
+    if (ids.length === 0) return { counts: src, expiredIds: [], confirmedIds: [] };
+    const expiredIds = [];
+    const confirmedIds = [];
+    for (const id of ids) {
+        const p = pending[id];
+        const s = Number(src[id] || 0);
+        const confirmed = p.mode === 'inc' ? s >= p.expected : s === p.expected;
+        if (confirmed) confirmedIds.push(id);
+        else if (now - p.ts > RELEASE_TIMEOUT_MS) expiredIds.push(id);
+    }
+    return { counts: reconcileCounts(serverCounts, pending, now), expiredIds, confirmedIds };
+}
+

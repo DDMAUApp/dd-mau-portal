@@ -34,7 +34,7 @@ import {
     setDoc as _fsSetDoc, runTransaction as _fsRunTransaction, getDocs as _fsGetDocs,
     getDoc as _fsGetDoc,
 } from 'firebase/firestore';
-import { watchdogWrite, watchdogRead, reviveFirestore, resilientSnapshot } from '../data/firestoreRevive';
+import { watchdogWrite, watchdogRead, reviveFirestore, resilientSnapshot, watchdogTransaction } from '../data/firestoreRevive';
 
 // ── Wedged-connection watchdog (2026-08-08, Andrew: "delete a shift
 // times out… add a shift doesnt respond until i refresh") ──────────────
@@ -50,7 +50,9 @@ const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
-const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
+// Transactions commit over unary XHR, not the write stream — they must not
+// count as write-stream progress for the stuck-write watchdog (2026-09-09).
+const runTransaction = (...a) => watchdogTransaction(_fsRunTransaction(...a));
 // Reads get the read-flavored watchdog (2026-08-09 audit): revive on hang,
 // but no reload escalation and no "Saving…" pill — a slow week prefetch on
 // store Wi-Fi must never reload the app or claim to be saving.

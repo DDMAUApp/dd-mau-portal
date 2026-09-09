@@ -34,7 +34,7 @@ import { normalizeVendor } from './inventory';
 // save: every write in this module runs under watchdogWrite (pill + 8s
 // network revive + idle-guarded reload escalation). The scan draft
 // (ReceiptScanModal) survives any escalation reload via its Resume banner.
-import { watchdogWrite } from './firestoreRevive';
+import { watchdogWrite, watchdogTransaction } from './firestoreRevive';
 
 // ── Price source taxonomy + trust ranking ───────────────────────────────
 // Lower rank = MORE trusted. This is the priority order Andrew approved:
@@ -327,7 +327,7 @@ export async function setManualPrice(location, itemId, fields, byName) {
     // Transaction so a concurrent write to the same item (e.g. a receipt
     // import landing at the same moment) can't drop history entries via a
     // stale read-modify-write of the `history` array.
-    await watchdogWrite(runTransaction(db, async (tx) => {
+    await watchdogTransaction(runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         const prev = snap.exists() ? snap.data() : {};
         const prevManual = prev.manual || null;
@@ -363,7 +363,7 @@ export async function setManualPrice(location, itemId, fields, byName) {
 // hidden by the history view's filter — this is an audit row, not a price).
 export async function clearManualPrice(location, itemId, byName) {
     const ref = doc(db, itemPricesCollPath(location), String(itemId));
-    await watchdogWrite(runTransaction(db, async (tx) => {
+    await watchdogTransaction(runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         if (!snap.exists()) return;
         const prev = snap.data();
@@ -423,7 +423,7 @@ export async function recordPurchase(location, itemId, { vendor, price, pack, un
     // work. The RAW receipt vendor still lives on the scan record.
     const vKey = canonicalVendorKey(vendor);
     // Transaction — same history-loss guard as setManualPrice.
-    await watchdogWrite(runTransaction(db, async (tx) => {
+    await watchdogTransaction(runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         const prev = snap.exists() ? snap.data() : {};
         const prevEntry = (prev.byVendor || {})[vKey] || null;

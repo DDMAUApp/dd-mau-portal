@@ -61,7 +61,7 @@ import {
 // Writes → watchdogWrite (revive + pill + escalation), reads →
 // watchdogRead (revive on hang only — never shows "Saving…", never
 // escalates to reload).
-import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+import { watchdogWrite, watchdogRead, watchdogTransaction } from '../data/firestoreRevive';
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
@@ -2225,7 +2225,7 @@ function ChatThreadInner({
             //    correct under contention.
             try {
                 const ref = doc(db, 'ops', `86_${location}`);
-                await watchdogWrite(runTransaction(db, async (txn) => {
+                await watchdogTransaction(runTransaction(db, async (txn) => {
                     const snap = await txn.get(ref);
                     const cur = snap.exists() ? (snap.data().items || []) : [];
                     // 2026-05-24 audit fix: dedup was case-folded + trimmed
@@ -2348,7 +2348,7 @@ function ChatThreadInner({
             //    between the two reads.
             try {
                 const ref = doc(db, 'ops', `86_${location}`);
-                await watchdogWrite(runTransaction(db, async (txn) => {
+                await watchdogTransaction(runTransaction(db, async (txn) => {
                     const snap = await txn.get(ref);
                     if (!snap.exists()) return;
                     const cur = snap.data().items || [];

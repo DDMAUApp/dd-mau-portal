@@ -48,14 +48,16 @@ import {
 // 2026-09-02 whole-app audit -- watchdog shadows (house pattern A):
 // user-pressed saves in this file ran raw and hung forever on a wedged
 // transport (no pill, no revive, no escalation). Zero call-site changes.
-import { watchdogWrite, watchdogRead } from './firestoreRevive';
+import { watchdogWrite, watchdogRead, watchdogTransaction } from './firestoreRevive';
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
-const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
+// Transactions commit over unary XHR, not the write stream — they must not
+// count as write-stream progress for the stuck-write watchdog (2026-09-09).
+const runTransaction = (...a) => watchdogTransaction(_fsRunTransaction(...a));
 
 // ── Date helpers (string-based, DST-safe) ──────────────────────────────
 // All plan math runs on LOCAL 'YYYY-MM-DD' strings; day arithmetic goes

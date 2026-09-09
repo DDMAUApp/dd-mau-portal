@@ -136,11 +136,13 @@ import {
 import { recordAudit } from './audit';
 // 2026-09-01 camera-crash sweep — watchdog shadows (health.js pattern):
 // TV-config saves ran raw and hung silently on a wedged transport.
-import { watchdogWrite, watchdogRead } from './firestoreRevive';
+import { watchdogWrite, watchdogRead, watchdogTransaction } from './firestoreRevive';
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
-const runTransaction = (...a) => watchdogWrite(_fsRunTransaction(...a));
+// Transactions commit over unary XHR, not the write stream — they must not
+// count as write-stream progress for the stuck-write watchdog (2026-09-09).
+const runTransaction = (...a) => watchdogTransaction(_fsRunTransaction(...a));
 
 const COLLECTION = 'tv_configs';
 // Subcollection of immutable snapshots — every time a TV config's

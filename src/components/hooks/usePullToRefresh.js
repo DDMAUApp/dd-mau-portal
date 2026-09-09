@@ -30,6 +30,7 @@
 // Net effect: feels like native iOS pull-to-refresh — the user has to
 // commit to the gesture rather than triggering it by overscrolling.
 
+import { runReloadStashes } from '../../data/reloadStash';
 import { useEffect, useState, useRef } from 'react';
 
 const THRESHOLD = 150;    // px pull distance required to ARM the refresh
@@ -41,6 +42,10 @@ const REFRESHING_PAINT_MS = 300; // brief window so user sees the spinner
 // pull gesture, exposed so a desktop button (or a future "refresh" menu
 // item) can trigger the exact same recovery without touch events.
 export async function forceRefresh() {
+    // Every forced reload snapshots page state first (2026-09-09) — the
+    // deploy broadcast, hourly version poll, chunk-error reload and Danger
+    // Zone all come through here. reloadStash is dependency-free.
+    try { runReloadStashes('force-refresh'); } catch { /* best-effort */ }
     // 2026-06-20 (QA audit A1) — on native, the web cache-bust + location.replace
     // below is a NO-OP: the WebView loads from the active Capgo bundle, not the
     // network, so a query-string reload re-runs the SAME bundle. Apply any

@@ -13,7 +13,7 @@ import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
-import { installFirestoreRevive, resilientSnapshot } from './data/firestoreRevive';
+import { installFirestoreRevive, resilientSnapshot, isInputBusy, PENDING_REPORT_KEY } from './data/firestoreRevive';
 import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
 import { parseChatDeepLink, setPendingChatOpen } from './data/chatDeepLink';
@@ -949,13 +949,14 @@ export default function App() {
         let baseline = null;
         let cancelled = false;
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        // Shared idle predicate (2026-09-09): typing AND tapping both count as
+        // busy now — the deploy reload used to fire out from under someone
+        // tapping inventory +/- buttons. Cancellation stays local.
         const waitInputIdle = async () => {
             const cap = Date.now() + 60_000;
             while (!cancelled && Date.now() < cap) {
-                const el = document.activeElement;
-                const busy = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
-                if (!busy) return;
-                await sleep(3000);
+                if (!isInputBusy()) return;
+                await sleep(1000);
             }
         };
         const handleBroadcast = async (targetVersion) => {
@@ -1596,6 +1597,22 @@ export default function App() {
             });
         } catch {}
     }, [staffName, currentStaffRecord]);
+
+    // Reload telemetry flush (2026-09-09): a forced reload parks its report in
+    // sessionStorage (the transport that caused it is suspect); land it in
+    // error_logs once the SDK is rebuilt AND identity is set (the effect
+    // above runs first), so the row says which person/store kept reloading.
+    // Exactly one row per reload.
+    useEffect(() => {
+        if (!staffName) return;
+        try {
+            const raw = sessionStorage.getItem(PENDING_REPORT_KEY);
+            if (!raw) return;
+            sessionStorage.removeItem(PENDING_REPORT_KEY);
+            const rep = JSON.parse(raw);
+            logError({ error: new Error(`reload-after: ${rep?.reason || '?'}`), severity: 'warning', feature: 'firestoreRevive:reload-after', meta: rep });
+        } catch { /* best-effort */ }
+    }, [staffName]);
 
     // Recipes access — opt-OUT model. Default: every staff has access.
     // Admin can flip recipesAccess to FALSE to revoke a specific person.
