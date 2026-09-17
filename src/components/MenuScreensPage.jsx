@@ -34,6 +34,7 @@
 
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { db } from '../firebase';
+import { asPreviewUrl } from '../data/tvHeartbeatGate';
 import { collection, query, where, onSnapshot, limit, Timestamp } from 'firebase/firestore';
 import {
     subscribeTvConfigs, subscribeTvHeartbeats, MODES,
@@ -834,7 +835,7 @@ function ScreenCard({ screen, baseUrl, isEs, staffName, onEdit, onShowHistory })
                         }`}>
                         {screen.isGhost ? `🔗 ${tx('Adopt', 'Adoptar')}` : `✏ ${tx('Edit', 'Editar')}`}
                     </button>
-                    <button type="button" onClick={() => openExternalUrl(publicUrl)}
+                    <button type="button" onClick={() => openExternalUrl(asPreviewUrl(publicUrl))}
                         className="px-2.5 py-1 rounded-lg bg-white border border-dd-line text-[11px] font-bold text-dd-text-2 hover:bg-dd-bg">
                         ↗ {tx('Open', 'Abrir')}
                     </button>

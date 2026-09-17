@@ -6,6 +6,7 @@
 // kiosk URL for each TV, and pick layout + category filter.
 
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import { asPreviewUrl } from '../data/tvHeartbeatGate';
 import { MENU_DATA as LEGACY_MENU_DATA } from '../data/menu';
 import { useMenuConfigLegacy } from '../data/menuConfig';
 import {
@@ -1508,7 +1509,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                     {tx('Kiosk URL for this TV', 'URL del kiosko')}
                                 </span>
                                 {(docExists || isPreset) && (
-                                    <button type="button" onClick={() => openExternalUrl(previewUrl)}
+                                    <button type="button" onClick={() => openExternalUrl(asPreviewUrl(previewUrl))}
                                         className="px-2 py-0.5 rounded bg-white border border-sky-300 text-sky-700 text-[10px] font-bold hover:bg-sky-100 whitespace-nowrap">
                                         👁 {tx('Preview', 'Vista previa')}
                                     </button>

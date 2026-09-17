@@ -783,6 +783,13 @@ exports.dispatchNotification = onDocumentCreated(
                                     type: notif.type || "",
                                     tag,
                                     deepLink: pushDeepLink,
+                                    // 2026-09-17 — parity with the FCM payload above. The
+                                    // iOS tap used to land on the chat LIST (no chatId), and
+                                    // without a unique id the client's tap de-dupe collapsed
+                                    // every chat push to "tab:chat", so a SECOND tap in the
+                                    // same app session did nothing. Old clients ignore both.
+                                    ...(notif.chatId ? { chatId: String(notif.chatId) } : {}),
+                                    notifId: String(snap.id),
                                     link: notif.link || "/",
                                 },
                             },
@@ -3958,12 +3965,102 @@ exports.parseReceipt = onCall(
     }
 );
 
+// ── "📺 Menu Screens" chat thread (2026-09-17) ───────────────────────────
+// Where checkTvHeartbeats talks to the owner. Same shape as notifyOwnerOfBug's
+// Debug Agent thread (group chat, a non-staff bot sender). Written directly
+// rather than via serverFanout so an alert never depends on a second function.
+const MENU_SCREENS_CHAT_ID = "tv_alerts";
+const MENU_SCREENS_BOT = "Menu Screens";
+
+// Idempotent, so it lives OUTSIDE the atomic commit: create the thread, re-add
+// anyone who left, and revive it if it was deleted — a soft-deleted chat is
+// invisible, which would silence every alert.
+async function ensureMenuScreensChat(recipients) {
+    const chatRef = db.doc(`chats/${MENU_SCREENS_CHAT_ID}`);
+    const snap = await chatRef.get();
+    if (!snap.exists) {
+        await chatRef.set({
+            type: "group", name: "📺 Menu Screens", emoji: "📺",
+            members: [...recipients, MENU_SCREENS_BOT], admins: [recipients[0]],
+            createdBy: MENU_SCREENS_BOT, createdByTier: "admin", editTier: "admin",
+            createdAt: FieldValue.serverTimestamp(), lastActivityAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        return chatRef;
+    }
+    const cur = snap.data() || {};
+    const have = Array.isArray(cur.members) ? cur.members : [];
+    const missing = [...recipients, MENU_SCREENS_BOT].filter((n) => !have.includes(n));
+    if (missing.length || cur.deletedAt) {
+        const patch = { deletedAt: FieldValue.delete() };
+        if (missing.length) patch.members = FieldValue.arrayUnion(...missing);
+        await chatRef.set(patch, { merge: true });
+    }
+    return chatRef;
+}
+
+// ONE atomic commit per message: the chat bubble, the chat-list preview, one
+// /notifications doc per person (chat_message + chatId ⇒ bell row, push, and
+// tap-through to the thread) AND the heartbeat stamps that say "this was
+// announced". Review 2026-09-17: post-then-stamp re-posted the same alert every
+// 5 min whenever the stamp write failed. Inside the transaction every screen is
+// RE-READ and re-checked (tvAlerts.stillValid), so an overlapping run — or a
+// commit that landed but reported DEADLINE_EXCEEDED — can never double-post.
+// Returns true when posted, false when the situation had already moved on.
+async function commitMenuScreensAlert({ chatRef, recipients, message, items, refsById, tvAlerts, nowMs }) {
+    const stampOps = (st) => {
+        const out = {};
+        for (const [k, v] of Object.entries(st.set)) out[k] = v === "NOW" ? FieldValue.serverTimestamp() : v;
+        for (const k of st.del) out[k] = FieldValue.delete();
+        return out;
+    };
+    return db.runTransaction(async (tx) => {
+        const refs = items.map((it) => refsById.get(it.id)).filter(Boolean);
+        if (refs.length !== items.length || refs.length === 0) return false;
+        const snaps = await tx.getAll(...refs);
+        for (let i = 0; i < items.length; i++) {
+            if (!snaps[i].exists || !tvAlerts.stillValid(message.kind, items[i], snaps[i].data() || {}, nowMs)) return false;
+        }
+        tx.set(chatRef.collection("messages").doc(), {
+            senderName: MENU_SCREENS_BOT, type: "text", text: message.text, createdAt: FieldValue.serverTimestamp(),
+        });
+        tx.set(chatRef, {
+            lastMessage: { text: `${message.pushTitle} · ${message.pushBody}`.slice(0, 120), sender: MENU_SCREENS_BOT, ts: FieldValue.serverTimestamp(), type: "text" },
+            lastActivityAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        for (const to of recipients) {
+            tx.set(db.collection("notifications").doc(), {
+                forStaff: to, type: "chat_message", chatId: MENU_SCREENS_CHAT_ID,
+                title: message.pushTitle, body: message.pushBody.slice(0, 200),
+                titleEn: message.pushTitle, titleEs: message.pushTitle,
+                bodyEn: message.pushBody.slice(0, 200), bodyEs: message.pushBody.slice(0, 200),
+                link: "/chat", deepLink: "chat",
+                // Kind-scoped tag: a "back online" banner for one screen must not
+                // REPLACE another screen's "offline" banner in the tray. (The
+                // channel-mute gate only reads segment [1], so muting still works.)
+                tag: `chat:${MENU_SCREENS_CHAT_ID}:${to}:${message.kind}`,
+                // Loud = cut through quiet hours / Do Not Disturb. Night-time
+                // first alerts and good news are delivered quietly.
+                priority: message.loud ? "high" : "normal",
+                forceDeliver: message.loud === true,
+                read: false, createdBy: MENU_SCREENS_BOT,
+                createdAt: FieldValue.serverTimestamp(),
+            });
+        }
+        for (let i = 0; i < items.length; i++) {
+            tx.set(refs[i], stampOps(tvAlerts.stampsFor(message.kind, items[i])), { merge: true });
+        }
+        return true;
+    });
+}
+
 // ── 2026-05-20 — checkTvHeartbeats: alert when a menu TV goes dark ─
 // Andrew Wave 7 of "match the SaaS leaders". Every kiosk browser
 // (MenuDisplay) writes a heartbeat to /tv_heartbeats/{tvId} every
 // minute via setDoc + serverTimestamp. This function runs every
 // 5 minutes, finds heartbeats that haven't ticked in >10 min, and
-// fires a notification (FCM + SMS if configured) once per outage.
+// posts into the "📺 Menu Screens" chat thread (2026-09-17 — was bell
+// notifications): once when a screen goes dark, a nudge every 3 h in the
+// daytime while it stays dark (2 days max), and once when it is back.
 //
 // We also stamp `alertedAt` on the heartbeat doc so the same outage
 // doesn't re-fire every 5 minutes — only one ping per stretch of
@@ -3971,13 +4068,17 @@ exports.parseReceipt = onCall(
 // `alertedAt` is cleared so the NEXT outage will alert again.
 //
 // Recipients: staff with canReceiveTvOfflineAlerts === true on
-// their /config/staff.list[] record. Falls back to admin (40, 41)
+// their /config/staff.list[] record. Falls back to the owner (id 40)
 // if no opt-in flags are set, so the alert never silently no-ops.
 exports.checkTvHeartbeats = onSchedule(
     {
         schedule: "every 5 minutes",
         timeZone: "America/Chicago",
         region: "us-central1",
+        // A missed run is simply picked up 5 min later; a Scheduler RETRY
+        // would only race the next run.
+        retryCount: 0,
+        timeoutSeconds: 120,
     },
     async (event) => {
         // ── 2026-05-24 — Feature flag gate ────────────────────────────
@@ -4009,19 +4110,18 @@ exports.checkTvHeartbeats = onSchedule(
             return;
         }
 
-        const STALE_MS = 10 * 60_000;   // 10 min = "TV is dark"
+        const tvAlerts = require("./tvAlerts");
+        const STALE_MS = tvAlerts.STALE_MS;   // one source of truth with the planner
         const now = Date.now();
 
-        // 2026-05-24 audit fix: was reading EVERY heartbeat doc every 5 min.
-        // Retired TVs stay in the collection forever (rules forbid client
-        // delete). Scoped to the last 1 hour — anything older than that has
-        // already been alerted on (alertedAt is set) so we have nothing new
-        // to do for it. Cuts read cost from O(all-TVs-ever) to O(active+
-        // recently-stale) per 5-min run. We do a second query for any TVs
-        // with alertedAt set so we can fire `tv_back_online` if they
-        // recovered — that's bounded by however many TVs are actively
-        // alerted (almost always 0–3 in a healthy fleet).
-        const lookbackMs = now - 60 * 60_000;   // 1 hour
+        // Two bounded reads: screens seen in the last 14 days, plus every doc
+        // with an OPEN incident (alertedAt set). The 14-day bound only ages out
+        // retired screens (rules forbid client delete, so their docs live
+        // forever) — it is NOT an "already alerted" guarantee: review
+        // 2026-09-17 found the old 1-hour window let a screen that died while
+        // alerts were switched off fall out of BOTH queries and stay dark and
+        // silent forever. The planner applies the same FIRST_ALERT_MAX_MS.
+        const lookbackMs = now - tvAlerts.FIRST_ALERT_MAX_MS;
         const recentSnap = await db.collection("tv_heartbeats")
             .where("lastSeenAt", ">", new Date(lookbackMs))
             .get();
@@ -4043,99 +4143,124 @@ exports.checkTvHeartbeats = onSchedule(
             return;
         }
 
-        // Load staff once to resolve recipients.
+        // ── 2026-09-17 — delivery moved to the CHAT page ─────────────────
+        // Andrew (after Webster 1 + 2 sat on Chromium's "Aw, Snap" page for
+        // 3 days unnoticed): "if it ever doesnt load again or its not live or
+        // offline it sends me a message in the chat page and i can take a
+        // look." Every decision (first alert / hold-then-back-online / 3-hourly
+        // daytime reminder / stop after 2 days / keeps-dropping) and every
+        // stamp is pure + unit-tested in ./tvAlerts.js; this block only
+        // gathers inputs and commits.
+        const hbList = snap.docs.map((d) => {
+            const hb = d.data() || {};
+            return {
+                id: d.id,
+                lastSeenMs: tvAlerts.toMs(hb.lastSeenAt),
+                alertedMs: tvAlerts.toMs(hb.alertedAt),
+                remindedMs: tvAlerts.toMs(hb.remindedAt),
+                stoppedMs: tvAlerts.toMs(hb.remindersStoppedAt),
+                healthySinceMs: tvAlerts.toMs(hb.healthySinceAt),
+                flapMs: tvAlerts.toMs(hb.flapAt),
+                lastOutageAgeMin: Number(hb.lastOutageAgeMin) || 0,
+                alertTimes: Array.isArray(hb.alertTimes) ? hb.alertTimes : [],
+            };
+        });
+        const refsById = new Map(snap.docs.map((d) => [d.id, d.ref]));
+        // Cheap exit for the healthy steady state (every run, all day).
+        const needsWork = hbList.some((h) => h.alertedMs || (h.lastSeenMs && (now - h.lastSeenMs) > STALE_MS));
+        if (!needsWork) {
+            logger.info(`checkTvHeartbeats: all ${hbList.length} screens healthy`);
+            return;
+        }
+
+        // Friendly names + the per-screen mute switch (tv_configs/{id}.alertsMuted).
+        // A heartbeat id with NO config doc is a preview/test tab and never alerts.
+        const configs = {};
+        try {
+            const cfgSnap = await db.collection("tv_configs").get();
+            cfgSnap.forEach((d) => {
+                const c = d.data() || {};
+                configs[d.id] = { label: c.label || d.id, location: c.location || "", alertsMuted: c.alertsMuted === true };
+            });
+        } catch (e) {
+            // Without configs every screen looks "unconfigured" and would be
+            // silently skipped — fail the run loudly instead; next run retries.
+            logger.error("checkTvHeartbeats: could not load tv_configs:", e?.message);
+            return;
+        }
+
+        const chicagoHour = Number(new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/Chicago", hour: "numeric", hourCycle: "h23",
+        }).format(new Date(now)));
+        const plan = tvAlerts.planTvAlerts({ heartbeats: hbList, configs, nowMs: now, chicagoHour });
+
+        // Silent bookkeeping for the "back online" hold. A failed write here can
+        // only DELAY a recovery message, never duplicate anything.
+        if (plan.holdStart.length || plan.holdReset.length) {
+            try {
+                const batch = db.batch();
+                for (const kind of ["holdStart", "holdReset"]) {
+                    for (const item of plan[kind]) {
+                        const ref = refsById.get(item.id);
+                        if (!ref) continue;
+                        const st = tvAlerts.stampsFor(kind, item);
+                        const ops = {};
+                        for (const [k, v] of Object.entries(st.set)) ops[k] = v === "NOW" ? FieldValue.serverTimestamp() : v;
+                        for (const k of st.del) ops[k] = FieldValue.delete();
+                        batch.set(ref, ops, { merge: true });
+                    }
+                }
+                await batch.commit();
+            } catch (e) {
+                logger.warn("checkTvHeartbeats: hold stamps failed (recovery message will be later):", e?.message);
+            }
+        }
+
+        const messages = tvAlerts.formatTvAlertMessages(plan, configs);
+        if (messages.length === 0) {
+            logger.info(`checkTvHeartbeats: nothing new to say (tracked=${hbList.length} holdStart=${plan.holdStart.length} holdReset=${plan.holdReset.length})`);
+            return;
+        }
+
+        // Who gets the thread: staff with canReceiveTvOfflineAlerts === true;
+        // nobody opted in → the owner (id 40). Andrew asked for "me" — Julie
+        // (or anyone) joins by setting that flag on their staff record.
         let recipients = [];
         try {
             const staffSnap = await db.doc("config/staff").get();
-            const staffList = Array.isArray(staffSnap.data()?.list)
-                ? staffSnap.data().list : [];
-            recipients = staffList.filter(s => s?.canReceiveTvOfflineAlerts === true && s?.name);
-            // Fallback: admin IDs 40 + 41 (Andrew + Julie) so the
-            // alert never silently no-ops before anyone opts in.
-            if (recipients.length === 0) {
-                recipients = staffList.filter(s => s?.id === 40 || s?.id === 41);
-            }
+            const staffList = Array.isArray(staffSnap.data()?.list) ? staffSnap.data().list : [];
+            recipients = staffList.filter((s) => s?.canReceiveTvOfflineAlerts === true && s?.name).map((s) => String(s.name));
+            if (recipients.length === 0) recipients = staffList.filter((s) => s?.id === 40 && s?.name).map((s) => String(s.name));
         } catch (e) {
             logger.warn("checkTvHeartbeats: could not load staff:", e?.message);
         }
+        if (recipients.length === 0) recipients = ["Andrew Shih"];
+        recipients = [...new Set(recipients)].slice(0, 20);
 
-        let alerted = 0;
-        let recovered = 0;
-        let perIterationErrors = 0;
-        for (const hbDoc of snap.docs) {
-            // 2026-06-02 audit fix: wrap each iteration in try/catch so a
-            // single failing TV (Firestore quota blip, transient write
-            // error on `.ref.set`) doesn't abort the whole fan-out and
-            // leave the remaining offline TVs un-alerted on their first
-            // bad cron run. Without this, a single rejection inside the
-            // for-of's await chain bubbles up to the function-level
-            // failure and the next 4 TVs in the queue silently lose
-            // their offline ping.
+        let chatRef;
+        try {
+            chatRef = await ensureMenuScreensChat(recipients);
+        } catch (e) {
+            logger.error("checkTvHeartbeats: could not open the Menu Screens thread — nothing posted, will retry next run:", e?.message || e);
+            return;
+        }
+
+        let posted = 0;
+        let moot = 0;
+        let failed = 0;
+        for (const m of messages) {
             try {
-                const hb = hbDoc.data() || {};
-                const tvId = hbDoc.id;
-                const lastSeenMs = hb.lastSeenAt?.toMillis
-                    ? hb.lastSeenAt.toMillis()
-                    : (hb.lastSeenAt?.seconds ? hb.lastSeenAt.seconds * 1000 : 0);
-                const ageMs = lastSeenMs ? (now - lastSeenMs) : Infinity;
-                const isStale = ageMs > STALE_MS;
-                const alertedAt = hb.alertedAt?.toMillis ? hb.alertedAt.toMillis() : 0;
-
-                if (isStale && !alertedAt) {
-                    // Going offline — fire one notification per recipient.
-                    const ageMin = Math.round(ageMs / 60_000);
-                    for (const r of recipients) {
-                        try {
-                            await db.collection("notifications").add({
-                                type: "tv_offline",
-                                forStaff: r.name,
-                                title: `📴 TV offline: ${tvId}`,
-                                body: `${tvId} hasn't reported in ${ageMin} min. Reboot the Fire TV or check the kiosk browser.`,
-                                createdAt: FieldValue.serverTimestamp(),
-                                read: false,
-                                details: { tvId, ageMin },
-                            });
-                        } catch (e) {
-                            logger.warn("tv_offline notification write failed:", r.name, e?.message);
-                        }
-                    }
-                    await hbDoc.ref.set({
-                        alertedAt: FieldValue.serverTimestamp(),
-                        lastOutageAgeMin: ageMin,
-                    }, { merge: true });
-                    alerted += 1;
-                    logger.info(`checkTvHeartbeats: alerted on ${tvId} (${ageMin} min stale)`);
-                } else if (!isStale && alertedAt) {
-                    // Recovery — TV is reporting again. Clear the alert
-                    // stamp so the NEXT outage will alert.
-                    for (const r of recipients) {
-                        try {
-                            await db.collection("notifications").add({
-                                type: "tv_back_online",
-                                forStaff: r.name,
-                                title: `🟢 TV back online: ${tvId}`,
-                                body: `${tvId} is reporting again.`,
-                                createdAt: FieldValue.serverTimestamp(),
-                                read: false,
-                                details: { tvId },
-                            });
-                        } catch (e) {
-                            logger.warn("tv_back_online notification write failed:", r.name, e?.message);
-                        }
-                    }
-                    await hbDoc.ref.set({
-                        alertedAt: FieldValue.delete(),
-                        lastOutageAgeMin: FieldValue.delete(),
-                    }, { merge: true });
-                    recovered += 1;
-                    logger.info(`checkTvHeartbeats: ${tvId} recovered`);
-                }
+                const ok = await commitMenuScreensAlert({
+                    chatRef, recipients, message: m, items: tvAlerts.listFor(plan, m.kind), refsById, tvAlerts, nowMs: now,
+                });
+                if (ok) posted += 1; else moot += 1;
             } catch (e) {
-                perIterationErrors += 1;
-                logger.warn(`checkTvHeartbeats: iteration failed for ${hbDoc.id}:`, e?.message || e);
+                failed += 1;
+                // Atomic: a failure means NOTHING was posted or stamped.
+                logger.error(`checkTvHeartbeats: ${m.kind} commit failed — nothing posted, next run retries:`, e?.message || e);
             }
         }
-        logger.info(`checkTvHeartbeats: alerted=${alerted} recovered=${recovered} errors=${perIterationErrors} totalHeartbeats=${snap.size}`);
+        logger.info(`checkTvHeartbeats: posted=${posted} moot=${moot} failed=${failed} offline=${plan.offline.length} flapping=${plan.flapping.length} recovered=${plan.recovered.length} reminders=${plan.reminders.length} stopped=${plan.stopped.length} tracked=${hbList.length}`);
     }
 );
 

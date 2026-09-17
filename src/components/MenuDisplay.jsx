@@ -31,6 +31,7 @@
 import { Component, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, onSnapshot, query, where, limit, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { isTvImpersonationBlocked } from '../data/tvHeartbeatGate';
 import { MENU_DATA } from '../data/menu';
 import { useMenuConfigLegacy } from '../data/menuConfig';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
@@ -91,6 +92,16 @@ const IS_EMBEDDED_PREVIEW = (() => {
         return true; // cross-origin frame — definitely not a real TV
     }
 })();
+
+// 2026-09-17: the same rule, widened — "Open"/"Preview" links (&preview=1) and
+// personal devices render the menu but never speak as the TV. The Pi watchdog
+// and the 📺 Menu Screens chat alerts both trust the heartbeat to mean "the
+// physical screen is alive" (see src/data/tvHeartbeatGate.js).
+const NO_IMPERSONATE = isTvImpersonationBlocked({
+    embedded: IS_EMBEDDED_PREVIEW,
+    search: typeof window !== 'undefined' ? window.location.search : '',
+    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+});
 
 const CACHE_PREFIX = 'ddmau:tv_cache:';
 // 7 days — old enough to cover a long weekend reboot, young enough
@@ -211,7 +222,7 @@ class TvErrorBoundary extends Component {
             // Preview iframes must not attribute their crashes to the
             // physical TV (see IS_EMBEDDED_PREVIEW above). The auto-
             // recover reload below still runs so the preview un-sticks.
-            if (!IS_EMBEDDED_PREVIEW) {
+            if (!NO_IMPERSONATE) {
                 const tvId = this.props.tvId || 'unknown';
                 const docId = `${tvId}_${Date.now()}`;
                 setDoc(doc(db, 'tv_crash_logs', docId), {
@@ -541,7 +552,7 @@ function MenuDisplayInner({ tvId = 'webster' }) {
     // offline" alerts. Ours is integrated into the existing FCM/SMS
     // notification dispatcher.
     useEffect(() => {
-        if (!tvId || IS_EMBEDDED_PREVIEW) return;
+        if (!tvId || NO_IMPERSONATE) return;
         const write = () => {
             setDoc(doc(db, 'tv_heartbeats', tvId), {
                 tvId,
