@@ -105,19 +105,71 @@ capgo_serves_version() {
     -d "{\"app_id\":\"com.ddmau.staff\",\"platform\":\"ios\",\"version_name\":\"1.0.1\",\"version_build\":\"1.0.1\",\"is_prod\":true,\"is_emulator\":false,\"plugin_version\":\"7.0.0\",\"device_id\":\"00000000-0000-4000-8000-00000de10a00\"}" \
     2>/dev/null | grep -q "\"version\":\"$VERSION\""
 }
+# 2026-09-09 (v1.0.472): "did the upload COMPLETE" and "is Capgo SERVING it
+# yet" are two different questions. The CDN took >35 s to start serving a
+# bundle the CLI had already confirmed uploaded; the old loop re-ran the
+# upload (which then failed with "already exists"), re-checked twice more
+# inside ~35 s, and aborted before the broadcast — phones stayed on the old
+# bundle even though the OTA was fine. Now: retry the UPLOAD only while the
+# CLI never reported completion ("Bundle uploaded" / "already exists"); once
+# it has, poll the serve probe every 10 s for up to CAPGO_SERVE_WAIT_S. The
+# guarantee is unchanged — no broadcast until Capgo's own /updates endpoint
+# offers $VERSION — only the patience is.
+CAPGO_SERVE_WAIT_S=180
 CAPGO_OK=0
+UPLOAD_DONE=0
 for attempt in 1 2 3; do
-  if npx "@capgo/cli@${CAPGO_CLI_VERSION}" bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION"; then :; fi
+  # Capture the CLI transcript (tee'd to stderr so the operator still sees
+  # it live). The CLI's EXIT CODE is not evidence either way: 0 on the
+  # 2026-08-31 "uploadBundle failed: unknown error", non-zero on the
+  # harmless "already exists" — so judge the text, under set +e.
+  set +e
+  UPLOAD_OUT="$(npx "@capgo/cli@${CAPGO_CLI_VERSION}" bundle upload --apikey "$CAPGO_TOKEN" --channel "$CHANNEL" --bundle "$VERSION" 2>&1 | tee /dev/stderr)"
+  set -e
+  case "$UPLOAD_OUT" in
+    # Anchored on the CLI's exact client-side text. Its pre-upload existence
+    # CHECK, when that RPC blips, says "Cannot check if version X already
+    # exists" (lowercase v) BEFORE anything is uploaded — a bare
+    # "already exists" match skipped the retries and waited 3 min for a
+    # bundle that was never sent (review 2026-09-09).
+    *"Version $VERSION already exists"*) UPLOAD_DONE=1 ;;   # on Capgo from an earlier attempt/run (its transcript ALSO says "uploadBundle failed" — this pattern must come first)
+    *"uploadBundle failed"*|*"Error:"*)  UPLOAD_DONE=0 ;;   # an explicit failure outranks an earlier "uploaded" line
+    *"Bundle uploaded"*)                 UPLOAD_DONE=1 ;;
+    *)                                   UPLOAD_DONE=0 ;;
+  esac
   sleep 5
+  # Whatever the CLI said, Capgo already OFFERING the version is proof enough.
   if capgo_serves_version; then CAPGO_OK=1; break; fi
-  echo "  ⚠ Capgo is NOT serving v$VERSION after upload attempt $attempt — retrying…" >&2
-  sleep 10
+  if [ "$UPLOAD_DONE" = "1" ]; then break; fi
+  if [ "$attempt" -lt 3 ]; then
+    echo "  ⚠ Capgo upload attempt $attempt did not complete — retrying…" >&2
+    sleep 10
+  else
+    echo "  ⚠ Capgo upload attempt $attempt did not complete." >&2
+  fi
 done
+if [ "$CAPGO_OK" != "1" ] && [ "$UPLOAD_DONE" = "1" ]; then
+  echo "  … upload confirmed; waiting up to ${CAPGO_SERVE_WAIT_S}s for Capgo to start serving v$VERSION" >&2
+  SERVE_DEADLINE=$((SECONDS + CAPGO_SERVE_WAIT_S))
+  while [ "$SECONDS" -lt "$SERVE_DEADLINE" ]; do
+    sleep 10
+    if capgo_serves_version; then CAPGO_OK=1; break; fi
+    echo "  … Capgo not serving v$VERSION yet ($((SERVE_DEADLINE - SECONDS))s left)" >&2
+  done
+fi
 if [ "$CAPGO_OK" != "1" ]; then
   echo "" >&2
   echo "✗ ABORTING before the refresh broadcast: Capgo never served v$VERSION." >&2
   echo "  Phones would have been told to fetch a version that doesn't exist" >&2
-  echo "  (web is already live — re-run this script once Capgo recovers)." >&2
+  echo "  (web is already live)." >&2
+  if [ "$UPLOAD_DONE" = "1" ]; then
+    echo "  The bundle IS on Capgo but channel '$CHANNEL' is not offering it after ${CAPGO_SERVE_WAIT_S}s." >&2
+    echo "  Check the channel in console.capgo.app, or point it at the bundle by hand:" >&2
+    echo "    npx @capgo/cli@${CAPGO_CLI_VERSION} channel set '$CHANNEL' com.ddmau.staff --bundle '$VERSION' --apikey <key>" >&2
+  else
+    echo "  The upload itself never completed — re-run this script once Capgo recovers." >&2
+  fi
+  echo "  Once the probe shows v$VERSION, press 🚨 System Refresh in Admin → Danger Zone to broadcast." >&2
   exit 1
 fi
 echo "  ✓ OTA v$VERSION uploaded AND verified served by channel '$CHANNEL' — open phones apply it via the broadcast below."

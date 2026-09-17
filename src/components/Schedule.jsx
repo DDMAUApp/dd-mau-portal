@@ -65,6 +65,7 @@ import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { auditAvailabilityChange, auditPtoChange, auditShiftChange, auditScheduleConfig } from '../data/audit';
 import { pushUndo, planUndoOps, undoKindLabel } from '../data/scheduleUndo';
+import { ptoFormStatus, applyPtoFormChange } from '../data/ptoRequestForm';
 import { enableFcmPush } from '../messaging';
 // (src/data/splh imports removed 2026-08-29 — the SPLH forecast pipeline
 // was dead code after the SplhAdvisor weather-only redesign; see SC4 note
@@ -12417,7 +12418,8 @@ function TimeOffModal({ onClose, onAdd, onRemove, onSetStatus, entries, staffLis
     const sortedEntries = [...entries].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
     const upcoming = sortedEntries.filter(e => (e.endDate || e.startDate) >= today);
     const past = sortedEntries.filter(e => (e.endDate || e.startDate) < today);
-    const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    // End date follows the start date when it would fall behind (2026-09-17).
+    const update = (k, v) => setForm(f => applyPtoFormChange(f, k, v));
     const canSubmit = form.staffName && form.startDate && form.endDate && form.startDate <= form.endDate;
     // Which of the picked dates land on a blackout? A manager can still add
     // it (that's the exception), but we SHOW it so it's a deliberate choice —
@@ -12554,12 +12556,25 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
         startTime: '15:00',
         endTime: '20:00',
     });
-    const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    // applyPtoFormChange: moving the start date past the end date drags the
+    // end date along (a stale "To <today>" used to gray Submit with no hint).
+    const update = (k, v) => setForm(f => applyPtoFormChange(f, k, v));
     // 2026-05-27 — Andrew: reason required. 2026-06-17 — Andrew: also support a
     // partial-day window (e.g. 3–8 off) instead of only whole days.
-    const datesOk = form.startDate && form.endDate && form.startDate <= form.endDate;
+    // 2026-09-17 (Rubi: Submit grayed out for "Sept 24, part of the day") —
+    // the gate lives in ptoFormStatus (pure, tested). Part-of-a-day mode has NO
+    // end-date input, so the hidden endDate (default: today) must not take
+    // part in the check; it used to, which made every FUTURE partial-day
+    // request impossible to submit.
     const timesOk = !form.partial || (form.startTime && form.endTime && form.startTime < form.endTime);
-    const canSubmit = datesOk && timesOk && form.reason.trim().length > 0;
+    const { canSubmit, missing } = ptoFormStatus(form);
+    const missingHint = canSubmit ? null : ({
+        date: tx('Pick a date to continue.', 'Elige una fecha para continuar.'),
+        dateOrder: tx('The "To" date must be on or after the "From" date.', 'La fecha "Hasta" debe ser igual o posterior a "Desde".'),
+        time: tx('Pick both times to continue.', 'Elige ambas horas para continuar.'),
+        timeOrder: tx('End time must be after start time.', 'La hora final debe ser después de la inicial.'),
+        reason: tx('Type a reason to enable Submit.', 'Escribe una razón para activar Enviar.'),
+    })[missing] || null;
     const submit = () => {
         if (!canSubmit) return;
         const base = { reason: form.reason.trim() };
@@ -12656,13 +12671,21 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
                 </div>
-                <div className="border-t border-gray-200 p-4 flex gap-2 shrink-0">
-                    <button onClick={onClose}
-                        className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Cancel', 'Cancelar')}</button>
-                    <button onClick={submit} disabled={!canSubmit}
-                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-amber-600 hover:bg-amber-700' : 'bg-gray-300'}`}>
-                        {tx('Submit Request', 'Enviar Solicitud')}
-                    </button>
+                <div className="border-t border-gray-200 p-4 shrink-0">
+                    {/* Never a silent gray button: say what is still missing. */}
+                    {missingHint && (
+                        <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2" role="status">
+                            {missingHint}
+                        </p>
+                    )}
+                    <div className="flex gap-2">
+                        <button onClick={onClose}
+                            className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                        <button onClick={submit} disabled={!canSubmit}
+                            className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-amber-600 hover:bg-amber-700' : 'bg-gray-300'}`}>
+                            {tx('Submit Request', 'Enviar Solicitud')}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
