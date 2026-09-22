@@ -3,7 +3,7 @@
 // the workbook rows — plus the proof that single-rate people are untouched.
 import { describe, it, expect } from 'vitest';
 import { readPayrollExports } from '../toastParse';
-import { asRateData, normalizeRoster, upsertPerson, buildRosterView } from '../roster';
+import { asRateData, normalizeRoster, upsertPerson, buildRosterView, syncWithToast } from '../roster';
 import { runLocation } from '../runLocation';
 import { applyCrossOt } from '../crossLocOt';
 import { resolveJobPay, jobPayAmounts, jobKey, jobsForPeople } from '../jobRates';
@@ -142,5 +142,17 @@ describe('helpers + People step', () => {
         expect(jobsForPeople(undefined)).toEqual([]);
         const jp = resolveJobPay({ lines: [{ job: 'A', reg_hours: 10, ot_hours: 0, rate: 10 }, { job: 'B', reg_hours: 10, ot_hours: 0, rate: 20 }] }, {});
         expect(jobPayAmounts(jp, 20, 0)).toEqual({ reg: 300, ot: 0, moved: 0 });
+    });
+});
+
+describe('the roster remembers jobs between imports (People & DD page)', () => {
+    it('an import stores last_jobs for a two-job person and clears it when they go back to one job', async () => {
+        const r = roster();
+        syncWithToast(r, 'WG', await parse([`"Diaz, Rosa",Lead,20,0,,${LOC}`, `"Diaz, Rosa",Cashier,20,0,12,${LOC}`]), '9.7.26-9.20.26', {});
+        expect(r.WG.people[KEY].last_jobs).toEqual([{ key: 'lead', label: 'Lead', toast_rate: null }, { key: 'cashier', label: 'Cashier', toast_rate: 12 }]);
+        const view = buildRosterView(r, { WG: {}, MH: {} }).WG.people[0];      // between imports
+        expect(view.jobs.map((j) => [j.label, j.hours, j.toast_rates])).toEqual([['Lead', null, []], ['Cashier', null, [12]]]);
+        syncWithToast(r, 'WG', await parse([`"Diaz, Rosa",Cashier,40,0,12,${LOC}`]), '9.21.26-10.4.26', {});
+        expect(r.WG.people[KEY].last_jobs).toBeUndefined();
     });
 });

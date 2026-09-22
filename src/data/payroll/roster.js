@@ -70,10 +70,18 @@ export function splitLegal(legalName) {
 export function syncWithToast(data, loc, toastEmps, period, staffDefaults) {
     const people = data[loc].people;
     const newKeys = [];
+    // Remember each person's jobs from the latest import (2026-09-22) so the
+    // People & DD page can show both jobs' pay between payroll runs too.
+    const rememberJobs = (p, t) => {
+        const jobs = (t.lines && t.lines.length > 1) ? jobsForPeople(t) : [];
+        if (jobs.length > 1) p.last_jobs = jobs.map((j) => ({ key: j.key, label: j.label, toast_rate: j.toast_rates[0] ?? null }));
+        else delete p.last_jobs;
+    };
     for (const key of Object.keys(toastEmps)) {
         const t = toastEmps[key];
         if (Object.prototype.hasOwnProperty.call(people, key)) {
             const p = people[key];
+            rememberJobs(p, t);
             if (t.toast_rate) p.last_rate = t.toast_rate;
             p.last_seen = period;
             if (!p.first) p.first = t.first;
@@ -87,6 +95,7 @@ export function syncWithToast(data, loc, toastEmps, period, staffDefaults) {
                 legal_name: '', last_rate: t.toast_rate == null ? null : t.toast_rate,
                 first_seen: period, last_seen: period, key,
             };
+            rememberJobs(people[key], t);
             newKeys.push(key);
         }
     }
@@ -264,7 +273,11 @@ export function buildRosterView(data, exportsEmployees) {
                 toast_rate: t ? t.toast_rate : null,
                 needs_setup: onToast && !section,
                 // Per-job detail for the People step (2026-09-22).
-                jobs: (t && t.lines && t.lines.length > 1) ? jobsForPeople(t) : [],
+                jobs: t
+                    ? ((t.lines && t.lines.length > 1) ? jobsForPeople(t) : [])
+                    : (Array.isArray(p.last_jobs) && p.last_jobs.length > 1
+                        ? p.last_jobs.map((j) => ({ key: j.key, label: j.label, hours: null, toast_rates: j.toast_rate ? [j.toast_rate] : [] }))
+                        : []),
                 job_rates: { ...(p.job_rates || {}) },
                 job_pay: t ? resolveJobPay(t, p) : null,
             };

@@ -126,3 +126,38 @@ describe('PayrollPanel notes popup on People & DD', () => {
         expect(screen.queryByText(/Payroll reminders/)).toBeNull();
     });
 });
+
+// ── Two jobs on the People & DD page (2026-09-22) ─────────────────────────
+import * as store from '../../data/payroll/payrollStore.js';
+
+describe('People & DD page shows both jobs’ pay', () => {
+    it('one line per job with its rate; master lock on its own line; typing locks one job', async () => {
+        sessionStorage.setItem('ddmau:payrollUnlocked', '1');
+        store.loadRoster.mockResolvedValueOnce({
+            version: 1,
+            WG: { people: {}, salary: [] },
+            MH: { people: { rosadiaz: {
+                first: 'Rosa', last: 'Diaz', section: 'FOH', direct_deposit: true, rate_override: 17, last_rate: 16,
+                last_jobs: [{ key: 'lead', label: 'Lead', toast_rate: null }, { key: 'cashier', label: 'Cashier', toast_rate: 12 }],
+            } }, salary: [] },
+        });
+        render(<PayrollPanel language="en" staffName="Andrew" staffList={OWNER} />);
+        await screen.findByText(/Import this period's Toast files/i);
+        fireEvent.click(screen.getAllByText(/People/i)[0]);
+        const lead = await screen.findByLabelText('Lead pay rate');
+        const cashier = screen.getByLabelText('Cashier pay rate');
+        expect(screen.getByLabelText('Master pay rate').value).toBe('17');
+        expect(lead.value).toBe('17');          // no job lock → master rate
+        expect(cashier.value).toBe('17');
+        expect(screen.getByText('$12.00')).toBeTruthy();   // Toast's Cashier rate column
+        expect(screen.getByText('none')).toBeTruthy();     // Toast had no Lead rate
+        fireEvent.change(cashier, { target: { value: '15' } });
+        fireEvent.blur(cashier);
+        expect(screen.getByLabelText('Cashier pay rate').value).toBe('15');
+        expect(screen.getByLabelText('Lead pay rate').value).toBe('17');
+        await waitFor(() => expect(store.saveRoster).toHaveBeenCalled());
+        const saved = store.saveRoster.mock.calls.at(-1)[0];
+        expect(saved.MH.people.rosadiaz.job_rates).toEqual({ cashier: 15 });
+        expect(saved.MH.people.rosadiaz.rate_override).toBe(17);
+    });
+});

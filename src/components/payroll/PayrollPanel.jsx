@@ -1220,9 +1220,47 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                                     {p.needs_setup && <span className="ml-1 text-red-600 font-bold">NEW</span>}
                                                     {!p.on_toast && !p.needs_setup && <span className="ml-1 text-dd-text-2">(no hours)</span>}</td>
                                                 <td className="px-1 text-right">{p.on_toast ? h2((p.reg_hours || 0) + (p.ot_hours || 0)) : '—'}</td>
-                                                <td className="px-1 text-right">
-                                                    {p.job_pay ? (
-                                                        <span className="text-amber-800 font-bold" title="Worked jobs at different rates — each job is paid at its own rate (set below)">per job ↓</span>
+                                                <td className="px-1 text-right align-top">
+                                                    {p.jobs && p.jobs.length > 1 ? (
+                                                        // Two+ jobs (2026-09-22, Andrew: "if one person has two jobs it shows
+                                                        // both pays on the pay and DD page"): one line per job with the rate it
+                                                        // is paid at. Typing locks that job's rate; a master lock (if any)
+                                                        // stays editable on its own line and covers every job without one.
+                                                        <div className="flex flex-col items-end gap-0.5">
+                                                            {hasOverride(p) && (
+                                                                <span className="inline-flex items-center gap-0.5" title="Master rate — used for every job that doesn't have its own locked rate">
+                                                                    <span className="text-dd-text-2">All jobs $</span>
+                                                                    <input type="number" step="0.01" min="0" aria-label="Master pay rate"
+                                                                        value={p.rate_override}
+                                                                        onChange={(e) => editRate(loc, p, e.target.value)}
+                                                                        onBlur={persistRosterQuiet}
+                                                                        className="w-16 text-right rounded px-1 py-0.5 border border-dd-green bg-dd-green-50 font-bold text-dd-green-700" />
+                                                                    <button type="button" onClick={() => resetRate(loc, p)} title="Remove the master rate — each job uses its own rate"
+                                                                        className="text-dd-text-2 hover:text-red-600 leading-none px-0.5">↺</button>
+                                                                </span>
+                                                            )}
+                                                            {p.jobs.map((j) => {
+                                                                const pin = Number((p.job_rates || {})[j.key]);
+                                                                const pinned = Number.isFinite(pin) && pin > 0;
+                                                                const toastR = j.toast_rates[0];
+                                                                const shown = pinned ? pin : (hasOverride(p) ? Number(p.rate_override) : (toastR != null ? toastR : ''));
+                                                                return (
+                                                                    <span key={j.key} className="inline-flex items-center gap-0.5">
+                                                                        <span className="text-dd-text-2 whitespace-nowrap">{j.label}{j.hours != null ? ` ${h2(j.hours)}h` : ''} $</span>
+                                                                        <input type="number" step="0.01" min="0" aria-label={`${j.label} pay rate`}
+                                                                            value={shown}
+                                                                            onChange={(e) => editJobRate(loc, p, j.key, e.target.value)}
+                                                                            onBlur={persistRosterQuiet}
+                                                                            title={pinned ? `Locked at $${h2(pin)} for ${j.label}${toastR != null ? ` (Toast says $${h2(toastR)})` : ''}. Stays until you change it.` : (hasOverride(p) ? `Paid at the master rate — type to lock a different rate for ${j.label}` : `From Toast — type to lock a rate for ${j.label}`)}
+                                                                            className={`w-16 text-right rounded px-1 py-0.5 border ${pinned ? 'border-dd-green bg-dd-green-50 font-bold text-dd-green-700' : 'border-dd-line'}`} />
+                                                                        {pinned ? (
+                                                                            <button type="button" onClick={() => resetJobRate(loc, p, j.key)} title={`Unlock ${j.label}`}
+                                                                                className="text-dd-text-2 hover:text-red-600 leading-none px-0.5">↺</button>
+                                                                        ) : <span className="w-3" />}
+                                                                    </span>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     ) : (
                                                     <span className="inline-flex items-center gap-0.5 justify-end">
                                                         <span className="text-dd-text-2">$</span>
@@ -1240,7 +1278,16 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                                     </span>
                                                     )}
                                                 </td>
-                                                <td className="px-1 text-right text-dd-text-2">{p.job_pay ? 'varies' : (p.toast_rate != null ? '$' + h2(p.toast_rate) : '—')}</td>
+                                                <td className="px-1 text-right text-dd-text-2 align-top">
+                                                    {p.jobs && p.jobs.length > 1 ? (
+                                                        <div className="flex flex-col items-end gap-0.5">
+                                                            {hasOverride(p) && <span className="py-0.5">&nbsp;</span>}
+                                                            {p.jobs.map((j) => (
+                                                                <span key={j.key} className="py-0.5 whitespace-nowrap">{j.toast_rates.length ? j.toast_rates.map((x) => '$' + h2(x)).join(' / ') : 'none'}</span>
+                                                            ))}
+                                                        </div>
+                                                    ) : (p.toast_rate != null ? '$' + h2(p.toast_rate) : '—')}
+                                                </td>
                                                 <td className="px-1">
                                                     <select value={p.section || ''} onChange={(e) => editPerson(loc, p.key, 'section', e.target.value)}
                                                         className="border border-dd-line rounded px-1 py-0.5 text-[11px]">
@@ -1250,38 +1297,6 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                                 <td className="px-1 text-center"><input type="checkbox" checked={!!p.direct_deposit} onChange={(e) => editPerson(loc, p.key, 'direct_deposit', e.target.checked)} /></td>
                                                 <td className="px-1 text-center"><input type="checkbox" checked={!p.no_tip} onChange={(e) => editPerson(loc, p.key, 'no_tip', !e.target.checked)} /></td>
                                             </tr>
-                                            {p.jobs && p.jobs.length > 1 && (
-                                                <tr className={p.job_pay ? 'bg-amber-50' : ''}>
-                                                    <td colSpan={7} className="pl-4 pb-1.5 pt-0">
-                                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
-                                                            <span className="text-dd-text-2">{p.job_pay ? 'Paid per job:' : (hasOverride(p) ? `All jobs paid at your locked $${h2(p.rate_override)} — or lock a rate per job:` : 'Jobs (same rate):')}</span>
-                                                            {p.jobs.map((j) => {
-                                                                const pin = Number((p.job_rates || {})[j.key]);
-                                                                const pinned = Number.isFinite(pin) && pin > 0;
-                                                                const toastR = j.toast_rates[0];
-                                                                return (
-                                                                    <span key={j.key} className="inline-flex items-center gap-1">
-                                                                        <b>{j.label}</b> <span className="text-dd-text-2">{h2(j.hours)}h</span>
-                                                                        <span className="text-dd-text-2">$</span>
-                                                                        <input type="number" step="0.01" min="0" aria-label={`${j.label} pay rate`}
-                                                                            value={pinned ? pin : (hasOverride(p) ? Number(p.rate_override) : (toastR != null ? toastR : ''))}
-                                                                            onChange={(e) => editJobRate(loc, p, j.key, e.target.value)}
-                                                                            onBlur={persistRosterQuiet}
-                                                                            title={pinned ? `Locked at $${h2(pin)} for ${j.label}${toastR != null ? ` (Toast says $${h2(toastR)})` : ''}. Stays until you change it.` : `From Toast — type to lock a rate for ${j.label}`}
-                                                                            className={`w-16 text-right rounded px-1 py-0.5 border ${pinned ? 'border-dd-green bg-dd-green-50 font-bold text-dd-green-700' : 'border-dd-line'}`} />
-                                                                        {pinned && (
-                                                                            <button type="button" onClick={() => resetJobRate(loc, p, j.key)}
-                                                                                title={`Reset ${j.label} to the Toast rate`}
-                                                                                className="text-dd-text-2 hover:text-red-600 leading-none px-0.5">↺</button>
-                                                                        )}
-                                                                        {j.toast_rates.length > 1 && <span className="text-amber-800">(Toast: {j.toast_rates.map((x) => '$' + h2(x)).join(' / ')})</span>}
-                                                                    </span>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            )}
                                             </Fragment>
                                         ))}
                                         {!rosterView[loc].people.length && <tr><td colSpan={7} className="text-dd-text-2 py-1">no one yet</td></tr>}
