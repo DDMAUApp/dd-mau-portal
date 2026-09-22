@@ -9,7 +9,7 @@
 // (dynamically imported) exceljs never cost anything for admins who don't run
 // payroll.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import ModalPortal from '../ModalPortal';
 import { toast } from '../../toast';
 import PayrollNotes from './PayrollNotes';
@@ -802,7 +802,7 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     // True when this period's Pay Rate doesn't match what Toast reported (i.e. an
     // override that differs from Toast) — used to flag the row red so a mismatch
     // is impossible to miss before payroll runs.
-    const rateMismatch = (p) => p.toast_rate != null && Math.abs(payRate(p) - p.toast_rate) > 0.0001;
+    const rateMismatch = (p) => !p.job_pay && p.toast_rate != null && Math.abs(payRate(p) - p.toast_rate) > 0.0001;
 
     // Every active rate override, for the "changes" summary at the bottom of the
     // People step (so the owner can see exactly which rates are pinned over Toast).
@@ -810,6 +810,12 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
     if (rosterView) {
         for (const loc of LOCS) {
             for (const p of rosterView[loc].people) {
+                for (const j of (p.jobs || [])) {
+                    const pin = Number((p.job_rates || {})[j.key]);
+                    if (Number.isFinite(pin) && pin > 0) {
+                        rateOverrides.push({ loc, name: `${p.first} ${p.last} — ${j.label}`, from: j.toast_rates[0] ?? null, to: pin });
+                    }
+                }
                 if (hasOverride(p)) {
                     rateOverrides.push({
                         loc, name: `${p.first} ${p.last}`,
@@ -913,6 +919,18 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
         setAck(false);
         bump();
     };
+    // Per-JOB master rate (2026-09-22) for someone who works two positions at
+    // different rates. Same sticky semantics as editRate, scoped to one job.
+    const editJobRate = (loc, p, jobKey, val) => {
+        const s = String(val).trim();
+        if (s === '') { upsertPerson(roster, loc, p.key, { job_rates: { [jobKey]: '' } }); setAck(false); bump(); return; }
+        const n = Number(s);
+        if (!Number.isFinite(n) || n <= 0) { bump(); return; }
+        upsertPerson(roster, loc, p.key, { job_rates: { [jobKey]: n } });
+        setAck(false);
+        bump();
+    };
+    const resetJobRate = (loc, p, jobKey) => { upsertPerson(roster, loc, p.key, { job_rates: { [jobKey]: '' } }); setAck(false); bump(); persistRosterQuiet(); };
     // Drop the master pin → this person falls back to the Toast rate again.
     const resetRate = (loc, p) => { upsertPerson(roster, loc, p.key, { rate_override: '' }); bump(); persistRosterQuiet(); };
     // Persist the roster in the background (no toast) so a pinned master rate is
@@ -1196,12 +1214,16 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                     </tr></thead>
                                     <tbody>
                                         {rosterView[loc].people.map((p) => (
-                                            <tr key={p.key} className={rateMismatch(p) ? 'bg-red-100' : (p.needs_setup ? 'bg-red-50' : '')}>
+                                            <Fragment key={p.key}>
+                                            <tr className={rateMismatch(p) ? 'bg-red-100' : (p.needs_setup ? 'bg-red-50' : (p.job_pay ? 'bg-amber-50' : ''))}>
                                                 <td className="py-1 pr-2">{p.first} {p.last}
                                                     {p.needs_setup && <span className="ml-1 text-red-600 font-bold">NEW</span>}
                                                     {!p.on_toast && !p.needs_setup && <span className="ml-1 text-dd-text-2">(no hours)</span>}</td>
                                                 <td className="px-1 text-right">{p.on_toast ? h2((p.reg_hours || 0) + (p.ot_hours || 0)) : '—'}</td>
                                                 <td className="px-1 text-right">
+                                                    {p.job_pay ? (
+                                                        <span className="text-amber-800 font-bold" title="Worked jobs at different rates — each job is paid at its own rate (set below)">per job ↓</span>
+                                                    ) : (
                                                     <span className="inline-flex items-center gap-0.5 justify-end">
                                                         <span className="text-dd-text-2">$</span>
                                                         <input type="number" step="0.01" min="0"
@@ -1216,8 +1238,9 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                                                 className="text-dd-text-2 hover:text-red-600 leading-none px-0.5">↺</button>
                                                         )}
                                                     </span>
+                                                    )}
                                                 </td>
-                                                <td className="px-1 text-right text-dd-text-2">{p.toast_rate != null ? '$' + h2(p.toast_rate) : '—'}</td>
+                                                <td className="px-1 text-right text-dd-text-2">{p.job_pay ? 'varies' : (p.toast_rate != null ? '$' + h2(p.toast_rate) : '—')}</td>
                                                 <td className="px-1">
                                                     <select value={p.section || ''} onChange={(e) => editPerson(loc, p.key, 'section', e.target.value)}
                                                         className="border border-dd-line rounded px-1 py-0.5 text-[11px]">
@@ -1227,6 +1250,39 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                                 <td className="px-1 text-center"><input type="checkbox" checked={!!p.direct_deposit} onChange={(e) => editPerson(loc, p.key, 'direct_deposit', e.target.checked)} /></td>
                                                 <td className="px-1 text-center"><input type="checkbox" checked={!p.no_tip} onChange={(e) => editPerson(loc, p.key, 'no_tip', !e.target.checked)} /></td>
                                             </tr>
+                                            {p.jobs && p.jobs.length > 1 && (
+                                                <tr className={p.job_pay ? 'bg-amber-50' : ''}>
+                                                    <td colSpan={7} className="pl-4 pb-1.5 pt-0">
+                                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                                                            <span className="text-dd-text-2">{p.job_pay ? 'Paid per job:' : (hasOverride(p) ? `All jobs paid at your locked $${h2(p.rate_override)} — or lock a rate per job:` : 'Jobs (same rate):')}</span>
+                                                            {p.jobs.map((j) => {
+                                                                const pin = Number((p.job_rates || {})[j.key]);
+                                                                const pinned = Number.isFinite(pin) && pin > 0;
+                                                                const toastR = j.toast_rates[0];
+                                                                return (
+                                                                    <span key={j.key} className="inline-flex items-center gap-1">
+                                                                        <b>{j.label}</b> <span className="text-dd-text-2">{h2(j.hours)}h</span>
+                                                                        <span className="text-dd-text-2">$</span>
+                                                                        <input type="number" step="0.01" min="0" aria-label={`${j.label} pay rate`}
+                                                                            value={pinned ? pin : (hasOverride(p) ? Number(p.rate_override) : (toastR != null ? toastR : ''))}
+                                                                            onChange={(e) => editJobRate(loc, p, j.key, e.target.value)}
+                                                                            onBlur={persistRosterQuiet}
+                                                                            title={pinned ? `Locked at $${h2(pin)} for ${j.label}${toastR != null ? ` (Toast says $${h2(toastR)})` : ''}. Stays until you change it.` : `From Toast — type to lock a rate for ${j.label}`}
+                                                                            className={`w-16 text-right rounded px-1 py-0.5 border ${pinned ? 'border-dd-green bg-dd-green-50 font-bold text-dd-green-700' : 'border-dd-line'}`} />
+                                                                        {pinned && (
+                                                                            <button type="button" onClick={() => resetJobRate(loc, p, j.key)}
+                                                                                title={`Reset ${j.label} to the Toast rate`}
+                                                                                className="text-dd-text-2 hover:text-red-600 leading-none px-0.5">↺</button>
+                                                                        )}
+                                                                        {j.toast_rates.length > 1 && <span className="text-amber-800">(Toast: {j.toast_rates.map((x) => '$' + h2(x)).join(' / ')})</span>}
+                                                                    </span>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            </Fragment>
                                         ))}
                                         {!rosterView[loc].people.length && <tr><td colSpan={7} className="text-dd-text-2 py-1">no one yet</td></tr>}
                                     </tbody>
@@ -1487,9 +1543,10 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                             <thead><tr className="text-left text-dd-text-2"><th className="pr-2">Person</th><th className="text-right px-1">Rate</th><th className="text-right px-1">Hrs</th><th className="text-right px-1">Tips</th><th className="text-right px-1">Reg</th><th className="text-right px-1">OT</th><th className="text-right px-1" title="Cross-store overtime — hours over 40/week combined across both stores (straight time + FLSA premium, ≈1.5×)">Cross OT</th><th className="text-right px-1">Extra</th><th className="text-right px-1">TOTAL</th><th>DD</th></tr></thead>
                                             <tbody>
                                                 {res.sections[sec].rows.map((r) => (
-                                                    <tr key={r.key} className={(r.toast_rate != null && Math.abs(r.rate - r.toast_rate) > 0.005) ? 'bg-red-100' : (r.multi_line ? 'bg-amber-50' : '')}>
+                                                    <Fragment key={r.key}>
+                                                    <tr className={(!r.multi_rate && r.toast_rate != null && Math.abs(r.rate - r.toast_rate) > 0.005) ? 'bg-red-100' : (r.multi_line ? 'bg-amber-50' : '')}>
                                                         <td className="pr-2">{r.display_first} {r.display_last}{r.no_tip ? <span className="text-dd-text-2"> (no tips)</span> : ''}</td>
-                                                        <td className="text-right px-1">${h2(r.rate)}</td>
+                                                        <td className="text-right px-1" title={r.multi_rate ? 'Weighted average of their job rates — each job is paid at its own rate (lines below)' : undefined}>{r.multi_rate ? '~' : ''}${h2(r.rate)}</td>
                                                         <td className="text-right px-1">{h2(r.total_hours)}</td>
                                                         <td className="text-right px-1">{money(r.tip_cents)}</td>
                                                         <td className="text-right px-1">{money(r.reg_cents)}</td>
@@ -1499,6 +1556,18 @@ export default function PayrollPanel({ language, staffName, staffList, onClose }
                                                         <td className="text-right px-1 font-bold">{money(r.comp_cents)}</td>
                                                         <td>{r.direct_deposit ? 'DD' : ''}</td>
                                                     </tr>
+                                                    {r.multi_rate && r.job_pay && r.job_pay.lines.filter((l) => l.reg_hours + l.ot_hours > 0).map((l) => (
+                                                        <tr key={`${r.key}:${l.key}:${l.rate}`} className="bg-amber-50 text-dd-text-2 italic">
+                                                            <td className="pr-2 pl-3">↳ {l.job}</td>
+                                                            <td className="text-right px-1">${h2(l.rate)}</td>
+                                                            <td className="text-right px-1">{h2(l.reg_hours + l.ot_hours)}</td>
+                                                            <td></td>
+                                                            <td className="text-right px-1">{r.xot_hours ? '' : money(Math.round(l.rate * l.reg_hours * 100))}</td>
+                                                            <td className="text-right px-1">{l.ot_hours ? `${h2(l.ot_hours)}h` : ''}</td>
+                                                            <td colSpan={4}></td>
+                                                        </tr>
+                                                    ))}
+                                                    </Fragment>
                                                 ))}
                                                 <tr className="font-bold border-t border-dd-line">
                                                     <td>TOTAL {sec}</td><td></td><td className="text-right px-1">{h2(res.sections[sec].totals.total_hours)}</td>

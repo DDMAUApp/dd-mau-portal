@@ -12,6 +12,7 @@
 // engine without any Firebase dependency.
 
 import { keyFromMaster } from './names.js';
+import { resolveJobPay, jobsForPeople, lockOverDifferentJobs } from './jobRates.js';
 
 export const LOCATIONS = ['WG', 'MH'];
 
@@ -118,6 +119,17 @@ export function upsertPerson(data, loc, key, fields) {
         if (ro === '' || ro === null || ro === undefined) delete p.rate_override;
         else p.rate_override = Number(ro);
     }
+    // Per-JOB locked rates (2026-09-22): { jobKey: rate }. Pass
+    // { job_rates: { line_cook: 17 } } to lock, '' / null to unlock one job.
+    if (fields.job_rates && typeof fields.job_rates === 'object') {
+        const jr = { ...(p.job_rates || {}) };
+        for (const [k, v] of Object.entries(fields.job_rates)) {
+            const n = Number(v);
+            if (v === '' || v === null || v === undefined || !Number.isFinite(n) || n <= 0) delete jr[k];
+            else jr[k] = n;
+        }
+        if (Object.keys(jr).length) p.job_rates = jr; else delete p.job_rates;
+    }
     return p;
 }
 
@@ -154,12 +166,20 @@ export function asRateData(data, loc, toastEmps) {
         // ship a blank/NaN paycheck on an all-green run. Coerce to 0 here; runLocation
         // then hard-FAILS any worked person left at $0 so it can never pay wrong.
         if (!Number.isFinite(rate)) rate = 0;
+        // Two+ jobs at DIFFERENT rates (2026-09-22): the row is paid per job
+        // (runLocation) and `rate` becomes the weighted-average regular rate —
+        // what cross-store OT and the "effective rate" display use. Everyone
+        // else keeps the exact single-rate precedence above.
+        const jobPay = resolveJobPay(t, p);
+        if (jobPay) rate = jobPay.regular_rate;
         const [lf, ll] = splitLegal(p.legal_name);
         const emp = {
             first: p.first, last: p.last, rate: Number(rate),
             section, direct_deposit: !!p.direct_deposit,
             no_tip: !!p.no_tip, legal_name: p.legal_name || '',
             legal_first: lf, legal_last: ll, note: '', row: null, key,
+            job_pay: jobPay,
+            lock_over_jobs: jobPay ? null : lockOverDifferentJobs(t, p),
         };
         employees.push(emp);
         byKey[key] = emp;
@@ -243,6 +263,10 @@ export function buildRosterView(data, exportsEmployees) {
                 ot_hours: t ? t.ot_hours : null,
                 toast_rate: t ? t.toast_rate : null,
                 needs_setup: onToast && !section,
+                // Per-job detail for the People step (2026-09-22).
+                jobs: (t && t.lines && t.lines.length > 1) ? jobsForPeople(t) : [],
+                job_rates: { ...(p.job_rates || {}) },
+                job_pay: t ? resolveJobPay(t, p) : null,
             };
         });
         list.sort((a, b) => {

@@ -7,7 +7,7 @@
 //
 // exceljs is dynamic-imported so it only loads when payroll runs.
 
-import { d, fmtG, money2 } from './cents.js';
+import { d, fmtG, money2, round2 } from './cents.js';
 import { describe as describeExtra } from './extras.js';
 
 const LOCATION_NAMES = { WG: 'WEBSTER GROVES', MH: 'MARYLAND HEIGHTS' };
@@ -109,8 +109,15 @@ function tipRow(ws, r, row) {
     });
     // Pay rate was changed from what Toast reported (an override) → fill the row
     // red so the People-step flag carries all the way through to the doc.
-    if (row.toast_rate != null && Math.abs(row.rate - row.toast_rate) > 0.005) {
+    // (A multi-rate person's `rate` is their weighted average, which never
+    // equals Toast's first-line rate — that isn't an override, so no red.)
+    if (!row.multi_rate && row.toast_rate != null && Math.abs(row.rate - row.toast_rate) > 0.005) {
         for (let ci = 1; ci <= 18; ci++) cell(ws, r, ci).fill = FILL_RED;
+    }
+    if (row.multi_rate) {
+        cell(ws, r, 1).note = 'Worked jobs at different rates — this is the WEIGHTED-AVERAGE rate. '
+            + 'REG PAY = each job\'s regular hours × that job\'s own rate (lines under this person). '
+            + 'OT PAY = each OT hour at its job\'s rate + ½ × this average (federal regular-rate method).';
     }
     if (row.no_tip) {
         cell(ws, r, 7).value = 0;
@@ -129,6 +136,21 @@ function tipRow(ws, r, row) {
             + 'Paid straight time + the FLSA-exact premium (≈1.5×). These hours were moved out of '
             + "REG HRS and are NOT in Toast's per-store OT column.";
     }
+}
+
+function jobDetailRows(ws, r, row) {
+    if (!row.multi_rate || !row.job_pay) return r;
+    for (const l of row.job_pay.lines) {
+        if (l.reg_hours + l.ot_hours <= 0) continue;
+        const c = cell(ws, r, 2);
+        // (Cross-store OT moved some regular hours out at the average rate, so
+        // a per-job $ here would no longer add up — show hours × rate only.)
+        const dollars = row.xot_hours ? '' : ` = $${(l.rate * l.reg_hours).toFixed(2)} regular`;
+        c.value = `      ↳ ${l.job}: ${fmtG(round2(l.reg_hours))}h reg${l.ot_hours ? ` + ${fmtG(round2(l.ot_hours))}h OT` : ''} @ $${l.rate.toFixed(2)}${dollars}`;
+        c.font = { italic: true, size: 9, color: { argb: argb('808080') } };
+        r += 1;
+    }
+    return r;
 }
 
 function extraDetailRows(ws, r, row) {
@@ -195,6 +217,7 @@ function writeTipSheet(ws, res) {
         for (const row of data.rows) {
             tipRow(ws, r, row);
             r += 1;
+            r = jobDetailRows(ws, r, row);
             r = extraDetailRows(ws, r, row);
         }
         totalsRow(ws, r, `TOTAL ${sec}`, data.totals);

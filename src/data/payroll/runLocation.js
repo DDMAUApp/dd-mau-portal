@@ -12,6 +12,7 @@
 import { c, cRound, fmtG, money2, round2, roundN } from './cents.js';
 import { suggestMatch } from './names.js';
 import { describe } from './extras.js';
+import { jobPayAmounts } from './jobRates.js';
 
 const OT_MULT = 1.5;
 
@@ -80,6 +81,10 @@ function newRow(m, t) {
         total_hours: t ? round2(t.reg_hours + t.ot_hours + (t.xot_hours || 0)) : 0.0,
         multi_line: !!(t && t.multi_line),
         lines: t ? t.lines : [],
+        // Two+ jobs at different rates → paid per job (jobRates.js). `rate`
+        // above is then the weighted-average regular rate.
+        multi_rate: !!(t && m.job_pay),
+        job_pay: (t && m.job_pay) ? m.job_pay : null,
         merge_detail: null,
         tip_cents: 0, reg_cents: 0, ot_cents: 0,
         extra_cents: 0, hol_hours: 0.0, hol_cents: 0,
@@ -161,7 +166,43 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
             checks.push(check(`namemerge:${key}`, 'fail', `Two different names merged into one paycheck`,
                 `Toast rows for ${(t.merged_names || []).join(' AND ')} collapsed to a single person (${m.first} ${m.last}) — usually a wrong alias or a name-spelling collision. Their hours/tips were SUMMED onto one check. If these are different people, fix the alias/spelling and re-run; if it's really one person, confirm before generating.`));
         }
-        if (t.multi_line) {
+        const jp = m.job_pay;
+        if (jp) {
+            // Paid per job (2026-09-22). One warn with the full math so the
+            // owner acknowledges it; a worked job with no usable rate FAILS.
+            const name = `${m.first} ${m.last}`;
+            const worked = jp.lines.filter((l) => l.reg_hours + l.ot_hours > 0);
+            const srcLabel = { locked: 'locked', toast: 'Toast', override: 'your locked rate', last: 'last known' };
+            const detail = worked
+                .map((l) => `${l.job}: ${fmtG(l.reg_hours)}h reg + ${fmtG(l.ot_hours)}h OT @ $${money2(l.rate)} (${srcLabel[l.source] || 'no rate'})`)
+                .join('; ');
+            rowsByKey[key].merge_detail = detail;
+            const amt = jobPayAmounts(jp, t.reg_hours, t.ot_hours);
+            checks.push(check(`jobs:${key}`, 'warn', `${name}: ${worked.length} jobs at different rates — paid per job`,
+                `${detail}. Regular pay $${money2(amt.reg)}${t.ot_hours > 0 ? `, overtime $${money2(amt.ot)}` : ''}. `
+                + `Weighted-average rate $${money2(jp.regular_rate)}/hr — used for the overtime premium (each OT hour pays its job's rate + ½ of this average, `
+                + `taken over the whole pay period) and for any cross-store overtime.`));
+            for (const l of jp.missing) {
+                checks.push(check(`jobnorate:${key}:${l.key}`, 'fail', `${name}: no pay rate for the ${l.job} job`,
+                    `They worked ${fmtG(l.reg_hours + l.ot_hours)}h as ${l.job} but Toast gave no rate and there's nothing to fall back on. Lock a rate for ${l.job} on the People step and re-run.`));
+            }
+            for (const l of worked) {
+                if (l.source === 'locked' && l.toast_rate && Math.abs(l.rate - l.toast_rate) > 0.005) {
+                    checks.push(check(`jobrate:${key}:${l.key}`, 'warn', `${name}: ${l.job} rate differs from Toast`,
+                        `Locked $${money2(l.rate)}/hr for ${l.job} (used for pay) vs Toast $${money2(l.toast_rate)}/hr. Fix whichever is wrong.`));
+                } else if (l.source === 'override' || l.source === 'last') {
+                    checks.push(check(`jobzero:${key}:${l.key}`, 'warn', `${name}: Toast had no rate for ${l.job}`,
+                        `Paid ${l.job} at $${money2(l.rate)}/hr (${srcLabel[l.source]}). Confirm it, or lock a rate for ${l.job} on the People step.`));
+                }
+            }
+        } else if (m.lock_over_jobs) {
+            const lo = m.lock_over_jobs;
+            const toastSays = lo.jobs.map((j) => `${j.job} ${j.toast_rate ? '$' + money2(j.toast_rate) : 'no rate'}`).join(', ');
+            checks.push(check(`joblock:${key}`, 'warn', `${m.first} ${m.last}: locked $${money2(lo.override)} paid for all jobs`,
+                `Toast lists their jobs at different rates (${toastSays}), but your locked master rate $${money2(lo.override)}/hr wins, so every hour is paid at it — same as before. `
+                + `If the jobs should pay differently, lock a rate on each job's line on the People step (a job lock beats the master rate).`));
+        }
+        if (!jp && t.multi_line) {
             const detail = t.lines
                 .map((ln) => `${ln.job || 'job'}: ${fmtG(ln.reg_hours)}h reg + ${fmtG(ln.ot_hours)}h OT @ $${fmtG(ln.rate)}`)
                 .join('; ');
@@ -170,7 +211,7 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
                 `Toast listed them once per job; hours were summed. ${detail}. OT is taken as Toast reports it per line, not recomputed.`));
         }
         const drift = Math.abs(t.toast_rate - m.rate);
-        if (t.toast_rate && drift > 0.005) {
+        if (!jp && t.toast_rate && drift > 0.005) {
             checks.push(check(`rate:${key}`, 'warn', `${m.first} ${m.last}: rate differs from Toast`,
                 `Master list $${fmtG(m.rate)}/hr (used for pay) vs Toast $${fmtG(t.toast_rate)}/hr. Fix whichever is wrong.`));
         }
@@ -180,7 +221,7 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
         // rather than let a stale $0-from-Toast hide silently. Additive warn only;
         // no money math changes. (A $0 Toast rate with NO roster fallback still
         // hits the zerorate hard-FAIL below.)
-        if (!t.toast_rate && Number.isFinite(m.rate) && m.rate > 0 && ((t.reg_hours || 0) > 0 || (t.ot_hours || 0) > 0)) {
+        if (!jp && !t.toast_rate && Number.isFinite(m.rate) && m.rate > 0 && ((t.reg_hours || 0) > 0 || (t.ot_hours || 0) > 0)) {
             checks.push(check(`toastzero:${key}`, 'warn', `${m.first} ${m.last}: Toast reported $0/hr`,
                 `Toast's pay rate for them was $0 or blank, so pay used $${fmtG(m.rate)}/hr from the roster (last known or your override). Confirm that's the right rate.`));
         }
@@ -276,8 +317,14 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
                 checks.push(check(`zerorate:${r.key}`, 'fail', `${r.first} ${r.last}: pay rate is $0 / missing`,
                     `They worked ${fmtG(r.total_hours)} hours but their pay rate read as $${fmtG(Number.isFinite(r.rate) ? r.rate : 0)}/hr. Set their rate on the People step (digits only, no $ or commas) and re-run.`));
             }
-            r.reg_cents = c(r.rate * r.reg_hours);
-            r.ot_cents = c(r.rate * OT_MULT * r.ot_hours);
+            if (r.job_pay) {
+                const amt = jobPayAmounts(r.job_pay, r.reg_hours, r.ot_hours);
+                r.reg_cents = c(amt.reg);
+                r.ot_cents = c(amt.ot);
+            } else {
+                r.reg_cents = c(r.rate * r.reg_hours);
+                r.ot_cents = c(r.rate * OT_MULT * r.ot_hours);
+            }
             r.comp_cents = r.tip_cents + r.reg_cents + r.ot_cents + r.xot_cents + r.extra_cents + r.hol_cents + r.vac_cents;
             r.eff_rate = r.total_hours ? round2(r.comp_cents / 100.0 / r.total_hours) : null;
             // comp_cents must be a real number. NaN < 0 is false, so a NaN paycheck
