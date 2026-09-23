@@ -121,3 +121,58 @@ export function planClearUndo(entry, live) {
     const relink = restoreShifts.filter(s => s.data?.fromNeedId && !restoredNeedIds.has(s.data.fromNeedId));
     return { restoreNeeds, restoreShifts, relink };
 }
+
+// ── Scope: exactly what's on screen, drafts only (Andrew 2026-09-23: "only
+// work for the unpublished shifts and the page we are currently on … only
+// the week I'm viewing, not all shifts and not all locations") ────────────
+//   scope: { startStr, endStr (exclusive), storeLocation, side, personFilter }
+// A 'both stores' view is refused — these actions run on ONE store.
+export function resetScopeProblem(scope) {
+    if (!scope || !scope.startStr || !scope.endStr || !scope.side) return 'no_scope';
+    if (!scope.storeLocation || scope.storeLocation === 'both') return 'both_stores';
+    return null;
+}
+
+// One shift is in scope only if ALL hold (checked on the freshest data we
+// have — the server copy when given, else the on-screen copy):
+//   draft · no pending claim · date inside the range · THIS store (a shift
+//   with no store is left alone) · THIS side · the filtered person (if any).
+export function shiftInResetScope(sh, scope, fallbackSide = null) {
+    if (!sh || resetScopeProblem(scope)) return false;
+    if (sh.published !== false) return false;
+    if (sh.pendingClaimBy) return false;
+    if (!sh.date || sh.date < scope.startStr || sh.date >= scope.endStr) return false;
+    if (sh.location !== scope.storeLocation) return false;
+    if ((sh.side || fallbackSide) !== scope.side) return false;
+    if (scope.personFilter && sh.staffName !== scope.personFilter) return false;
+    return true;
+}
+
+// viewShifts: what the grid shows ({ id, ...data }, side may be missing on
+// legacy docs — the grid already resolved it to the viewed side).
+// liveById: Map of fresh server docs for the range, or null to count from
+// the screen (the confirm dialog). A shift must be on screen AND (when
+// liveById is given) still exist and still qualify on the server.
+export function selectResetDrafts(viewShifts, liveById, scope) {
+    if (resetScopeProblem(scope)) return [];
+    const out = [];
+    for (const v of viewShifts || []) {
+        if (!v || !v.id) continue;
+        const fallbackSide = v.side || scope.side;
+        const data = liveById ? liveById.get(v.id) : v;
+        if (!data) continue;
+        if (!shiftInResetScope(data, scope, fallbackSide)) continue;
+        out.push({ ...data, id: v.id, side: data.side || fallbackSide });
+    }
+    return out;
+}
+
+// Unassigned seats "Delete all unpublished" clears: only ones Unassign-all
+// made, in this range / store / side. None while a person filter is on —
+// seats belong to nobody, so "only Maria's shifts" must not wipe them.
+export function selectResetSeats(needs, scope) {
+    if (resetScopeProblem(scope) || scope.personFilter) return [];
+    return (needs || []).filter(n => n && n.fromUnassign === true &&
+        n.date >= scope.startStr && n.date < scope.endStr &&
+        n.side === scope.side && n.location === scope.storeLocation);
+}

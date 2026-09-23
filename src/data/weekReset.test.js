@@ -99,3 +99,72 @@ describe('planClearUndo', () => {
         expect(plan.relink.map(s => s.id)).toEqual(['b']);
     });
 });
+
+import { resetScopeProblem, shiftInResetScope, selectResetDrafts, selectResetSeats } from './weekReset';
+
+describe('reset scope — only drafts on the page being viewed', () => {
+    const scope = { startStr: '2026-09-20', endStr: '2026-09-27', storeLocation: 'webster', side: 'foh', personFilter: null };
+    const d = (id, over = {}) => ({ id, staffName: 'Maria', date: '2026-09-22', side: 'foh', location: 'webster', published: false, startTime: '10:00', endTime: '15:00', ...over });
+
+    it('refuses a both-stores view', () => {
+        expect(resetScopeProblem({ ...scope, storeLocation: 'both' })).toBe('both_stores');
+        expect(selectResetDrafts([d('a')], null, { ...scope, storeLocation: 'both' })).toEqual([]);
+        expect(resetScopeProblem(scope)).toBe(null);
+    });
+    it('published shifts are never included', () => {
+        expect(shiftInResetScope(d('a', { published: true }), scope)).toBe(false);
+        expect(shiftInResetScope(d('a', { published: undefined }), scope)).toBe(false); // legacy = published
+        expect(shiftInResetScope(d('a'), scope)).toBe(true);
+    });
+    it('only the week on screen (range edges)', () => {
+        expect(shiftInResetScope(d('a', { date: '2026-09-19' }), scope)).toBe(false); // last week
+        expect(shiftInResetScope(d('a', { date: '2026-09-20' }), scope)).toBe(true);  // first day
+        expect(shiftInResetScope(d('a', { date: '2026-09-26' }), scope)).toBe(true);  // last day
+        expect(shiftInResetScope(d('a', { date: '2026-09-27' }), scope)).toBe(false); // next week
+    });
+    it('only the store on screen — other store and no-store shifts are left alone', () => {
+        expect(shiftInResetScope(d('a', { location: 'maryland' }), scope)).toBe(false);
+        expect(shiftInResetScope(d('a', { location: undefined }), scope)).toBe(false);
+    });
+    it('only the side on screen; legacy no-side uses the grid-resolved side', () => {
+        expect(shiftInResetScope(d('a', { side: 'boh' }), scope)).toBe(false);
+        expect(shiftInResetScope(d('a', { side: undefined }), scope, 'foh')).toBe(true);
+        expect(shiftInResetScope(d('a', { side: undefined }), scope, 'boh')).toBe(false);
+    });
+    it('pending claims and the person filter', () => {
+        expect(shiftInResetScope(d('a', { pendingClaimBy: 'Juan' }), scope)).toBe(false);
+        expect(shiftInResetScope(d('a', { staffName: 'Juan' }), { ...scope, personFilter: 'Maria' })).toBe(false);
+        expect(shiftInResetScope(d('a'), { ...scope, personFilter: 'Maria' })).toBe(true);
+    });
+    it('a day scope (Day view) covers just that day', () => {
+        const day = { ...scope, startStr: '2026-09-22', endStr: '2026-09-23' };
+        expect(shiftInResetScope(d('a', { date: '2026-09-22' }), day)).toBe(true);
+        expect(shiftInResetScope(d('a', { date: '2026-09-23' }), day)).toBe(false);
+    });
+    it('server copy wins: moved/published/deleted since the screen loaded → skipped', () => {
+        const view = [d('a'), d('b'), d('c'), d('e')];
+        const live = new Map([
+            ['a', d('a')],                              // still a draft here → included
+            ['b', d('b', { published: true })],         // published since
+            ['c', d('c', { location: 'maryland' })],    // moved to the other store
+            // 'e' deleted since
+        ]);
+        expect(selectResetDrafts(view, live, scope).map(x => x.id)).toEqual(['a']);
+    });
+    it('never reaches beyond what the grid shows, even if the server has more', () => {
+        const live = new Map([['a', d('a')], ['zzz', d('zzz')]]);
+        expect(selectResetDrafts([d('a')], live, scope).map(x => x.id)).toEqual(['a']);
+    });
+    it('seats: only Unassign-made, this range/store/side, none under a person filter', () => {
+        const seats = [
+            { id: 's1', fromUnassign: true, date: '2026-09-22', side: 'foh', location: 'webster' },
+            { id: 's2', fromUnassign: true, date: '2026-09-22', side: 'foh', location: 'maryland' },
+            { id: 's3', fromUnassign: true, date: '2026-09-29', side: 'foh', location: 'webster' },
+            { id: 's4', fromUnassign: true, date: '2026-09-22', side: 'boh', location: 'webster' },
+            { id: 's5', date: '2026-09-22', side: 'foh', location: 'webster' }, // template / hand-made
+        ];
+        expect(selectResetSeats(seats, scope).map(s => s.id)).toEqual(['s1']);
+        expect(selectResetSeats(seats, { ...scope, personFilter: 'Maria' })).toEqual([]);
+        expect(selectResetSeats(seats, { ...scope, storeLocation: 'both' })).toEqual([]);
+    });
+});

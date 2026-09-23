@@ -35,7 +35,7 @@ import {
     getDoc as _fsGetDoc,
 } from 'firebase/firestore';
 import { watchdogWrite, watchdogRead, reviveFirestore, resilientSnapshot, watchdogTransaction } from '../data/firestoreRevive';
-import { planUnassign, planUnassignUndo, planClearUndo } from '../data/weekReset';
+import { planUnassign, planUnassignUndo, planClearUndo, resetScopeProblem, selectResetDrafts, selectResetSeats } from '../data/weekReset';
 
 // ── Wedged-connection watchdog (2026-08-08, Andrew: "delete a shift
 // times out… add a shift doesnt respond until i refresh") ──────────────
@@ -6261,82 +6261,94 @@ ${dayBlocks}
     // (a staffing_need — never publishes, never notifies, no hours); drag it
     // onto a name or tap it to pick someone. Planning is data/weekReset.js.
     const weekResetBusyRef = useRef(false);
-    const _weekResetScopeLabel = () => {
+    // THE scope — exactly the page on screen (Andrew 2026-09-23: "only …
+    // the unpublished shifts and the page we are currently on … not all
+    // shifts and not all locations"): the viewed week (or, in Day view, the
+    // viewed day) · the viewed side tab · the ONE store in the header · the
+    // person filter. Captured when the confirm opens and handed to the
+    // action, so what it does is exactly what the dialog said.
+    const _resetScope = () => {
+        const dayView = viewMode === 'day';
+        const start = dayView ? addDays(weekStart, selectedDayIdx) : weekStart;
+        const startStr = toDateStr(start);
+        const endStr = toDateStr(addDays(start, dayView ? 1 : 7));
         const sideLabel = side === 'boh' ? 'BOH' : 'FOH';
-        const storeLabel = storeLocation === 'both' ? tx('both stores', 'ambas tiendas') : (LOCATION_LABELS[storeLocation] || storeLocation);
-        return `${sideLabel} · ${storeLabel}`;
+        const storeLabel = LOCATION_LABELS[storeLocation] || storeLocation;
+        const fmt = (d) => d.toLocaleDateString(isEn ? 'en-US' : 'es-MX', { month: 'short', day: 'numeric' });
+        const when = dayView
+            ? start.toLocaleDateString(isEn ? 'en-US' : 'es-MX', { weekday: 'short', month: 'short', day: 'numeric' })
+            : `${fmt(start)} – ${fmt(addDays(start, 6))}`;
+        return {
+            startStr, endStr, storeLocation, side, personFilter: personFilter || null,
+            dayView, label: `${when} · ${sideLabel} · ${storeLabel}`,
+        };
     };
-    // Drafts in view, re-read from the SERVER so a stale week cache can never
-    // unassign/delete shifts that are already gone or were published since.
-    const _loadWeekDraftsInView = async () => {
-        const wkStartStr = toDateStr(weekStart);
-        const wkEndStr = toDateStr(addDays(weekStart, 7));
-        const inView = visibleShifts.filter(sh =>
-            sh.published === false && sh.date >= wkStartStr && sh.date < wkEndStr &&
-            !sh.pendingClaimBy && canEditSide(sh.side || side));
-        if (inView.length === 0) return [];
+    // Refuse up front when the page can't be scoped to one store/side.
+    const _resetScopeOk = (scope) => {
+        if (!canEditSide(scope.side)) {
+            toast(tx('You need editor access for this side.', 'Necesitas acceso de editor para este lado.'));
+            return false;
+        }
+        if (resetScopeProblem(scope) === 'both_stores') {
+            toast(tx('Pick one store at the top first (Webster or Maryland Heights) — this only works on one store at a time.',
+                     'Elige una tienda arriba primero (Webster o Maryland Heights) — esto solo funciona en una tienda a la vez.'),
+                { kind: 'warn', duration: 7000 });
+            return false;
+        }
+        return !resetScopeProblem(scope);
+    };
+    // Drafts in scope, re-checked against the SERVER copy: a shift that was
+    // published, moved to another store/week, claimed or deleted since the
+    // screen loaded is skipped (selectResetDrafts — unit-tested).
+    const _loadResetDrafts = async (scope) => {
+        const onScreen = selectResetDrafts(visibleShifts, null, scope);
+        if (onScreen.length === 0) return [];
         const snap = await getDocs(query(collection(db, 'shifts'),
-            where('date', '>=', wkStartStr), where('date', '<', wkEndStr)));
+            where('date', '>=', scope.startStr), where('date', '<', scope.endStr)));
         const live = new Map();
         snap.forEach(d => live.set(d.id, d.data()));
-        const out = [];
-        for (const sh of inView) {
-            const data = live.get(sh.id);
-            if (!data || data.published !== false || data.pendingClaimBy) continue;
-            const staffRec = staffByName.get(data.staffName);
-            out.push({
-                id: sh.id, ...data,
-                side: data.side || side,
-                location: data.location || (storeLocation !== 'both' ? storeLocation
-                    : ((staffRec?.location && staffRec.location !== 'both') ? staffRec.location : 'webster')),
-            });
-        }
-        return out;
+        return selectResetDrafts(onScreen, live, scope);
     };
-    const _publishedInViewCount = () => {
-        const wkStartStr = toDateStr(weekStart);
-        const wkEndStr = toDateStr(addDays(weekStart, 7));
-        return visibleShifts.filter(sh => sh.published !== false && sh.date >= wkStartStr && sh.date < wkEndStr).length;
+    const _publishedInScopeCount = (scope) => visibleShifts.filter(sh =>
+        sh.published !== false && sh.date >= scope.startStr && sh.date < scope.endStr &&
+        sh.location === scope.storeLocation).length;
+    const _resetExtras = (scope, published) => {
+        const en = [], es = [];
+        if (scope.personFilter) { en.push(`Only ${scope.personFilter}'s shifts — the person filter is on.`); es.push(`Solo los turnos de ${scope.personFilter} — el filtro de persona está activo.`); }
+        if (published) { en.push(`${published} published shift${published === 1 ? ' is' : 's are'} not touched.`); es.push(`${published} turno(s) publicado(s) no se tocan.`); }
+        en.push(`Other weeks, the other store${scope.side === 'boh' ? ', FOH' : ', BOH'} and all published shifts are not touched.`);
+        es.push(`Otras semanas, la otra tienda${scope.side === 'boh' ? ', FOH' : ', BOH'} y los turnos publicados no se tocan.`);
+        return { en: en.join('\n\n'), es: es.join('\n\n') };
     };
 
     const askUnassignAll = () => {
-        if (!canEditSide(side)) {
-            toast(tx('You need editor access for this side.', 'Necesitas acceso de editor para este lado.'));
-            return;
-        }
-        const wkStartStr = toDateStr(weekStart);
-        const wkEndStr = toDateStr(addDays(weekStart, 7));
-        const drafts = visibleShifts.filter(sh => sh.published === false && sh.date >= wkStartStr && sh.date < wkEndStr && !sh.pendingClaimBy);
+        const scope = _resetScope();
+        if (!_resetScopeOk(scope)) return;
+        const drafts = selectResetDrafts(visibleShifts, null, scope);
         if (drafts.length === 0) {
-            toast(tx('No draft shifts to unassign this week (published shifts are never unassigned).',
-                     'No hay turnos borrador para quitar esta semana (los publicados nunca se quitan).'), { duration: 6000 });
+            toast(tx(`No draft shifts to unassign on this page (${scope.label}). Published shifts are never unassigned.`,
+                     `No hay turnos borrador para quitar en esta página (${scope.label}). Los publicados nunca se quitan.`), { duration: 6000 });
             return;
         }
         const people = new Set(drafts.map(d => d.staffName)).size;
-        const published = _publishedInViewCount();
+        const extra = _resetExtras(scope, _publishedInScopeCount(scope));
         setConfirmDialog({
             title: tx('Unassign all shifts?', '¿Quitar a todos de sus turnos?'),
             body: tx(
-                `This takes every staff member off all ${drafts.length} draft shift${drafts.length === 1 ? '' : 's'} this week (${_weekResetScopeLabel()}) — ${people} ${people === 1 ? 'person' : 'people'} will have no shifts.\n\nThe shifts stay in the blue "Unassigned" row at the top. Drag each one down onto a name (or tap it to pick someone).` +
-                (personFilter ? `\n\nOnly ${personFilter}'s shifts — the person filter is on.` : '') +
-                (published ? `\n\n${published} published shift${published === 1 ? ' is' : 's are'} left alone.` : '') +
-                `\n\nYou can undo this with ↩ Undo.`,
-                `Esto quita a todo el personal de los ${drafts.length} turno(s) borrador de esta semana (${_weekResetScopeLabel()}) — ${people} persona(s) quedarán sin turnos.\n\nLos turnos quedan en la fila azul "Sin asignar" arriba. Arrastra cada uno hacia un nombre (o tócalo para elegir a alguien).` +
-                (personFilter ? `\n\nSolo los turnos de ${personFilter} — el filtro de persona está activo.` : '') +
-                (published ? `\n\n${published} turno(s) publicado(s) no se tocan.` : '') +
-                `\n\nPuedes deshacerlo con ↩ Deshacer.`,
+                `${scope.label}\n\nThis takes every staff member off all ${drafts.length} unpublished shift${drafts.length === 1 ? '' : 's'} on this page (${people} ${people === 1 ? 'person' : 'people'}).\n\nThe shifts stay in the blue "Unassigned" row at the top. Drag each one down onto a name (or tap it to pick someone).\n\n${extra.en}\n\nYou can undo this with ↩ Undo.`,
+                `${scope.label}\n\nEsto quita a todo el personal de los ${drafts.length} turno(s) sin publicar de esta página (${people} persona(s)).\n\nLos turnos quedan en la fila azul "Sin asignar" arriba. Arrastra cada uno hacia un nombre (o tócalo para elegir a alguien).\n\n${extra.es}\n\nPuedes deshacerlo con ↩ Deshacer.`,
             ),
             confirmLabel: tx(`Unassign ${drafts.length}`, `Quitar ${drafts.length}`),
             tone: 'danger',
-            onConfirm: () => handleUnassignAll(),
+            onConfirm: () => handleUnassignAll(scope),
         });
     };
 
-    const handleUnassignAll = async () => {
-        if (!canEditSide(side) || weekResetBusyRef.current) return;
+    const handleUnassignAll = async (scope) => {
+        if (!scope || resetScopeProblem(scope) || !canEditSide(scope.side) || weekResetBusyRef.current) return;
         weekResetBusyRef.current = true;
         try {
-            const drafts = await _loadWeekDraftsInView();
+            const drafts = await _loadResetDrafts(scope);
             if (drafts.length === 0) {
                 toast(tx('Nothing to unassign — those shifts are gone or were published.',
                          'Nada que quitar — esos turnos ya no existen o se publicaron.'));
@@ -6388,19 +6400,20 @@ ${dayBlocks}
                     keptFillIds[nid] = ns.exists() ? [...(ns.data().filledShiftIds || [])] : [];
                 } catch { keptFillIds[nid] = []; }
             }
-            invalidateWeekCache(toDateStr(weekStart));
+            invalidateWeekCache(scope.startStr);
             recordUndo({
                 kind: 'unassign',
                 snapshots: drafts.map(({ id, ...data }) => ({ id, data })),
                 createdNeedIds, keptFillIds,
-                week: { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) },
+                week: { startStr: scope.startStr, endStr: scope.endStr },
                 label: `×${drafts.length}`,
             });
             auditScheduleConfig({ action: 'unassigned_all', targetType: 'shift', targetName: 'unassign all',
                 after: { count: drafts.length, slots: groups.length, reopened: reopen.length,
-                         week: toDateStr(weekStart), side, location: storeLocation } }).catch(() => {});
-            toast(tx(`✅ Unassigned ${drafts.length} shift${drafts.length === 1 ? '' : 's'} — drag them from the blue Unassigned row onto names.`,
-                     `✅ Se quitaron ${drafts.length} turno(s) — arrástralos de la fila azul Sin asignar hacia los nombres.`),
+                         from: scope.startStr, to: scope.endStr, side: scope.side, location: scope.storeLocation,
+                         person: scope.personFilter } }).catch(() => {});
+            toast(tx(`✅ Unassigned ${drafts.length} shift${drafts.length === 1 ? '' : 's'} (${scope.label}) — drag them from the blue Unassigned row onto names.`,
+                     `✅ Se quitaron ${drafts.length} turno(s) (${scope.label}) — arrástralos de la fila azul Sin asignar hacia los nombres.`),
                 { kind: 'success', duration: 9000 });
         } catch (e) {
             console.error('Unassign all failed:', e);
@@ -6411,63 +6424,46 @@ ${dayBlocks}
         }
     };
 
-    // The unassigned seats Unassign-all made for this week/view — "start
-    // over" clears those too. Hand-made / template open slots are left.
-    const _unassignSlotsInView = () => {
-        const wkStartStr = toDateStr(weekStart);
-        const wkEndStr = toDateStr(addDays(weekStart, 7));
-        return (staffingNeeds || []).filter(n => n.fromUnassign === true &&
-            n.date >= wkStartStr && n.date < wkEndStr && n.side === side &&
-            (storeLocation === 'both' || n.location === storeLocation));
-    };
-
     const askDeleteAllUnpublished = () => {
-        if (!canEditSide(side)) {
-            toast(tx('You need editor access for this side.', 'Necesitas acceso de editor para este lado.'));
+        const scope = _resetScope();
+        if (!_resetScopeOk(scope)) return;
+        const drafts = selectResetDrafts(visibleShifts, null, scope);
+        const seats = selectResetSeats(staffingNeeds, scope);
+        const openSeats = seats.reduce((sum, n) => sum + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0);
+        if (drafts.length === 0 && openSeats === 0) {
+            toast(tx(`No unpublished shifts to delete on this page (${scope.label}).`,
+                     `No hay turnos sin publicar para borrar en esta página (${scope.label}).`));
             return;
         }
-        const wkStartStr = toDateStr(weekStart);
-        const wkEndStr = toDateStr(addDays(weekStart, 7));
-        const drafts = visibleShifts.filter(sh => sh.published === false && sh.date >= wkStartStr && sh.date < wkEndStr && !sh.pendingClaimBy);
-        const slots = _unassignSlotsInView();
-        const openSeats = slots.reduce((sum, n) => sum + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0);
-        if (drafts.length === 0 && slots.length === 0) {
-            toast(tx('No unpublished shifts to delete this week.', 'No hay turnos sin publicar para borrar esta semana.'));
-            return;
-        }
-        const published = _publishedInViewCount();
         const parts = [];
-        if (drafts.length) parts.push(tx(`${drafts.length} draft shift${drafts.length === 1 ? '' : 's'}`, `${drafts.length} turno(s) borrador`));
+        if (drafts.length) parts.push(tx(`${drafts.length} unpublished shift${drafts.length === 1 ? '' : 's'}`, `${drafts.length} turno(s) sin publicar`));
         if (openSeats) parts.push(tx(`${openSeats} unassigned shift${openSeats === 1 ? '' : 's'}`, `${openSeats} turno(s) sin asignar`));
+        const extra = _resetExtras(scope, _publishedInScopeCount(scope));
         setConfirmDialog({
             title: tx('Delete all unpublished shifts?', '¿Borrar todos los turnos sin publicar?'),
             body: tx(
-                `This deletes ${parts.join(' and ')} this week (${_weekResetScopeLabel()}) so you can start over.` +
-                (personFilter ? `\n\nOnly ${personFilter}'s shifts — the person filter is on.` : '') +
-                (published ? `\n\n${published} published shift${published === 1 ? ' is' : 's are'} kept.` : '') +
-                `\n\nOpen slots you added by hand or from a template stay. You can undo this with ↩ Undo.`,
-                `Esto borra ${parts.join(' y ')} de esta semana (${_weekResetScopeLabel()}) para empezar de nuevo.` +
-                (personFilter ? `\n\nSolo los turnos de ${personFilter} — el filtro de persona está activo.` : '') +
-                (published ? `\n\n${published} turno(s) publicado(s) se mantienen.` : '') +
-                `\n\nLos espacios abiertos hechos a mano o con plantilla se quedan. Puedes deshacerlo con ↩ Deshacer.`,
+                `${scope.label}\n\nThis deletes ${parts.join(' and ')} on this page so you can start over.\n\n${extra.en}\n\nOpen slots you added by hand or from a template stay. You can undo this with ↩ Undo.`,
+                `${scope.label}\n\nEsto borra ${parts.join(' y ')} de esta página para empezar de nuevo.\n\n${extra.es}\n\nLos espacios abiertos hechos a mano o con plantilla se quedan. Puedes deshacerlo con ↩ Deshacer.`,
             ),
             confirmLabel: tx('Delete all', 'Borrar todo'),
             tone: 'danger',
-            onConfirm: () => handleDeleteAllUnpublished(),
+            onConfirm: () => handleDeleteAllUnpublished(scope),
         });
     };
 
-    const handleDeleteAllUnpublished = async () => {
-        if (!canEditSide(side) || weekResetBusyRef.current) return;
+    const handleDeleteAllUnpublished = async (scope) => {
+        if (!scope || resetScopeProblem(scope) || !canEditSide(scope.side) || weekResetBusyRef.current) return;
         weekResetBusyRef.current = true;
         try {
-            const drafts = await _loadWeekDraftsInView();
-            // Fresh reads of the unassigned slots too (snapshot for undo).
+            const drafts = await _loadResetDrafts(scope);
+            // Fresh server copies of the unassigned seats (snapshot for undo),
+            // re-checked against the same scope.
             const needSnaps = [];
-            for (const n of _unassignSlotsInView()) {
-                if (!canEditSide(n.side)) continue;
+            for (const n of selectResetSeats(staffingNeeds, scope)) {
                 const ns = await getDoc(doc(db, 'staffing_needs', n.id));
-                if (ns.exists()) needSnaps.push({ id: n.id, data: ns.data() });
+                if (ns.exists() && selectResetSeats([{ id: n.id, ...ns.data() }], scope).length) {
+                    needSnaps.push({ id: n.id, data: ns.data() });
+                }
             }
             if (drafts.length === 0 && needSnaps.length === 0) {
                 toast(tx('Nothing to delete — those shifts are gone or were published.',
@@ -6489,18 +6485,19 @@ ${dayBlocks}
             for (const d of drafts) {
                 if (d.fromNeedId && !wipedNeedIds.has(d.fromNeedId)) await pruneNeedAfterShiftDelete(d);
             }
-            invalidateWeekCache(toDateStr(weekStart));
+            invalidateWeekCache(scope.startStr);
             recordUndo({
                 kind: 'clear',
                 shiftSnaps: drafts.map(({ id, ...data }) => ({ id, data })),
                 needSnaps,
-                week: { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) },
+                week: { startStr: scope.startStr, endStr: scope.endStr },
                 label: `×${drafts.length + needSnaps.length}`,
             });
             auditScheduleConfig({ action: 'cleared_unpublished', targetType: 'shift', targetName: 'delete all unpublished',
-                after: { shifts: drafts.length, slots: needSnaps.length, week: toDateStr(weekStart), side, location: storeLocation } }).catch(() => {});
-            toast(tx(`🗑 Deleted ${drafts.length} unpublished shift${drafts.length === 1 ? '' : 's'}${needSnaps.length ? ` and ${needSnaps.length} unassigned slot${needSnaps.length === 1 ? '' : 's'}` : ''}.`,
-                     `🗑 Se borraron ${drafts.length} turno(s) sin publicar${needSnaps.length ? ` y ${needSnaps.length} espacio(s) sin asignar` : ''}.`),
+                after: { shifts: drafts.length, slots: needSnaps.length, from: scope.startStr, to: scope.endStr,
+                         side: scope.side, location: scope.storeLocation, person: scope.personFilter } }).catch(() => {});
+            toast(tx(`🗑 Deleted ${drafts.length} unpublished shift${drafts.length === 1 ? '' : 's'}${needSnaps.length ? ` and ${needSnaps.length} unassigned slot${needSnaps.length === 1 ? '' : 's'}` : ''} (${scope.label}).`,
+                     `🗑 Se borraron ${drafts.length} turno(s) sin publicar${needSnaps.length ? ` y ${needSnaps.length} espacio(s) sin asignar` : ''} (${scope.label}).`),
                 { kind: 'success', duration: 8000 });
         } catch (e) {
             console.error('Delete all unpublished failed:', e);
