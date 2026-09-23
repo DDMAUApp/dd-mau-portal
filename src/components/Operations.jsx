@@ -53,6 +53,7 @@ import { formatCountStampLines, contributionWrites } from '../data/inventoryStam
 import { reconcileCountsDetailed, RELEASE_TIMEOUT_MS } from '../data/inventoryReconcile';
 import { createTapCoalescer } from '../data/inventoryTapCoalescer';
 import { registerReloadStash, peekReloadStash, peekReloadStashMeta, clearReloadStash, planStashRehydrate, resolveLostHolds } from '../data/reloadStash';
+import { InventoryLocationJumpBar, InventoryMoreMenu, locationGroupKey, locationTitle, UNASSIGNED_LOCATION } from './InventoryLayoutParts';
 import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot, shouldApplyInventorySnapshot } from '../data/inventoryStability';
 import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
 // Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
@@ -8454,8 +8455,10 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 groups also have `flex-wrap` so they still
                                 degrade gracefully if a future button is
                                 added or translation gets long. */}
-                            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                <div className="flex flex-wrap items-center gap-1.5">
+                            {/* One wrap row: view buttons, then Done / ⋯ More right after
+                                them (the inner groups are display: contents). */}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <div className="contents">
                                     <button onClick={() => setInvViewMode("category")}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "category" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                         {language === "es" ? "📋 Lista Maestra" : "📋 Master List"}
@@ -8495,9 +8498,19 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         {language === "es" ? "Precios" : "Pricing"}
                                     </button>
                                 </div>
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                    {currentIsAdmin && (
-                                        <button onClick={() => {
+                                {/* Less-used actions live behind "⋯ More" (2026-09-23) so
+                                    the view buttons fit on fewer rows and items start
+                                    higher on a phone. Same handlers as before. Edit mode
+                                    keeps a visible ✓ Done so it can't get lost. */}
+                                <div className="contents">
+                                    {invEditMode && (
+                                        <button onClick={() => { setInvEditMode(false); setInvEditingIdx(null); setInvShowAddForm(null); }}
+                                            className="px-3 py-1.5 rounded-lg text-xs font-bold transition bg-green-600 text-white">
+                                            ✓ {language === "es" ? "Listo" : "Done"}
+                                        </button>
+                                    )}
+                                    <InventoryMoreMenu language={language} items={[
+                                        { key: 'csv', hidden: !currentIsAdmin, label: `📥 ${language === "es" ? "Importar CSV" : "Import CSV"}`, onClick: () => {
                                             if (storeLocation === 'both') {
                                                 toast(language === 'es'
                                                     ? 'Elige Webster o Maryland (arriba) para importar CSV'
@@ -8505,48 +8518,15 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                 return;
                                             }
                                             setShowCsvImport(true);
-                                        }}
-                                            title={language === "es" ? "Importar CSV del proveedor" : "Import vendor CSV"}
-                                            className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold hover:bg-blue-100 transition">
-                                            📥 {language === "es" ? "Importar CSV" : "Import CSV"}
-                                        </button>
-                                    )}
-                                    {/* 🖨 Print — single button, prints the
-                                        inventory comparison sheet (master +
-                                        vendor-only counts grouped by vendor).
-                                        2026-05-29 — Andrew: removed the 🏷
-                                        Label button (date-sticker flow lives
-                                        in Recipes / Operations sub-pages) and
-                                        the free-form PrintCenter button (was
-                                        confusing — staff thought it printed
-                                        the inventory). One Print button, one
-                                        job: print the inventory. */}
-                                    <button onClick={printInventory}
-                                        title={language === "es" ? "Imprimir inventario" : "Print inventory"}
-                                        className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold hover:bg-purple-100 transition">
-                                        🖨 {language === "es" ? "Imprimir" : "Print"}
-                                    </button>
-                                    {/* Density toggle — flips master list rows
-                                        between the rich detailed view (current
-                                        default) and a stripped-down NAME +
-                                        QUANTITY layout for fast counting. */}
-                                    <button onClick={() => setInvCompactView(v => !v)}
-                                        title={invCompactView
-                                            ? (language === "es" ? "Vista detallada" : "Detailed view")
-                                            : (language === "es" ? "Vista compacta" : "Compact view")}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                                            invCompactView
-                                                ? 'bg-purple-600 text-white'
-                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                        }`}>
-                                        {invCompactView
-                                            ? (language === "es" ? "≡ Compacto" : "≡ Compact")
-                                            : (language === "es" ? "≣ Detallado" : "≣ Detailed")}
-                                    </button>
-                                    <button onClick={() => { setInvEditMode(!invEditMode); setInvEditingIdx(null); setInvShowAddForm(null); }}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invEditMode ? "bg-green-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                                        {invEditMode ? (language === "es" ? "Listo" : "Done") : (language === "es" ? "Editar" : "Edit")}
-                                    </button>
+                                        } },
+                                        { key: 'print', label: `🖨 ${language === "es" ? "Imprimir inventario" : "Print inventory"}`, onClick: printInventory },
+                                        { key: 'density', label: invCompactView
+                                            ? `≣ ${language === "es" ? "Vista detallada" : "Detailed rows"}`
+                                            : `≡ ${language === "es" ? "Vista compacta" : "Compact rows"}`,
+                                          onClick: () => setInvCompactView(v => !v) },
+                                        { key: 'edit', hidden: invEditMode, label: `✏️ ${language === "es" ? "Editar lista" : "Edit list"}`,
+                                          onClick: () => { setInvEditMode(true); setInvEditingIdx(null); setInvShowAddForm(null); } },
+                                    ]} />
                                 </div>
                             </div>
 
@@ -8609,35 +8589,10 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 </div>
                             )}
 
-                            {/* ── SEARCH BAR ── */}
-                            {!invEditMode && (
-                                <>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <div className="relative flex-1 min-w-[160px]">
-                                        <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
-                                            placeholder={invAiOn
-                                                ? (language === "es" ? "\u{1F50D} Buscar cualquier cosa (\"seco\", \"verde\", \"vegano\")" : "\u{1F50D} Search anything (\"dry\", \"green\", \"vegan\")")
-                                                : (language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items...")}
-                                            className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
-                                        {invSearch && (
-                                            <button type="button" onClick={() => { setInvSearch(""); setCollapsedCats({}); }}
-                                                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
-                                        )}
-                                    </div>
-                                    {/* AI semantic search toggle — ON sends queries
-                                        to the aiSearch Cloud Function in parallel
-                                        with the local substring matcher. ~$0.001
-                                        per call. Toggle OFF if AI is slow or
-                                        unwanted; substring keeps working. */}
-                                    <button onClick={() => setInvAiOn(v => !v)}
-                                        title={invAiOn
-                                            ? (language === "es" ? "Búsqueda IA activada — clic para apagar" : "AI search ON — click to use plain search")
-                                            : (language === "es" ? "Búsqueda básica — clic para activar IA" : "Plain search — click to enable AI")}
-                                        className={`flex-shrink-0 px-3 py-2.5 rounded-xl text-sm font-bold border-2 transition ${invAiOn
-                                            ? 'bg-purple-600 text-white border-purple-700'
-                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
-                                        ✨ {language === "es" ? "IA" : "AI"}
-                                    </button>
+                            {/* ── SAVE / CLEAR ── (search moved to the floating dock at
+                                the bottom of the page, 2026-09-23) */}
+                            {!invEditMode && invViewMode !== "pricing" && (
+                                <div className="flex items-center gap-2">
                                     {/* Quick Save + Clear — copies of the bottom "Save & Reset"
                                         and the cart "Empty", sized ~2× the AI button so you
                                         can save/clear the count without scrolling. Hidden in
@@ -8653,27 +8608,17 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                     if (ok) saveAndResetInventory();
                                                 }}
                                                 title={language === "es" ? "Guardar y reiniciar el conteo" : "Save & reset the count"}
-                                                className="flex-shrink-0 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-mint-700 text-white border-mint-800 hover:bg-mint-800 active:scale-95 transition disabled:opacity-50">
+                                                className="flex-1 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-mint-700 text-white border-mint-800 hover:bg-mint-800 active:scale-95 transition disabled:opacity-50">
                                                 💾 {inventorySaving ? (language === "es" ? "Guardando…" : "Saving…") : (language === "es" ? "Guardar" : "Save")}
                                             </button>
                                             <button onClick={clearAllInventoryCounts}
                                                 title={language === "es" ? "Limpiar todo el conteo" : "Clear all counts"}
-                                                className="flex-shrink-0 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-white text-red-700 border-red-200 hover:bg-red-50 active:scale-95 transition">
+                                                className="flex-1 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-white text-red-700 border-red-200 hover:bg-red-50 active:scale-95 transition">
                                                 🗑 {language === "es" ? "Limpiar" : "Clear"}
                                             </button>
                                         </>
                                     )}
                                 </div>
-                                {invSearch.trim() && invAiOn && (
-                                    <div className="text-[11px] mt-1">
-                                        {invAiLoading && <span className="text-purple-700 font-bold">✨ {language === "es" ? "pensando…" : "thinking…"}</span>}
-                                        {!invAiLoading && invAiError && <span className="text-amber-700">⚠ {language === "es" ? "IA no disponible" : "AI unavailable"}</span>}
-                                        {!invAiLoading && !invAiError && invAiIds && invAiIds.length > 0 && (
-                                            <span className="text-purple-700">✨ {language === "es" ? `IA añadió ${invAiIds.length}` : `AI added ${invAiIds.length}`}</span>
-                                        )}
-                                    </div>
-                                )}
-                                </>
                             )}
 
                             {/* ── CART SUMMARY ── */}
@@ -8692,14 +8637,14 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 // height; the Low/Counted filter chips stay put either way.
                                 const cartEmpty = itemCount === 0;
                                 return (
-                                    <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex items-center justify-between">
+                                    <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
                                         <div className="flex flex-col gap-0.5 min-w-0">
                                         {cartEmpty ? (
                                             <span className="text-sm font-bold text-mint-700/40 flex items-center gap-1 select-none">
                                                 {"\u{1F6D2}"} {language === "es" ? "Carrito vacío" : "Cart empty"}
                                             </span>
                                         ) : (
-                                        <button onClick={() => setShowCart(true)} className="text-sm font-bold text-mint-700 flex items-center gap-1 hover:text-mint-900 transition">
+                                        <button onClick={() => setShowCart(true)} className="text-sm font-bold text-mint-700 flex items-center gap-1 hover:text-mint-900 transition whitespace-nowrap">
                                             {"\u{1F6D2}"} {totalQty} {language === "es" ? "total" : "total"} ({itemCount} {language === "es" ? "artículos" : "items"})
                                             <span className="text-xs text-mint-500 ml-1">{language === "es" ? "ver ▸" : "view ▸"}</span>
                                         </button>
@@ -8721,7 +8666,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                             )
                                         )}
                                         </div>
-                                        <div className="flex items-center gap-1.5">
+                                        <div className="flex flex-wrap items-center gap-1.5">
                                             <button onClick={() => setInvShowOnlyLow(v => !v)}
                                                 className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyLow ? "bg-amber-600 text-white" : "bg-amber-100 text-amber-800 hover:bg-amber-200"}`}>
                                                 📉 {invShowOnlyLow ? (language === "es" ? "Mostrar Todo" : "Show All") : (language === "es" ? "Solo Bajos" : "Low Only")}
@@ -9947,10 +9892,14 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 // Group by location. Items without one go
                                 // to a special bucket that sorts last so
                                 // they're easy to spot and fix.
-                                const UNASSIGNED = '(no location set)';
+                                // Case/space-insensitive grouping (2026-09-23): "hallway"
+                                // and "Hallway" land in ONE section. Display only — the
+                                // stored item.location is never rewritten.
+                                const UNASSIGNED = UNASSIGNED_LOCATION;
+                                const customByLower = new Map();
                                 const byLoc = new Map();
                                 for (const row of filtered) {
-                                    const key = (row.it.location || '').trim() || UNASSIGNED;
+                                    const key = locationGroupKey(row.it.location, customByLower);
                                     if (!byLoc.has(key)) byLoc.set(key, []);
                                     byLoc.get(key).push(row);
                                 }
@@ -9973,37 +9922,60 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         </div>
                                     );
                                 }
-                                return orderedLocs.map(loc => {
+                                const countedOf = (rows) => rows.reduce(
+                                    (n, { it }) => n + ((inventory[it.id] || 0) > 0 ? 1 : 0), 0);
+                                // Pinned bubbles (2026-09-23): tap to JUMP to a location;
+                                // the one on screen lights up. Folding is per location.
+                                const jumpSections = orderedLocs.map(loc => ({
+                                    key: loc, total: (byLoc.get(loc) || []).length, counted: countedOf(byLoc.get(loc) || []),
+                                }));
+                                // Wrapper div = the bubbles stay pinned only while you're in
+                                // the location list, not over the saved-lists area below.
+                                return (<div>
+                                <InventoryLocationJumpBar
+                                    sections={jumpSections}
+                                    language={language}
+                                    onJump={(loc) => setCollapsedCats(prev => (prev[`loc::${loc}`] ? { ...prev, [`loc::${loc}`]: false } : prev))}
+                                />
+                                {orderedLocs.map(loc => {
                                     const rows = byLoc.get(loc) || [];
-                                    const countedInLoc = rows.reduce(
-                                        (n, { it }) => n + ((inventory[it.id] || 0) > 0 ? 1 : 0), 0);
+                                    const countedInLoc = countedOf(rows);
                                     const isUnassigned = loc === UNASSIGNED;
+                                    const foldKey = `loc::${loc}`;
+                                    const isFolded = !!collapsedCats[foldKey] && !searchLower;
                                     return (
-                                        <div key={loc} className="bg-white border-2 border-gray-200 rounded-xl overflow-hidden mb-3">
-                                            <div className={`flex items-center justify-between px-3 py-2 ${
-                                                isUnassigned ? 'bg-amber-50 border-b-2 border-amber-200' : 'bg-mint-50 border-b-2 border-mint-200'
-                                            }`}>
-                                                <div className="flex items-center gap-2">
+                                        <div key={loc} data-inv-loc={loc} className="bg-white border-2 border-gray-200 rounded-xl overflow-hidden mb-3">
+                                            <button type="button"
+                                                onClick={() => setCollapsedCats(prev => ({ ...prev, [foldKey]: !prev[foldKey] }))}
+                                                aria-expanded={!isFolded}
+                                                className={`w-full text-left flex items-center justify-between gap-2 px-3 py-2 ${
+                                                isUnassigned ? 'bg-amber-50' : 'bg-mint-50'
+                                            } ${isFolded ? '' : (isUnassigned ? 'border-b-2 border-amber-200' : 'border-b-2 border-mint-200')}`}>
+                                                <div className="flex items-center gap-2 min-w-0 flex-wrap">
                                                     <span className={`text-sm font-black uppercase tracking-wide ${
                                                         isUnassigned ? 'text-amber-800' : 'text-mint-800'
                                                     }`}>
                                                         {isUnassigned
                                                             ? (language === "es" ? '⚠ Sin ubicación' : '⚠ No location')
-                                                            : `📍 ${locationLabel(loc, language === 'es')}`}
+                                                            : `📍 ${locationTitle(loc, language === 'es')}`}
                                                     </span>
                                                     <span className="text-[10px] text-gray-500 font-bold">
                                                         {rows.length} {language === "es" ? "artíc." : "items"}
                                                         {countedInLoc > 0 && ` · ${countedInLoc} ${language === "es" ? "contados" : "counted"}`}
                                                     </span>
+                                                    {isUnassigned && (
+                                                        <span className="text-[10px] text-amber-700 italic">
+                                                            {language === "es"
+                                                                ? "Edita en Lista Maestra para asignar"
+                                                                : "Edit in Master List to assign"}
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                {isUnassigned && (
-                                                    <span className="text-[10px] text-amber-700 italic">
-                                                        {language === "es"
-                                                            ? "Edita en Lista Maestra para asignar"
-                                                            : "Edit in Master List to assign"}
-                                                    </span>
-                                                )}
-                                            </div>
+                                                <span className={`shrink-0 text-xs font-bold ${isUnassigned ? 'text-amber-700' : 'text-mint-700'}`}>
+                                                    {isFolded ? (language === "es" ? "▶ Abrir" : "▶ Open") : "▼"}
+                                                </span>
+                                            </button>
+                                            {!isFolded && (<>
                                             <div className="divide-y divide-gray-200">
                                                 {rows.map(({ it: item, catName }) => (
                                                     <LocationItemRow
@@ -10079,9 +10051,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                     </div>
                                                 );
                                             })()}
+                                            </>)}
                                         </div>
                                     );
-                                });
+                                })}
+                                </div>);
                             })()}
 
                             {/* ── VENDOR VIEW ── */}
@@ -10645,6 +10619,57 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                     </>
                                 )}
                             </div>
+
+                            {/* ── FLOATING SEARCH DOCK ── (2026-09-23, Andrew: "move the
+                                search bar at the very bottom of the screen and let it
+                                float like the menu bar does"). position: sticky at the end
+                                of the inventory column, so it rides just above the phone
+                                menu bar (near the bottom edge on iPad/desktop), follows the
+                                column's width, and settles into place at the end of the list
+                                instead of covering the last rows. Same input, same AI toggle,
+                                same handlers as the old top search row. */}
+                            {!invEditMode && (
+                                <div className="ddmau-inv-searchdock sticky z-20">
+                                    <div className="rounded-2xl bg-white/85 backdrop-blur-xl backdrop-saturate-150 ring-1 ring-black/10 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.45)] p-1.5">
+                                        {invSearch.trim() && invAiOn && (
+                                            <div className="text-[11px] px-2 pb-1">
+                                                {invAiLoading && <span className="text-purple-700 font-bold">✨ {language === "es" ? "pensando…" : "thinking…"}</span>}
+                                                {!invAiLoading && invAiError && <span className="text-amber-700">⚠ {language === "es" ? "IA no disponible" : "AI unavailable"}</span>}
+                                                {!invAiLoading && !invAiError && invAiIds && invAiIds.length > 0 && (
+                                                    <span className="text-purple-700">✨ {language === "es" ? `IA añadió ${invAiIds.length}` : `AI added ${invAiIds.length}`}</span>
+                                                )}
+                                            </div>
+                                        )}
+                                        <div className="flex items-center gap-2">
+                                    <div className="relative flex-1 min-w-[160px]">
+                                        <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
+                                            placeholder={invAiOn
+                                                ? (language === "es" ? "\u{1F50D} Buscar cualquier cosa (\"seco\", \"verde\", \"vegano\")" : "\u{1F50D} Search anything (\"dry\", \"green\", \"vegan\")")
+                                                : (language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items...")}
+                                            className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-base sm:text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
+                                        {invSearch && (
+                                            <button type="button" onClick={() => { setInvSearch(""); setCollapsedCats({}); }}
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
+                                        )}
+                                    </div>
+                                    {/* AI semantic search toggle — ON sends queries
+                                        to the aiSearch Cloud Function in parallel
+                                        with the local substring matcher. ~$0.001
+                                        per call. Toggle OFF if AI is slow or
+                                        unwanted; substring keeps working. */}
+                                    <button onClick={() => setInvAiOn(v => !v)}
+                                        title={invAiOn
+                                            ? (language === "es" ? "Búsqueda IA activada — clic para apagar" : "AI search ON — click to use plain search")
+                                            : (language === "es" ? "Búsqueda básica — clic para activar IA" : "Plain search — click to enable AI")}
+                                        className={`flex-shrink-0 px-3 py-2.5 rounded-xl text-sm font-bold border-2 transition ${invAiOn
+                                            ? 'bg-purple-600 text-white border-purple-700'
+                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                        ✨ {language === "es" ? "IA" : "AI"}
+                                    </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
