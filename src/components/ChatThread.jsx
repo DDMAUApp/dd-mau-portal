@@ -80,8 +80,8 @@ import { ref as sref, uploadBytesResumable, getDownloadURL, deleteObject } from 
 import { ChatAvatar, chatDisplayName } from './ChatShared';
 // Pure formatters lifted out 2026-05-23 — see chatThreadHelpers.js
 // for the rationale on the incremental ChatThread split.
-import { previewScheduledList, relativeTime, groupByDate } from './chatThreadHelpers';
-import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen, canEditMessage } from '../data/chat';
+import { previewScheduledList, relativeTime, groupByDate, sortPinsForBanner, planNotifSweepDelay, needsFollowUpNotifSweep } from './chatThreadHelpers';
+import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen, canEditMessage, isMessageEditable, isChatLastMessage, lastMessagePatchFor } from '../data/chat';
 // 2026-05-24 — Andrew: "make all messages in the chat push regardless
 // if they are working or not." Removed the off-shift gate UI entirely.
 // Server-side chat_message/chat_mention are already in
@@ -97,7 +97,7 @@ import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CAT
 // that file does the work.
 import { postEightySixToChat } from '../data/eightySixChat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
-import { notifyStaff, composeChatNudgeSmsUrl } from '../data/notify';
+import { notifyStaff, composeChatNudgeSmsUrl, markChatNotificationsRead } from '../data/notify';
 // 2026-05-27 — breadcrumb every send so the Sentry timeline shows
 // "user sent a message of type=X to chat=Y" before any error that
 // fires afterward. Single chokepoint at the bottom-of-file
@@ -308,8 +308,12 @@ function ChatThreadInner({
     // staffer could reply and fan out priority-high pushes company-wide.
     // Same manager gate ChatCenter's canAnnounce uses (canPostAnnouncements);
     // managers keep the composer, everyone else gets a static bar.
-    const composerLocked = chat?.readOnly === true
-        && !canPostAnnouncements(viewer, isAdmin, isManager);
+    // 2026-09-23 chat audit C1 — defensive: a slim warm-cache chat-list row
+    // (no readOnly / members / editTier) must never unlock the composer.
+    // ChatCenter already refuses to hand one over; this is the backstop.
+    const composerLocked = (chat?.readOnly === true
+        && !canPostAnnouncements(viewer, isAdmin, isManager))
+        || chat?._cached === true;
 
     // ── Subscribe to messages ─────────────────────────────────────
     // Fetches the newest N messages and reverses them so display
@@ -357,6 +361,23 @@ function ChatThreadInner({
     const [loading, setLoading] = useState(() => !_msgCache.has(chat?.id));
     const [loadError, setLoadError] = useState(null);
     const [subscriptionGen, setSubscriptionGen] = useState(0);
+    // 2026-09-23 chat audit M1 — STATE mirror of serverConfirmedRef (the ref,
+    // declared further down, stays the fire-time source of truth). The
+    // mark-read effect lists this in its deps so the moment server-confirmed
+    // data lands — including a metadata-only cache→server flip — a pending
+    // mark-read re-arms instead of waiting for the next NEW message.
+    const [serverConfirmed, setServerConfirmed] = useState(false);
+    // m5 — page visibility. Mark-read is skipped while the app/tab is hidden
+    // (a backgrounded phone with the thread open was stamping "Seen by" for
+    // messages nobody looked at) and re-fires when it becomes visible.
+    const [pageVisible, setPageVisible] = useState(() =>
+        typeof document === 'undefined' || document.visibilityState === 'visible');
+    useEffect(() => {
+        if (typeof document === 'undefined') return undefined;
+        const onVis = () => setPageVisible(document.visibilityState === 'visible');
+        document.addEventListener('visibilitychange', onVis);
+        return () => document.removeEventListener('visibilitychange', onVis);
+    }, []);
 
     useEffect(() => {
         if (!chat?.id) return;
@@ -368,6 +389,7 @@ function ChatThreadInner({
         setMessageLimit(50);
         setHasMore(true);
         serverConfirmedRef.current = false;   // mark-read honesty gate
+        setServerConfirmed(false);
         // Paint this chat's last-known messages instantly from the module cache
         // (only fall back to the spinner when we have nothing to show). The
         // onSnapshot below revalidates within ms.
@@ -421,6 +443,7 @@ function ChatThreadInner({
                 const snap = await getDocsFromServer(q);
                 if (!alive || gotSnapshot) return;
                 serverConfirmedRef.current = true;   // server truth
+                setServerConfirmed(true);
                 const list = [];
                 snap.forEach(d => list.push({ id: d.id, ...d.data() }));
                 list.reverse();
@@ -430,11 +453,35 @@ function ChatThreadInner({
                 clearTimeout(timeoutId);
             } catch { /* revive already kicked; the timeout + Retry still stand */ }
         }, 6000);
-        const unsub = onSnapshot(q, (snap) => {
+        // 2026-09-23 chat audit M1 — includeMetadataChanges. When this
+        // thread's messages are already in the SDK cache, the first emit is
+        // fromCache and the server's confirmation is METADATA-ONLY (no doc
+        // changed) — without this option that emit never arrived, so the
+        // mark-read honesty gate below never opened: the unread dot stuck and
+        // "Seen by" was never written. It also delivers the pending→acked
+        // flip for writes that don't change data on ack (e.g. a reaction's
+        // arrayUnion), which used to leave "Sending…" up.
+        // Metadata-only emits whose pending set didn't change are dropped
+        // right after the gate update, so no list rebuild / re-render.
+        let lastPendingSig = null;
+        const unsub = onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
             if (!alive) return;
+            const firstEmit = !gotSnapshot;
             gotSnapshot = true;
-            if (!snap.metadata.fromCache) serverConfirmedRef.current = true;
+            if (!snap.metadata.fromCache && !serverConfirmedRef.current) {
+                serverConfirmedRef.current = true;
+                setServerConfirmed(true);
+            }
             clearTimeout(timeoutId);
+            let pendingSig = '';
+            snap.forEach(d => { if (d.metadata.hasPendingWrites) pendingSig += d.id + ','; });
+            if (!firstEmit && pendingSig === lastPendingSig && snap.docChanges().length === 0) {
+                // Metadata-only (cache→server confirm, sync-state flip).
+                // Only the history-exhausted decision can depend on it.
+                if (snap.size < messageLimit && !snap.metadata.fromCache) setHasMore(false);
+                return;
+            }
+            lastPendingSig = pendingSig;
             const list = [];
             // 2026-08-11 (chat forensics C2) — stamp `_pending` from snapshot
             // metadata. hasPendingWrites is true while the write is queued
@@ -560,6 +607,41 @@ function ChatThreadInner({
         setMessageLimit(n => Math.min(n + 50, MAX_MESSAGE_LIMIT));
     }
 
+    // ── Per-conversation notification sweep (2026-09-23 chat audit M2) ──
+    // The onChatMessageCreated CF writes a chat_message/mention/reply
+    // notification per recipient per message, and only ChatCenter's tab-entry
+    // sweep cleared them — so the Chat badge counted UP while the user sat
+    // reading inside the thread. Each time this thread marks itself read we
+    // queue a sweep of THIS chat's unread chat notifications (equality/`in`
+    // filters only, quiet posture — see markChatNotificationsRead).
+    // Throttled: first sweep ≥4s after the request (the CF writes the
+    // notification a beat after the message lands), then at most one per 15s
+    // while messages stream in, with a follow-up if a request arrived inside
+    // the settle window of the sweep that just ran. A queued sweep is NOT
+    // cancelled on unmount — it's a fire-and-forget write with no setState.
+    const notifSweepTimerRef = useRef(null);
+    const lastNotifSweepAtRef = useRef(0);
+    const lastNotifSweepReqAtRef = useRef(0);
+    const requestNotifSweep = useCallback(() => {
+        if (!staffName || !chat?.id) return;
+        lastNotifSweepReqAtRef.current = Date.now();
+        if (notifSweepTimerRef.current) return; // the queued sweep covers it
+        const who = staffName;
+        const cid = chat.id;
+        const arm = () => {
+            const delay = planNotifSweepDelay({ now: Date.now(), lastSweepAt: lastNotifSweepAtRef.current });
+            notifSweepTimerRef.current = setTimeout(() => {
+                const firedAt = Date.now();
+                lastNotifSweepAtRef.current = firedAt;
+                markChatNotificationsRead(who, { chatId: cid, max: 200 }).finally(() => {
+                    notifSweepTimerRef.current = null;
+                    if (needsFollowUpNotifSweep({ firedAt, lastRequestAt: lastNotifSweepReqAtRef.current })) arm();
+                });
+            }, delay);
+        };
+        arm();
+    }, [staffName, chat?.id]);
+
     // ── Mark read on view + on each new message ────────────────────
     // We write a single lastReadByName.{name} timestamp on the chat doc.
     // Dot-notation update preserves other members' read markers.
@@ -577,6 +659,10 @@ function ChatThreadInner({
         // 1.5s timer used to fire on the EMPTY thread and write a read
         // marker — a false "Seen by" for messages the viewer never saw.
         if (!messages.length) return;
+        // 2026-09-23 (M1/m5): nothing to arm until this device holds
+        // server-confirmed data, or while the app/tab is hidden. Both are
+        // deps below, so the effect re-arms the moment either flips.
+        if (!serverConfirmed || !pageVisible) return;
         const ref = doc(db, 'chats', chat.id);
         const t = setTimeout(() => {
             // 2026-06-14 — only mark fully-read when the viewer is actually at
@@ -591,8 +677,10 @@ function ChatThreadInner({
             // case is unchanged.
             if (!atBottomRef.current) return;
             if (!serverConfirmedRef.current) return;   // cache paint — not seen yet
+            if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
             quietUpdateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
                 .catch(e => console.warn('markRead failed:', e));
+            requestNotifSweep();
         }, 1500);
         return () => clearTimeout(t);
         // CORRECTNESS FIX (audit P2, 2026-07-14): key on the NEWEST message's
@@ -601,7 +689,7 @@ function ChatThreadInner({
         // stream in — the old dep never changed, so the read-marker stopped
         // updating and the viewer kept showing an unread dot (and never appeared
         // in others' "seen by") while staring right at the thread.
-    }, [chat?.id, staffName, messages[messages.length - 1]?.id]);
+    }, [chat?.id, staffName, messages[messages.length - 1]?.id, serverConfirmed, pageVisible, requestNotifSweep]);
 
     // ── Auto-scroll-to-bottom on new messages ──────────────────────
     // Skip auto-scroll if the user has scrolled up >100px from bottom —
@@ -671,8 +759,10 @@ function ChatThreadInner({
         const t = setTimeout(() => {
             if (!atBottomRef.current) return;
             if (!serverConfirmedRef.current) return;   // cache paint — not seen yet
+            if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
             quietUpdateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
                 .catch(() => { /* best-effort */ });
+            requestNotifSweep();
         }, 1500);
         return () => clearTimeout(t);
     }, [chat?.id, staffName, atBottom, messages.length]);
@@ -993,27 +1083,40 @@ function ChatThreadInner({
     // effect only fires when the id changes AND messages contain it,
     // so the initial load doesn't trigger before subscriptions land.
     const lastJumpedRef = useRef(null);
+    // 2026-09-23 chat audit M4 — in-thread jump requests (the pins drawer)
+    // ride the SAME path as the search jump prop, including the auto-grow
+    // below, so a pin older than the loaded window is fetched instead of
+    // the tap doing nothing. `n` makes a repeat tap on the same pin a new
+    // request. A new search target from ChatCenter supersedes it.
+    const [localJump, setLocalJump] = useState(null); // { id, n }
+    useEffect(() => { setLocalJump(null); }, [jumpToMessageId]);
+    const jumpTargetId = localJump ? localJump.id : jumpToMessageId;
+    const jumpKey = localJump ? `local:${localJump.id}:${localJump.n}` : jumpToMessageId;
+    const requestJumpToMessage = useCallback((id) => {
+        if (!id) return;
+        setLocalJump(prev => ({ id, n: (prev?.n || 0) + 1 }));
+    }, []);
     useEffect(() => {
-        if (!jumpToMessageId) return;
-        if (!messages.some(m => m.id === jumpToMessageId)) return;
+        if (!jumpTargetId) return;
+        if (!messages.some(m => m.id === jumpTargetId)) return;
         // Fire once per target. `messages` gets a fresh array ref on every
         // snapshot (incoming msg, reaction, ~1.5s mark-read write), and
         // jumpToMessageId stays set until a different chat opens — without
         // this guard every snapshot re-yanks scroll back to the jumped-to
         // message and re-arms the highlight timer.
-        if (lastJumpedRef.current === jumpToMessageId) return;
-        lastJumpedRef.current = jumpToMessageId;
-        setHighlightMsgId(jumpToMessageId);
+        if (lastJumpedRef.current === jumpKey) return;
+        lastJumpedRef.current = jumpKey;
+        setHighlightMsgId(jumpTargetId);
         setAtBottom(false);
         // 160ms (was 60): the progressive first paint (P1-1) fills the older
         // rows in ≤120ms, and the target may be one of them.
         const t = setTimeout(() => {
-            const el = document.getElementById(`msg-${jumpToMessageId}`);
+            const el = document.getElementById(`msg-${jumpTargetId}`);
             el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 160);
         const t2 = setTimeout(() => setHighlightMsgId(null), 2800);
         return () => { clearTimeout(t); clearTimeout(t2); };
-    }, [jumpToMessageId, messages]);
+    }, [jumpKey, jumpTargetId, messages]);
 
     // 2026-07-26 audit — the effect above is a silent no-op when the search
     // hit is OLDER than the loaded window (the search panel reads up to 200
@@ -1025,11 +1128,11 @@ function ChatThreadInner({
     // back to an honest toast instead of doing nothing.
     const JUMP_AUTO_LOAD_LIMIT = 500;
     useEffect(() => {
-        if (!jumpToMessageId) return;
-        if (lastJumpedRef.current === jumpToMessageId) return; // already handled
+        if (!jumpTargetId) return;
+        if (lastJumpedRef.current === jumpKey) return; // already handled
         if (loading) return;                 // wait for the current window to land
         if (!messages.length) return;        // first snapshot not in yet
-        if (messages.some(m => m.id === jumpToMessageId)) return; // main effect handles it
+        if (messages.some(m => m.id === jumpTargetId)) return; // main effect handles it
         // Only act once the CURRENT window has actually filled — after a limit
         // bump the effect re-fires on cached echoes of the old (smaller)
         // window, and without this gate those echoes would race the limit
@@ -1041,7 +1144,7 @@ function ChatThreadInner({
         }
         if (!hasMore || (windowSettled && messageLimit >= JUMP_AUTO_LOAD_LIMIT)) {
             // Give up honestly — mark handled so the toast fires once per target.
-            lastJumpedRef.current = jumpToMessageId;
+            lastJumpedRef.current = jumpKey;
             toast(
                 hasMore
                     ? tx('Older message — tap "Load older messages" to reach it.',
@@ -1052,7 +1155,7 @@ function ChatThreadInner({
             );
         }
         // Otherwise a bigger window is in flight — wait for its snapshot.
-    }, [jumpToMessageId, messages, loading, hasMore, messageLimit]);
+    }, [jumpKey, jumpTargetId, messages, loading, hasMore, messageLimit]);
 
     // ── My personal ack set for this chat (so I can show "✓ Read") ──
     // Subscribe to /chats/{id}/acks where userName == me. Small per-user
@@ -1093,10 +1196,49 @@ function ChatThreadInner({
     }, [chat?.id, staffName]);
 
     // Pinned-message count for the top-of-thread banner.
-    const pinnedMessages = useMemo(
+    // 2026-09-23 chat audit M4 — driven by a small server query of THIS
+    // chat's pinned messages instead of the 50-message window: in a busy
+    // chat an older pin fell out of the window, so the banner vanished, the
+    // 5-pin cap under-counted (a 6th pin got through) and the drawer's jump
+    // did nothing. Equality-only (pinned == true) + limit → no composite
+    // index needed; ordering + deleted-filtering happen client-side in
+    // sortPinsForBanner. The windowed list stays as the fallback until the
+    // first pins snapshot lands (or if the listener errors). Local pin/unpin
+    // writes echo into this query immediately (latency compensation).
+    const windowPinnedMessages = useMemo(
         () => messages.filter(m => m.pinned === true && !m.deleted),
         [messages]
     );
+    const [serverPins, setServerPins] = useState(null); // null = not loaded
+    useEffect(() => {
+        if (!chat?.id) return undefined;
+        setServerPins(null);
+        let alive = true;
+        const q = query(
+            collection(db, 'chats', chat.id, 'messages'),
+            where('pinned', '==', true),
+            limit(50),
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            if (!alive) return;
+            const list = [];
+            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            setServerPins(sortPinsForBanner(list));
+        }, (err) => {
+            // Keep the windowed fallback — never blank the banner on error.
+            console.warn('pinned-messages snapshot failed:', err);
+        });
+        return () => { alive = false; unsub(); };
+    }, [chat?.id]);
+    const pinnedMessages = serverPins || windowPinnedMessages;
+    // Latest-value mirror for action handlers. The memoized MessageBubble
+    // deliberately ignores handler identity, so a bubble can hold a
+    // handleX closure from an OLDER render — whose `chat` / `messages` /
+    // pin count are stale. The 2026-09-23 fixes that decide from those
+    // values (pin cap, "is this the previewed message?") read them here.
+    // Stamped during render (idempotent; read only from event handlers).
+    const latestThreadRef = useRef(null);
+    latestThreadRef.current = { chat, messages, pinnedCount: pinnedMessages.length };
 
     // 2026-05-24 — off-shift detection subscription + memo deleted.
     // The Cloud Function still has its off-shift gate, but chat_message
@@ -1564,7 +1706,14 @@ function ChatThreadInner({
     const recordChunks = useRef([]);
     const recordStartRef = useRef(0);
     const recordTimerRef = useRef(null);
+    // 2026-09-23 chat audit m6 — in-flight guard. getUserMedia is async (and
+    // shows the permission sheet on first use); a second tap/hold before it
+    // resolved started a SECOND recorder whose stream was never stopped (mic
+    // light stuck on, orphaned onstop staging a phantom memo).
+    const startingRecordingRef = useRef(false);
     async function startRecording() {
+        if (startingRecordingRef.current || recorderRef.current) return;
+        startingRecordingRef.current = true;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const mime = MediaRecorder.isTypeSupported('audio/webm')
@@ -1601,6 +1750,8 @@ function ChatThreadInner({
                 'Voice memos need microphone permission — allow it in Settings → DD Mau → Microphone. Typing works as usual.',
                 'Los memos de voz necesitan permiso de micrófono — actívalo en Ajustes → DD Mau → Micrófono. Escribir funciona igual.',
             ), { kind: 'error', duration: 6000 });
+        } finally {
+            startingRecordingRef.current = false;
         }
     }
     function stopRecording(cancel = false) {
@@ -1759,7 +1910,7 @@ function ChatThreadInner({
     async function handleTogglePin(message) {
         if (!message?.id) return;
         const isPinned = message.pinned === true;
-        if (!isPinned && pinnedMessages.length >= 5) {
+        if (!isPinned && (latestThreadRef.current?.pinnedCount ?? pinnedMessages.length) >= 5) {
             toast(tx('Up to 5 messages can be pinned. Unpin one first.',
                      'Hasta 5 mensajes pueden estar fijados. Quita uno primero.'),
                   { kind: 'warn' });
@@ -1800,12 +1951,24 @@ function ChatThreadInner({
         if (!canOwn && !canAny) return;
         const ok = window.confirm(tx('Delete this message?', '¿Eliminar este mensaje?'));
         if (!ok) return;
+        // 2026-09-23 chat audit M5 — decide BEFORE the write (the local echo
+        // flips the message to deleted) whether it's the one the chat-list
+        // preview shows; if so the preview must stop quoting it for everyone.
+        const live = latestThreadRef.current || { chat, messages };
+        const isPreviewed = isChatLastMessage(live.chat, message, live.messages[live.messages.length - 1]?.id);
         try {
             await updateDoc(doc(db, 'chats', chat.id, 'messages', message.id), {
                 deleted: true,
                 deletedBy: staffName,
                 deletedAt: serverTimestamp(),
             });
+            if (isPreviewed) {
+                const patch = lastMessagePatchFor('delete', message);
+                // Best-effort + not awaited: the delete itself already landed;
+                // a failed preview patch must not report the delete failed.
+                if (patch) updateDoc(doc(db, 'chats', chat.id), patch)
+                    .catch(e => console.warn('lastMessage (delete) patch failed:', e));
+            }
             recordAudit({
                 action: 'chat.message.delete',
                 actorName: staffName,
@@ -1853,7 +2016,19 @@ function ChatThreadInner({
     // change, they should send a follow-up.
     async function handleEditMessage(message, newText) {
         if (!message?.id) return;
-        if (!canEditMessage(message, viewer)) return;
+        if (!canEditMessage(message, viewer)) {
+            // 2026-09-23 chat audit m4 — the 15-minute window can lapse while
+            // the editor is open; Save used to silently do nothing and leave
+            // the editor up. Say why and close it (the typed text is lost on
+            // purpose — the message can no longer change).
+            if (message.senderName === viewer?.name && isMessageEditable(message)) {
+                toast(tx('Edit window closed — messages can only be edited for 15 minutes.',
+                         'Se cerró el tiempo para editar — los mensajes solo se pueden editar por 15 minutos.'),
+                      { kind: 'warn' });
+            }
+            setEditingMessageId(null);
+            return;
+        }
         const trimmed = String(newText || '').trim();
         if (!trimmed) return; // empty edit = no-op (use delete instead)
         if (trimmed === (message.text || '').trim()) {
@@ -1863,6 +2038,8 @@ function ChatThreadInner({
             setEditingMessageId(null);
             return;
         }
+        const live = latestThreadRef.current || { chat, messages };
+        const isPreviewed = isChatLastMessage(live.chat, message, live.messages[live.messages.length - 1]?.id);
         try {
             // 2026-05-24 audit fix: edit was leaving the stale `mentions[]`
             // array on the doc — if a user edited "hey team" → "hey @Andrea",
@@ -1886,6 +2063,13 @@ function ChatThreadInner({
                 translations: {},
                 sourceLang: null,
             });
+            // 2026-09-23 chat audit M5 — keep the chat-list preview in step
+            // with an edit of the previewed (newest) text message. Best-effort.
+            if (isPreviewed) {
+                const patch = lastMessagePatchFor('edit', message, trimmed);
+                if (patch) updateDoc(doc(db, 'chats', chat.id), patch)
+                    .catch(e => console.warn('lastMessage (edit) patch failed:', e));
+            }
             recordAudit({
                 action: 'chat.message.edit',
                 actorName: staffName,
@@ -2060,18 +2244,24 @@ function ChatThreadInner({
     // specific message via jumpToMessageId.
     //
     // Audit row per nudge for accountability.
-    async function handleNudge(message, targetName) {
-        if (!message?.id || !targetName) return;
+    // Returns true on success, false on failure / not allowed. `quiet`
+    // suppresses the per-person failure toast (Nudge-all reports once).
+    async function handleNudge(message, targetName, { quiet = false } = {}) {
+        if (!message?.id || !targetName) return false;
         // Permission check — manager / admin / chat co-admin only.
         if (!isAdmin && !isManager
             && !(Array.isArray(chat?.admins) && chat.admins.includes(staffName))) {
-            return;
+            return false;
         }
-        if (targetName === staffName) return; // no self-nudge
+        if (targetName === staffName) return false; // no self-nudge
 
         const chatLabel = chat?.type === 'dm' ? staffName : (chat?.name || 'Chat');
         try {
-            await notifyStaff({
+            // 2026-09-23 chat audit m11 — notifyStaff never throws; it
+            // resolves null when the write failed. The old try/catch could
+            // never fire, so a failed nudge looked sent. Check the result.
+            // chatId rides along so the push / bell tap opens THIS chat.
+            const notifId = await notifyStaff({
                 forStaff: targetName,
                 type: 'chat_nudge',
                 title: '⏰ ' + tx('Reminder', 'Recordatorio'),
@@ -2088,7 +2278,9 @@ function ChatThreadInner({
                 priority: 'high',
                 forceDeliver: true,
                 createdBy: staffName,
+                chatId: chat.id,
             });
+            if (!notifId) throw new Error('notify_failed');
             recordAudit({
                 action: 'chat.nudge.send',
                 actorName: staffName,
@@ -2101,9 +2293,14 @@ function ChatThreadInner({
                     chatLabel,
                 },
             });
+            return true;
         } catch (e) {
             console.warn(`nudge failed for ${targetName}:`, e);
-            toast(tx('Nudge failed', 'Error al recordar'), { kind: 'error' });
+            if (!quiet) {
+                toast(tx(`Nudge to ${targetName} failed — check connection.`,
+                         `No se pudo recordar a ${targetName} — revisa la conexión.`), { kind: 'error' });
+            }
+            return false;
         }
     }
 
@@ -2142,13 +2339,21 @@ function ChatThreadInner({
     // the audit log readable in order.
     async function handleNudgeAll(message, targetNames) {
         if (!message?.id || !Array.isArray(targetNames) || targetNames.length === 0) return;
+        let ok = 0;
         for (const name of targetNames) {
-            await handleNudge(message, name);
+            // eslint-disable-next-line no-await-in-loop
+            if (await handleNudge(message, name, { quiet: true })) ok += 1;
         }
-        toast(
-            tx(`Nudged ${targetNames.length}`, `${targetNames.length} recordados`),
-            { kind: 'success' }
-        );
+        // m11 — report what actually went out (was always "Nudged N").
+        const failed = targetNames.length - ok;
+        if (failed === 0) {
+            toast(tx(`Nudged ${ok}`, `${ok} recordados`), { kind: 'success' });
+        } else if (ok === 0) {
+            toast(tx('Nudge failed — check connection.', 'Error al recordar — revisa la conexión.'), { kind: 'error' });
+        } else {
+            toast(tx(`Nudged ${ok} of ${targetNames.length} — ${failed} failed.`,
+                     `${ok} de ${targetNames.length} recordados — ${failed} fallaron.`), { kind: 'warn' });
+        }
     }
 
     // Close a poll. Only the creator or admin can close.
@@ -2859,16 +3064,11 @@ function ChatThreadInner({
                         targetLang={targetLang}
                         autoTranslate={autoTranslate}
                         onClose={() => setShowPinsDrawer(false)}
-                        onJumpToMessage={(id) => {
-                            setHighlightMsgId(id);
-                            setAtBottom(false);
-                            setTimeout(() => {
-                                const el = document.getElementById(`msg-${id}`);
-                                el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                // Auto-clear highlight after 2s
-                                setTimeout(() => setHighlightMsgId(null), 2500);
-                            }, 100);
-                        }}
+                        // 2026-09-23 chat audit M4 — route through the shared
+                        // jump path (scroll + highlight, and auto-grow the
+                        // window when the pin is older than what's loaded).
+                        onJumpToMessage={requestJumpToMessage}
+                        pins={serverPins}
                     />
                 </Suspense>
             )}
@@ -3649,6 +3849,10 @@ function msgFieldsEqual(a, b) {
     if (a.edited !== b.edited) return false;
     if (a.deleted !== b.deleted) return false;
     if (a.pinned !== b.pinned) return false;
+    // 2026-09-23 chat audit m3 — the "📋 Task created" chip renders from
+    // linkedTaskId; without this the memo kept the chip hidden after
+    // "Make task" until some other field changed.
+    if ((a.linkedTaskId || '') !== (b.linkedTaskId || '')) return false;
     if ((a.coverageStatus || '') !== (b.coverageStatus || '')) return false;
     if ((a.coverageClaimedBy || '') !== (b.coverageClaimedBy || '')) return false;
     // Timestamps must compare by value — Firestore rebuilds Timestamp
@@ -3828,18 +4032,37 @@ function AudioPlayer({ src, duration, isMine }) {
         if (!a) return;
         const onTime = () => setT(a.currentTime);
         const onEnd = () => { setPlaying(false); setT(0); };
+        // 2026-09-23 chat audit m7 — playback paused by anything other than
+        // our button (OS audio interruption, a call, the browser pausing a
+        // background tab) left the pill showing ❚❚ forever.
+        const onPause = () => setPlaying(false);
         a.addEventListener('timeupdate', onTime);
         a.addEventListener('ended', onEnd);
+        a.addEventListener('pause', onPause);
         return () => {
             a.removeEventListener('timeupdate', onTime);
             a.removeEventListener('ended', onEnd);
+            a.removeEventListener('pause', onPause);
         };
     }, []);
     function toggle() {
         const a = audioRef.current;
         if (!a) return;
         if (playing) { a.pause(); setPlaying(false); }
-        else { a.play(); setPlaying(true); }
+        else {
+            setPlaying(true);
+            // m7 — play() returns a promise that REJECTS on a load/decode
+            // failure or a blocked autoplay; unhandled, the pill stuck on ❚❚
+            // (and logged an unhandled rejection). Reset instead.
+            let p;
+            try { p = a.play(); } catch (e) { p = Promise.reject(e); }
+            if (p && typeof p.catch === 'function') {
+                p.catch((e) => {
+                    console.warn('voice playback failed:', e);
+                    setPlaying(false);
+                });
+            }
+        }
     }
     const total = duration || 0;
     const pct = total > 0 ? Math.min(100, (t / total) * 100) : 0;

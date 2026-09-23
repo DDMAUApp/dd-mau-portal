@@ -53,8 +53,11 @@ import { formatCountStampLines, contributionWrites } from '../data/inventoryStam
 import { reconcileCountsDetailed, RELEASE_TIMEOUT_MS } from '../data/inventoryReconcile';
 import { createTapCoalescer } from '../data/inventoryTapCoalescer';
 import { registerReloadStash, peekReloadStash, peekReloadStashMeta, clearReloadStash, planStashRehydrate, resolveLostHolds } from '../data/reloadStash';
-import { InventoryLocationJumpBar, InventoryMoreMenu, locationGroupKey, locationTitle, UNASSIGNED_LOCATION } from './InventoryLayoutParts';
-import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot, shouldApplyInventorySnapshot } from '../data/inventoryStability';
+import { InventoryLocationJumpBar, InventoryMoreMenu, locationGroupKey, locationTitle, UNASSIGNED_LOCATION, keepLocationFolds } from './InventoryLayoutParts';
+import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot, shouldApplyInventorySnapshot, isServerConfirmedSnapshot } from '../data/inventoryStability';
+// 2026-09-23 inventory bug batch — the catalog load-merge + every catalog
+// edit (edit / move / delete / reorder / new ids) as pure, tested planners.
+import { mergeSavedInventory, isListOverride, findItemById, nextCatalogItemId, planIdRemapWrites, planItemPatch, planItemMove, planItemDelete, planItemSwap } from '../data/inventoryCatalog';
 import { centralToday, centralTomorrow, shouldAutoEmpty, deliveredDocId, buildHistoryDoc, formatDeliveryLabel } from '../data/inventoryDelivery';
 // Trusted item-pricing engine (inventory pricing redesign). resolveTrustedPrice
 // returns the priority-ranked price (manual > receipt > … > legacy scraped).
@@ -1010,6 +1013,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // form opens. Andrew: "the edit is able to re categorize items".
             const [invEditTargetCatIdx, setInvEditTargetCatIdx] = useState(null);
             const [invEditSubcat, setInvEditSubcat] = useState("");
+            // In-flight guard for saveInvEdit (a double-tapped Save would run a
+            // second move against an id the first one already replaced).
+            const invEditSavingRef = useRef(false);
             // 2026-05-17 — "move mode" for fast recategorization. The
             // Edit form (above) is precise but slow when you have a
             // bunch of items to relocate. Tap the 🔀 button on an item
@@ -1053,6 +1059,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // (the snapshot subscription is set up once on mount).
             const activeListRef = useRef(null);
             useEffect(() => { activeListRef.current = activeList; }, [activeList]);
+            // Catalog-merge memo for the inventory listener (2026-09-23, M1).
+            // Was a `let` inside the listener effect, so deactivating an
+            // active list couldn't re-run the merge: the hash still matched
+            // and the list's items stayed on screen. Hoisted to refs so the
+            // active-list callback can reset it and re-merge from the LAST
+            // ops snapshot's catalog ({ customInventory, deletedMasterIds }).
+            const lastCustomInvHashRef = useRef('');
+            const lastOpsCatalogRef = useRef(null);
             const [livePrices, setLivePrices] = useState({}); // { sysco: { prices: { itemId: { price, pack, ... } }, lastScraped } }
             // (Scraper trigger/status state removed 2026-06-15 — the Sysco/USFoods
             // scrapers were deleted, so these were write-only dead state.)
@@ -1697,9 +1711,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return out;
             }, [syscoPricingData, usfoodsPricingData]);
 
-            // Expand all categories when searching, collapse back when cleared
+            // Expand all categories when searching, collapse back when cleared.
+            // 2026-09-23: keep the Location view's folded sections (`loc::` keys)
+            // — clearing a search used to un-fold every location.
             useEffect(() => {
-                if (!invSearch) { setCollapsedCats({}); }
+                if (!invSearch) { setCollapsedCats(keepLocationFolds); }
             }, [invSearch]);
 
             // ── AI semantic search wiring ─────────────────────────────
@@ -2104,13 +2120,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // customInventory array from local state (silently overwriting a
                 // concurrent edit from another tablet). mutateInventory re-reads the
                 // live list inside the txn and sets local state on success.
-                await mutateInventory((live) => (live || customInventory).map((c, cIdx) => {
-                    if (cIdx !== catIdx) return c;
-                    const items = [...(c.items || [])];
-                    if (targetIdx < 0 || targetIdx >= items.length) return c;
-                    [items[itemIdx], items[targetIdx]] = [items[targetIdx], items[itemIdx]];
-                    return { ...c, items };
-                }));
+                // 2026-09-23 (M3): swap by ID — the item and the neighbor the user
+                // saw — not by position in the live array (its order/length can
+                // differ from the on-screen list, which swapped the wrong items).
+                const id = cat.items[itemIdx]?.id;
+                const neighborId = cat.items[targetIdx]?.id;
+                if (id == null) return;
+                let missing = false;
+                await mutateInventory((live, data) => {
+                    const r = planItemSwap({ list: live || customInventory, id, neighborId, direction }, catalogCtx(data));
+                    if (r.error) { missing = true; return live; }
+                    return r.customInventory;
+                });
+                if (missing) catalogMissingToast();
             };
 
             // 2026-06-02 — labor subscription removed. `laborData` now
@@ -2570,15 +2592,52 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // tab renders from the active list. If no list is active,
                 // the legacy ops/inventory_{loc}.customInventory path below
                 // is the source of truth (existing behavior).
+                // Fresh per store (was a `let` in this effect before M1).
+                lastCustomInvHashRef.current = '';
+                lastOpsCatalogRef.current = null;
+                // Apply the ops doc's catalog through the shared load merge
+                // (src/data/inventoryCatalog.js — extracted verbatim, tested).
+                // Short-circuits when neither the saved list nor the
+                // tombstones changed (the common count-only snapshot). The
+                // tombstones are part of the key since 2026-09-23: deleting a
+                // built-in the saved list never stored only adds a tombstone.
+                const applyOpsCatalog = (catalog) => {
+                    const nextHash = JSON.stringify(catalog.customInventory) + '|' + JSON.stringify(catalog.deletedMasterIds || []);
+                    if (nextHash === lastCustomInvHashRef.current) return;
+                    lastCustomInvHashRef.current = nextHash;
+                    const { merged, idMigration } = mergeSavedInventory(INVENTORY_CATEGORIES, catalog.customInventory, catalog.deletedMasterIds);
+                    setCustomInventory(merged);
+                    // The merge had to renumber ids → persist the fix. The
+                    // migration re-merges the LIVE doc inside a transaction and
+                    // writes only the remapped ids, so when several devices
+                    // open at once only the first does any work.
+                    if (Object.keys(idMigration).length > 0) {
+                        migrateInventoryIds().catch(err => {
+                            console.error("[idMigration] failed:", err);
+                        });
+                    }
+                };
                 const unsubActiveList = subscribeActiveList((next) => {
+                    const wasOverriding = isListOverride(activeListRef.current);
+                    // Sync the ref NOW (the mirror effect only runs after the
+                    // next commit) so the ops listener agrees immediately.
+                    activeListRef.current = next;
                     setActiveList(next);
-                    if (next && Array.isArray(next.categories) && next.categories.length > 0) {
+                    if (isListOverride(next)) {
                         // Replace customInventory immediately — counts stay
                         // keyed by item.id, so the inventory tab re-renders
                         // with the list's items but the same counts.
                         // 2026-07-27 (audit O6) — guard c.items: a malformed
                         // category (missing items) crashed the whole page here.
                         setCustomInventory(next.categories.map(c => ({ ...c, items: [...(c.items || [])] })));
+                    } else if (wasOverriding) {
+                        // M1 (2026-09-23): the list was DEACTIVATED — put the
+                        // normal catalog back. Nothing did before: the ops
+                        // listener's hash still matched, so the list's items
+                        // stayed on screen until the catalog itself changed.
+                        lastCustomInvHashRef.current = '';
+                        if (lastOpsCatalogRef.current) applyOpsCatalog(lastOpsCatalogRef.current);
+                        else setCustomInventory(INVENTORY_CATEGORIES.map(c => ({ ...c, items: [...c.items] })));
                     }
                 });
 
@@ -2644,10 +2703,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 } catch { /* best-effort */ }
 
                 const inventoryDocRef = doc(db, "ops", "inventory_" + storeLocation);
-                // Track last customInventory hash so we can short-circuit
-                // the heavy id-migration merge below when only counts
-                // changed (the common case on every +/- tap).
-                let lastCustomInvHash = '';
+                // (The customInventory hash that short-circuits the merge on
+                // count-only snapshots now lives in lastCustomInvHashRef.)
                 // True once we've applied at least one server-confirmed snapshot.
                 // Used to let the FIRST (cache) snapshot paint counts for a warm/
                 // offline cold-start, while skipping the LATER stale cache echoes
@@ -2672,6 +2729,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         localHasAny: hasAnyCount(inventoryRef.current, vendorCountsRef.current),
                     });
                     if (!admit.apply) return;
+                    // Whether a server snapshot had been applied BEFORE this
+                    // one (M2 — see the stability guard below).
+                    const syncedBefore = invServerSynced;
                     if (admit.markSynced) invServerSynced = true;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
@@ -2700,7 +2760,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         const recentlyCleared = Date.now() - manualInvClearRef.current < 15000;
                         const incomingClearedAt = data.clearedAt || null;
                         const remoteClearAdvanced = isRemoteClearAdvanced(incomingClearedAt, lastAppliedClearedAtRef.current);
-                        if (shouldIgnoreInventorySnapshot({ incomingHasAny, localHasAny, recentlyCleared, remoteClearAdvanced })) {
+                        // M2 (2026-09-23): a SERVER snapshot (no pending writes)
+                        // after this sheet already synced once IS the doc's real
+                        // state — e.g. another device emptied the cart with "−"
+                        // taps, which never stamps clearedAt. Empty cache echoes
+                        // and the first server snapshot after a load stay guarded.
+                        const serverConfirmed = isServerConfirmedSnapshot({
+                            fromCache: docSnap.metadata.fromCache,
+                            hasPendingWrites: docSnap.metadata.hasPendingWrites,
+                            syncedBefore,
+                        });
+                        if (shouldIgnoreInventorySnapshot({ incomingHasAny, localHasAny, recentlyCleared, remoteClearAdvanced, serverConfirmed })) {
                             console.warn('[inventory] ignored an empty/stale snapshot that would have wiped the active cart — keeping current counts.');
                             return;
                         }
@@ -2761,134 +2831,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // idempotent (deterministic history id + clears deliveryDate).
                         setDeliveryDate(data.deliveryDate || null);
                         archiveAndClearIfDelivered(data);
+                        // Remember the catalog even while a list overrides it, so
+                        // deactivating the list can re-merge it at once (M1).
+                        if (Array.isArray(data.customInventory)) {
+                            lastOpsCatalogRef.current = { customInventory: data.customInventory, deletedMasterIds: data.deletedMasterIds || [] };
+                        }
                         // If an admin-activated list is in play, IT owns the
                         // categories structure — skip the legacy merge from
                         // the ops doc. Counts/meta still come from the ops
                         // doc (per-location, orthogonal to the list).
-                        const overrideList = activeListRef.current;
-                        if (overrideList && Array.isArray(overrideList.categories) && overrideList.categories.length > 0) {
+                        if (isListOverride(activeListRef.current)) {
                             return;
                         }
                         // 2026-07-27 (audit O6) — Array.isArray, not truthy: a
                         // malformed doc (customInventory saved as an object /
                         // string) crashed the page on EVERY snapshot before.
                         if (Array.isArray(data.customInventory)) {
-                            // Perf-fix 2026-05-22 (production audit): short-circuit
-                            // the id-migration merge when customInventory bytes
-                            // haven't changed. This fires for every count-only
-                            // snapshot (the most common path), and the merge below
-                            // builds Sets/Maps and walks 200+ items pointlessly.
-                            // JSON.stringify is cheap (<2ms on this data shape) and
-                            // avoids the deep-merge + downstream setCustomInventory
-                            // → re-derivation of every useMemo in the tab.
-                            const nextHash = JSON.stringify(data.customInventory);
-                            if (nextHash === lastCustomInvHash) {
-                                    return;
-                            }
-                            lastCustomInvHash = nextHash;
-                            // Merge Firestore custom items into the master INVENTORY_CATEGORIES
-                            // so new items from inventory.js always appear.
-                            // Tombstones (deletedMasterIds) record master items the user
-                            // intentionally removed via merge; without them, the load-merge
-                            // would re-include every master item every time, undoing the
-                            // delete on next reload.
-                            const tombstones = new Set(data.deletedMasterIds || []);
-                            const idMigration = {};
-                            const merged = INVENTORY_CATEGORIES.map((masterCat, masterIdx) => {
-                                const savedCat = data.customInventory.find(sc => sc.name === masterCat.name);
-                                const liveMasterItems = masterCat.items.filter(it => !tombstones.has(it.id));
-                                if (!savedCat) return { ...masterCat, items: [...liveMasterItems] };
-                                const masterIds = new Set(liveMasterItems.map(it => it.id));
-                                const masterById = new Map(liveMasterItems.map(it => [it.id, it]));
-                                const expectedPrefix = `${masterIdx}-`;
-                                // Walk savedCat.items in saved order so user reorders persist.
-                                // Then append any master items the saved doc didn't have yet
-                                // (newly-added entries in inventory.js).
-                                const mergedItems = [];
-                                const seenIds = new Set();
-                                // 2026-07-27 (audit O6) — guard items array.
-                                (savedCat.items || []).forEach(si => {
-                                    let newId = si.id;
-                                    if (typeof si.id === "string" && !si.id.startsWith(expectedPrefix) && !masterIds.has(si.id)) {
-                                        // Item from a renamed/moved category. Renumber under
-                                        // the new prefix so it can't collide with another
-                                        // category's master ids.
-                                        let n = mergedItems.length;
-                                        while (seenIds.has(`${masterIdx}-${n}`) || masterIds.has(`${masterIdx}-${n}`)) n++;
-                                        newId = `${masterIdx}-${n}`;
-                                        idMigration[si.id] = newId;
-                                    }
-                                    // NEVER silently drop a user's item on an id collision — that
-                                    // is how an added item could "erase" a previous one. Re-id the
-                                    // collider so BOTH survive (a genuine accidental dup then shows
-                                    // twice — visible + deletable — instead of vanishing).
-                                    if (seenIds.has(newId)) {
-                                        let n = mergedItems.length;
-                                        while (seenIds.has(`${masterIdx}-${n}`) || masterIds.has(`${masterIdx}-${n}`)) n++;
-                                        const reId = `${masterIdx}-${n}`;
-                                        idMigration[si.id] = reId;
-                                        seenIds.add(reId);
-                                        mergedItems.push({ ...si, id: reId });
-                                        return;
-                                    }
-                                    seenIds.add(newId);
-                                    // If a master twin exists, layer master fields under saved
-                                    // (saved wins on every non-empty field).
-                                    const mi = masterById.get(newId);
-                                    if (mi) {
-                                        const merged = { ...mi };
-                                        for (const k of Object.keys(si)) {
-                                            const v = si[k];
-                                            if (v !== "" && v !== null && v !== undefined) merged[k] = v;
-                                        }
-                                        merged.id = newId;
-                                        mergedItems.push(merged);
-                                    } else {
-                                        mergedItems.push({ ...si, id: newId });
-                                    }
-                                });
-                                // Append any master items the saved doc didn't have yet
-                                // (newly-added in inventory.js since the last save).
-                                liveMasterItems.forEach(mi => {
-                                    if (seenIds.has(mi.id)) return;
-                                    seenIds.add(mi.id);
-                                    mergedItems.push({ ...mi });
-                                });
-                                return { ...masterCat, items: mergedItems };
-                            });
-                            // For saved categories that don't match a master by name (e.g. an
-                            // old name from before a rename), append them and renumber their
-                            // ids under the new merged index so they can't collide with master
-                            // items in another category.
-                            data.customInventory.forEach(sc => {
-                                if (INVENTORY_CATEGORIES.find(mc => mc.name === sc.name)) return;
-                                const newIdx = merged.length;
-                                const expectedPrefix = `${newIdx}-`;
-                                const seenIds = new Set();
-                                // 2026-07-27 (audit O6) — guard items array.
-                                const renumbered = (sc.items || []).map((si, n) => {
-                                    let newId = si.id;
-                                    if (typeof si.id !== "string" || !si.id.startsWith(expectedPrefix) || seenIds.has(si.id)) {
-                                        let j = n;
-                                        while (seenIds.has(`${newIdx}-${j}`)) j++;
-                                        newId = `${newIdx}-${j}`;
-                                        if (newId !== si.id) idMigration[si.id] = newId;
-                                    }
-                                    seenIds.add(newId);
-                                    return { ...si, id: newId };
-                                });
-                                merged.push({ ...sc, items: renumbered });
-                            });
-                            setCustomInventory(merged);
-
-                            // If the merge had to renumber any ids, persist the corrected
-                            // customInventory + counts + vendor_matches so the cleanup is durable.
-                            // Runs at most once per affected device on first load post-deploy.
-                            if (Object.keys(idMigration).length > 0) {
-                                migrateInventoryIds(merged, idMigration, data.counts || {}, data.countMeta || {}).catch(err => {
-                                    console.error("[idMigration] failed:", err);
-                                });
-                            }
+                            // Merge Firestore custom items into the master
+                            // INVENTORY_CATEGORIES so new items from inventory.js
+                            // always appear (tombstoned built-ins excluded).
+                            // Perf-fix 2026-05-22: short-circuits inside when the
+                            // catalog bytes haven't changed (count-only snapshot).
+                            applyOpsCatalog(lastOpsCatalogRef.current);
                         }
                     }
                 }, (err) => console.warn('inventory snapshot subscribe failed', err));
@@ -4848,12 +4812,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     setInventory(resetCounts);
                     setInvCountMeta({});
                     setVendorCounts({});
+                    // 2026-09-23: zeroed rows must not keep a stale "Save failed" /
+                    // "Changed elsewhere" badge.
+                    setInventorySyncStatus({});
                     const ref = doc(db, "ops", "inventory_" + storeLocation);
                     // updateDoc replaces these top-level fields without touching customInventory or other fields,
                     // so a concurrent schema edit (add item, change vendor) on another tablet isn't clobbered.
                     setDeliveryDate(null);
+                    // Our OWN clear marker: record it as applied so its echo isn't
+                    // treated as another device's clear (which would drop the holds
+                    // of taps made right after this reset).
+                    const resetClearedAt = new Date().toISOString();
+                    lastAppliedClearedAtRef.current = resetClearedAt;
                     try {
-                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), clearedAt: new Date().toISOString(), date: new Date().toISOString() });
+                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), clearedAt: resetClearedAt, date: new Date().toISOString() });
                     } catch (err) {
                         if (err?.code === "not-found") {
                             await setDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, customInventory, date: new Date().toISOString() });
@@ -4925,9 +4897,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setInvCountMeta({});
                 setVendorCounts({});
                 setDeliveryDate(null);
+                setInventorySyncStatus({}); // no stale badges on zeroed rows
+                // Own clear marker = already applied (its echo is not a remote clear).
+                const clearClearedAt = new Date().toISOString();
+                lastAppliedClearedAtRef.current = clearClearedAt;
                 try {
                     await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
-                        counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), clearedAt: new Date().toISOString(), date: new Date().toISOString(),
+                        counts: {}, countMeta: {}, vendorCounts: {}, deliveryDate: deleteField(), clearedAt: clearClearedAt, date: new Date().toISOString(),
                     });
                     toast(language === 'es' ? '✓ Conteo limpiado' : '✓ Counts cleared', { kind: 'success' });
                 } catch (e) {
@@ -4942,23 +4918,41 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // ids, and vendor_matches that pointed at the old ids redirected.
             // The fact that idMigration was non-empty in the load means duplicates were
             // forming on every render; saving is what actually breaks the cycle.
-            const migrateInventoryIds = async (correctedInventory, idMigration, oldCounts, oldMeta) => {
-                const newCounts = {};
-                Object.entries(oldCounts).forEach(([oldId, val]) => {
-                    newCounts[idMigration[oldId] || oldId] = val;
-                });
-                const newMeta = {};
-                Object.entries(oldMeta).forEach(([oldId, val]) => {
-                    newMeta[idMigration[oldId] || oldId] = val;
-                });
+            //
+            // 2026-09-23 (C1): was a plain updateDoc that REPLACED the whole
+            // counts / countMeta maps from this device's snapshot — and it ran on
+            // every open device at once, so taps landing meanwhile were wiped.
+            // Now: a transaction that re-runs the merge on the LIVE doc (another
+            // device may already have fixed it → nothing to do, no write) and
+            // moves only the remapped ids' counts/meta with dotted paths.
+            const migrateInventoryIds = async () => {
+                if (!storeLocation) return;
                 const ref = doc(db, "ops", "inventory_" + storeLocation);
-                await updateDoc(ref, {
-                    customInventory: correctedInventory,
-                    counts: newCounts,
-                    countMeta: newMeta,
-                    date: new Date().toISOString(),
+                const idMigration = await runTransaction(db, async (txn) => {
+                    const snap = await txn.get(ref);
+                    if (!snap.exists()) return null;
+                    const data = snap.data() || {};
+                    if (!Array.isArray(data.customInventory)) return null;
+                    const { merged, idMigration: liveMigration } = mergeSavedInventory(INVENTORY_CATEGORIES, data.customInventory, data.deletedMasterIds);
+                    if (Object.keys(liveMigration).length === 0) return null;
+                    txn.update(ref, {
+                        customInventory: merged,
+                        ...planIdRemapWrites(liveMigration, data.counts || {}, data.countMeta || {}, deleteField()),
+                        date: new Date().toISOString(),
+                    });
+                    return liveMigration;
                 });
-                // Redirect any vendor matches whose value points at an old id.
+                if (!idMigration) return;
+                await redirectVendorMatches(idMigration);
+                // MED-5, 2026-05-30: removed [idMigration] console.log left
+                // in production after the one-shot heal migration shipped.
+            };
+            // Redirect any vendor matches (Sysco/USFoods SKU links) whose value
+            // points at an old id. Shared by the id migration and by a
+            // cross-category move, which now re-ids the item itself (C1) — the
+            // same end state the post-move migration used to produce.
+            const redirectVendorMatches = async (idMigration) => {
+                if (!idMigration || !Object.keys(idMigration).length) return;
                 const vmRef = doc(db, "config", "vendor_matches");
                 const vmSnap = await getDoc(vmRef);
                 if (vmSnap.exists()) {
@@ -4975,8 +4969,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         await updateDoc(vmRef, updates);
                     }
                 }
-                // MED-5, 2026-05-30: removed [idMigration] console.log left
-                // in production after the one-shot heal migration shipped.
             };
 
             const inventoryDocRef = () => doc(db, "ops", "inventory_" + storeLocation);
@@ -4985,21 +4977,31 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // and writes back atomically. If another tablet wrote between our read and
             // our write, Firestore retries the transformer against the fresh data —
             // no more silent overwrites when two managers edit at once.
+            // The transformer also gets the live doc's data (2nd arg) so new ids can
+            // skip tombstones + leftover count keys (see nextItemId).
+            //
+            // Local mirror (2026-09-23): the SAVED list is run through the same
+            // load merge before it's shown (it used to be shown raw — built-ins
+            // the saved doc lacks vanished until the next snapshot), and it is
+            // NOT shown at all while an admin-activated list owns the screen
+            // (M1: the list view used to be swapped for the raw ops list).
             const mutateInventory = async (transformer) => {
                 try {
-                    const next = await runTransaction(db, async (txn) => {
+                    const out = await runTransaction(db, async (txn) => {
                         const snap = await txn.get(inventoryDocRef());
+                        const data = snap.exists() ? (snap.data() || {}) : {};
                         const live = (snap.exists() && Array.isArray(snap.data()?.customInventory))
                             ? snap.data().customInventory
                             : customInventory;
-                        const updated = transformer(live);
+                        const updated = transformer(live, data);
                         txn.set(inventoryDocRef(), {
                             customInventory: updated,
                             date: new Date().toISOString(),
                         }, { merge: true });
-                        return updated;
+                        return { updated, tombstones: data.deletedMasterIds || [] };
                     });
-                    setCustomInventory(next);
+                    const next = out.updated;
+                    mirrorSavedCatalog(next, out.tombstones);
                     return next;
                 } catch (err) {
                     console.error("Error updating inventory:", err);
@@ -5007,6 +5009,96 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     return null;
                 }
             };
+            // Show a just-written SAVED list the way the listener will (merged),
+            // unless an active inventory list owns the screen (M1).
+            const mirrorSavedCatalog = (savedList, tombstones) => {
+                if (isListOverride(activeListRef.current)) return;
+                try {
+                    setCustomInventory(mergeSavedInventory(INVENTORY_CATEGORIES, savedList, tombstones).merged);
+                } catch (e) {
+                    console.warn('[inventory] local catalog mirror failed — the snapshot will repaint', e);
+                }
+            };
+
+            // Catalog edits that must ALSO touch counts / countMeta / tombstones
+            // atomically (edit, cross-category move, delete — 2026-09-23 C1/C2/M3).
+            // plan(live, data) returns a planner result from inventoryCatalog.js:
+            //   { customInventory, idMigration?, tombstones?, clearCountIds? }
+            //   or { error: 'missing' } → nothing is written.
+            // Counts/meta follow a renamed id and cleared ids are deleted with
+            // DOTTED paths computed from the LIVE maps — never whole-map writes.
+            // Resolves { ok: true, plan } | { ok: false, reason: 'missing'|'error' }.
+            const commitInventoryCatalog = async (plan) => {
+                const ref = inventoryDocRef();
+                try {
+                    const out = await runTransaction(db, async (txn) => {
+                        const snap = await txn.get(ref);
+                        const data = snap.exists() ? (snap.data() || {}) : {};
+                        const live = Array.isArray(data.customInventory) ? data.customInventory : customInventory;
+                        const result = plan(live, data);
+                        if (!result || result.error) return { result: result || { error: 'missing' } };
+                        const tombstones = (result.tombstones || []).filter(Boolean);
+                        const date = new Date().toISOString();
+                        if (snap.exists()) {
+                            const update = {
+                                customInventory: result.customInventory,
+                                ...planIdRemapWrites(result.idMigration || {}, data.counts || {}, data.countMeta || {}, deleteField()),
+                                date,
+                            };
+                            for (const id of (result.clearCountIds || [])) {
+                                if (data.counts && Object.prototype.hasOwnProperty.call(data.counts, id)) update[`counts.${id}`] = deleteField();
+                                if (data.countMeta && Object.prototype.hasOwnProperty.call(data.countMeta, id)) update[`countMeta.${id}`] = deleteField();
+                            }
+                            if (tombstones.length) update.deletedMasterIds = arrayUnion(...tombstones);
+                            txn.update(ref, update);
+                        } else {
+                            // No doc yet → nothing to re-key; seed the catalog.
+                            txn.set(ref, {
+                                customInventory: result.customInventory,
+                                ...(tombstones.length ? { deletedMasterIds: tombstones } : {}),
+                                date,
+                            }, { merge: true });
+                        }
+                        return { result, tombstonesAll: [...(data.deletedMasterIds || []), ...tombstones] };
+                    });
+                    if (out.result.error) return { ok: false, reason: out.result.error };
+                    mirrorSavedCatalog(out.result.customInventory, out.tombstonesAll);
+                    return { ok: true, plan: out.result };
+                } catch (err) {
+                    console.error("Error updating inventory:", err);
+                    toast(language === "es" ? "Error al guardar inventario" : "Inventory save failed", { kind: 'error' });
+                    return { ok: false, reason: 'error' };
+                }
+            };
+            // After a move re-ids an item (C1): local counts / meta / holds follow
+            // the new id right away (the snapshot confirms) so the moved item
+            // never flashes 0, and its vendor SKU links are redirected.
+            const followRenamedIds = (idMigration) => {
+                const pairs = Object.entries(idMigration || {}).filter(([a, b]) => a && b && a !== b);
+                if (!pairs.length) return;
+                // SKU links follow the item too (best-effort, never blocks).
+                redirectVendorMatches(Object.fromEntries(pairs)).catch(err => console.warn('[inventory] vendor-match redirect after move failed', err));
+                const remap = (prev) => {
+                    let changed = false;
+                    const next = { ...prev };
+                    for (const [a, b] of pairs) {
+                        if (Object.prototype.hasOwnProperty.call(next, a)) { next[b] = next[a]; delete next[a]; changed = true; }
+                    }
+                    return changed ? next : prev;
+                };
+                setInventory(remap);
+                setInvCountMeta(remap);
+                pendingCountsRef.current = remap(pendingCountsRef.current);
+                setInventorySyncStatus(prev => {
+                    let changed = false; const next = { ...prev };
+                    for (const [a] of pairs) if (a in next) { delete next[a]; changed = true; }
+                    return changed ? next : prev;
+                });
+            };
+            const catalogMissingToast = () => toast(language === 'es'
+                ? 'Ese artículo cambió o se eliminó en otro dispositivo. Revisa la lista e inténtalo de nuevo.'
+                : 'That item was changed or removed on another device. Check the list and try again.', { kind: 'error' });
+
             // Backward-compat shim — legacy callers that pre-computed `items`.
             // New code should use mutateInventory(transformer) for race safety.
             const saveInventory = async (_counts, items) => {
@@ -5017,31 +5109,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 } catch (err) { console.error("Error updating inventory (legacy):", err); }
             };
 
-            // Insert `merged` into an items array adjacent to the LAST item
-            // that shares its subcat. If no sibling exists, append. Used by
-            // cross-category move (saveInvEdit + dropMovingItem) so a moved
-            // item lands inside the matching subcategory bucket instead of
-            // at the bottom of the destination category. See saveInvEdit
-            // comment for the "chicken bone → Chicken" case that motivated
-            // this. The merged item's subcat must already be set by caller.
-            const insertNearSameSubcat = (items, merged) => {
-                const targetSub = (merged.subcat || '').trim();
-                let lastIdx = -1;
-                for (let i = 0; i < items.length; i++) {
-                    if ((items[i].subcat || '').trim() === targetSub) lastIdx = i;
-                }
-                if (lastIdx === -1) return [...items, merged]; // no sibling, append
-                return [...items.slice(0, lastIdx + 1), merged, ...items.slice(lastIdx + 1)];
-            };
+            // (insertNearSameSubcat — keeps a moved item inside its subcategory
+            // bucket — now lives in src/data/inventoryCatalog.js.)
 
-            // Build a fresh ID that won't collide with anything currently in the category,
-            // even when existing items have malformed IDs (no "-", non-numeric suffix, etc.).
-            const nextItemId = (category, catIdx) => {
-                const taken = new Set(category.items.map(it => it.id));
-                let n = category.items.length;
-                while (taken.has(catIdx + "-" + n)) n++;
-                return catIdx + "-" + n;
-            };
+            // Build a fresh ID for a new item in working[idx] (the LIVE saved list,
+            // possibly with the category just appended). 2026-09-23 (C2): the id
+            // prefix is the category's MERGED index (the saved array's position
+            // can differ → the load merge renumbered the new item on every device)
+            // and it skips every built-in id (a deleted built-in's id was being
+            // re-issued, and the merge then back-filled the new item from it),
+            // tombstones, ids the merge presents, and leftover count keys.
+            const nextItemId = (working, idx, data) => nextCatalogItemId(working, working[idx]?.name, {
+                masterCategories: INVENTORY_CATEGORIES,
+                deletedMasterIds: data?.deletedMasterIds || [],
+                counts: data?.counts || {},
+                countMeta: data?.countMeta || {},
+            });
 
             // Quick write-in add (from the blank line at bottom of each
             // category). The destination is the writeInDest entry for the
@@ -5072,7 +5155,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const targetName = customInventory[targetCatIdx]?.name;
                 setWriteInValues(prev => ({ ...prev, [sourceCatIdx]: "" }));
                 setWriteInDest(prev => ({ ...prev, [sourceCatIdx]: { catIdx: sourceCatIdx, location: '' } }));
-                await mutateInventory((live) => {
+                await mutateInventory((live, data) => {
                     // Locate the category in the LIVE doc by NAME, not by index: the saved
                     // array can be shorter / a different order than the rendered (merged)
                     // list, so live[targetCatIdx] could hit the wrong category — or none
@@ -5085,9 +5168,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         working = [...live, { name: targetName, items: [] }];
                         idx = working.length - 1;
                     }
-                    const liveCat = working[idx];
                     const newItem = {
-                        id: nextItemId(liveCat, idx),
+                        id: nextItemId(working, idx, data),
                         name: translated.name, nameEs: translated.nameEs,
                         vendor: "", supplier: "", orderDay: "", pack: "", price: null,
                         location,
@@ -5130,7 +5212,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // the transaction against the LIVE doc, where only one writer
                 // can win.
                 let raceDupe = false;
-                const result = await mutateInventory((live) => {
+                const result = await mutateInventory((live, data) => {
                     raceDupe = isDuplicateInventoryName(live, {
                         location: loc, name: translated.name, nameEs: translated.nameEs,
                     });
@@ -5144,9 +5226,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         working = [...live, { name: targetName, items: [] }];
                         idx = working.length - 1;
                     }
-                    const liveCat = working[idx];
                     const newItem = {
-                        id: nextItemId(liveCat, idx),
+                        id: nextItemId(working, idx, data),
                         name: translated.name, nameEs: translated.nameEs,
                         vendor: '', supplier: '', orderDay: '', pack: '', price: null,
                         location: loc,
@@ -5184,7 +5265,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     supplier: invNewSupplier.trim(), orderDay: invNewOrderDay,
                 };
                 const targetName = customInventory[catIdx]?.name;
-                await mutateInventory((live) => {
+                await mutateInventory((live, data) => {
                     // Find the category in the LIVE doc by NAME (saved order/length can
                     // differ from the rendered list) so the add never lands on the wrong
                     // category or silently no-ops. Create it if the saved doc lacks it.
@@ -5195,9 +5276,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         working = [...live, { name: targetName, items: [] }];
                         idx = working.length - 1;
                     }
-                    const liveCat = working[idx];
                     const newItem = {
-                        id: nextItemId(liveCat, idx),
+                        id: nextItemId(working, idx, data),
                         name: captured.name, nameEs: captured.nameEs,
                         vendor: captured.supplier, supplier: captured.supplier,
                         orderDay: captured.orderDay, pack: "", price: null, subcat: "",
@@ -5207,14 +5287,64 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setInvNewName(""); setInvNewNameEs(""); setInvNewSupplier(""); setInvNewOrderDay("Fri"); setInvShowAddForm(null);
             };
 
-            const saveInvEdit = async (catIdx, itemIdx) => {
+            // Planner context from the LIVE doc (inside a transaction).
+            const catalogCtx = (data) => ({
+                masterCategories: INVENTORY_CATEGORIES,
+                deletedMasterIds: (data && data.deletedMasterIds) || [],
+                counts: (data && data.counts) || {},
+                countMeta: (data && data.countMeta) || {},
+            });
+
+            // ONE opener for every Edit button (Category / Vendor / Split views).
+            // 2026-09-23 (C3): the Vendor opener never loaded min, the Split one
+            // loaded neither min nor location, and their Cancel didn't reset the
+            // form — so saving from those views wrote a blank/stale min (and
+            // location) over the item. This loads EVERY field saveInvEdit writes.
+            // M3: it also captures the item's id + category name, so the save
+            // targets THIS item even if the list shifts while the form is open.
+            const openInvEdit = (item, catIdx, itemIdx) => {
+                if (!item) return;
+                setInvEditingIdx({
+                    catIdx, itemIdx,
+                    id: item.id,
+                    catName: customInventory[catIdx]?.name ?? null,
+                    openedVendor: item.vendor || item.supplier || "",
+                });
+                setInvEditName(item.name || "");
+                setInvEditNameEs(item.nameEs || "");
+                setInvEditSupplier(item.vendor || item.supplier || "");
+                setInvEditOrderDay(item.orderDay || "");
+                setInvEditMin(item.min != null ? String(item.min) : "");
+                setInvEditTargetCatIdx(catIdx);
+                setInvEditSubcat(item.subcat || "");
+                setInvEditLocation(item.location || "");
+            };
+            // Close + reset every edit field (Save, Cancel, Delete — all views).
+            const closeInvEdit = () => {
+                setInvEditingIdx(null);
+                setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri"); setInvEditMin("");
+                setInvEditTargetCatIdx(null); setInvEditSubcat(""); setInvEditLocation("");
+            };
+
+            const saveInvEdit = async () => {
                 if (!invEditName.trim()) return;
-                // Capture the item ID from local state so we can locate it in the live
-                // list by ID rather than by index — index drifts if other managers
-                // added/removed items in this category between snapshots.
-                const editedItem = customInventory[catIdx]?.items[itemIdx];
-                const targetId = editedItem?.id;
+                const editing = invEditingIdx;
+                if (!editing) return;
+                if (invEditSavingRef.current) return;   // double-tapped Save
+                // M3 (2026-09-23): the id captured when the form OPENED. It used
+                // to be re-read from the on-screen position at save time, so a
+                // list that shifted meanwhile saved the edit onto another item.
+                const targetId = editing.id != null
+                    ? editing.id
+                    : customInventory[editing.catIdx]?.items[editing.itemIdx]?.id;
                 if (!targetId) return;
+                const here = findItemById(customInventory, targetId, editing.catName);
+                if (!here) { catalogMissingToast(); closeInvEdit(); return; }
+                const editedItem = here.item;
+                const sourceCatName = customInventory[here.catIdx]?.name;
+                const openedVendor = editing.openedVendor != null
+                    ? editing.openedVendor
+                    : (editedItem.vendor || editedItem.supplier || '');
                 const patch = {
                     name: invEditName.trim(), nameEs: invEditNameEs.trim(),
                     vendor: invEditSupplier.trim(), supplier: invEditSupplier.trim(),
@@ -5223,7 +5353,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // silently overriding it everywhere else. Editing the vendor now
                     // moves preferredVendor with it (only when actually changed, so
                     // pack-only edits can't clobber a dropdown-set vendor).
-                    ...(invEditSupplier.trim() !== (editedItem?.vendor || editedItem?.supplier || '')
+                    ...(invEditSupplier.trim() !== openedVendor
                         ? { preferredVendor: invEditSupplier.trim() } : {}),
                     orderDay: invEditOrderDay,
                     subcat: (invEditSubcat || '').trim(),
@@ -5238,53 +5368,43 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // so the count comparison in render is straightforward.
                 const minParsed = parseInt(String(invEditMin || '').trim(), 10);
                 patch.min = Number.isFinite(minParsed) && minParsed > 0 ? minParsed : null;
-                // Cross-category move: when invEditTargetCatIdx differs from
-                // the source catIdx, we PULL the item out of the source array
-                // and APPEND it to the destination's items array. ID stays
-                // the same so inventory counts, audits, and vendor matches
-                // remain linked.
+                // Cross-category move when the "Move to" picker names another
+                // category. Resolved by NAME against the live doc (the saved
+                // array's order can differ from the merged on-screen list).
                 const destCatIdx = (invEditTargetCatIdx == null || invEditTargetCatIdx === '')
-                    ? catIdx
+                    ? here.catIdx
                     : Number(invEditTargetCatIdx);
-                if (destCatIdx === catIdx) {
-                    // Same-category update — just merge the patch onto the item.
-                    await mutateInventory((live) => live.map((cat, cIdx) =>
-                        cIdx === catIdx
-                            ? { ...cat, items: cat.items.map(item =>
-                                item.id === targetId ? { ...item, ...patch } : item) }
-                            : cat
-                    ));
-                } else {
-                    // Cross-category move — remove from source, insert into
-                    // dest *adjacent to* existing items with the same subcat.
-                    //
-                    // Why not just append: when you move "chicken bone" to
-                    // Proteins ▸ Chicken, you want it next to the other
-                    // Chicken items, not at the end of Proteins. Appending
-                    // worked fine functionally but produced ugly storage —
-                    // and (before the grouping fix above) caused a phantom
-                    // second "Chicken" group to render. The grouping fix
-                    // makes display correct regardless, but tidy storage
-                    // helps Print, CSV exports, and any future consumer
-                    // that walks the array in order.
-                    await mutateInventory((live) => {
-                        const sourceItem = (live[catIdx]?.items || []).find(it => it.id === targetId);
-                        if (!sourceItem) return live; // nothing to move
-                        const merged = { ...sourceItem, ...patch };
-                        return live.map((cat, cIdx) => {
-                            if (cIdx === catIdx) {
-                                return { ...cat, items: cat.items.filter(it => it.id !== targetId) };
-                            }
-                            if (cIdx === destCatIdx) {
-                                return { ...cat, items: insertNearSameSubcat(cat.items, merged) };
-                            }
-                            return cat;
-                        });
-                    });
+                const destCatName = customInventory[destCatIdx]?.name ?? sourceCatName;
+                const isMove = destCatName !== sourceCatName;
+                // C1 (2026-09-23): a move gives the item a NEW id in the
+                // destination (the old id kept its old category prefix, so the
+                // load merge renumbered it on every device AND re-added a built-in
+                // in its old category), moves its count/who-counted with it and
+                // tombstones a built-in source — all in one transaction (see
+                // planItemMove). Land any open tap window first so it isn't
+                // written to the old id afterwards.
+                if (isMove) { try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ } }
+                invEditSavingRef.current = true;
+                let res;
+                try {
+                    // Cross-category moves insert *adjacent to* existing items with
+                    // the same subcat (e.g. "chicken bone" → Proteins ▸ Chicken lands
+                    // beside the other Chicken items, not at the end of Proteins).
+                    res = await commitInventoryCatalog((live, data) => isMove
+                        ? planItemMove({ list: live, id: targetId, destCatName, patch }, catalogCtx(data))
+                        : planItemPatch({ list: live, id: targetId, patch }, catalogCtx(data)));
+                } finally {
+                    invEditSavingRef.current = false;
                 }
-                setInvEditingIdx(null);
-                setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri"); setInvEditMin("");
-                setInvEditTargetCatIdx(null); setInvEditSubcat(""); setInvEditLocation("");
+                if (!res.ok) {
+                    // Gone on the live doc → say so (nothing was written). A
+                    // failed save already toasted — keep the form so the typing
+                    // isn't lost and Save can be tapped again.
+                    if (res.reason === 'missing') { catalogMissingToast(); closeInvEdit(); }
+                    return;
+                }
+                if (res.plan.idMigration) followRenamedIds(res.plan.idMigration);
+                closeInvEdit();
             };
 
             // Drop the currently-grabbed item into a target bucket. Same
@@ -5293,69 +5413,59 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // subcategory headers when movingItem is set.
             const dropMovingItem = async (destCatIdx, destSubcat) => {
                 if (!movingItem) return;
-                const { id, fromCatIdx } = movingItem;
+                const { id } = movingItem;
                 if (id == null) { setMovingItem(null); return; }
                 const norm = (destSubcat || '').trim();
+                const here = findItemById(customInventory, id, movingItem.fromCatName);
+                const destCatName = customInventory[destCatIdx]?.name;
+                if (!here || !destCatName) { if (!here) catalogMissingToast(); setMovingItem(null); return; }
+                const sourceCatName = customInventory[here.catIdx]?.name;
                 // No-op if dropping into the exact same bucket.
-                const sourceItem = (customInventory[fromCatIdx]?.items || []).find(it => it.id === id);
-                if (sourceItem && fromCatIdx === destCatIdx && (sourceItem.subcat || '') === norm) {
+                if (sourceCatName === destCatName && (here.item.subcat || '') === norm) {
                     setMovingItem(null);
                     return;
                 }
-                await mutateInventory((live) => {
-                    const src = (live[fromCatIdx]?.items || []).find(it => it.id === id);
-                    if (!src) return live;
-                    const merged = { ...src, subcat: norm };
-                    if (fromCatIdx === destCatIdx) {
-                        // Same-category: just patch subcat in place.
-                        return live.map((cat, ci) =>
-                            ci === fromCatIdx
-                                ? { ...cat, items: cat.items.map(it => it.id === id ? merged : it) }
-                                : cat
-                        );
-                    }
-                    // Cross-category: pull from source, insert into dest
-                    // adjacent to existing same-subcat items (see saveInvEdit
-                    // for the rationale — keeps the storage order tidy so
-                    // the moved item shows up under the existing subcategory
-                    // header rather than tacked onto the end of the category).
-                    return live.map((cat, ci) => {
-                        if (ci === fromCatIdx) {
-                            return { ...cat, items: cat.items.filter(it => it.id !== id) };
-                        }
-                        if (ci === destCatIdx) {
-                            return { ...cat, items: insertNearSameSubcat(cat.items, merged) };
-                        }
-                        return cat;
-                    });
-                });
+                const isMove = sourceCatName !== destCatName;
+                if (isMove) { try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ } }
+                // Same-category: just patch subcat in place. Cross-category: new
+                // id in the destination + counts follow + built-in tombstoned
+                // (C1 — see saveInvEdit), inserted beside same-subcat items.
+                const res = await commitInventoryCatalog((live, data) => isMove
+                    ? planItemMove({ list: live, id, destCatName, patch: { subcat: norm } }, catalogCtx(data))
+                    : planItemPatch({ list: live, id, patch: { subcat: norm } }, catalogCtx(data)));
+                if (res.ok && res.plan.idMigration) followRenamedIds(res.plan.idMigration);
+                if (!res.ok && res.reason === 'missing') catalogMissingToast();
                 setMovingItem(null);
             };
 
-            const deleteInvItem = async (catIdx, itemIdx) => {
-                // Same drift-safety: target by ID, not by index.
-                const targetId = customInventory[catIdx]?.items[itemIdx]?.id;
+            // target = { id, name } — captured from the row that was tapped (by
+            // the on-screen ID, never by position).
+            const deleteInvItem = async (target) => {
+                const targetId = target?.id;
                 if (!targetId) return;
-                const itemName = customInventory[catIdx]?.items[itemIdx]?.name || 'item';
+                const itemName = target.name || 'item';
                 // Wrap in 5-second undo toast — restaurant managers WILL fat-finger
                 // delete on a phone with wet hands. The audit specifically flagged
                 // this as a no-undo destructive action that needed soft-delete.
                 undoToast(
                     language === 'es' ? `🗑 Eliminado: ${itemName}` : `🗑 Deleted: ${itemName}`,
                     async () => {
-                        // 1. Remove the item from the master list (drift-safe by ID).
-                        await mutateInventory((live) => live.map((cat, cIdx) =>
-                            cIdx === catIdx ? { ...cat, items: cat.items.filter(it => it.id !== targetId) } : cat
-                        ));
-                        // 2. Clean up the item's leftover count + count-meta so no
-                        //    orphan data lingers (and a future id reuse can't inherit
-                        //    a stale count). Best-effort — never blocks the delete.
-                        try {
-                            await updateDoc(inventoryDocRef(), {
-                                [`counts.${targetId}`]: deleteField(),
-                                [`countMeta.${targetId}`]: deleteField(),
-                            });
-                        } catch (e) { /* orphan count is harmless if this write fails */ }
+                        try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
+                        // ONE transaction (2026-09-23, C2): remove the item (by ID),
+                        // clear its leftover count + count-meta (so a future id reuse
+                        // can't inherit it), and TOMBSTONE a built-in item — without
+                        // the tombstone the load merge re-added it on the next load.
+                        const res = await commitInventoryCatalog((live, data) =>
+                            planItemDelete({ list: live, id: targetId }, catalogCtx(data)));
+                        if (!res.ok) return;
+                        const drop = (prev) => {
+                            if (!prev || !Object.prototype.hasOwnProperty.call(prev, targetId)) return prev;
+                            const next = { ...prev }; delete next[targetId]; return next;
+                        };
+                        setInventory(drop);
+                        setInvCountMeta(drop);
+                        pendingCountsRef.current = drop(pendingCountsRef.current);
+                        setInventorySyncStatus(drop);
                     },
                     { delayMs: 5000, undoLabel: language === 'es' ? 'Deshacer' : 'Undo', kind: 'warn' }
                 );
@@ -6006,13 +6116,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     dateStr: now.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
                 };
                 const targetId = item.id;
-                // Race-safe inventory update — target by ID against the live list.
-                await mutateInventory((live) => live.map((cat, cIdx) =>
-                    cIdx === catIdx
-                        ? { ...cat, items: cat.items.map(it =>
-                            it.id === targetId ? { ...it, preferredVendor: newVendor } : it) }
-                        : cat
-                ));
+                // Race-safe inventory update — target by ID against the live list
+                // (2026-09-23: the category too — it was matched by position).
+                await mutateInventory((live, data) => {
+                    const r = planItemPatch({ list: live, id: targetId, patch: { preferredVendor: newVendor } }, catalogCtx(data));
+                    return r.error ? live : r.customInventory;
+                });
                 // Race-safe log append. The previous code did
                 //   newLog = [entry, ...localLog].slice(0,50)
                 //   setDoc({ log: newLog })
@@ -7659,10 +7768,97 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                 return { vendorGroups, vendorNames };
             }, [
                 invViewMode, customInventory, invSearchDeferred, invShowOnlyCounted, invShowOnlyLow,
-                invPersonFilterDeferred, invPersonMatches,
+                // M4 (2026-09-23): invPersonMatches is rebuilt on every count-meta
+                // change (every tap / snapshot) — it's only a real input while a
+                // person filter is set, so gate it like `inventory` below; plain
+                // taps no longer rebuild + re-sort the whole vendor grouping.
+                invPersonFilterDeferred,
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+                invPersonFilterDeferred ? invPersonMatches : null,
+                // AI search hits (was read but missing from the deps, so AI
+                // results only showed up after some other input changed).
+                itemMatchesSearchAi,
                 // eslint-disable-next-line react-hooks/exhaustive-deps
                 (invShowOnlyCounted || invShowOnlyLow) ? inventory : null,
             ]);
+
+            // Location view: flatten + filter + group by location, memoized
+            // (2026-09-23) — was rebuilt inline on every render (~4 per tap).
+            // Same gated deps as vendorViewData: `inventory` only matters with
+            // the Counted/Low filters on, invPersonMatches only with a person
+            // filter set. ⚠ Declared ABOVE every reader (TDZ — see the
+            // vendorCounts note near the top).
+            const locationViewData = useMemo(() => {
+                if (invViewMode !== "location") return null;
+                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
+                // Flatten every item across categories. Preserve a name-only
+                // badge so the user can still see what kind of item it is.
+                const allItems = [];
+                for (const cat of customInventory) {
+                    for (const it of (cat.items || [])) {
+                        allItems.push({ it, catName: cat.name });
+                    }
+                }
+                // Apply the same filters the Master List does.
+                const filtered = allItems.filter(({ it }) => {
+                    if (searchLower && !itemMatchesSearchAi(it, searchLower)) return false;
+                    if (invShowOnlyCounted && !((inventory[it.id] || 0) > 0)) return false;
+                    if (invShowOnlyLow) {
+                        const min = Number(it?.min);
+                        if (!Number.isFinite(min) || min <= 0) return false;
+                        const c = Number(inventory[it.id] || 0);
+                        if (!(c > 0 && c <= min)) return false;
+                    }
+                    if (invPersonFilterDeferred && !invPersonMatches(it.id)) return false;
+                    return true;
+                });
+                // Group by location. Items without one go to a special bucket
+                // that sorts last so they're easy to spot and fix.
+                // Case/space-insensitive grouping (2026-09-23): "hallway" and
+                // "Hallway" land in ONE section. Display only — the stored
+                // item.location is never rewritten.
+                const customByLower = new Map();
+                const byLoc = new Map();
+                for (const row of filtered) {
+                    const key = locationGroupKey(row.it.location, customByLower);
+                    if (!byLoc.has(key)) byLoc.set(key, []);
+                    byLoc.get(key).push(row);
+                }
+                // Order: canonical INVENTORY_LOCATIONS first (in their declared
+                // order), then any non-canonical custom locations
+                // alphabetically, then UNASSIGNED at the bottom.
+                const canonical = INVENTORY_LOCATIONS.filter(l => byLoc.has(l));
+                const customLocs = [...byLoc.keys()]
+                    .filter(l => l !== UNASSIGNED_LOCATION && !INVENTORY_LOCATIONS.includes(l))
+                    .sort();
+                const orderedLocs = [...canonical, ...customLocs];
+                if (byLoc.has(UNASSIGNED_LOCATION)) orderedLocs.push(UNASSIGNED_LOCATION);
+                return { byLoc, orderedLocs };
+            }, [
+                invViewMode, customInventory, invSearchDeferred, itemMatchesSearchAi,
+                invShowOnlyCounted, invShowOnlyLow, invPersonFilterDeferred,
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+                invPersonFilterDeferred ? invPersonMatches : null,
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+                (invShowOnlyCounted || invShowOnlyLow) ? inventory : null,
+            ]);
+            // Pinned location bubbles: sections + jump handler memoized so the
+            // memo()'d InventoryLocationJumpBar only re-renders when a section's
+            // total / counted number actually changes (not on every tap).
+            const locationCountedSig = locationViewData
+                ? locationViewData.orderedLocs.map(loc => (locationViewData.byLoc.get(loc) || []).reduce(
+                    (n, { it }) => n + ((inventory[it.id] || 0) > 0 ? 1 : 0), 0)).join(',')
+                : '';
+            const locationJumpSections = useMemo(() => {
+                if (!locationViewData) return [];
+                const counted = locationCountedSig.split(',');
+                return locationViewData.orderedLocs.map((loc, i) => ({
+                    key: loc, total: (locationViewData.byLoc.get(loc) || []).length, counted: Number(counted[i]) || 0,
+                }));
+            }, [locationViewData, locationCountedSig]);
+            const onLocationJump = useCallback((loc) => {
+                setCollapsedCats(prev => (prev[`loc::${loc}`] ? { ...prev, [`loc::${loc}`]: false } : prev));
+            }, []);
 
             // Access gate — AFTER every hook (see the audit-H2 note above)
             // so revoking opsAccess mid-session shows this screen instead
@@ -8166,12 +8362,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 // ordering. newId is computed inside the txn against the live cat.
                                 const targetName = customInventory[newMasterCatIdx]?.name;
                                 let newId = null;
-                                const result = await mutateInventory((live) => {
+                                const result = await mutateInventory((live, data) => {
                                     let idx = live.findIndex(c => c && c.name === targetName);
                                     let working = live;
                                     if (idx === -1) { working = [...live, { name: targetName, items: [] }]; idx = working.length - 1; }
-                                    const liveCat = working[idx];
-                                    newId = nextItemId(liveCat, idx);
+                                    newId = nextItemId(working, idx, data);
                                     const newItem = {
                                         id: newId,
                                         name: trimmed,
@@ -8567,8 +8762,12 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 the in-progress item + a Cancel. Subcategory
                                 headers across every category turn amber
                                 ("Drop here") while this is showing. */}
+                            {/* ddmau-inv-jumpbar = the same top offset as the location
+                                bubbles (just under the sticky app header; it used to pin
+                                at top-0 and hide UNDER the header). z-[15]: above rows
+                                and the bubble bar, below the search dock + modals. */}
                             {movingItem && (
-                                <div className="sticky top-0 z-10 bg-amber-100 border-2 border-amber-300 rounded-xl px-3 py-2 shadow-sm flex items-center gap-2">
+                                <div className="ddmau-inv-jumpbar sticky z-[15] bg-amber-100 border-2 border-amber-300 rounded-xl px-3 py-2 shadow-sm flex items-center gap-2">
                                     <span className="text-lg shrink-0">{"\u{1F500}"}</span>
                                     <div className="flex-1 min-w-0">
                                         <div className="text-xs font-black text-amber-900 truncate">
@@ -9025,11 +9224,15 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         setInvCountMeta({});
                                                         setVendorCounts({});
                                                         setDeliveryDate(null);
+                                                        setInventorySyncStatus({}); // no stale badges on zeroed rows
+                                                        // Own clear marker = already applied (its echo is not a remote clear).
+                                                        const emptyClearedAt = new Date().toISOString();
+                                                        lastAppliedClearedAtRef.current = emptyClearedAt;
                                                         try {
                                                             await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
                                                                 counts: {}, countMeta: {}, vendorCounts: {},
                                                                 deliveryDate: deleteField(),
-                                                                clearedAt: new Date().toISOString(),
+                                                                clearedAt: emptyClearedAt,
                                                                 date: new Date().toISOString(),
                                                             });
                                                             toast(language === "es" ? "✓ Carrito vaciado" : "✓ Cart emptied", { kind: 'success' });
@@ -9283,7 +9486,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         // toggle was off. Now isEditing is purely a function
                                                         // of which row was clicked — Edit just works without
                                                         // having to first flip the global edit-mode switch.
-                                                        const isEditing = invEditingIdx && invEditingIdx.catIdx === catIdx && invEditingIdx.itemIdx === itemIdx;
+                                                        // By the id captured when the form opened (M3) —
+                                                        // positions shift when another device edits the list.
+                                                        const isEditing = !!invEditingIdx && invEditingIdx.id === item.id;
                                                         // Visual marker for items added via the "Add as new master item" flow
                                                         // in the match audit modal — colored left border based on origin vendor.
                                                         const fromVendor = item.addedFromVendor;
@@ -9450,8 +9655,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             );
                                                                         })()}
                                                                         <div className="flex gap-2">
-                                                                            <button onClick={() => saveInvEdit(catIdx, itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
-                                                                            <button onClick={() => { setInvEditingIdx(null); setInvEditTargetCatIdx(null); setInvEditSubcat(""); setInvEditLocation(""); }} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                                            <button onClick={() => saveInvEdit()} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
+                                                                            <button onClick={closeInvEdit} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                                         </div>
                                                                         {/* 2026-06-07 — Andrew: delete an item from the edit
                                                                             view. Admin-only + 5s undo toast (deleteInvItem)
@@ -9460,7 +9665,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             red + separated from Save so it isn't mistapped. */}
                                                                         {currentIsAdmin && (
                                                                             <button
-                                                                                onClick={() => { deleteInvItem(catIdx, itemIdx); setInvEditingIdx(null); setInvEditTargetCatIdx(null); setInvEditSubcat(""); setInvEditLocation(""); }}
+                                                                                onClick={() => { deleteInvItem({ id: item.id, name: item.name }); closeInvEdit(); }}
                                                                                 className="w-full mt-2 bg-red-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-red-700">
                                                                                 {language === "es" ? "🗑 Eliminar artículo" : "🗑 Delete item"}
                                                                             </button>
@@ -9514,17 +9719,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                 {renderLivePriceBadge(item.id, item)}
                                                                                 {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                                 {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
-                                                                                <button onClick={() => {
-                                                                                    setInvEditingIdx({catIdx, itemIdx});
-                                                                                    setInvEditName(item.name);
-                                                                                    setInvEditNameEs(item.nameEs || "");
-                                                                                    setInvEditSupplier(item.vendor || item.supplier || "");
-                                                                                    setInvEditOrderDay(item.orderDay || "");
-                                                                                    setInvEditMin(item.min != null ? String(item.min) : "");
-                                                                                    setInvEditTargetCatIdx(catIdx);
-                                                                                    setInvEditSubcat(item.subcat || "");
-                                                                                    setInvEditLocation(item.location || "");
-                                                                                }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
+                                                                                <button onClick={() => openInvEdit(item, catIdx, itemIdx)} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                                 {/* Quick-move: tap to grab this item,
                                                                                     then tap any subcategory header on
                                                                                     the page to drop it there. Toggles
@@ -9540,6 +9735,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                             id: item.id,
                                                                                             name: item.name,
                                                                                             fromCatIdx: catIdx,
+                                                                                            fromCatName: category.name,
                                                                                             fromSubcat: item.subcat || '',
                                                                                         });
                                                                                     }
@@ -9865,54 +10061,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 input + chevron + / -. No edit, no vendor
                                 selector, no price badge — those workflows
                                 stay in Master List. */}
-                            {invViewMode === "location" && (() => {
+                            {invViewMode === "location" && locationViewData && (() => {
                                 const searchLower = (invSearchDeferred || "").toLowerCase().trim();
-                                // Flatten every item across categories.
-                                // Preserve a name-only badge so the user
-                                // can still see what kind of item it is.
-                                const allItems = [];
-                                for (const cat of customInventory) {
-                                    for (const it of (cat.items || [])) {
-                                        allItems.push({ it, catName: cat.name });
-                                    }
-                                }
-                                // Apply the same filters the Master List does.
-                                const filtered = allItems.filter(({ it }) => {
-                                    if (searchLower && !itemMatchesSearchAi(it, searchLower)) return false;
-                                    if (invShowOnlyCounted && !((inventory[it.id] || 0) > 0)) return false;
-                                    if (invShowOnlyLow) {
-                                        const min = Number(it?.min);
-                                        if (!Number.isFinite(min) || min <= 0) return false;
-                                        const c = Number(inventory[it.id] || 0);
-                                        if (!(c > 0 && c <= min)) return false;
-                                    }
-                                    if (invPersonFilterDeferred && !invPersonMatches(it.id)) return false;
-                                    return true;
-                                });
-                                // Group by location. Items without one go
-                                // to a special bucket that sorts last so
-                                // they're easy to spot and fix.
-                                // Case/space-insensitive grouping (2026-09-23): "hallway"
-                                // and "Hallway" land in ONE section. Display only — the
-                                // stored item.location is never rewritten.
+                                // Flatten / filter / group: memoized above (locationViewData).
                                 const UNASSIGNED = UNASSIGNED_LOCATION;
-                                const customByLower = new Map();
-                                const byLoc = new Map();
-                                for (const row of filtered) {
-                                    const key = locationGroupKey(row.it.location, customByLower);
-                                    if (!byLoc.has(key)) byLoc.set(key, []);
-                                    byLoc.get(key).push(row);
-                                }
-                                // Order: canonical INVENTORY_LOCATIONS first
-                                // (in their declared order), then any non-
-                                // canonical custom locations alphabetically,
-                                // then UNASSIGNED at the bottom.
-                                const canonical = INVENTORY_LOCATIONS.filter(l => byLoc.has(l));
-                                const customLocs = [...byLoc.keys()]
-                                    .filter(l => l !== UNASSIGNED && !INVENTORY_LOCATIONS.includes(l))
-                                    .sort();
-                                const orderedLocs = [...canonical, ...customLocs];
-                                if (byLoc.has(UNASSIGNED)) orderedLocs.push(UNASSIGNED);
+                                const { byLoc, orderedLocs } = locationViewData;
                                 if (orderedLocs.length === 0) {
                                     return (
                                         <div className="p-8 text-center text-gray-400 text-sm italic bg-white border-2 border-dashed border-gray-200 rounded-xl">
@@ -9926,16 +10079,15 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                     (n, { it }) => n + ((inventory[it.id] || 0) > 0 ? 1 : 0), 0);
                                 // Pinned bubbles (2026-09-23): tap to JUMP to a location;
                                 // the one on screen lights up. Folding is per location.
-                                const jumpSections = orderedLocs.map(loc => ({
-                                    key: loc, total: (byLoc.get(loc) || []).length, counted: countedOf(byLoc.get(loc) || []),
-                                }));
+                                // Sections + onJump are memoized above (locationJumpSections /
+                                // onLocationJump) so the bar's memo() holds between taps.
                                 // Wrapper div = the bubbles stay pinned only while you're in
                                 // the location list, not over the saved-lists area below.
                                 return (<div>
                                 <InventoryLocationJumpBar
-                                    sections={jumpSections}
+                                    sections={locationJumpSections}
                                     language={language}
-                                    onJump={(loc) => setCollapsedCats(prev => (prev[`loc::${loc}`] ? { ...prev, [`loc::${loc}`]: false } : prev))}
+                                    onJump={onLocationJump}
                                 />
                                 {orderedLocs.map(loc => {
                                     const rows = byLoc.get(loc) || [];
@@ -10089,7 +10241,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         // PERF (2026-08-25 audit): format the who/when stamp once
                                                         // per row, not twice (guard + display).
                                                         const stampLines = count > 0 ? formatCountStampLines(invCountMeta[item.id]) : null;
-                                                        const isEditing = invEditingIdx && invEditingIdx.catIdx === item.catIdx && invEditingIdx.itemIdx === item.itemIdx;
+                                                        const isEditing = !!invEditingIdx && invEditingIdx.id === item.id;
                                                         return (
                                                             <div key={item.id} className={`${isEditing ? "" : "ddmau-inv-cv"} px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
                                                                 {isEditing ? (
@@ -10105,8 +10257,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                 placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
                                                                         </div>
                                                                         <div className="flex gap-2">
-                                                                            <button onClick={() => saveInvEdit(item.catIdx, item.itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
-                                                                            <button onClick={() => setInvEditingIdx(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                                            <button onClick={() => saveInvEdit()} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
+                                                                            <button onClick={closeInvEdit} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                                         </div>
                                                                     </div>
                                                                 ) : (
@@ -10146,16 +10298,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             {renderLivePriceBadge(item.id, item)}
                                                                             {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                             {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
-                                                                            <button onClick={() => {
-                                                                                setInvEditingIdx({catIdx: item.catIdx, itemIdx: item.itemIdx});
-                                                                                setInvEditName(item.name);
-                                                                                setInvEditNameEs(item.nameEs || "");
-                                                                                setInvEditSupplier(item.vendor || item.supplier || "");
-                                                                                setInvEditOrderDay(item.orderDay || "");
-                                                                                setInvEditTargetCatIdx(item.catIdx);
-                                                                                setInvEditSubcat(item.subcat || "");
-                                                                                setInvEditLocation(item.location || "");
-                                                                            }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
+                                                                            <button onClick={() => openInvEdit(item, item.catIdx, item.itemIdx)} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                         </div>
                                                                     </div>
                                                                     {/* Column so the who/when stamp sits under −/count/+ */}
@@ -10286,7 +10429,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                     const count = inventory[item.id] || 0;
                                                                     const isMoving = splitMovingItem && splitMovingItem.itemId === item.id;
                                                                     const wasMoved = !!splitOverrides[item.id];
-                                                                    const isEditing = invEditingIdx && invEditingIdx.catIdx === item.catIdx && invEditingIdx.itemIdx === item.itemIdx;
+                                                                    const isEditing = !!invEditingIdx && invEditingIdx.id === item.id;
                                                                     return (
                                                                         <div key={item.id} className={`${isEditing ? "" : "ddmau-inv-cv"} px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
                                                                             {isEditing ? (
@@ -10302,8 +10445,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                             placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
                                                                                     </div>
                                                                                     <div className="flex gap-2">
-                                                                                        <button onClick={() => saveInvEdit(item.catIdx, item.itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
-                                                                                        <button onClick={() => setInvEditingIdx(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                                                        <button onClick={() => saveInvEdit()} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
+                                                                                        <button onClick={closeInvEdit} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                                                     </div>
                                                                                 </div>
                                                                             ) : (
@@ -10345,15 +10488,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                             className={`text-xs px-1.5 py-0.5 rounded font-medium transition ${isMoving ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
                                                                                             {isMoving ? "\u{2715}" : "\u{21C4}"} {language === "es" ? "Mover" : "Move"}
                                                                                         </button>
-                                                                                        <button onClick={() => {
-                                                                                            setInvEditingIdx({catIdx: item.catIdx, itemIdx: item.itemIdx});
-                                                                                            setInvEditName(item.name);
-                                                                                            setInvEditNameEs(item.nameEs || "");
-                                                                                            setInvEditSupplier(item.vendor || item.supplier || "");
-                                                                                            setInvEditOrderDay(item.orderDay || "");
-                                                                                            setInvEditTargetCatIdx(item.catIdx);
-                                                                                            setInvEditSubcat(item.subcat || "");
-                                                                                        }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
+                                                                                        <button onClick={() => openInvEdit(item, item.catIdx, item.itemIdx)} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                                     </div>
                                                                                     {isMoving && (
                                                                                         <div className="flex gap-1 mt-1">
@@ -10627,8 +10762,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 menu bar (near the bottom edge on iPad/desktop), follows the
                                 column's width, and settles into place at the end of the list
                                 instead of covering the last rows. Same input, same AI toggle,
-                                same handlers as the old top search row. */}
-                            {!invEditMode && (
+                                same handlers as the old top search row. Hidden on Pricing
+                                (2026-09-23) — that view has its own search and ignores this one. */}
+                            {!invEditMode && invViewMode !== "pricing" && (
                                 <div className="ddmau-inv-searchdock sticky z-20">
                                     <div className="rounded-2xl bg-white/85 backdrop-blur-xl backdrop-saturate-150 ring-1 ring-black/10 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.45)] p-1.5">
                                         {invSearch.trim() && invAiOn && (
@@ -10648,7 +10784,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                 : (language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items...")}
                                             className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-base sm:text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
                                         {invSearch && (
-                                            <button type="button" onClick={() => { setInvSearch(""); setCollapsedCats({}); }}
+                                            <button type="button" onClick={() => { setInvSearch(""); setCollapsedCats(keepLocationFolds); }}
                                                 className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
                                         )}
                                     </div>

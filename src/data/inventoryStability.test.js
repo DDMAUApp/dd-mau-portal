@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldApplyInventorySnapshot, shouldIgnoreInventorySnapshot, hasAnyCount } from './inventoryStability';
+import { shouldApplyInventorySnapshot, shouldIgnoreInventorySnapshot, hasAnyCount, isServerConfirmedSnapshot } from './inventoryStability';
 
 describe('shouldApplyInventorySnapshot — admission truth table', () => {
     const t = (o) => shouldApplyInventorySnapshot(o);
@@ -31,4 +31,28 @@ describe('existing guards still hold', () => {
         expect(shouldIgnoreInventorySnapshot({ incomingHasAny: false, localHasAny: true, recentlyCleared: true, remoteClearAdvanced: false })).toBe(false);
     });
     it('hasAnyCount', () => { expect(hasAnyCount({ a: 0 }, { b: 2 })).toBe(true); expect(hasAnyCount({}, null)).toBe(false); });
+});
+
+describe('M2 — an emptied cart propagates when the server confirms it', () => {
+    const base = { incomingHasAny: false, localHasAny: true, recentlyCleared: false, remoteClearAdvanced: false };
+    it('server-confirmed empty snapshot after first sync → applied (cart emptied by − taps elsewhere)', () => {
+        expect(shouldIgnoreInventorySnapshot({ ...base, serverConfirmed: true })).toBe(false);
+    });
+    it('empty CACHE echo is still ignored', () => {
+        const serverConfirmed = isServerConfirmedSnapshot({ fromCache: true, hasPendingWrites: false, syncedBefore: true });
+        expect(serverConfirmed).toBe(false);
+        expect(shouldIgnoreInventorySnapshot({ ...base, serverConfirmed })).toBe(true);
+    });
+    it('first server snapshot after a (re)load is still guarded', () => {
+        const serverConfirmed = isServerConfirmedSnapshot({ fromCache: false, hasPendingWrites: false, syncedBefore: false });
+        expect(serverConfirmed).toBe(false);
+        expect(shouldIgnoreInventorySnapshot({ ...base, serverConfirmed })).toBe(true);
+    });
+    it('pending-write snapshot is not server-confirmed', () => {
+        expect(isServerConfirmedSnapshot({ fromCache: false, hasPendingWrites: true, syncedBefore: true })).toBe(false);
+        expect(isServerConfirmedSnapshot({ fromCache: false, hasPendingWrites: false, syncedBefore: true })).toBe(true);
+    });
+    it('omitting serverConfirmed keeps the old behavior', () => {
+        expect(shouldIgnoreInventorySnapshot(base)).toBe(true);
+    });
 });

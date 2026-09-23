@@ -410,6 +410,16 @@ export function getLabelFormatFast(printer = 'epson') {
     });
 }
 
+// Synchronous peek at the live-mirrored format (2026-09-23 review M5).
+// undefined until getLabelFormatFast's subscription has delivered a REAL
+// snapshot (warmPrintConfigs starts it when a print surface opens). The
+// print modal seeds from this so its shelf-life default and preview reflect
+// the saved format on the first frame instead of flashing the defaults.
+export function getCachedLabelFormat(printer = 'epson') {
+    const cache = _fmtCaches[isBrother(printer) ? 'brother' : 'epson'];
+    return cache.ready ? cache.value : undefined;
+}
+
 // One-shot read. Used by Cloud Function paths or anywhere we
 // don't want a live subscription.
 export async function getLabelFormat(printer = 'epson') {

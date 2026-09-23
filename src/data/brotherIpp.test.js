@@ -117,3 +117,104 @@ describe('renderLabelCanvas — honor size, wrap instead of shrink', () => {
         expect(px).toBeLessThan(99);
     });
 });
+
+// ── IPP response status (2026-09-23 review M3) ────────────────────────
+// The printer reports job errors INSIDE an HTTP 200 body; bytes 2-3 are
+// the IPP status-code. Synthetic responses below mirror RFC 8010 framing:
+// version, status, request-id, operation-attributes group, end tag.
+import {
+    ippResponseBytes, parseIppResponseStatus, ippStatusIsError, ippStatusMessage,
+    interpretIppHttpResponse, probeAnsweredReady,
+} from './brotherIpp';
+
+function ippResponse(status, requestId = 1, version = [2, 0]) {
+    const enc = (s) => Array.from(new TextEncoder().encode(s));
+    const name = enc('attributes-charset');
+    const val = enc('utf-8');
+    return Uint8Array.from([
+        version[0], version[1],
+        (status >> 8) & 0xff, status & 0xff,
+        (requestId >>> 24) & 0xff, (requestId >>> 16) & 0xff, (requestId >>> 8) & 0xff, requestId & 0xff,
+        0x01,                                   // operation-attributes-tag
+        0x47, 0x00, name.length, ...name, 0x00, val.length, ...val,
+        0x03,                                   // end-of-attributes
+    ]);
+}
+const b64 = (u8) => Buffer.from(u8).toString('base64');
+
+describe('IPP response parsing', () => {
+    it('reads version / status / request-id from a base64 body (native CapacitorHttp shape)', () => {
+        const r = parseIppResponseStatus(b64(ippResponse(0x0000, 1)), 1);
+        expect(r).toEqual({ version: '2.0', statusCode: 0, requestId: 1 });
+        expect(parseIppResponseStatus(b64(ippResponse(0x0506, 7)), 7).statusCode).toBe(0x0506);
+    });
+
+    it('tolerates Android line-wrapped base64 and raw ArrayBuffer / Uint8Array bodies', () => {
+        const wrapped = b64(ippResponse(0x0507, 2)).replace(/(.{8})/g, '$1\n');
+        expect(parseIppResponseStatus(wrapped, 2).statusCode).toBe(0x0507);
+        const u8 = ippResponse(0x0400, 3);
+        expect(parseIppResponseStatus(u8, 3).statusCode).toBe(0x0400);
+        expect(parseIppResponseStatus(u8.buffer, 3).statusCode).toBe(0x0400);
+    });
+
+    it('returns null for anything that is not clearly OUR IPP response', () => {
+        expect(parseIppResponseStatus(undefined)).toBeNull();
+        expect(parseIppResponseStatus('')).toBeNull();
+        expect(parseIppResponseStatus('<html>busy</html>')).toBeNull();
+        expect(parseIppResponseStatus(b64(new TextEncoder().encode('HTTP/1.1 200 OK hello')))).toBeNull();
+        expect(parseIppResponseStatus(b64(ippResponse(0x0506, 9)), 1)).toBeNull();   // request-id mismatch
+        expect(parseIppResponseStatus(b64(ippResponse(0x0506, 1, [3, 0])), 1)).toBeNull(); // bad version
+        expect(parseIppResponseStatus(b64(Uint8Array.from([2, 0, 0, 0, 0, 0, 0, 1]))), 1).toBeNull(); // too short
+        expect(ippResponseBytes({ some: 'object' })).toBeNull();
+    });
+
+    it('status-codes above 0x00FF are errors; successful-* are not', () => {
+        for (const ok of [0x0000, 0x0001, 0x0007, 0x00ff]) expect(ippStatusIsError(ok)).toBe(false);
+        for (const bad of [0x0400, 0x040a, 0x0500, 0x0506, 0x0507]) expect(ippStatusIsError(bad)).toBe(true);
+    });
+
+    it('builds a readable reason with the hex code', () => {
+        expect(ippStatusMessage(0x0506)).toMatch(/not accepting jobs/);
+        expect(ippStatusMessage(0x0506)).toMatch(/0x0506/);
+        expect(ippStatusMessage(0x04ff)).toMatch(/client error/);
+        expect(ippStatusMessage(0x05ff)).toMatch(/server error/);
+    });
+});
+
+describe('interpretIppHttpResponse (Print-Job verdict)', () => {
+    it('HTTP 200 + IPP successful-ok = ok', () => {
+        expect(interpretIppHttpResponse({ status: 200, data: b64(ippResponse(0, 1)) }, 1))
+            .toEqual({ ok: true, status: 200, ippStatus: 0 });
+    });
+    it('HTTP 200 + IPP error = printer_rejected with a readable message (was a false success)', () => {
+        const r = interpretIppHttpResponse({ status: 200, data: b64(ippResponse(0x0506, 4)) }, 4);
+        expect(r.ok).toBe(false);
+        expect(r.error).toBe('printer_rejected');
+        expect(r.ippStatus).toBe(0x0506);
+        expect(r.message).toMatch(/not accepting jobs/);
+    });
+    it('unreadable 2xx body keeps the OLD behavior (ok) — never invent a failure', () => {
+        expect(interpretIppHttpResponse({ status: 200, data: '' }, 1).ok).toBe(true);
+        expect(interpretIppHttpResponse({ status: 200 }, 1).ok).toBe(true);
+        expect(interpretIppHttpResponse({ status: 200, data: b64(ippResponse(0x0506, 8)) }, 1).ok).toBe(true);
+    });
+    it('non-2xx HTTP keeps the old shape (no error code → caller maps to printer_rejected)', () => {
+        expect(interpretIppHttpResponse({ status: 500 }, 1)).toEqual({ ok: false, status: 500 });
+        expect(interpretIppHttpResponse(undefined, 1)).toEqual({ ok: false, status: 0 });
+    });
+});
+
+describe('probeAnsweredReady (wake / keep-alive probe)', () => {
+    it('any HTTP reply is still "up"…', () => {
+        expect(probeAnsweredReady({ status: 200, data: b64(ippResponse(0, 1)) })).toBe(true);
+        expect(probeAnsweredReady({ status: 200 })).toBe(true);
+        expect(probeAnsweredReady({ status: 400 })).toBe(true);
+    });
+    it('…except an IPP error body — answered but NOT ready', () => {
+        expect(probeAnsweredReady({ status: 200, data: b64(ippResponse(0x0502, 1)) })).toBe(false);
+    });
+    it('no reply = not ready', () => {
+        expect(probeAnsweredReady({ status: 0 })).toBe(false);
+        expect(probeAnsweredReady(null)).toBe(false);
+    });
+});

@@ -136,3 +136,45 @@ export function chatDocEqual(a, b) {
     }
     return true;
 }
+
+// ── Pinned-message banner ordering (2026-09-23 chat audit M4) ──────────
+// The pin banner + 5-pin cap used to derive from the 50-message window, so
+// in a busy chat a pin older than the window vanished (banner gone, cap
+// under-counted, drawer jump dead). The thread now subscribes to the
+// chat's pinned messages directly (pinned == true + limit, NO orderBy — an
+// equality-only query needs no composite index) and orders them here:
+// drop soft-deleted ones (the drawer does the same), then oldest-first by
+// message createdAt so `list[list.length - 1]` stays the NEWEST pin, same
+// contract the windowed version had. Missing createdAt (pending local
+// write) sorts last = newest. Ties break by id for a stable order.
+export function sortPinsForBanner(pins) {
+    const ms = (ts) => (ts && typeof ts.toMillis === 'function')
+        ? ts.toMillis()
+        : (ts && ts.seconds ? ts.seconds * 1000 : 0);
+    return (Array.isArray(pins) ? pins : [])
+        .filter(p => p && p.id && p.pinned === true && p.deleted !== true)
+        .slice()
+        .sort((a, b) => {
+            const am = ms(a.createdAt) || Number.MAX_SAFE_INTEGER;
+            const bm = ms(b.createdAt) || Number.MAX_SAFE_INTEGER;
+            if (am !== bm) return am - bm;
+            return String(a.id).localeCompare(String(b.id));
+        });
+}
+
+// ── Per-conversation notification sweep throttle (2026-09-23 M2) ───────
+// Delay before the next sweep of this chat's unread chat notifications:
+// at least `settleMs` after the request (the server writes the notification
+// a beat after the message lands, so sweeping instantly would miss it) and
+// at least `minGapMs` after the previous sweep (a busy thread marks read on
+// every arrival — cap the query+batch rate).
+export function planNotifSweepDelay({ now, lastSweepAt = 0, settleMs = 4000, minGapMs = 15000 }) {
+    const gapWait = lastSweepAt ? (lastSweepAt + minGapMs) - now : 0;
+    return Math.max(settleMs, gapWait);
+}
+// After a sweep fires: did a request land inside its settle window (i.e.
+// possibly for a notification that didn't exist yet when the sweep ran)?
+// Then one more sweep is needed.
+export function needsFollowUpNotifSweep({ firedAt, lastRequestAt, settleMs = 4000 }) {
+    return Number.isFinite(lastRequestAt) && lastRequestAt > firedAt - settleMs;
+}

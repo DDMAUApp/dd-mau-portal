@@ -16,7 +16,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { doc, onSnapshot, setDoc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, updateDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
 import { isAdmin, LOCATION_LABELS } from '../data/staff';
 import { toast } from '../toast';
 import {
@@ -81,8 +81,32 @@ export default function ShiftHandoff({ language, staffName, staffList, storeLoca
     const canEdit = isManager && (!isPast || adminUser);
     const canAuthor = canEdit && (status === 'none' || status === 'draft');
     const canSubmit = canEdit && (status === 'none' || status === 'draft');
-    const canAcknowledge = canEdit && status === 'submitted';
-    const canEditPmNotes = canEdit && status === 'acknowledged';
+    // 2026-09-23 review: the handoff is filed under the CLOSER's date, so
+    // the next-morning opener is always looking at a "past" date — and the
+    // past-date lock meant only an admin could ever acknowledge. Acknowledge
+    // only stamps who/when (the closer's content stays locked), so any
+    // manager may do it on any date; the acknowledger may add PM notes.
+    const canAcknowledge = isManager && status === 'submitted';
+    const canEditPmNotes = status === 'acknowledged' && (canEdit || (isManager && handoff?.acknowledgedBy === staffName));
+
+    // A submitted-but-unacknowledged handoff from the last 3 days — the one
+    // the opener came here for. Shown as a banner on today's view.
+    const [waitingHandoff, setWaitingHandoff] = useState(null);
+    useEffect(() => {
+        if (!isManager) return;
+        let cancelled = false;
+        const [y, m, d] = today.split('-').map(Number);
+        const keys = [1, 2, 3].map(n => new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10));
+        Promise.all(keys.map(k => getDoc(doc(db, 'shift_handoffs', handoffDocId(k, concreteLocation)))
+            .then(snap => (snap.exists() ? { key: k, data: snap.data() } : null))
+            .catch(() => null)))
+            .then(rows => {
+                if (cancelled) return;
+                const hit = rows.find(r => r && statusOf(r.data) === 'submitted');
+                setWaitingHandoff(hit ? { date: hit.key, submittedBy: hit.data.submittedBy || '' } : null);
+            });
+        return () => { cancelled = true; };
+    }, [isManager, today, concreteLocation]);
 
     // Notification fanout — every other manager at this location, plus admins.
     const handoffNotifyTargets = useMemo(() => {
@@ -169,6 +193,7 @@ export default function ShiftHandoff({ language, staffName, staffList, storeLoca
                 acknowledgedBy: staffName,
                 acknowledgedAt: new Date().toISOString(),
             });
+            setWaitingHandoff(w => (w && w.date === viewDate ? null : w));
             // Ping the closer so they know it landed.
             if (handoff?.submittedBy && handoff.submittedBy !== staffName) {
                 addDoc(collection(db, 'notifications'), {
@@ -250,6 +275,17 @@ export default function ShiftHandoff({ language, staffName, staffList, storeLoca
                     </button>
                 )}
             </div>
+
+            {waitingHandoff && viewDate !== waitingHandoff.date && (
+                <button onClick={() => setViewDate(waitingHandoff.date)}
+                    className="w-full mb-3 p-3 rounded-xl bg-blue-50 border-2 border-blue-300 text-left text-sm text-blue-900 hover:bg-blue-100">
+                    <span className="font-bold">📬 {tx('A closing handoff is waiting for you', 'Un handoff de cierre te espera')}</span>
+                    <span className="block text-xs mt-0.5">
+                        {tx(`${waitingHandoff.date}${waitingHandoff.submittedBy ? ` · from ${waitingHandoff.submittedBy}` : ''} — tap to review and acknowledge`,
+                            `${waitingHandoff.date}${waitingHandoff.submittedBy ? ` · de ${waitingHandoff.submittedBy}` : ''} — toca para revisar y confirmar`)}
+                    </span>
+                </button>
+            )}
 
             {loading ? (
                 <p className="text-center text-gray-400 mt-8 text-sm">{tx('Loading…', 'Cargando…')}</p>

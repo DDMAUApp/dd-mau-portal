@@ -61,6 +61,7 @@ import {
     query, orderBy, limit as fsLimit, deleteField,
 } from 'firebase/firestore';
 import { recordAudit } from './audit';
+import { allergenLabel, sortAllergens } from './allergens';
 import { getLabelFormat, getLabelFormatFast } from './labelFormat';
 // Pi 5 print bridge — Andrew 2026-05-22. When configured, all Brother
 // QL-820NWB prints try the bridge FIRST (HTTPS POST to a Tailscale
@@ -96,14 +97,25 @@ export const SHELF_LIFE_BY_CATEGORY = Object.freeze({
 // Resolve the shelf life days for a recipe object. Recipe-level
 // override wins; falls back to category-derived; finally to the
 // global default. Returns an integer day count.
-export function resolveShelfLifeDays(recipe) {
-    if (!recipe) return DEFAULT_SHELF_LIFE_DAYS;
+//
+// 2026-09-23 review (M5): `fallbackDays` = the Label Format's "Default
+// shelf life (days)". It used to be unreachable (this always returned ≥5,
+// so the `|| format.defaultShelfLifeDays` after it never ran). Now it is
+// the LAST-resort fallback only: an item's own shelf life and a SPECIFIC
+// category default (Proteins 3d, Sauces 7d…) still win. 'Other' is the
+// catch-all bucket (sides/drinks/chemicals/status all map to it) whose
+// value IS the global default, so it defers to the admin's setting too.
+// Omitting fallbackDays keeps the exact old results.
+export function resolveShelfLifeDays(recipe, fallbackDays = null) {
+    const fb = Math.floor(Number(fallbackDays));
+    const fallback = Number.isFinite(fb) && fb > 0 ? Math.min(60, fb) : DEFAULT_SHELF_LIFE_DAYS;
+    if (!recipe) return fallback;
     if (Number.isFinite(recipe.shelfLifeDays) && recipe.shelfLifeDays > 0) {
         return Math.floor(recipe.shelfLifeDays);
     }
     const cat = recipe.category || '';
-    if (SHELF_LIFE_BY_CATEGORY[cat]) return SHELF_LIFE_BY_CATEGORY[cat];
-    return DEFAULT_SHELF_LIFE_DAYS;
+    if (cat !== 'Other' && SHELF_LIFE_BY_CATEGORY[cat]) return SHELF_LIFE_BY_CATEGORY[cat];
+    return fallback;
 }
 
 // ── Config CRUD ───────────────────────────────────────────────
@@ -696,6 +708,43 @@ export async function savePrinterConfig({
     });
 }
 
+// ── Back-dated prep date/time (2026-09-23 review C4) ─────────
+// The print modal's 📅 picker used to pin ANY picked day to 12:00 noon, so
+// the label printed a made-up "12:00p" prep time and hour-based use-by
+// clocks counted from that fake noon (a 4h hold labeled at 5pm printed a
+// 4:00p discard — already past; labeled at 7am it printed 4:00p, 5h late).
+// These build the real instant instead:
+//   • picking TODAY → `now` (the real time of day);
+//   • picking another day → that calendar day at `timeOf`'s time of day
+//     (the time the modal currently shows — now, unless staff set one);
+//   • never later than `now` — a future prep time would push the use-by out.
+// Local-calendar constructors only, so the picked CALENDAR day never shifts;
+// day-based use-by math is untouched (setDate in buildLabelPayload).
+export function prepDateFromPick(ymd, { now = new Date(), timeOf = null } = {}) {
+    const [y, m, d] = String(ymd || '').split('-').map(Number);
+    if (!y || !m || !d) return null;
+    if (y === now.getFullYear() && m - 1 === now.getMonth() && d === now.getDate()) {
+        return new Date(now.getTime());
+    }
+    const t = timeOf instanceof Date && !isNaN(timeOf) ? timeOf : now;
+    const out = new Date(y, m - 1, d, t.getHours(), t.getMinutes(), 0, 0);
+    // Reject impossible dates (2026-02-31 would silently roll into March).
+    if (isNaN(out) || out.getFullYear() !== y || out.getMonth() !== m - 1 || out.getDate() !== d) return null;
+    return out > now ? new Date(now.getTime()) : out;
+}
+
+// Same calendar day as `date`, at "HH:MM" (an <input type="time"> value).
+// Clamped to `now` like prepDateFromPick. null on a malformed value.
+export function prepDateWithTime(date, hhmm, now = new Date()) {
+    const mt = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || ''));
+    if (!mt || !(date instanceof Date) || isNaN(date)) return null;
+    const h = Number(mt[1]);
+    const mi = Number(mt[2]);
+    if (h > 23 || mi > 59) return null;
+    const out = new Date(date.getFullYear(), date.getMonth(), date.getDate(), h, mi, 0, 0);
+    return out > now ? new Date(now.getTime()) : out;
+}
+
 // ── Label content layout ──────────────────────────────────────
 // Build the printable label payload from input data. Returns an
 // object the renderer can stringify. Keeps content building
@@ -890,10 +939,19 @@ export function buildLabelPayload({
     // a shelf reads at a glance by the huge weekday ("JUE") instead of
     // squinting at dates. Hour-based labels show the discard TIME instead.
     // Off via Label Format `showUseByBand: false`.
+    // 2026-09-23 review: an hour clock that runs past midnight (a 12h hold
+    // started at 8pm) printed only "8:00a" — indistinguishable from 8am
+    // TODAY. When the discard time lands on a different calendar day than
+    // the prep, lead with the weekday: "THU 8:00a".
+    const useBySameDay = useByDate.getFullYear() === prepDate.getFullYear()
+        && useByDate.getMonth() === prepDate.getMonth()
+        && useByDate.getDate() === prepDate.getDate();
     const useByBig = (format?.showUseByBand === false || format?.showUseBy === false)
         ? ''
         : (hoursBased
-            ? fmtTime(useByDate)
+            ? (useBySameDay
+                ? fmtTime(useByDate)
+                : `${(isEs ? weekdayEs : weekday).toUpperCase()} ${fmtTime(useByDate)}`)
             : (isEs ? weekdayEs : weekday).toUpperCase());
     if (location && format?.showLocation !== false) {
         metaLines.push(`${tx('Loc', 'Loc')}:    ${location}`);
@@ -901,9 +959,19 @@ export function buildLabelPayload({
 
     // Trim allergen list to fit. Allergens go LAST visually so a
     // line that overflows still keeps the date info readable.
+    // 2026-09-23 review: print readable names in the label's language
+    // ("Shellfish" / "Mariscos"), not internal codes ("shell", "treenut"),
+    // most-dangerous first, and keep ALL of them (the old slice(0, 8) could
+    // silently drop an allergen off a food label). Unknown entries (free
+    // text) are kept as written.
     const allergenList = format?.showAllergens === false
         ? []
-        : (allergens || []).filter(Boolean).slice(0, 8);
+        : (() => {
+            const raw = [...new Set((allergens || []).filter(Boolean).map(String))];
+            const known = sortAllergens(raw);
+            const unknown = raw.filter((a) => !known.includes(a));
+            return [...known.map((c) => allergenLabel(c, isEs ? 'es' : 'en')), ...unknown];
+        })();
 
     // Top ingredients — keep first 4 to avoid 4-inch-tall labels.
     const ingredientList = format?.showIngredients === false
@@ -1624,6 +1692,18 @@ export function brotherFreeTextScale(size) {
     if (map[size]) return map[size];
     const n = Number(size);
     return n > 0 ? n : 1.0;
+}
+
+// Footer for a free-text label on the direct-Brother path — the SAME rule
+// the Epson renderer (renderFreeTextBody) applies: an explicit footer
+// prints as given; otherwise "DD MAU" only anchors a label that carries a
+// date/name stamp; a plain message gets no footer. 2026-09-23 review: the
+// Brother branch passed `footer` through as undefined, so renderLabelCanvas's
+// 'DD Mau' default stamped EVERY custom Brother print (and PrintCenter's
+// preview, which follows the Epson rule, didn't show it). '' = no footer.
+export function freeTextFooter({ footer, stampDate = false, stampSignature = false } = {}) {
+    if (footer != null) return String(footer).slice(0, 30);
+    return (stampDate || stampSignature) ? 'DD MAU' : '';
 }
 
 // One free-text label as HTML body. Honors size/bold/align/stamps
@@ -2486,12 +2566,14 @@ async function _printFreeTextImpl({
             const r = await printBrotherDirect({
                 ip: printer.brotherIp,
                 lines,
-                footer,
+                // Epson parity (see freeTextFooter) — never undefined, or
+                // renderLabelCanvas falls back to its 'DD Mau' default.
+                footer: freeTextFooter({ footer, stampDate, stampSignature }),
                 copies: c,
                 rightShift: printer.brotherRightShift,
                 jobName: 'DD Mau Label',
             });
-            res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error };
+            res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error, detail: r.message };
             transport = 'brother_ipp_direct';
             logBrotherDirectAttempt({
                 printer,
@@ -2859,6 +2941,10 @@ function logBrotherDirectAttempt({ printer, meta, res, durationMs }) {
             outcome: {
                 ok: res?.ok === true,
                 error: res?.ok === true ? null : (res?.error || 'print_failed'),
+                // IPP-level rejections (2026-09-23 M3) carry a readable
+                // reason ("…not accepting jobs (IPP 0x0506)") — keep it in
+                // the print log so "printer rejected" is diagnosable.
+                ...(res?.ok !== true && res?.detail ? { printerMessage: String(res.detail).slice(0, 160) } : {}),
             },
             durationMs,
         });
@@ -2963,7 +3049,7 @@ async function _printPrepLabelImpl({
         const format = resolveLabelFormatForKind(baseFormat, recipe?.kind);
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
-            : (resolveShelfLifeDays(recipe) || baseFormat?.defaultShelfLifeDays || DEFAULT_SHELF_LIFE_DAYS);
+            : resolveShelfLifeDays(recipe, baseFormat?.defaultShelfLifeDays);
         const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
 
         const payload = buildLabelPayload({
@@ -3016,7 +3102,7 @@ async function _printPrepLabelImpl({
                 jobName: recipe?.titleEn || 'DD Mau Label',
                 shouldAbort,      // honor Cancel between copies (audit M3)
             });
-            res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error };
+            res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error, detail: r.message };
             transport = 'brother_ipp_direct';
             logBrotherDirectAttempt({
                 printer,

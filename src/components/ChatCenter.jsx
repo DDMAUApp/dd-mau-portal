@@ -25,7 +25,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, memo, lazy, Suspense
 import { db } from '../firebase';
 import {
     collection, doc, query, where, onSnapshot,
-    serverTimestamp, orderBy, limit, writeBatch, deleteField, arrayUnion,
+    serverTimestamp, orderBy, limit, deleteField, arrayUnion,
     addDoc as _fsAddDoc,
     setDoc as _fsSetDoc,
     updateDoc as _fsUpdateDoc,
@@ -48,7 +48,8 @@ import {
     tierOf, canEditChat, previewOf, isChatUnread, formatChatTime,
     matchesAudienceFilter, audienceMembersFor, AUDIENCE_AUTO_KEYS, audienceAutoLabel,
 } from '../data/chat';
-import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
+import { canPostAnnouncements, canDeleteChat } from '../data/chatPermissions';
+import { markChatNotificationsRead } from '../data/notify';
 import { findLiveDmId } from '../data/chatDm';
 import { consumePendingChatOpen } from '../data/chatDeepLink';
 import { isAdminId } from '../data/staff';
@@ -130,6 +131,8 @@ function saveChatListCache(staffName, list) {
                 sender: c.lastMessage.sender || '',
                 type: c.lastMessage.type || 'text',
                 ts: _slimTs(c.lastMessage.ts),
+                // 2026-09-23 (M5) — deleted-newest-message preview.
+                ...(c.lastMessage.deleted ? { deleted: true } : {}),
             } : null,
             lastActivityAt: _slimTs(c.lastActivityAt),
             createdAt: _slimTs(c.createdAt),
@@ -146,7 +149,16 @@ function loadChatListCache(staffName) {
         const parsed = JSON.parse(raw);
         if (!parsed || !Array.isArray(parsed.chats)) return [];
         if (Date.now() - (parsed.at || 0) > CHAT_LIST_CACHE_MAX_AGE_MS) return [];
-        return parsed.chats;
+        // 2026-09-23 chat audit C1 — TAG every warm-cache row. They are slim
+        // (no members for groups, no admins / editTier / createdBy /
+        // readOnly / autoAudience …), fine for painting a list row but NOT
+        // for any gate or write: the leave/save paths computed whole-array
+        // members/admins from them and canEditChat granted edit rights on
+        // the missing editTier. activeChat refuses a _cached row, so the
+        // thread + settings only ever see the live doc.
+        return parsed.chats
+            .filter(c => c && c.id)
+            .map(c => ({ ...c, _cached: true }));
     } catch { return []; }
 }
 
@@ -585,48 +597,24 @@ export default function ChatCenter({
     // mark-read sweep has to match — otherwise reply notifications
     // would never clear and the Chat tile badge would stick after
     // opening chat.
+    // 2026-09-23 chat audit M2 — the sweep body moved to notify.js
+    // (markChatNotificationsRead: bounded 1,500 read, ≤450-op chunks, type
+    // filtered server-side with equality/`in` only — no composite index,
+    // quiet watchdogRead posture; all unchanged). It now ALSO re-runs on
+    // unmount: notifications for messages that arrived while the user sat
+    // in the Chat tab were never cleared (the badge counted up), and leaving
+    // the tab is the natural "I've seen chat" moment. The unmount run is
+    // fire-and-forget (no state to set) and never cancelled. ChatThread
+    // additionally clears the open conversation's notifications as it marks
+    // the thread read.
     useEffect(() => {
         if (!staffName) return;
         let cancelled = false;
-        (async () => {
-            try {
-                // Bounded read + chunked writes (correctness/leak audit,
-                // 2026-07-14). A staffer returning after a long absence could
-                // have >500 unread chat notifications; a single writeBatch caps
-                // at 500 ops and THREW, so NONE were marked read (caught
-                // silently → the unread badge never cleared). Cap the read and
-                // commit in ≤450-op chunks.
-                // 2026-08-25: filter by type SERVER-side. The old query read
-                // every unread notification of ALL types (schedule, 86,
-                // announcements…) up to 1,500 docs on every Chat-tab entry,
-                // then kept only the 3 chat types client-side. `in` +
-                // equality filters need no composite index.
-                const q = query(
-                    collection(db, 'notifications'),
-                    where('forStaff', '==', staffName),
-                    where('read', '==', false),
-                    where('type', 'in', ['chat_message', 'chat_mention', 'chat_reply']),
-                    limit(1500),
-                );
-                const snap = await getDocs(q);
-                if (cancelled) return;
-                const chatDocs = [];
-                snap.forEach(d => chatDocs.push(d.id));
-                if (chatDocs.length === 0) return;
-                for (let i = 0; i < chatDocs.length; i += 450) {
-                    if (cancelled) return;
-                    const batch = writeBatch(db);
-                    chatDocs.slice(i, i + 450).forEach(id => batch.update(doc(db, 'notifications', id), { read: true }));
-                    // Quiet posture — automatic mark-read on entering the Chat
-                    // tab must not show the pill or arm the reload escalation.
-                    // eslint-disable-next-line no-await-in-loop
-                    await watchdogRead(batch.commit());
-                }
-            } catch (e) {
-                console.warn('mark-chat-read failed:', e);
-            }
-        })();
-        return () => { cancelled = true; };
+        markChatNotificationsRead(staffName, { isCancelled: () => cancelled });
+        return () => {
+            cancelled = true;
+            markChatNotificationsRead(staffName);
+        };
     }, [staffName]);
 
     // ── UI state ─────────────────────────────────────────────────
@@ -663,7 +651,10 @@ export default function ChatCenter({
     const [longPressedChat, setLongPressedChat] = useState(null); // chat-list long-press action sheet
 
     const canAnnounce = canPostAnnouncements(viewer, isAdmin, isManager);
-    const canCover = canPostCoverageRequest(viewer);
+    // (2026-09-23 chat audit M7 — the "Request coverage" menu row is hidden:
+    // it posts into the purged system channels and always errored. The
+    // modal code stays below, unreferenced from the menu. Coverage lives
+    // in the Schedule tab.)
 
     // 2026-07-21 (chat audit follow-up) — stabilize the open thread's `chat`
     // prop reference. The chats onSnapshot returns a NEW array on every
@@ -675,7 +666,12 @@ export default function ChatCenter({
     // own data actually moved. See chatDocEqual in chatThreadHelpers.js.
     const activeChatStableRef = useRef(null);
     const activeChat = useMemo(() => {
-        const found = allChats.find(c => c.id === activeChatId) || null;
+        const row = allChats.find(c => c.id === activeChatId) || null;
+        // 2026-09-23 chat audit C1 — a warm-cache row is NOT a chat doc
+        // (see loadChatListCache): never hand it to the thread / settings /
+        // leave gates. Resolve to null until the live snapshot replaces it;
+        // the pane shows a brief "Opening…" state meanwhile.
+        const found = row && !row._cached ? row : null;
         const prev = activeChatStableRef.current;
         if (prev && found && prev.id === found.id && chatDocEqual(prev, found)) {
             return prev;
@@ -683,6 +679,11 @@ export default function ChatCenter({
         activeChatStableRef.current = found;
         return found;
     }, [allChats, activeChatId]);
+
+    // A chat is selected but only its warm-cache row exists so far — the
+    // live list hasn't landed. Drives the pane's "Opening…" state.
+    const activeChatAwaitingLive = !!activeChatId && !activeChat
+        && allChats.some(c => c.id === activeChatId && c._cached);
 
     // Mobile list-vs-thread switcher: if mobile + a chat is active, hide
     // the list. Desktop shows both panes always.
@@ -706,12 +707,16 @@ export default function ChatCenter({
     }, [activeChat]);
     useEffect(() => {
         if (!activeChatId || chatsLoading || activeChat) return;
+        // Still only a warm-cache row (live list errored/timed out) — the
+        // pane's Opening/Retry state owns that; don't bounce.
+        if (activeChatAwaitingLive) return;
         if (seenActiveChatRef.current === activeChatId) {
             seenActiveChatRef.current = null;
             setActiveChatId(null);
             setMobileShowList(true);
+            setShowSettings(false);
         }
-    }, [activeChatId, activeChat, chatsLoading]);
+    }, [activeChatId, activeChat, chatsLoading, activeChatAwaitingLive]);
 
     // ── Conversation-level push deep link (2026-08-11, chat forensics C4) ──
     // A chat push tap parks its chatId in the chatDeepLink store (it can
@@ -769,6 +774,10 @@ export default function ChatCenter({
         if (!pendingOpenChatId) return;
         const found = allChats.find(c => c.id === pendingOpenChatId);
         if (!found) return; // list still loading (or not a member) — wait for the timeout below
+        // 2026-09-23 chat audit C1 — a warm-cache row proves nothing (the
+        // user may have been removed since it was cached, and it can't feed
+        // the thread anyway). Keep the open pending until the live row lands.
+        if (found._cached) return;
         breadcrumb('chat.open.deeplink', found.id, { type: found.type || 'unknown' });
         setJumpToMessageId(null);
         setActiveChatId(found.id);
@@ -777,9 +786,14 @@ export default function ChatCenter({
     }, [pendingOpenChatId, allChats]);
     useEffect(() => {
         if (!pendingOpenChatId) return;
+        // The 15s give-up clock starts once the live list has answered (the
+        // open now waits for the LIVE row, and a post-suspend stream can take
+        // 6-15s to deliver it). The list's own 15s timeout flips chatsLoading
+        // false, so this still always ends.
+        if (chatsLoading) return;
         const t = setTimeout(() => setPendingOpenChatId(null), 15000);
         return () => clearTimeout(t);
-    }, [pendingOpenChatId]);
+    }, [pendingOpenChatId, chatsLoading]);
 
     // Android hardware-Back inside an open thread → go back to the chat LIST,
     // not all the way to the Home tab. Only claim Back while a thread is open
@@ -805,6 +819,11 @@ export default function ChatCenter({
         // reopening the SAME chat later in the session scrolled back to the
         // old search hit (+ highlight) instead of the newest message.
         setJumpToMessageId(null);
+        // A tap on a warm-cache row (live list not in yet): mark it "seen"
+        // so, if the live list lands WITHOUT this chat (removed while the
+        // app was closed), the strand recovery returns to the list instead
+        // of leaving an empty pane.
+        if (c._cached) seenActiveChatRef.current = c.id;
         setActiveChatId(c.id);
         setMobileShowList(false);
     }, []);
@@ -819,6 +838,9 @@ export default function ChatCenter({
         breadcrumb('chat.back', activeChatIdRef.current || 'unknown');
         setActiveChatId(null);
         setMobileShowList(true);
+        // A settings request made while the chat was still "Opening…" (long-
+        // press → Manage members) must not pop up on the NEXT chat opened.
+        setShowSettings(false);
     }, []);
     const handleOpenSettings = useCallback(() => setShowSettings(true), []);
 
@@ -1093,6 +1115,13 @@ export default function ChatCenter({
                             onOpenSettings={handleOpenSettings}
                         />
                     </Suspense>
+                ) : activeChatAwaitingLive ? (
+                    <OpeningChatState
+                        isEs={isEs}
+                        failed={!chatsLoading && !!chatsError}
+                        onRetry={retryChatsLoad}
+                        onBack={handleThreadBack}
+                    />
                 ) : (
                     <EmptyState isEs={isEs} onStart={() => setShowNewChat(true)} />
                 )}
@@ -1182,18 +1211,10 @@ export default function ChatCenter({
                                 </div>
                             </button>
                         )}
-                        {canCover && (
-                            <button
-                                onClick={() => { setShowActionMenu(false); setShowCoverage(true); }}
-                                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-dd-bg text-left"
-                            >
-                                <span className="text-2xl">🙋</span>
-                                <div className="flex-1">
-                                    <div className="font-black text-dd-text">{tx('Request coverage', 'Pedir cobertura')}</div>
-                                    <div className="text-xs text-dd-text-2">{tx('Need someone to take a shift', 'Necesitas que cubran un turno')}</div>
-                                </div>
-                            </button>
-                        )}
+                        {/* 2026-09-23 chat audit M7 — "Request coverage" row
+                            removed: it targeted the purged system channels and
+                            always errored. (ChatCoverageRequestModal is left in
+                            place, unreferenced from this menu.) */}
                         <button
                             onClick={() => { setShowActionMenu(false); setShowIssue(true); }}
                             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-dd-bg text-left"
@@ -1202,6 +1223,31 @@ export default function ChatCenter({
                             <div className="flex-1">
                                 <div className="font-black text-dd-text">{tx('Report issue', 'Reportar problema')}</div>
                                 <div className="text-xs text-dd-text-2">{tx('Broken equipment, supplies, safety', 'Equipo, suministros, seguridad')}</div>
+                            </div>
+                        </button>
+                        {/* 2026-09-23 chat audit M3 — on phones the header's
+                            🔍 / 🔔 buttons are hidden (desktop-only row), so
+                            message search + notification settings were
+                            unreachable. Mobile-only rows here; desktop keeps
+                            the header buttons. */}
+                        <button
+                            onClick={() => { setShowActionMenu(false); setShowSearchPanel(true); }}
+                            className="md:hidden w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-dd-bg text-left"
+                        >
+                            <span className="text-2xl">🔍</span>
+                            <div className="flex-1">
+                                <div className="font-black text-dd-text">{tx('Search messages', 'Buscar mensajes')}</div>
+                                <div className="text-xs text-dd-text-2">{tx('Find a message in any of your chats', 'Encuentra un mensaje en cualquiera de tus chats')}</div>
+                            </div>
+                        </button>
+                        <button
+                            onClick={() => { setShowActionMenu(false); setShowNotifSettings(true); }}
+                            className="md:hidden w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-dd-bg text-left"
+                        >
+                            <span className="text-2xl">🔔</span>
+                            <div className="flex-1">
+                                <div className="font-black text-dd-text">{tx('Notification settings', 'Configuración de notificaciones')}</div>
+                                <div className="text-xs text-dd-text-2">{tx('Push, quiet hours, translation', 'Push, horas de silencio, traducción')}</div>
                             </div>
                         </button>
                     </div>
@@ -1329,6 +1375,8 @@ export default function ChatCenter({
                         setLongPressedChat(null);
                     }}
                     onOpenSettings={() => {
+                        // Same strand guard as handleSelectChat for a warm-cache row.
+                        if (longPressedChat._cached) seenActiveChatRef.current = longPressedChat.id;
                         setActiveChatId(longPressedChat.id);
                         setShowSettings(true);
                         setLongPressedChat(null);
@@ -1472,6 +1520,46 @@ function subtitleFor(chat, isEs) {
         return isEs ? `${n} miembros` : `${n} members`;
     }
     return '';
+}
+
+// 2026-09-23 chat audit C1 — shown in the thread pane while a selected
+// chat exists only as a warm-cache row (the live list hasn't landed). The
+// thread needs the live doc for its gates, so we wait here instead of
+// rendering on partial data. Back is always available (the mobile list is
+// hidden while a chat is selected); Retry appears if the live list failed.
+function OpeningChatState({ isEs, failed, onRetry, onBack }) {
+    return (
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-3">
+            {failed ? (
+                <>
+                    <div className="text-3xl">⚠️</div>
+                    <div className="text-sm font-bold text-dd-text">
+                        {isEs ? 'No se pudo abrir el chat' : "Couldn't open this chat"}
+                    </div>
+                    <div className="text-[12px] text-dd-text-2 max-w-xs">
+                        {isEs ? 'Red lenta — intenta de nuevo.' : 'Network is slow — try again in a moment.'}
+                    </div>
+                    <button
+                        onClick={onRetry}
+                        className="px-4 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm"
+                    >
+                        ↻ {isEs ? 'Reintentar' : 'Retry'}
+                    </button>
+                </>
+            ) : (
+                <>
+                    <div className="inline-block w-6 h-6 border-2 border-dd-line border-t-dd-green rounded-full animate-spin" />
+                    <div className="text-sm text-dd-text-2">{isEs ? 'Abriendo chat…' : 'Opening chat…'}</div>
+                </>
+            )}
+            <button
+                onClick={onBack}
+                className="md:hidden mt-1 px-4 py-2 rounded-full text-sm font-bold text-dd-text-2 hover:bg-dd-bg"
+            >
+                ← {isEs ? 'Volver a los chats' : 'Back to chats'}
+            </button>
+        </div>
+    );
 }
 
 function EmptyState({ isEs, onStart }) {

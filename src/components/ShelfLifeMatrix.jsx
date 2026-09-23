@@ -9,6 +9,24 @@ import ModalPortal from './ModalPortal';
 import { toast } from '../toast';
 import { subscribeStickerLists, saveStickerList, STICKER_SECTIONS } from '../data/stickerListsOverride';
 
+// "Set all" for one section — DAY-clock rows only (2026-09-23 review).
+// It used to write the number into every row but keep each row's unit, so
+// typing 5 turned an hour-clocked item (Sanitizer 4h, COOLING 6h) into 5
+// HOURS. Converting those rows to N DAYS would be worse (a discard-in-hours
+// item labeled good for days), so hour rows are left alone — edit them
+// individually. A row's unit = its pending edit, else its saved clock.
+// Pure: returns the next edits map.
+export function applySetAllDays(edits, sectionKey, rows, value) {
+    const next = { ...edits };
+    for (const r of (rows || [])) {
+        const k = `${sectionKey}:${r.id}`;
+        const unit = (`${k}:u` in next) ? next[`${k}:u`] : (r.shelfLifeHours != null ? 'h' : 'd');
+        if (unit === 'h') continue;
+        next[k] = String(value);
+    }
+    return next;
+}
+
 export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -46,13 +64,10 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
     const setUnit = (sk, id, u) => setEdits((e) => ({ ...e, [`${key(sk, id)}:u`]: u === 'h' ? 'h' : 'd' }));
     const setThaw = (sk, id, v) => setEdits((e) => ({ ...e, [`${key(sk, id)}:t`]: v.replace(/[^0-9]/g, '').slice(0, 2) }));
 
-    // "Set all in this section to N" — fills every row in the section.
+    // "Set all in this section to N days" — every DAY-clock row; hour-clock
+    // rows are skipped (see applySetAllDays).
     const setSection = (sk, rows, v) => {
-        setEdits((e) => {
-            const next = { ...e };
-            for (const r of rows) next[key(sk, r.id)] = String(v);
-            return next;
-        });
+        setEdits((e) => applySetAllDays(e, sk, rows, v));
     };
 
     const totals = useMemo(() => {
@@ -136,8 +151,10 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
                                 <div key={s.key} className="mb-3">
                                     <div className="flex items-center justify-between gap-2 sticky top-0 bg-white py-1.5 z-10">
                                         <span className="text-sm font-black text-dd-text">{isEs ? s.titleEs : s.titleEn}</span>
-                                        <label className="flex items-center gap-1 text-[11px] text-dd-text-2">
-                                            {tx('set all', 'todos a')}
+                                        <label className="flex items-center gap-1 text-[11px] text-dd-text-2"
+                                            title={tx('Sets every item on a DAYS clock in this section. Items on an hours clock are left alone.',
+                                                'Aplica a los artículos en DÍAS de esta sección. Los que van en horas no cambian.')}>
+                                            {tx('set all (days)', 'todos (días)')}
                                             <input type="number" min="1" max="60" inputMode="numeric"
                                                 onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, '').slice(0, 2); if (v) setSection(s.key, rows, v); }}
                                                 placeholder="—"
@@ -174,8 +191,8 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
                             );
                         })}
                         <p className="text-[11px] text-dd-text-2 px-1 pb-2 leading-snug">
-                            {tx('Blank = category default. Pick "hrs" for line items that discard the same day (the label prints a discard time). The ❄ box = shelf life in DAYS once thawed — items with one get a Fresh/Thawed button when printing.',
-                                'Vacío = valor por defecto. Elige "hrs" para artículos que se desechan el mismo día (la etiqueta imprime hora de descarte). La casilla ❄ = días de vida útil una vez descongelado — esos artículos muestran un botón Fresco/Descongelado al imprimir.')}
+                            {tx('Blank = category default. Pick "hrs" for line items that discard the same day (the label prints a discard time). "Set all (days)" skips items on an hours clock. The ❄ box = shelf life in DAYS once thawed — items with one get a Fresh/Thawed button when printing.',
+                                'Vacío = valor por defecto. Elige "hrs" para artículos que se desechan el mismo día (la etiqueta imprime hora de descarte). "Todos (días)" no cambia los artículos en horas. La casilla ❄ = días de vida útil una vez descongelado — esos artículos muestran un botón Fresco/Descongelado al imprimir.')}
                         </p>
                     </div>
 

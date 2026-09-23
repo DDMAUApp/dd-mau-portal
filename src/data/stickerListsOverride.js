@@ -594,6 +594,68 @@ export async function moveStickerRow(fromKey, toKey, row, byName) {
     return true;
 }
 
+// ── Edit Mode draft ⇄ live list merge (2026-09-23 review M8) ──────────
+// Edit Mode keeps a local draft of a section and saves the WHOLE array
+// (saveStickerList). The old merge kept every draft row verbatim, so a
+// device sitting in Edit Mode silently reverted other devices' work on its
+// next save: renames / shelf lives of rows it never touched went back to
+// its stale copy, and rows another device deleted or moved came back.
+// Pure — the component supplies the id sets:
+//   touchedIds — rows edited here this session (their typed text wins)
+//   addedIds   — rows created here and not yet seen on the server
+//   deletedIds — rows deleted/moved-out here whose save may be in flight
+// Rules:
+//   • untouched row → the SERVER version (remote renames/shelf lives stick)
+//   • touched row   → server row with the draft's EDITABLE text on top, so
+//                     fields this editor doesn't own (shelfLifeDays/Hours,
+//                     thawedDays, …) still follow the server
+//   • row the server no longer has → dropped, unless added here (unsaved)
+//   • server row not in the draft → appended (another device added it),
+//     unless deleted here and our save hasn't landed yet
+export const STICKER_EDITABLE_FIELDS = Object.freeze(['nameEn', 'nameEs', 'descEn', 'descEs']);
+
+export function mergeEditDraft(draft, incoming, { touchedIds, addedIds, deletedIds } = {}) {
+    const has = (set, id) => !!set && set.has(id);
+    const server = Array.isArray(incoming) ? incoming : [];
+    const serverById = new Map(server.map((r) => [r.id, r]));
+    const out = [];
+    const placed = new Set();
+    for (const d of (Array.isArray(draft) ? draft : [])) {
+        const s = serverById.get(d.id);
+        if (s) {
+            placed.add(d.id);
+            if (has(touchedIds, d.id)) {
+                const row = { ...s };
+                for (const f of STICKER_EDITABLE_FIELDS) row[f] = d[f];
+                out.push(row);
+            } else {
+                out.push(s);
+            }
+        } else if (has(addedIds, d.id)) {
+            out.push(d);
+        }
+        // else: gone from the server (deleted / moved by another device).
+    }
+    for (const s of server) {
+        if (placed.has(s.id) || has(deletedIds, s.id)) continue;
+        out.push(s);
+    }
+    return out;
+}
+
+// Ids whose draft text now equals the server's — our save landed (or the
+// edit was a no-op). The component clears them from touched/added so the
+// row follows the server again (a later remote rename isn't reverted).
+export function settledEditIds(draft, incoming) {
+    const serverById = new Map((Array.isArray(incoming) ? incoming : []).map((r) => [r.id, r]));
+    const out = new Set();
+    for (const d of (Array.isArray(draft) ? draft : [])) {
+        const s = serverById.get(d.id);
+        if (s && STICKER_EDITABLE_FIELDS.every((f) => (d[f] ?? '') === (s[f] ?? ''))) out.add(d.id);
+    }
+    return out;
+}
+
 // Generate a stable, readable ID from a name (slug-like). Includes
 // a short random tail so two rows with the same name don't collide.
 export function makeStickerRowId(name) {

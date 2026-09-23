@@ -13,8 +13,17 @@
 
 import { db } from '../firebase';
 import {
-    doc, runTransaction, collection, addDoc, serverTimestamp, updateDoc,
+    doc, serverTimestamp,
+    runTransaction as _fsRunTransaction,
 } from 'firebase/firestore';
+// 2026-09-23 chat audit m1 — watchdog coverage (see firestoreRevive.js). A
+// wedged transport left claim/approve/deny/withdraw spinning forever with no
+// revive; watchdogTransaction revives on hang (no stream-progress credit —
+// a transaction is one round-trip) and returns the ORIGINAL promise, so the
+// transaction semantics + thrown state errors are untouched. (The unused
+// collection/addDoc/updateDoc imports were dropped.)
+import { watchdogTransaction } from './firestoreRevive';
+const runTransaction = (...a) => watchdogTransaction(_fsRunTransaction(...a));
 import { notifyStaff } from './notify';
 import { recordAudit } from './audit';
 
@@ -46,6 +55,7 @@ export async function claimCoverage({ chatId, messageId, claimerName, claimerId 
             title: '✋ ' + 'Coverage claimed',
             body: `${claimerName} wants to take your ${snapshot.shiftSnapshot?.date || ''} shift`,
             deepLink: 'chat',
+            chatId,
             tag: `coverage_claimed:${messageId}`,
             createdBy: claimerName,
         }).catch(() => {});
@@ -150,6 +160,7 @@ export async function denyCoverage({ chatId, messageId, managerName, managerId }
                 title: '✕ ' + 'Coverage claim denied',
                 body: `Manager declined the claim. Request is open again.`,
                 deepLink: 'chat',
+                chatId,
                 tag: `coverage_denied:${messageId}:${recipient}`,
                 createdBy: managerName,
             }).catch(() => {});
@@ -188,6 +199,7 @@ export async function withdrawCoverage({ chatId, messageId, requesterName, reque
             title: 'ℹ️ ' + 'Coverage request withdrawn',
             body: `${requesterName} withdrew their coverage request.`,
             deepLink: 'chat',
+            chatId,
             tag: `coverage_withdrawn:${messageId}`,
             createdBy: requesterName,
         }).catch(() => {});

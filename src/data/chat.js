@@ -103,9 +103,17 @@ export function canEditChat(chat, viewer, isAdminFlag) {
     if (chat.type === 'dm') return false;
     if (isAdminFlag) return true;                       // app admin always wins (for groups + channels)
     if (chat.type === 'channel') return false;          // only admin path above
+    // 2026-09-23 chat audit C1 — FAIL CLOSED when editTier is missing or
+    // unknown. It used to default to 'staff' rank 0, which (because the
+    // creator check below only runs for an explicit 'staff') granted EVERY
+    // viewer edit rights. Every create path stamps editTier, so a missing
+    // one means a partial object (e.g. the slim chat-list warm cache) — never
+    // hand edit/leave/save controls to a doc we can't read the policy of.
+    // App admins keep full access via the branch above.
+    if (!Object.prototype.hasOwnProperty.call(TIER_RANK, chat.editTier)) return false;
     const tier = tierOf(viewer, isAdminFlag);
     const rank = TIER_RANK[tier] ?? 0;
-    const requiredRank = TIER_RANK[chat.editTier || 'staff'] ?? 0;
+    const requiredRank = TIER_RANK[chat.editTier] ?? 0;
     if (rank >= requiredRank) {
         // Manager+ groups: any peer of the right tier can manage.
         // Staff groups: only the creator + listed group-admins.
@@ -246,6 +254,79 @@ export function audienceMembersFor(key, staffList) {
     return (Array.isArray(staffList) ? staffList : [])
         .filter(s => s && s.name && matchesAudienceFilter(s, key))
         .map(s => s.name);
+}
+
+// 2026-09-23 chat audit M6 — would the ADD-only auto-audience sync
+// (ChatCenter, managers' devices) immediately re-add this viewer if they
+// left? Mirrors the sync's own gates exactly: groups only, not soft-deleted,
+// a recognised autoAudience key, and the viewer's staff record matching it.
+// When true, "Leave" silently reverted a few seconds later — the UI blocks
+// it with an explanation instead. No opt-out schema is invented here.
+export function leaveBlockedByAutoAudience(chat, viewer) {
+    if (!chat || chat.type !== 'group' || chat.deletedAt) return false;
+    const key = chat.autoAudience;
+    if (!key || !AUDIENCE_AUTO_KEYS.includes(key)) return false;
+    if (!viewer || !viewer.name) return false;
+    return matchesAudienceFilter(viewer, key);
+}
+
+// 2026-09-23 chat audit C1 — merge a settings-modal co-admin edit onto the
+// LIVE admins array instead of writing the modal's (possibly stale / cached)
+// copy wholesale. Returns the array to write, or null when the user never
+// changed co-admins (→ don't touch the field at all).
+//   liveAdmins  — chat.admins as the live snapshot has it right now
+//   liveMembers — chat.members (live); newly-added co-admins must be members
+//   baseline    — the admins list the user started editing from
+//   local       — the modal's co-admin list after the user's toggles
+// Only EXPLICIT removals drop someone, so the result can be [] only when the
+// user removed every existing co-admin themselves.
+export function mergeCoAdminEdits({ liveAdmins, liveMembers, baseline, local }) {
+    const live = Array.isArray(liveAdmins) ? liveAdmins : [];
+    const base = new Set(Array.isArray(baseline) ? baseline : []);
+    const loc = new Set(Array.isArray(local) ? local : []);
+    const added = [...loc].filter(n => !base.has(n));
+    const removed = new Set([...base].filter(n => !loc.has(n)));
+    if (added.length === 0 && removed.size === 0) return null;
+    const members = Array.isArray(liveMembers) ? liveMembers : null;
+    const next = [];
+    for (const n of live) {
+        if (!removed.has(n) && !next.includes(n)) next.push(n);
+    }
+    for (const n of added) {
+        if (members && !members.includes(n)) continue;
+        if (!next.includes(n)) next.push(n);
+    }
+    return next;
+}
+
+// 2026-09-23 chat audit M5 — is `message` the one the chat-list preview
+// (chat.lastMessage) is currently showing? lastMessage carries no message id
+// today (the onChatMessageCreated CF writes {text,sender,ts,type}), so we
+// fall back to "it's the newest message loaded in the thread AND the preview
+// was written by the same sender". An explicit lastMessage.id wins if a
+// future writer adds one.
+export function isChatLastMessage(chat, message, newestLoadedId) {
+    const lm = chat && chat.lastMessage;
+    if (!lm || typeof lm !== 'object' || !message || !message.id) return false;
+    if (lm.id) return lm.id === message.id;
+    if (!newestLoadedId || newestLoadedId !== message.id) return false;
+    if (lm.sender && message.senderName && lm.sender !== message.senderName) return false;
+    return true;
+}
+
+// Dotted-path patch for the chat doc's lastMessage after the previewed
+// message is deleted or edited. Field paths are fixed literals (never user
+// text). Media messages preview their TYPE ("📷 Photo"), not the caption,
+// so a caption edit leaves the preview alone (returns null).
+export function lastMessagePatchFor(kind, message, newText) {
+    if (kind === 'delete') {
+        return { 'lastMessage.text': '', 'lastMessage.deleted': true };
+    }
+    if (kind === 'edit') {
+        if ((message && message.type ? message.type : 'text') !== 'text') return null;
+        return { 'lastMessage.text': String(newText || '').slice(0, 200) };
+    }
+    return null;
 }
 
 function isFohRole(s) {

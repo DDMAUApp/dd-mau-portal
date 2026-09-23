@@ -67,12 +67,84 @@ export function __setReloadImplForTests(fn) { _reloadImpl = fn; }
 export const DRAIN_CAP_MS = 5 * 1000;
 export const PENDING_REPORT_KEY = 'ddmau:pendingReloadReport';
 
+// ── Write-stuck reload: only when it can actually help (2026-09-23) ──────
+// Field telemetry after v1.0.472 (the Webster iPad, native iOS app):
+//   • 9/11: 14 "write-stuck" reloads in ~20 min, every one with the local
+//     queue unresponsive (drain timed out). A page reload does NOT restart
+//     iOS's wedged storage process, so each reload changed nothing — a loop.
+//   • 9/18–9/19: reloads mid-count where the local queue answered in 28 ms–
+//     2.5 s. The taps were already durable on the device and only waiting on
+//     a slow connection; the reload just yanked the sheet from the counter.
+// So for write-stuck: probe the local queue FIRST. Healthy ⇒ never reload
+// (keep the Reconnecting pill; the writes flush when the network allows).
+// Unresponsive ⇒ reload, but at most WRITE_STUCK_MAX_RELOADS per window;
+// after that, stop and tell the person what actually fixes it.
+export const WRITE_STUCK_LOOP_WINDOW_MS = 20 * 60 * 1000;
+export const WRITE_STUCK_MAX_RELOADS = 2;
+const WRITE_STUCK_RELOADS_KEY = 'ddmau:writeStuckReloads';
+const SKIP_LOG_EVERY_MS = 10 * 60 * 1000;
+const _lastSkipLogAt = {};
+let _hardStuck = false;
+
+function _readStuckReloads(now) {
+    try {
+        const arr = JSON.parse(sessionStorage.getItem(WRITE_STUCK_RELOADS_KEY) || '[]');
+        return Array.isArray(arr) ? arr.filter((t) => Number.isFinite(t) && now - t < WRITE_STUCK_LOOP_WINDOW_MS) : [];
+    } catch { return []; }
+}
+function _setHardStuck(on) {
+    if (_hardStuck === on) return;
+    _hardStuck = on;
+    _notifyWriteSubs();
+}
+function _logReloadSkipped(why, meta) {
+    const now = Date.now();
+    if (now - (_lastSkipLogAt[why] || 0) < SKIP_LOG_EVERY_MS) return;
+    _lastSkipLogAt[why] = now;
+    try {
+        logError({ error: new Error(`reload skipped: ${why}`), severity: 'warning', feature: 'firestoreRevive:reload-skipped', meta: { why, ...meta } });
+    } catch { /* never block */ }
+}
+// 'ok' = the local queue answered (resolved); 'rejected' = it answered with an
+// error (can't prove health); 'timeout' = no answer within DRAIN_CAP_MS.
+async function _probeLocalQueue() {
+    try {
+        return await Promise.race([
+            getDocFromCache(doc(db, 'config', 'minVersion')).then(() => 'ok', () => 'rejected'),
+            new Promise((res) => setTimeout(() => res('timeout'), DRAIN_CAP_MS)),
+        ]);
+    } catch { return 'rejected'; }
+}
+
 export async function escalateReload(reason = 'write-stuck', ctx = {}) {
+    const loopable = reason === 'write-stuck-after-revive';
     try {
         const last = Number(sessionStorage.getItem(RELOAD_GUARD_KEY)) || 0;
         if (Date.now() - last < RELOAD_GUARD_MS) return false;
-        sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
     } catch { /* storage broken — still reload; worst case iOS re-suspends */ }
+    let pre = null;
+    if (loopable) {
+        const recent = _readStuckReloads(Date.now());
+        if (recent.length >= WRITE_STUCK_MAX_RELOADS) {
+            // Reloading already failed to cure this — stop looping.
+            _setHardStuck(true);
+            _logReloadSkipped('loop-cap', { reason, recentReloads: recent.length, ...getWatchdogTelemetry(), ...ctx });
+            return false;
+        }
+        const t0 = Date.now();
+        pre = await _probeLocalQueue();
+        if (pre === 'ok') {
+            _logReloadSkipped('queue-healthy', { reason, probeMs: Date.now() - t0, ...getWatchdogTelemetry(), ...ctx });
+            return false;
+        }
+    }
+    try { sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now())); } catch { /* ignore */ }
+    if (loopable) {
+        try {
+            const now = Date.now();
+            sessionStorage.setItem(WRITE_STUCK_RELOADS_KEY, JSON.stringify([..._readStuckReloads(now), now]));
+        } catch { /* ignore */ }
+    }
     const report = { reason, at: Date.now(), ...getWatchdogTelemetry(), ...ctx };
     // Stash BEFORE the drain (pages flush their pending taps into the SDK
     // queue so the drain covers them) and AGAIN after it (taps made during
@@ -80,16 +152,22 @@ export async function escalateReload(reason = 'write-stuck', ctx = {}) {
     try { report.stashed = runReloadStashes(reason); } catch { /* best-effort */ }
     let drained = false;
     const t0 = Date.now();
-    try {
-        drained = await Promise.race([
-            // Any settle (resolve OR "not in cache" rejection) proves the
-            // queue reached this op ⇒ every queued local write is durable.
-            getDocFromCache(doc(db, 'config', 'minVersion')).then(() => true, () => true),
-            new Promise((res) => setTimeout(() => res(false), DRAIN_CAP_MS)),
-        ]);
-    } catch { drained = false; }
+    if (pre === 'timeout') {
+        // Just proved unresponsive — don't wait another DRAIN_CAP_MS for it.
+        drained = false;
+    } else {
+        try {
+            drained = await Promise.race([
+                // Any settle (resolve OR "not in cache" rejection) proves the
+                // queue reached this op ⇒ every queued local write is durable.
+                getDocFromCache(doc(db, 'config', 'minVersion')).then(() => true, () => true),
+                new Promise((res) => setTimeout(() => res(false), DRAIN_CAP_MS)),
+            ]);
+        } catch { drained = false; }
+    }
     report.drained = drained;
     report.drainMs = Date.now() - t0;
+    if (pre) report.preProbe = pre;
     try { runReloadStashes(reason); } catch { /* best-effort */ }
     // The transport is suspect by definition, so the report is parked in
     // sessionStorage and flushed through logError on the next boot (App.jsx,
@@ -198,6 +276,7 @@ export function getWatchdogTelemetry() {
     return {
         inFlight: _inFlight,
         stuck: _stuck,
+        hardStuck: _hardStuck,
         sinceLastSettleMs: _lastWriteSettleAt ? now - _lastWriteSettleAt : null,
         sinceLastReviveMs: _lastReviveDoneAt ? now - _lastReviveDoneAt : null,
         oldestWriteAgeMs: oldest != null ? now - oldest : null,
@@ -206,7 +285,7 @@ export function getWatchdogTelemetry() {
 }
 
 function _notifyWriteSubs() {
-    const snapshot = { inFlight: _inFlight, stuck: _stuck };
+    const snapshot = { inFlight: _inFlight, stuck: _stuck, hardStuck: _hardStuck };
     _writeSubs.forEach((cb) => { try { cb(snapshot); } catch { /* subscriber's problem */ } });
 }
 
@@ -216,7 +295,7 @@ function _notifyWriteSubs() {
  */
 export function subscribeInFlightWrites(cb) {
     _writeSubs.add(cb);
-    try { cb({ inFlight: _inFlight, stuck: _stuck }); } catch { /* ignore */ }
+    try { cb({ inFlight: _inFlight, stuck: _stuck, hardStuck: _hardStuck }); } catch { /* ignore */ }
     return () => _writeSubs.delete(cb);
 }
 
@@ -338,7 +417,11 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS, { progress = true
         // XHR, not the WebChannel write stream this watchdog guards — they
         // opt out via watchdogTransaction (review 2026-09-09: counting them
         // let a dead write stream hide behind live transactions for ~64 s).
-        if (progress && ok === true) _lastWriteSettleAt = Date.now();
+        if (progress && ok === true) {
+            _lastWriteSettleAt = Date.now();
+            // Real progress ⇒ whatever was "stuck for good" is moving again.
+            if (_hardStuck) { _hardStuck = false; }
+        }
         clearTimeout(hangTimer);
         if (escalateTimer) clearTimeout(escalateTimer);
         _inFlight = Math.max(0, _inFlight - 1);

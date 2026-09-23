@@ -39,8 +39,24 @@ export function isRemoteClearAdvanced(incomingClearedAt, lastAppliedClearedAt) {
 // local nor a real remote clear explains the emptiness — i.e. it's a transient
 // / stale / offline-cache blip. In every other case the snapshot is applied
 // normally (so real edits, real clears, and normal loads all go through).
-export function shouldIgnoreInventorySnapshot({ incomingHasAny, localHasAny, recentlyCleared, remoteClearAdvanced }) {
-    return !incomingHasAny && localHasAny && !recentlyCleared && !remoteClearAdvanced;
+//   serverConfirmed     — (2026-09-23, M2) the snapshot came from the SERVER
+//                         (not fromCache), carries no pending writes, AND this
+//                         sheet had already applied a server snapshot BEFORE
+//                         this one. Such a snapshot is the doc's real state, so
+//                         an empty one is real too — e.g. another device emptied
+//                         the cart with "−" taps (a decrement never stamps
+//                         clearedAt, so without this the other devices kept a
+//                         full cart forever). Empty CACHE echoes, and the very
+//                         first server snapshot after a (re)load, are still
+//                         ignored exactly as before. Defaults to false.
+export function shouldIgnoreInventorySnapshot({ incomingHasAny, localHasAny, recentlyCleared, remoteClearAdvanced, serverConfirmed = false }) {
+    return !incomingHasAny && localHasAny && !recentlyCleared && !remoteClearAdvanced && !serverConfirmed;
+}
+
+// serverConfirmed input for the guard above, from the snapshot metadata and
+// whether a server snapshot had been applied BEFORE this one.
+export function isServerConfirmedSnapshot({ fromCache, hasPendingWrites, syncedBefore }) {
+    return !!syncedBefore && !fromCache && !hasPendingWrites;
 }
 
 // ── Snapshot admission (2026-09-09) ────────────────────────────────────────

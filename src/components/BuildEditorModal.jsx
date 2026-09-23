@@ -47,6 +47,19 @@ export default function BuildEditorModal({
     }, [initialComponents]);
     const [rows, setRows] = useState(seedRows);
     const [originalJson] = useState(() => JSON.stringify(seedRows));
+    // Original components by id. The custom-item save REPLACES the whole
+    // doc (saveCustomItem, merge:false), and the rows above only carry the
+    // fields this editor shows — so any other per-component field (e.g.
+    // allergens / shelf lives set by an admin script, which the sticker
+    // search reads) would be silently stripped on every edit. Same bug
+    // class as the 2026-07-26 normalizeForEdit shelf-life wipe. Became
+    // reachable when ✏️ Edit on ⭐ Custom items started opening this
+    // custom path (2026-09-23 review M2).
+    const originalById = useMemo(() => {
+        const m = new Map();
+        for (const c of (initialComponents || [])) if (c && c.id) m.set(c.id, c);
+        return m;
+    }, [initialComponents]);
     const [saving, setSaving] = useState(false);
     const [hasExistingOverride, setHasExistingOverride] = useState(false);
 
@@ -81,7 +94,14 @@ export default function BuildEditorModal({
         })();
     }, [menuItem.id, isCustom, isNew]);
 
-    const isDirty = JSON.stringify(rows) !== originalJson;
+    // Dirty = the component rows OR any other field this editor saves. It
+    // used to watch only the rows, so on a custom item an allergen-, name-,
+    // category-, shelf-life- or notes-only fix left Save disabled — which
+    // mattered once ✏️ Edit started opening custom items here (2026-09-23
+    // review M2: an allergen correction must be saveable on its own).
+    const metaJson = JSON.stringify([String(shelfLifeDays ?? ''), notes, customName, customNameEs, customCategory, customAllergens]);
+    const [originalMetaJson] = useState(() => metaJson);
+    const isDirty = JSON.stringify(rows) !== originalJson || metaJson !== originalMetaJson;
 
     const updateRow = (rowId, field, val) => {
         setRows(rs => rs.map(r => r.id === rowId ? { ...r, [field]: val } : r));
@@ -141,14 +161,32 @@ export default function BuildEditorModal({
         try {
             if (isCustom || isNew) {
                 const slug = isNew ? makeCustomItemSlug(customName) : menuItem.id;
+                // Carry through fields this editor doesn't own (see
+                // originalById); the edited fields in `r` always win.
+                const EDITED = ['id', 'kind', 'nameEn', 'nameEs', 'descEn', 'descEs'];
+                const components = cleaned.map((r) => {
+                    const orig = originalById.get(r.id);
+                    if (!orig) return r;
+                    const carried = {};
+                    for (const [k, v] of Object.entries(orig)) {
+                        if (!EDITED.includes(k) && v !== undefined) carried[k] = v;
+                    }
+                    return { ...carried, ...r };
+                });
+                const cat = customCategory.trim() || 'Custom';
                 await saveCustomItem({
                     slug,
                     nameEn: customName.trim(),
                     nameEs: customNameEs.trim() || customName.trim(),
-                    category: customCategory.trim() || 'Custom',
-                    categoryEs: customCategory.trim() || 'Custom',
+                    category: cat,
+                    // Keep an existing Spanish category name when the
+                    // category wasn't renamed (the save used to overwrite it
+                    // with the English one).
+                    categoryEs: (!isNew && menuItem?.categoryEs && cat === String(menuItem?.category || '').trim())
+                        ? menuItem.categoryEs
+                        : cat,
                     allergens: customAllergens.trim(),
-                    components: cleaned,
+                    components,
                     shelfLifeDays: cleanShelfLife,
                     notes: cleanNotes,
                     byName: staffName,

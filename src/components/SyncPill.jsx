@@ -21,6 +21,9 @@ export const SHOW_DELAY_MS = 900;
 export default function SyncPill() {
     const [visible, setVisible] = useState(false);
     const [stuck, setStuck] = useState(false);
+    // Reloading already failed to cure a stuck save (firestoreRevive loop cap,
+    // 2026-09-23): say plainly what fixes it instead of spinning forever.
+    const [hardStuck, setHardStuck] = useState(false);
     // Explicit offline contract (2026-08-10 gap work): when the browser
     // says we're offline, say so plainly — Firestore quietly queues writes
     // locally, and "queued on this device" must never read as "saved".
@@ -30,8 +33,9 @@ export default function SyncPill() {
     const showTimer = useRef(null);
 
     useEffect(() => {
-        const unsub = subscribeInFlightWrites(({ inFlight, stuck: stuckCount }) => {
+        const unsub = subscribeInFlightWrites(({ inFlight, stuck: stuckCount, hardStuck: hard }) => {
             setStuck(stuckCount > 0);
+            setHardStuck(!!hard);
             if (inFlight > 0) {
                 if (!showTimer.current) {
                     showTimer.current = setTimeout(() => setVisible(true), SHOW_DELAY_MS);
@@ -55,13 +59,18 @@ export default function SyncPill() {
 
     // Offline outranks everything and shows immediately — the schedule on
     // screen may be stale and saves are only queued, not durable.
-    if (!offline && !visible) return null;
+    if (!offline && !visible && !hardStuck) return null;
+    const isNative = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
     const label = offline
         ? 'Offline — changes save when back / Sin conexión'
+        : hardStuck
+            ? (isNative
+                ? 'Saving is stuck — close the app completely and reopen it / Cierra la app y ábrela de nuevo'
+                : 'Saving is stuck — refresh the page / Recarga la página')
         : stuck
             ? 'Reconnecting… / Reconectando…'
             : 'Saving… / Guardando…';
-    const bg = offline ? 'rgba(75,85,99,.92)' : stuck ? 'rgba(146,64,14,.92)' : 'rgba(15,36,23,.88)';
+    const bg = offline ? 'rgba(75,85,99,.92)' : hardStuck ? 'rgba(153,27,27,.94)' : stuck ? 'rgba(146,64,14,.92)' : 'rgba(15,36,23,.88)';
     return (
         <div
             aria-live="polite"
@@ -73,6 +82,7 @@ export default function SyncPill() {
                 zIndex: 2147482000, // above page chrome, below the version-floor overlay
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '6px 14px', borderRadius: 999,
+                maxWidth: 'calc(100vw - 24px)', textAlign: 'center',
                 background: bg,
                 color: '#fff', fontSize: 12, fontWeight: 700,
                 boxShadow: '0 4px 14px rgba(0,0,0,.25)',

@@ -9,7 +9,18 @@
 
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import {
+    doc, serverTimestamp,
+    getDoc as _fsGetDoc,
+    getDocFromServer as _fsGetDocFromServer,
+    setDoc as _fsSetDoc,
+} from 'firebase/firestore';
+// 2026-09-23 chat audit m1 — watchdog shadows (see firestoreRevive.js).
+// Load = read posture (revive on hang, no pill); Save = write posture.
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
+const getDocFromServer = (...a) => watchdogRead(_fsGetDocFromServer(...a));
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 import { DEFAULT_NOTIF_POLICY } from '../data/chat';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
@@ -31,7 +42,15 @@ export default function ChatNotifSettings({
         (async () => {
             try {
                 const ref = doc(db, 'chat_prefs', staffName);
-                const snap = await getDoc(ref);
+                let snap = await getDoc(ref);
+                // EMPTY-FROM-CACHE guard (house rule, 2026-08-12): after a
+                // revive a pending getDoc can resolve from an empty cache —
+                // the form would show DEFAULTS and Save (merge of the whole
+                // policy) would overwrite the real prefs. Confirm with the
+                // server before trusting "doesn't exist".
+                if (!snap.exists() && snap.metadata?.fromCache) {
+                    try { snap = await getDocFromServer(ref); } catch { /* offline — keep defaults */ }
+                }
                 if (snap.exists()) {
                     setPolicy({ ...DEFAULT_NOTIF_POLICY, ...snap.data() });
                 }

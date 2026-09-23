@@ -14,7 +14,7 @@
 //   onClose      — close callback.
 //
 // State:
-//   shelfLifeDays — adjustable in 1-day increments (1..14). Defaults
+//   shelfLifeDays — adjustable in 1-day increments (1..60). Defaults
 //                   from the recipe via resolveShelfLifeDays().
 //   notes         — short free-text added below the ingredients
 //                   ("batch #3", "double the chili", etc.).
@@ -40,8 +40,10 @@ import {
     getCachedPrinterConfig,
     pendingPrintCount,
     resolveLabelFormatForKind,
+    prepDateFromPick,
+    prepDateWithTime,
 } from '../data/labelPrinting';
-import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
+import { subscribeLabelFormat, getCachedLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
 // Props:
 //   recipe       — recipe-shaped object (titleEn, titleEs, allergens,
@@ -68,8 +70,28 @@ export default function PrintLabelModal({
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
-    const defaultDays = useMemo(() => resolveShelfLifeDays(recipe), [recipe]);
-    const [shelfLifeDays, setShelfLifeDays] = useState(defaultDays);
+    // Label formats — declared FIRST because the shelf-life default below
+    // reads them (TDZ lesson: state must exist above any hook that reads
+    // it). Seeded from the print path's live-mirror cache (2026-09-23 M5)
+    // so the first frame already shows the SAVED format, not defaults.
+    // 2026-07-30: each printer has its OWN saved format (subscriptions and
+    // the Brother-toggle selection further down).
+    const [epsonFormat, setEpsonFormat] = useState(() => getCachedLabelFormat('epson') || { ...DEFAULT_LABEL_FORMAT });
+    const [brotherFormat, setBrotherFormat] = useState(() => getCachedLabelFormat('brother') || { ...DEFAULT_LABEL_FORMAT });
+
+    // Shelf-life default: the item's own life → its category's → the Label
+    // Format "Default shelf life (days)" (2026-09-23 M5 — that setting used
+    // to be unreachable). Initial value uses the Epson format (the Brother
+    // toggle starts OFF); `defaultDays` below follows the selected printer.
+    const [shelfLifeDays, setShelfLifeDays] = useState(
+        () => resolveShelfLifeDays(recipe, epsonFormat?.defaultShelfLifeDays));
+    // Once staff pick a day count themselves, a late-arriving format
+    // snapshot must never overwrite it.
+    const daysTouchedRef = useRef(false);
+    const setShelfLifeDaysByUser = useCallback((v) => {
+        daysTouchedRef.current = true;
+        setShelfLifeDays(v);
+    }, []);
     // Hour-based shelf life (2026-07-26 feature #2): items whose life is
     // set in HOURS (hot-hold, line sauces, sanitizer) default to the hours
     // unit; everything else stays on days. Staff can flip the unit per
@@ -82,11 +104,6 @@ export default function PrintLabelModal({
     // thawed life and stamps ❄ THAWED on the label.
     const thawedDays = Number(recipe?.thawedDays) > 0 ? Math.floor(Number(recipe.thawedDays)) : 0;
     const [thawed, setThawed] = useState(false);
-    const pickThawed = (on) => {
-        setThawed(on);
-        if (on && thawedDays) { setLifeUnit('days'); setShelfLifeDays(thawedDays); }
-        if (!on) setShelfLifeDays(defaultDays);
-    };
     const [notes, setNotes] = useState('');
     // Andrew 2026-05-20 — "and then how many copies we want to print".
     // Prep labels can print N at once, stitched into one envelope so
@@ -140,16 +157,28 @@ export default function PrintLabelModal({
     // Double-clicking the big date in the preview (or the 📅 chip) opens this.
     const [prepDate, setPrepDate] = useState(() => new Date());
     const [editingDate, setEditingDate] = useState(false);
-    // Date <-> <input type="date"> (yyyy-mm-dd). Build the chosen date at
-    // LOCAL noon so a tz/DST shift can't bump the printed calendar day (the
-    // same care buildLabelPayload's shelf-life math takes).
+    // Date <-> <input type="date"> (yyyy-mm-dd) and <input type="time">
+    // (HH:MM). 2026-09-23 review (C4): a picked day used to be pinned to
+    // 12:00 NOON — the label printed a made-up "12:00p" prep time and hour
+    // clocks counted from it. Now: picking today = now; picking another day
+    // keeps the time of day shown here (now, unless staff set one), never
+    // later than now. Local-calendar construction keeps the picked DAY
+    // exact (see prepDateFromPick); day-based use-by math is unchanged.
     const toInputDate = (d) => {
         const x = d instanceof Date && !isNaN(d) ? d : new Date();
         return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
     };
+    const toInputTime = (d) => {
+        const x = d instanceof Date && !isNaN(d) ? d : new Date();
+        return `${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}`;
+    };
     const onPickDate = (val) => {
-        const [y, m, day] = String(val || '').split('-').map(Number);
-        if (y && m && day) setPrepDate(new Date(y, m - 1, day, 12, 0, 0, 0));
+        const next = prepDateFromPick(val, { now: new Date(), timeOf: prepDate });
+        if (next) setPrepDate(next);
+    };
+    const onPickTime = (val) => {
+        const next = prepDateWithTime(prepDate, val, new Date());
+        if (next) setPrepDate(next);
     };
     const isToday = (() => {
         const n = new Date();
@@ -175,6 +204,11 @@ export default function PrintLabelModal({
             // formats key on it (2026-07-27: sanitizer override silently
             // no-opped because this rebuilt object dropped it).
             kind: recipe?.kind || null,
+            // Same class of drop (2026-09-23 review M1): the bottle sticker's
+            // printed description rides on descEn — without it neither the
+            // preview nor the print ever showed it (showItemDesc kinds).
+            ...(recipe?.descEn ? { descEn: recipe.descEn } : {}),
+            ...(recipe?.descEs ? { descEs: recipe.descEs } : {}),
         }
         : recipe
     ), [editable, editTitle, editTitleEs, editAllergens, recipe, isEs]);
@@ -212,11 +246,42 @@ export default function PrintLabelModal({
     // 2026-07-30: each printer has its OWN saved format, so the preview has to
     // follow the "Permanent sticker (Brother)" toggle — otherwise flipping it
     // previewed the Epson layout for a label that prints from the Brother doc.
-    const [epsonFormat, setEpsonFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
-    const [brotherFormat, setBrotherFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
+    // (epsonFormat / brotherFormat state is declared at the top — the
+    // shelf-life default reads it.)
     useEffect(() => subscribeLabelFormat((f) => setEpsonFormat(f), 'epson'), []);
     useEffect(() => subscribeLabelFormat((f) => setBrotherFormat(f), 'brother'), []);
     const labelFormat = (printOnBrother && printer?.brotherIp) ? brotherFormat : epsonFormat;
+
+    // Shelf-life default for THIS print (M5) — same fallback chain the
+    // print path uses for the printer the label is actually going to.
+    const formatDefaultDays = labelFormat?.defaultShelfLifeDays;
+    const defaultDays = useMemo(
+        () => resolveShelfLifeDays(recipe, formatDefaultDays),
+        [recipe, formatDefaultDays]);
+    // Follow the default until staff touch the day count (a format snapshot
+    // landing after open, or the Brother toggle switching formats). Never
+    // while on the thawed clock.
+    useEffect(() => {
+        if (daysTouchedRef.current || thawed) return;
+        setShelfLifeDays(defaultDays);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [defaultDays]);
+    const pickThawed = (on) => {
+        setThawed(on);
+        if (on && thawedDays) { setLifeUnit('days'); setShelfLifeDays(thawedDays); }
+        if (!on) {
+            // Back to the item's FRESH clock: its default days again, and —
+            // 2026-09-23 review M6 — its hour clock when it has one (flipping
+            // Thawed forced 'days' and Fresh never switched back, so a 4-hour
+            // item printed a multi-DAY use-by after Thawed → Fresh).
+            daysTouchedRef.current = false;
+            setShelfLifeDays(defaultDays);
+            if (Number(recipe?.shelfLifeHours) > 0) {
+                setLifeUnit('hours');
+                setShelfLifeHours(defaultHours);
+            }
+        }
+    };
 
     // Printer type drives which preset list staff sees:
     //   • epson_linerless → 80mm-wide ("3-inch") presets
@@ -428,7 +493,7 @@ export default function PrintLabelModal({
                     {/* Shelf life — quick chips + step buttons + days/hours unit */}
                     <ShelfLifeSection
                         shelfLifeDays={shelfLifeDays}
-                        setShelfLifeDays={setShelfLifeDays}
+                        setShelfLifeDays={setShelfLifeDaysByUser}
                         defaultDays={defaultDays}
                         lifeUnit={lifeUnit}
                         setLifeUnit={setLifeUnit}
@@ -469,16 +534,31 @@ export default function PrintLabelModal({
                             </button>
                         </div>
                         {editingDate && (
-                            <div className="mb-1.5 flex items-center gap-2 bg-dd-sage-50 border border-dd-green/30 rounded-lg p-2">
-                                <input type="date" value={toInputDate(prepDate)} max={toInputDate(new Date())}
-                                    onChange={e => onPickDate(e.target.value)} autoFocus
-                                    className="text-base flex-1 min-w-0 bg-white border border-dd-line rounded px-2 py-1 text-dd-text" />
-                                {!isToday && (
-                                    <button type="button" onClick={() => setPrepDate(new Date())}
-                                        className="text-[11px] font-bold text-dd-text-2 px-2 py-1 rounded hover:bg-white">{tx('Today', 'Hoy')}</button>
+                            <div className="mb-1.5 bg-dd-sage-50 border border-dd-green/30 rounded-lg p-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <input type="date" value={toInputDate(prepDate)} max={toInputDate(new Date())}
+                                        onChange={e => onPickDate(e.target.value)} autoFocus
+                                        className="text-base flex-1 min-w-[9rem] bg-white border border-dd-line rounded px-2 py-1 text-dd-text" />
+                                    {/* Time made (C4) — the label prints it, and an
+                                        hour clock counts from it. Defaults to the
+                                        current time of day; capped at now. */}
+                                    <input type="time" value={toInputTime(prepDate)}
+                                        onChange={e => onPickTime(e.target.value)}
+                                        aria-label={tx('Time made', 'Hora de preparación')}
+                                        className="text-base w-[7.5rem] bg-white border border-dd-line rounded px-2 py-1 text-dd-text" />
+                                    {!isToday && (
+                                        <button type="button" onClick={() => setPrepDate(new Date())}
+                                            className="text-[11px] font-bold text-dd-text-2 px-2 py-1 rounded hover:bg-white">{tx('Today', 'Hoy')}</button>
+                                    )}
+                                    <button type="button" onClick={() => setEditingDate(false)}
+                                        className="text-[11px] font-bold text-dd-green px-2 py-1 rounded hover:bg-white">{tx('Done', 'Listo')}</button>
+                                </div>
+                                {lifeUnit === 'hours' && (
+                                    <div className="text-[10px] text-amber-800 mt-1.5">
+                                        ⏱ {tx('Hour clock counts from this date + time — set the time it was made.',
+                                            'El reloj de horas cuenta desde esta fecha y hora — pon la hora en que se hizo.')}
+                                    </div>
                                 )}
-                                <button type="button" onClick={() => setEditingDate(false)}
-                                    className="text-[11px] font-bold text-dd-green px-2 py-1 rounded hover:bg-white">{tx('Done', 'Listo')}</button>
                             </div>
                         )}
                         <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 text-dd-text">
@@ -644,8 +724,11 @@ const EditableIdentity = memo(function EditableIdentity({
     return (
         <div className="space-y-2 pb-3 border-b border-dd-line">
             <label className="block">
+                {/* 2026-09-23 review (M7): each name field says which
+                    LANGUAGE it edits, in both UI languages. This one is the
+                    English name (titleEn — what English labels print). */}
                 <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                    {tx('Item name', 'Nombre del artículo')}
+                    {tx('Item name (English)', 'Nombre en inglés')}
                 </span>
                 <input
                     type="text"
@@ -658,8 +741,12 @@ const EditableIdentity = memo(function EditableIdentity({
             </label>
             {isEs && (
                 <label className="block">
+                    {/* Bound to editTitleEs — the name SPANISH labels print
+                        (falls back to the English name when blank). The old
+                        label had the tx() args reversed AND named the wrong
+                        language ("English name" on the Spanish field). */}
                     <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                        {tx('Nombre en inglés (opcional)', 'English name (optional)')}
+                        {tx('Spanish name (optional)', 'Nombre en español (opcional)')}
                     </span>
                     <input
                         type="text"
@@ -703,7 +790,9 @@ const ShelfLifeSection = memo(function ShelfLifeSection({
     const val = isHours ? shelfLifeHours : shelfLifeDays;
     const step = (delta) => {
         if (isHours) setShelfLifeHours?.(h => Math.max(1, Math.min(96, h + delta)));
-        else setShelfLifeDays(d => Math.max(1, Math.min(14, d + delta)));
+        // 60 = the per-row / custom-item max (was 14: an item saved at 21
+        // days jumped DOWN to 14 on "+").
+        else setShelfLifeDays(d => Math.max(1, Math.min(60, d + delta)));
     };
     return (
         <div>

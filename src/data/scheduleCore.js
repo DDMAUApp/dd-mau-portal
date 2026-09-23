@@ -227,7 +227,7 @@ export const pruneAvailabilityWeeks = (weeks, todayStr) => {
 // form (surfaced as an overridable warning so a manager can make an exception).
 // `blocksByDate` is the component's Map<'YYYY-MM-DD', block[]>. Iterates by
 // addDays() (DST-safe, unlike Date.setDate mutation) and caps at 120 days.
-export function blockedDatesInRange(startStr, endStr, blocksByDate) {
+export function blockedDatesInRange(startStr, endStr, blocksByDate, { types = ['no_timeoff', 'closed'] } = {}) {
     const out = [];
     if (!startStr || !endStr || !blocksByDate) return out;
     const startD = parseLocalDate(startStr);
@@ -240,7 +240,7 @@ export function blockedDatesInRange(startStr, endStr, blocksByDate) {
         const dStr = toDateStr(d);
         if (dStr > eStr) break;
         if (dStr < sStr) continue;
-        const hit = (blocksByDate.get(dStr) || []).find(b => b.type === 'no_timeoff' || b.type === 'closed');
+        const hit = (blocksByDate.get(dStr) || []).find(b => types.includes(b.type));
         if (hit) out.push({ date: dStr, reason: hit.reason || 'blocked' });
     }
     return out;
@@ -478,4 +478,51 @@ export function planWeekCopy({ sourceShifts, existingShifts, createdBy, isClosed
         });
     }
     return { toCreate, skipped };
+}
+
+
+// ── Store-aware closures (2026-09-23 review) ────────────────────────────
+// A date_block carries location 'webster' | 'maryland' | 'both' (or none =
+// both). The Schedule used to ignore a block's store in the 'both' view, so a
+// Webster-only closure also closed Maryland for copy-week / auto-fill /
+// recurring / drag / Add Shift, and a Webster "open this day" override
+// re-opened Maryland's weekly closure. One pure rule now answers
+// "is this date closed at THIS store?" for every caller.
+export function blockAppliesTo(block, loc) {
+    const bl = block && block.location;
+    if (!bl || bl === 'both') return true;
+    return loc !== 'both' && bl === loc;
+}
+
+function statusForStore(dateStr, loc, blocks, closedWeekdays) {
+    const bs = (blocks || []).filter((b) => blockAppliesTo(b, loc));
+    const overridden = bs.some((b) => b.type === 'open_override');
+    const oneOffBlock = overridden ? null : (bs.find((b) => b.type === 'closed') || null);
+    let recurring = false;
+    if (!overridden && !oneOffBlock) {
+        const d = parseLocalDate(dateStr);
+        const arr = Array.isArray(closedWeekdays && closedWeekdays[loc]) ? closedWeekdays[loc].map(Number) : [];
+        recurring = !!d && arr.includes(d.getDay());
+    }
+    return { closed: !!oneOffBlock || recurring, oneOffBlock, recurring, overridden };
+}
+
+/**
+ * @param dateStr         'YYYY-MM-DD'
+ * @param loc             'webster' | 'maryland' | 'both' (the 'both' view is
+ *                        closed only when BOTH stores are closed)
+ * @param blocks          ALL date_blocks for that date (any store)
+ * @param closedWeekdays  config/schedule_settings.closedWeekdays
+ * @returns {closed, oneOffBlock, recurring, overridden}
+ */
+export function storeDateStatus({ dateStr, loc, blocks, closedWeekdays }) {
+    if (loc === 'webster' || loc === 'maryland') return statusForStore(dateStr, loc, blocks, closedWeekdays);
+    const w = statusForStore(dateStr, 'webster', blocks, closedWeekdays);
+    const m = statusForStore(dateStr, 'maryland', blocks, closedWeekdays);
+    return {
+        closed: w.closed && m.closed,
+        oneOffBlock: (w.oneOffBlock && m.closed) ? w.oneOffBlock : ((m.oneOffBlock && w.closed) ? m.oneOffBlock : null),
+        recurring: w.recurring && m.recurring,
+        overridden: (blocks || []).some((b) => b.type === 'open_override' && blockAppliesTo(b, 'both')),
+    };
 }

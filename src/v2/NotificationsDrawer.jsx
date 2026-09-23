@@ -231,7 +231,12 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
         // deepLink may be explicit on the doc OR inferred from the type
         // family (notifications written before deepLink became standard
         // still navigate to the right tab).
-        const target = deepLinkFor(item);
+        let target = deepLinkFor(item);
+        // 2026-09-23 chat audit m10 — a chat notification that carries its
+        // conversation id opens THAT conversation, not just the Chat tab.
+        // App.handleNavigate splits 'chat:{id}' (parseChatDeepLink) and parks
+        // the id for ChatCenter — the same route a push tap takes (C4).
+        if (target === 'chat' && item.chatId) target = `chat:${item.chatId}`;
         if (target && onNavigate) onNavigate(target);
         onClose?.();
     };

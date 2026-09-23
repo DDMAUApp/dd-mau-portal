@@ -20,8 +20,10 @@
 import { db } from '../firebase';
 import {
     collection, doc, serverTimestamp,
+    query, where, limit, writeBatch,
     addDoc as _fsAddDoc,
     getDoc as _fsGetDoc,
+    getDocs as _fsGetDocs,
     setDoc as _fsSetDoc,
 } from 'firebase/firestore';
 import { isAdminId } from './staff';
@@ -32,6 +34,7 @@ import { watchdogWrite, watchdogRead } from './firestoreRevive';
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 
 // HF-6, 2026-05-30: stable fallback tag bucket. The fallback path for
 // callers that didn't pass an explicit `tag` used to be
@@ -309,6 +312,10 @@ export async function notifyStaff({
     smsVars,         // object — explicit {placeholder} values for SMS-eligible types (dispatchSms buildSmsVars)
     createdBy = 'system',
     excludeStaff = null,
+    // 2026-09-23 chat audit m11 — optional conversation id. Stamped on the
+    // doc so the dispatcher's push tap (C4) and the bell drawer can open the
+    // exact conversation ('chat:{id}') instead of just the Chat tab.
+    chatId = null,
 }) {
     if (!forStaff) return null;
     if (excludeStaff && forStaff === excludeStaff) return null;
@@ -347,6 +354,7 @@ export async function notifyStaff({
             bodyEs: bodyVar.es,
             link,
             ...(deepLink ? { deepLink } : {}),
+            ...(chatId ? { chatId: String(chatId) } : {}),
             ...(priority ? { priority } : {}),
             ...(forceDeliver === true ? { forceDeliver: true } : {}),
             ...(smsVars && typeof smsVars === 'object' ? { smsVars } : {}),
@@ -359,6 +367,62 @@ export async function notifyStaff({
     } catch (e) {
         console.warn(`notifyStaff write failed for ${forStaff}:`, e);
         return null;
+    }
+}
+
+// ── Chat-notification mark-read sweep ──────────────────────────────────
+// The /notifications docs of these types drive the Chat tile / sidebar
+// unread badge (AppDataContext). The onChatMessageCreated CF writes one per
+// recipient per message — so they must be cleared by the READER's device.
+export const CHAT_NOTIF_TYPES = ['chat_message', 'chat_mention', 'chat_reply'];
+
+// Pure: the equality-only filter set for a sweep. Equality + `in` filters
+// merge single-field indexes — NO composite index needed (same shape the
+// ChatCenter tab-entry sweep has used since 2026-08-25, plus chatId ==).
+export function chatNotifSweepFilters(staffName, chatId = null) {
+    const f = [
+        ['forStaff', '==', staffName],
+        ['read', '==', false],
+        ['type', 'in', CHAT_NOTIF_TYPES],
+    ];
+    if (chatId) f.push(['chatId', '==', String(chatId)]);
+    return f;
+}
+
+// Mark this staffer's unread chat notifications read — all of them, or only
+// one conversation's when chatId is given (2026-09-23 chat audit M2: the badge
+// counted up while the user sat reading inside the Chat tab, because only the
+// tab-entry sweep ever cleared them). Bounded read, ≤450-op batch chunks.
+// QUIET posture (watchdogRead): automatic housekeeping must never show the
+// Saving pill or arm the reload escalation. Never throws; resolves to the
+// number of docs marked (0 on failure). `isCancelled` lets a caller abort
+// between chunks.
+export async function markChatNotificationsRead(staffName, { chatId = null, max = 1500, isCancelled } = {}) {
+    if (!staffName) return 0;
+    try {
+        const q = query(
+            collection(db, 'notifications'),
+            ...chatNotifSweepFilters(staffName, chatId).map(([f, op, v]) => where(f, op, v)),
+            limit(max),
+        );
+        const snap = await getDocs(q);
+        if (isCancelled?.()) return 0;
+        const ids = [];
+        snap.forEach(d => ids.push(d.id));
+        let done = 0;
+        for (let i = 0; i < ids.length; i += 450) {
+            if (isCancelled?.()) return done;
+            const batch = writeBatch(db);
+            const chunk = ids.slice(i, i + 450);
+            chunk.forEach(id => batch.update(doc(db, 'notifications', id), { read: true }));
+            // eslint-disable-next-line no-await-in-loop
+            await watchdogRead(batch.commit());
+            done += chunk.length;
+        }
+        return done;
+    } catch (e) {
+        console.warn('mark-chat-notifications-read failed:', e);
+        return 0;
     }
 }
 

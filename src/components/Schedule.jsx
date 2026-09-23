@@ -35,6 +35,7 @@ import {
     getDoc as _fsGetDoc,
 } from 'firebase/firestore';
 import { watchdogWrite, watchdogRead, reviveFirestore, resilientSnapshot, watchdogTransaction } from '../data/firestoreRevive';
+import { planUnassign, planUnassignUndo, planClearUndo } from '../data/weekReset';
 
 // ── Wedged-connection watchdog (2026-08-08, Andrew: "delete a shift
 // times out… add a shift doesnt respond until i refresh") ──────────────
@@ -83,7 +84,7 @@ import {
     Search, User, Users, Megaphone, Plus, MoreHorizontal, Bell,
     Hourglass, RefreshCw,
     // More-menu items
-    Printer, Calendar, Copy, Repeat, Ban, Undo2,
+    Printer, Calendar, Copy, Repeat, Ban, Undo2, UserMinus, Trash2,
 } from 'lucide-react';
 import ModalPortal from './ModalPortal';
 import { printViaNative, downloadFile } from '../capacitor-bridge';
@@ -105,6 +106,7 @@ import {
     roleColors, toDateStr, parseLocalDate, startOfWeek, addDays, weeksBetween,
     pruneAvailabilityWeeks, formatDateShort, planWeekCopy,
     blockedDatesInRange, stripShiftTimestamps, rehydrateShiftTimestamps,
+    storeDateStatus, blockAppliesTo,
     formatTime12h, ptoIsPartial, ptoWindowLabel, timeRangesOverlap, selectGhostShifts,
     hoursBetween, dayPaidHours, isDoubleDay, formatHours, hoursColor,
     minorShiftWarnings, SCHEDULE_DAY_KEYS, shortTime12h,
@@ -514,6 +516,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         });
     };
     const clearSelection = () => setSelectedShiftIds(new Set());
+    // 2026-09-23 review: a selection must not survive a week / side / store
+    // change — the bulk-delete confirm counted shifts that were no longer on
+    // screen (then silently dropped them).
+    const _weekKeyForSelection = weekStart ? toDateStr(weekStart) : '';
+    useEffect(() => { setSelectedShiftIds(prev => (prev.size ? new Set() : prev)); }, [_weekKeyForSelection, side, storeLocation]);
     // Date blocks ("restaurant closed" / "no time-off allowed"). Manager-defined.
     const [dateBlocks, setDateBlocks] = useState([]);
     const [showBlockModal, setShowBlockModal] = useState(false);
@@ -708,6 +715,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // (movingShift) where the next person-day tapped becomes the destination.
     const [editingShift, setEditingShift] = useState(null);
     const [movingShift, setMovingShift] = useState(null);
+    // 2026-09-23 review: "Move to…" only works inside the week on screen
+    // (the drop handler looks the shift up in this week's list). Paging to
+    // another week used to leave move mode on and the drop silently did
+    // nothing — end it with a clear pointer instead.
+    const _moveWeekKey = weekStart ? toDateStr(weekStart) : '';
+    const _moveWeekRef = useRef(_moveWeekKey);
+    useEffect(() => {
+        if (_moveWeekRef.current === _moveWeekKey) return;
+        _moveWeekRef.current = _moveWeekKey;
+        if (!movingShift) return;
+        setMovingShift(null);
+        toast(tx('Move cancelled — moves work within one week. To move a shift to another week, open it and change its date.',
+                 'Movimiento cancelado — solo funciona dentro de la semana. Para otra semana, abre el turno y cambia la fecha.'), { duration: 7000 });
+    }, [_moveWeekKey]); // eslint-disable-line react-hooks/exhaustive-deps
     const [takeTarget, setTakeTarget] = useState(null);
     // 2026-08-25 audit — busy wiring for the offer/take composers. The
     // runTransaction round-trip has no optimistic compensation, so without
@@ -814,6 +835,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
         } catch { /* storage broken — fall through to live query */ }
         if (!hadCache) {
+            // 2026-09-23 review: drop the PREVIOUS week's shifts too. The
+            // grid hides behind the skeleton, but the header counts,
+            // publish / copy / claims panels read `shifts` and kept acting
+            // on last week until the new snapshot landed.
+            setShifts([]);
             setLoading(true);
             setScheduleCacheStatus({ usingCache: false, cachedAt: null, liveAt: null });
         }
@@ -1439,8 +1465,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // hideFromSchedule applies — don't render owner birthdays on
             // the grid since their row is hidden anyway.
             if (s.hideFromSchedule === true) continue;
-            for (const y of [thisYear, thisYear + 1]) {
-                const dateStr = `${y}-${bd}`;
+            for (const y of [thisYear - 1, thisYear, thisYear + 1]) {
+                // Feb 29 birthdays land on Feb 28 in non-leap years
+                // (2026-09-23 review — `${y}-02-29` never matched a cell).
+                const isLeap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+                const dateStr = `${y}-${bd === '02-29' && !isLeap ? '02-28' : bd}`;
                 if (!map.has(dateStr)) map.set(dateStr, []);
                 map.get(dateStr).push({
                     type: 'birthday',
@@ -1464,6 +1493,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
         return map;
     }, [dateBlocks, storeLocation]);
+    // Every block by date regardless of store — closures are resolved per
+    // store by storeDateStatus (2026-09-23), so a Webster-only closure never
+    // leaks into Maryland (or vice versa) in the 'both' view.
+    const blocksByDateAll = useMemo(() => {
+        const map = new Map();
+        for (const b of dateBlocks) {
+            if (!map.has(b.date)) map.set(b.date, []);
+            map.get(b.date).push(b);
+        }
+        return map;
+    }, [dateBlocks]);
+    const dateStatus = (dateStr, loc = storeLocation) => storeDateStatus({
+        dateStr, loc, blocks: blocksByDateAll.get(dateStr) || [], closedWeekdays: scheduleSettings?.closedWeekdays || {},
+    });
 
     // dateClosed — single source of truth. Returns true if:
     //   (a) the date has a one-off date_block of type='closed' applying to the current view, OR
@@ -1485,54 +1528,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //   3. If recurring rule applies for this weekday + location → CLOSED.
     //   4. Otherwise → OPEN.
     const dateClosed = (dateStr, locOverride) => {
-        const blocks = blocksByDate.get(dateStr) || [];
-        if (blocks.some(b => b.type === 'open_override')) return false;
-        if (blocks.some(b => b.type === 'closed')) return true;
-        const cw = scheduleSettings?.closedWeekdays || {};
-        const d = parseLocalDate(dateStr);
-        if (!d) return false;
-        const dow = d.getDay();
-        // 2026-06-16 (#6): when a generator passes the shift's OWN location,
-        // test only THAT store's closed weekdays. Without this, generating from
-        // the "both" view treats a day as open unless BOTH stores are closed —
-        // so a single-location closed day (e.g. a Webster-only holiday) gets
-        // scheduled. No-arg callers (grid render, drag, AddShift) keep the
-        // existing view-based behavior below.
-        if (locOverride === 'webster' || locOverride === 'maryland') {
-            const arr = Array.isArray(cw[locOverride]) ? cw[locOverride] : [];
-            return arr.includes(dow);
-        }
-        if (storeLocation === 'both') {
-            // Closed in BOTH views only when every location is closed that
-            // weekday. Otherwise the open location's grid still matters.
-            const w = Array.isArray(cw.webster) ? cw.webster : [];
-            const m = Array.isArray(cw.maryland) ? cw.maryland : [];
-            return w.includes(dow) && m.includes(dow);
-        }
-        const arr = Array.isArray(cw[storeLocation]) ? cw[storeLocation] : [];
-        return arr.includes(dow);
+        // Per-store resolution (2026-09-23): an explicit store (a generator
+        // passing the shift's own location) is checked against THAT store's
+        // blocks + weekly rule; otherwise the view's store ('both' = closed
+        // only when both stores are closed). See storeDateStatus.
+        const loc = (locOverride === 'webster' || locOverride === 'maryland') ? locOverride : storeLocation;
+        return dateStatus(dateStr, loc).closed;
     };
     // Helpers — what's the REASON a date is closed? Used by the UI so
     // we can offer the right action (delete the one-off vs add an
     // override for a recurring rule).
-    const dateClosedByRecurring = (dateStr) => {
-        const blocks = blocksByDate.get(dateStr) || [];
-        if (blocks.some(b => b.type === 'open_override')) return false;
-        const cw = scheduleSettings?.closedWeekdays || {};
-        const d = parseLocalDate(dateStr);
-        if (!d) return false;
-        const dow = d.getDay();
-        if (storeLocation === 'both') {
-            const w = Array.isArray(cw.webster) ? cw.webster : [];
-            const m = Array.isArray(cw.maryland) ? cw.maryland : [];
-            return w.includes(dow) && m.includes(dow);
-        }
-        const arr = Array.isArray(cw[storeLocation]) ? cw[storeLocation] : [];
-        return arr.includes(dow);
-    };
-    const dateHasOpenOverride = (dateStr) => {
-        return (blocksByDate.get(dateStr) || []).some(b => b.type === 'open_override');
-    };
+    const dateClosedByRecurring = (dateStr) => dateStatus(dateStr).recurring;
+    const dateHasOpenOverride = (dateStr) => dateStatus(dateStr).overridden;
 
     // ── Derived: which staff names have shifts on the CURRENT side this week ──
     // A FOH staff with one BOH shift this week appears in BOH view too (cross-side).
@@ -1786,6 +1793,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             })();
         if (!canEditSide(targetSide)) {
             console.warn(`[Schedule] blocked add for side=${targetSide} — user lacks editor toggle`);
+            toast(tx(`You can't add ${targetSide === 'boh' ? 'BOH' : 'FOH'} shifts — ask an admin for that side's editor access.`,
+                     `No puedes agregar turnos de ${targetSide === 'boh' ? 'BOH' : 'FOH'} — pide acceso de editor para ese lado.`), { kind: 'error' });
             return;
         }
         // 2026-08-15 (schedule perf forensics S3) — pre-mint the id and use
@@ -2146,8 +2155,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // grid filter — invisible-but-existing assignment. Resolve
         // the new owner's side via the same helper used for cell
         // rendering, fall back to the current side.
-        const newOwner = (staffList || []).find(x => x.name === newStaffName);
-        const newOwnerSide = newOwner ? resolveStaffSide(newOwner) : shift.side;
+        // 2026-09-23 review: a drag happens INSIDE one side's grid, and every
+        // row there (own-side, 'both', and cross-side covers) belongs on this
+        // grid — so the shift keeps its side. Re-deriving it from the new
+        // owner's home side flipped e.g. a BOH shift dropped on a 'both'
+        // manager's row to FOH, where it vanished from this grid (and let a
+        // BOH-only editor create FOH shifts). Legacy side-less shifts get the
+        // grid's side stamped.
+        const newOwnerSide = shift.side || side;
         // S1 — move the cube NOW; the transaction confirms (or the catch
         // reverts). Mirrors the fields the txn writes so the overlay settles
         // as soon as the server echo lands.
@@ -2828,8 +2843,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // recovered for 5 seconds. Mass deletes are higher-stakes than singles
     // so we require explicit confirm AND the undo window.
     const handleBulkDelete = async () => {
-        const ids = Array.from(selectedShiftIds);
-        if (ids.length === 0) return;
+        // Only shifts on screen that this editor may touch (side-gated like
+        // single delete — 2026-09-23 review).
+        const ids = Array.from(selectedShiftIds).filter(id => {
+            const sh = shifts.find(s => s.id === id);
+            return sh && canEditSide(sh.side);
+        });
+        if (ids.length === 0) {
+            if (selectedShiftIds.size > 0) toast(tx("None of the selected shifts can be deleted from here.", 'Ninguno de los turnos seleccionados se puede borrar aquí.'), { kind: 'error' });
+            return;
+        }
         const ok = confirm(tx(
             `Delete ${ids.length} selected shift${ids.length === 1 ? '' : 's'}? This will be undoable for 5 seconds.`,
             `¿Eliminar ${ids.length} turno${ids.length === 1 ? '' : 's'} seleccionado${ids.length === 1 ? '' : 's'}? Tendrás 5 segundos para deshacer.`
@@ -2871,7 +2894,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     await Promise.all(snapshot.map(sh =>
                         pruneNeedAfterShiftDelete(sh).catch(e => console.warn('prune failed for', sh.id, e))
                     ));
-                } catch (e) { console.warn('bulk-delete batch failed:', e); }
+                } catch (e) {
+                    // 2026-09-23 review: this used to fall through to the audit
+                    // row and "shifts removed" pushes even though nothing was
+                    // deleted. Stop and say so.
+                    console.warn('bulk-delete batch failed:', e);
+                    toast(tx('Could not delete the shifts — nothing was removed. Try again.', 'No se pudieron borrar los turnos — no se quitó nada. Intenta de nuevo.'), { kind: 'error', duration: 7000 });
+                    return;
+                }
                 // Audit log (roll-up) — Andrew 2026-06-25.
                 auditShiftChange({ action: 'bulk_deleted', staffName: null,
                     after: { count: snapshot.length, ids: snapshot.slice(0, 25).map(s => s.id) } }).catch(() => {});
@@ -2993,6 +3023,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 const ref = doc(db, 'shifts', shift.id);
                 const snap = await txn.get(ref);
                 const verdict = assessCancelOffer(snap.exists() ? snap.data() : null);
+                if (!verdict.ok && verdict.reason === 'pending_claim') {
+                    throw Object.assign(new Error(tx(
+                        `${verdict.claimant} already claimed this shift — a manager must approve or deny that first.`,
+                        `${verdict.claimant} ya reclamó este turno — un gerente debe aprobar o negar primero.`,
+                    )), { userFacing: true });
+                }
                 if (verdict.noop) { alreadyDone = true; return; }
                 txn.update(ref, {
                     offerStatus: null,
@@ -3007,6 +3043,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     claimedAt: null,
                     // Clear the claim-cycle approval guard too (see commitOfferShift).
                     approvedBy: null,
+                    // 2026-09-23 review: the old note / 🔥 urgent flag used to
+                    // survive a cancel and reappear on the NEXT offer.
+                    offerNote: null,
+                    offerUrgent: false,
                     updatedAt: serverTimestamp(),
                 });
             });
@@ -3015,6 +3055,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             auditShiftChange({ shiftId: shift.id, staffName: shift.staffName, action: 'offer_cancelled',
                 before: { offerStatus: shift.offerStatus || 'open' }, after: { offerStatus: null } }).catch(() => {});
         } catch (e) {
+            if (e && e.userFacing) { toast(e.message, { kind: 'error', duration: 8000 }); return; }
             console.error('Cancel offer failed:', e);
             toast(tx('Could not cancel the offer: ', 'No se pudo cancelar la oferta: ') + (e.message || e), { kind: 'error' });
         }
@@ -3169,6 +3210,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     split.endTime <= live.endTime &&
                     split.startTime < split.endTime &&
                     !(split.startTime === live.startTime && split.endTime === live.endTime));
+                // A partial pickup that no longer fits the shift (its times
+                // were edited after the claim) must NOT fall through to a
+                // full takeover — the manager approved a partial (2026-09-23).
+                const hasSplit = !!(split && split.startTime && split.endTime);
+                const coversWhole = hasSplit && split.startTime === live.startTime && split.endTime === live.endTime;
+                if (hasSplit && !isSplit && !coversWhole) {
+                    throw new Error(tx(
+                        `The shift's times changed since ${live.pendingClaimBy} asked for ${formatTime12h(split.startTime)}–${formatTime12h(split.endTime)}. Deny it and have them claim again.`,
+                        `El horario cambió desde que ${live.pendingClaimBy} pidió ${formatTime12h(split.startTime)}–${formatTime12h(split.endTime)}. Niégalo y que lo reclame de nuevo.`,
+                    ));
+                }
 
                 if (isSplit) {
                     detail = `${live.date} ${formatTime12h(split.startTime)}–${formatTime12h(split.endTime)}`;
@@ -3526,6 +3578,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Already-filled shifts are NOT retroactively retimed — managers can choose
     // to delete + re-fill if they want the changed times to apply to the live
     // shifts too.
+    const prevSideOf = (needId) => (staffingNeeds.find(n => n.id === needId) || {}).side;
     const handleEditNeed = async (need) => {
         if (!canEdit || !need?.id) return;
         try {
@@ -3538,6 +3591,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             delete data.filledStaff;
             delete data.filledShiftIds;
             delete data.interestedClaims;
+            // 2026-09-23 review: the modal sends fromTemplateId: undefined for
+            // hand-made slots, and Firestore rejects undefined field values —
+            // every ✏ edit of a "+ slot" need failed ("Could not update slot").
+            for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
+            if (!canEditSide(data.side || prevSideOf(id))) {
+                toast(tx("You don't have editor access for that side.", 'No tienes acceso de editor para ese lado.'), { kind: 'error' });
+                return;
+            }
             // Detect transition: false (or missing) → true on
             // openToAllStaff so we can fan-out the broadcast push
             // when a previously-private slot gets flipped to up-
@@ -3585,7 +3646,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //       which makes the just-filled staffer's row in the modal flip
     //       to status='scheduled' (or hide if hasOverlap is true), so
     //       they can't accidentally be filled twice into the same slot.
-    const fillNeedWithStaff = async (need, staffMember) => {
+    const fillNeedWithStaff = async (need, staffMember, opts = {}) => {
         if (!canEditSide(need?.side)) return;
         // 2026-07-26 audit: no in-flight guard meant a double-tap created
         // TWO shifts while arrayUnion deduped the name — filledStaff and
@@ -3599,12 +3660,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
         fillNeedBusyRef.current = true;
         try {
-            await _fillNeedWithStaffInner(need, staffMember);
+            await _fillNeedWithStaffInner(need, staffMember, opts);
         } finally {
             fillNeedBusyRef.current = false;
         }
     };
-    const _fillNeedWithStaffInner = async (need, staffMember) => {
+    const _fillNeedWithStaffInner = async (need, staffMember, opts = {}) => {
         // 2026-05-15 — Andrew: "no you didnt fix it. when ... we have slots
         // available i can just click assign and when i do that it doesnt
         // show the warning. dont make me ask again."
@@ -3679,9 +3740,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 // The slot's side determines the shift's side — even if it's
                 // a cross-side fill (FOH staff working a BOH slot, etc.).
                 side: need.side || resolveStaffSide(staffMember),
-                isShiftLead: false,
-                isDouble: false,
-                notes: need.notes || tx('From staffing need', 'De necesidad de personal'),
+                // Seats from "Unassign all" carry the original shift's
+                // double flag + note; the lead badge follows the person
+                // (same as quick-add). Other slots keep the old defaults.
+                isShiftLead: need.fromUnassign ? !!staffMember.shiftLead : false,
+                isDouble: !!need.isDouble,
+                notes: need.notes || (need.fromUnassign ? '' : tx('From staffing need', 'De necesidad de personal')),
                 published: false, // draft — same convention as handleAddShift
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
@@ -3707,7 +3771,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // is done. Otherwise keep modal open and bump fillingNeed
             // state so the progress chip reflects the new ratio.
             const isFullyStaffed = newFilledStaff.length >= (need.count || 0);
-            if (isFullyStaffed) {
+            if (opts.quiet) {
+                // Drag-to-name: no picker is open — just confirm it landed.
+                toast(tx(`✓ ${staffMember.name.split(' ')[0]} · ${need.date} ${formatTime12h(need.startTime)}–${formatTime12h(need.endTime)}`,
+                         `✓ ${staffMember.name.split(' ')[0]} · ${need.date} ${formatTime12h(need.startTime)}–${formatTime12h(need.endTime)}`),
+                      { kind: 'success', duration: 2500 });
+            } else if (isFullyStaffed) {
                 setFillingNeed(null);
                 setAvailableForDate(null);
                 toast(tx(`✓ All ${need.count} slot${need.count === 1 ? '' : 's'} filled`,
@@ -3729,6 +3798,27 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // 2026-09-23 review: the Open Slots "×" chips deleted a REAL (possibly
+    // published) shift with one tap — no confirm, no undo, no staff notice,
+    // no audit. Route through handleDeleteShift (confirm + slot prune +
+    // notify + undo + audit) whenever the shift is on screen; otherwise
+    // confirm first, then fall back to the plain unfill.
+    const askUnfillNeedSlot = (need, staffMemberName) => {
+        const idx = (need?.filledStaff || []).indexOf(staffMemberName);
+        const shiftId = idx >= 0 ? (need.filledShiftIds || [])[idx] : null;
+        if (shiftId && shifts.some(sh => sh.id === shiftId)) {
+            handleDeleteShift(shiftId);
+            return;
+        }
+        setConfirmDialog({
+            title: tx('Remove from this slot?', '¿Quitar de este espacio?'),
+            body: tx(`This removes ${staffMemberName} from the slot and deletes their shift for it.`,
+                     `Esto quita a ${staffMemberName} del espacio y borra su turno.`),
+            confirmLabel: tx('Remove', 'Quitar'),
+            tone: 'danger',
+            onConfirm: () => unfillNeedSlot(need, staffMemberName),
+        });
+    };
     const unfillNeedSlot = async (need, staffMemberName) => {
         if (!canEditSide(need?.side)) return;
         // Find the matching shift and delete it, then prune the need.
@@ -3954,17 +4044,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    const applyTemplateBusyRef = useRef(false);
     const handleApplyTemplate = async (tpl, dateOrDates) => {
         if (!canEditSide(tpl?.side || side)) return;
         if (!tpl || !dateOrDates) return;
+        // 2026-09-23 review: a double-tap on Apply created every open slot
+        // twice (no in-flight guard).
+        if (applyTemplateBusyRef.current) return;
         // FIX (2026-05-14): accept either a single date string (legacy
         // single-day call) OR an array of date strings (new multi-day
         // flow). Normalize to array.
-        const dateStrs = Array.isArray(dateOrDates) ? dateOrDates : [dateOrDates];
-        if (dateStrs.length === 0) return;
+        const pickedDates = Array.isArray(dateOrDates) ? dateOrDates : [dateOrDates];
+        if (pickedDates.length === 0) return;
         const location = tpl.location || (storeLocation !== 'both' ? storeLocation : 'webster');
+        // Closed days get no open slots (they'd sit there as "unfilled").
+        const closedPicked = pickedDates.filter(d => dateClosed(d, location));
+        const dateStrs = pickedDates.filter(d => !dateClosed(d, location));
+        if (dateStrs.length === 0) {
+            toast(tx('Those days are marked closed — nothing applied.', 'Esos días están cerrados — no se aplicó nada.'), { kind: 'warn' });
+            return;
+        }
         const successes = [];
         const failures = [];
+        applyTemplateBusyRef.current = true;
         try {
             // Batched per-day (audit 2026-05-22). Previously a triple-
             // nested sequential addDoc loop (dates × blocks × slots)
@@ -4015,7 +4117,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 targetName: tpl.name || 'template', after: { days: successes.length, failed: failures.length } }).catch(() => {});
             if (failures.length === 0) {
                 const label = dateStrs.length === 1 ? dateStrs[0] : `${dateStrs.length} ${tx('days', 'días')}`;
-                toast(tx(`✅ Applied "${tpl.name}" to ${label}.`, `✅ "${tpl.name}" aplicada a ${label}.`));
+                const skippedNote = closedPicked.length
+                    ? tx(` Skipped ${closedPicked.length} closed day(s).`, ` Se omitieron ${closedPicked.length} día(s) cerrados.`) : '';
+                toast(tx(`✅ Applied "${tpl.name}" to ${label}.`, `✅ "${tpl.name}" aplicada a ${label}.`) + skippedNote);
             } else if (successes.length === 0) {
                 toast(tx(`Apply error — no days were updated.`, `Error — no se aplicó a ningún día.`), { kind: 'error' });
             } else {
@@ -4027,6 +4131,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         } catch (e) {
             console.error('Apply template failed:', e);
             toast(tx('Apply error: ', 'Error al aplicar: ') + e.message);
+        } finally {
+            applyTemplateBusyRef.current = false;
         }
     };
 
@@ -4132,9 +4238,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 if (dateClosed(dStr, rule.location)) { skipped.push(`${rule.staffName} ${dStr}: closed`); continue; }
                 if (isStaffOffOn(rule.staffName, dStr)) { skipped.push(`${rule.staffName} ${dStr}: PTO`); continue; }
                 // Don't double-book: any existing shift overlapping this time block
-                const conflict = shifts.some(sh =>
-                    sh.staffName === rule.staffName && sh.date === dStr &&
-                    !(sh.endTime <= rule.startTime || sh.startTime >= rule.endTime));
+                // (2026-09-23 review: also against shifts queued earlier in
+                // THIS run — two overlapping rules for one person used to
+                // both generate.)
+                const overlaps = (sh) => sh.staffName === rule.staffName && sh.date === dStr &&
+                    !(sh.endTime <= rule.startTime || sh.startTime >= rule.endTime);
+                const conflict = shifts.some(overlaps) || recurringBatchShifts.some(overlaps);
                 if (conflict) { skipped.push(`${rule.staffName} ${dStr}: existing shift`); continue; }
                 // Collect into the outer batch instead of awaiting per
                 // shift (audit 2026-05-22) — same pattern as auto-fill.
@@ -4144,6 +4253,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     startTime: rule.startTime,
                     endTime: rule.endTime,
                     location: rule.location || (storeLocation !== 'both' ? storeLocation : 'webster'),
+                    // 2026-09-23 review: stamp the side — without it the
+                    // shift fell back to the staffer's home side, so a
+                    // 'both' person's BOH rule landed on the FOH grid.
+                    side: ruleSide,
                     isShiftLead: !!rule.isShiftLead,
                     isDouble: !!rule.isDouble,
                     notes: tx('Recurring', 'Recurrente'),
@@ -4157,24 +4270,45 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
         }
         // Commit all the recurring shifts in batches of 400.
+        // 2026-09-23 review: a failed commit used to be swallowed and the
+        // manager still saw "✅ Generated N draft shifts". Only ids from
+        // batches that actually committed count, and a failure says so.
+        const generatedIds = [];
         try {
-            const generatedIds = [];
             const BATCH_LIMIT = 400;
             for (let i = 0; i < recurringBatchShifts.length; i += BATCH_LIMIT) {
                 const batch = writeBatch(db);
+                const batchIds = [];
                 for (const sh of recurringBatchShifts.slice(i, i + BATCH_LIMIT)) {
                     const ref = doc(collection(db, 'shifts'));
                     batch.set(ref, sh);
-                    generatedIds.push(ref.id);
+                    batchIds.push(ref.id);
                 }
                 await watchdogWrite(batch.commit());
+                generatedIds.push(...batchIds);
             }
+        } catch (e) {
+            console.error('Recurring shift batch failed:', e);
             if (generatedIds.length > 0) {
                 recordUndo({ kind: 'create', ids: generatedIds,
                     week: { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) },
                     tag: 'recurring', label: `×${generatedIds.length}` });
             }
-        } catch (e) { console.error('Recurring shift batch failed:', e); }
+            toast(tx(
+                generatedIds.length
+                    ? `Only ${generatedIds.length} of ${recurringBatchShifts.length} recurring shifts saved — check your connection and tap Generate again (it skips ones already there).`
+                    : 'Could not generate the recurring shifts — nothing was saved. Check your connection and try again.',
+                generatedIds.length
+                    ? `Solo se guardaron ${generatedIds.length} de ${recurringBatchShifts.length} turnos — revisa tu conexión y vuelve a generar.`
+                    : 'No se pudieron generar los turnos — no se guardó nada. Revisa tu conexión e inténtalo de nuevo.'
+            ), { duration: 8000 });
+            return;
+        }
+        if (generatedIds.length > 0) {
+            recordUndo({ kind: 'create', ids: generatedIds,
+                week: { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) },
+                tag: 'recurring', label: `×${generatedIds.length}` });
+        }
         // Audit log (roll-up) — Andrew 2026-06-25.
         if (created.length > 0) auditScheduleConfig({ action: 'recurring_generated', targetType: 'shift',
             targetName: 'recurring → shifts', after: { generated: created.length, skipped: skipped.length } }).catch(() => {});
@@ -4241,9 +4375,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //     a toggle; defensive return).
     const handleToggleDateOpen = async (dateStr) => {
         if (!staffIsAdmin) return; // admin-only
-        const blocks = blocksByDate.get(dateStr) || [];
-        const existingOverride = blocks.find(b => b.type === 'open_override');
-        const existingClosedBlock = blocks.find(b => b.type === 'closed');
+        // Store-scoped (2026-09-23): acts on THIS view's store only. In the
+        // 'both' view it acts on blocks that cover both stores, as before.
+        const view = storeLocation;
+        const all = blocksByDateAll.get(dateStr) || [];
+        const applies = (b) => blockAppliesTo(b, view);
+        const overrides = all.filter(b => b.type === 'open_override' && applies(b));
+        // Prefer removing this store's own override over a both-store one.
+        const existingOverride = overrides.find(b => b.location === view) || overrides[0];
+        const closedBlocks = all.filter(b => b.type === 'closed' && applies(b));
+        const existingClosedBlock = closedBlocks.find(b => b.location === view) || closedBlocks[0];
+        const overrideLoc = view === 'both' ? 'both' : view;
         try {
             if (existingOverride) {
                 // Was overridden open → remove override, falls back to
@@ -4253,22 +4395,35 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 return;
             }
             if (existingClosedBlock) {
-                // One-off closure → just delete the block.
+                const coversOtherStore = view !== 'both' && (!existingClosedBlock.location || existingClosedBlock.location === 'both');
+                if (coversOtherStore) {
+                    // The closure covers BOTH stores; opening it from one
+                    // store's view must not reopen the other store — add a
+                    // store-scoped open override instead of deleting it.
+                    await addDoc(collection(db, 'date_blocks'), {
+                        date: dateStr, type: 'open_override', location: overrideLoc,
+                        reason: tx('Open this day (one-off)', 'Abrir este día (puntual)'),
+                        createdBy: staffName, createdAt: serverTimestamp(),
+                    });
+                    auditScheduleConfig({ action: 'date_toggled', targetType: 'date', targetName: dateStr, reason: `added ${overrideLoc} open-override over a both-store closure` }).catch(() => {});
+                    return;
+                }
+                // One-off closure for this store → just delete the block.
                 await deleteDoc(doc(db, 'date_blocks', existingClosedBlock.id));
                 auditScheduleConfig({ action: 'date_toggled', targetType: 'date', targetName: dateStr, reason: 'removed closure (opened)' }).catch(() => {});
                 return;
             }
             if (dateClosedByRecurring(dateStr)) {
-                // Recurring rule closes this date → add override.
+                // Recurring rule closes this date → add a store-scoped override.
                 await addDoc(collection(db, 'date_blocks'), {
                     date: dateStr,
                     type: 'open_override',
-                    location: 'both',
+                    location: overrideLoc,
                     reason: tx('Open this day (one-off)', 'Abrir este día (puntual)'),
                     createdBy: staffName,
                     createdAt: serverTimestamp(),
                 });
-                auditScheduleConfig({ action: 'date_toggled', targetType: 'date', targetName: dateStr, reason: 'added open-override (one-off open)' }).catch(() => {});
+                auditScheduleConfig({ action: 'date_toggled', targetType: 'date', targetName: dateStr, reason: `added ${overrideLoc} open-override (one-off open)` }).catch(() => {});
                 return;
             }
             // Already open normally — nothing to do.
@@ -4309,6 +4464,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!staffIsAdmin) return; // admin-only
         const cw = scheduleSettings?.closedWeekdays || {};
         const cur = Array.isArray(cw[loc]) ? cw[loc] : [];
+        const turningOn = !cur.includes(dayOfWeek);
+        // 2026-09-23 review: this one tap changes EVERY week, past and
+        // future (Labor Day was closed here on 9/1 and every Monday after it
+        // closed too). Confirm the scope and point at the one-day option.
+        const dayName = isEn
+            ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek]
+            : ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'][dayOfWeek];
+        const storeName = loc === 'webster' ? 'Webster' : loc === 'maryland' ? 'Maryland Heights' : loc;
+        const ok = window.confirm(turningOn
+            ? tx(`Close ${storeName} EVERY ${dayName}, every week from now on?\n\nTo close just one day (like a holiday), cancel and use "Add blackout" with type Closed instead.`,
+                 `¿Cerrar ${storeName} TODOS los ${dayName}, cada semana desde ahora?\n\nPara cerrar solo un día (como un feriado), cancela y usa "Agregar bloqueo" tipo Cerrado.`)
+            : tx(`Open ${storeName} on ${dayName}s again, every week?`,
+                 `¿Abrir ${storeName} los ${dayName} otra vez, cada semana?`));
+        if (!ok) return;
         const next = cur.includes(dayOfWeek)
             ? cur.filter(d => d !== dayOfWeek)
             : [...cur, dayOfWeek].sort();
@@ -4382,7 +4551,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // point of "make an exception". Recompute the overlap here (never
         // trust the modal alone) so the exception is recorded + the staffer
         // is told it was an override, not a normal approval.
-        const overlap = blockedDatesInRange(entry.startDate, entry.endDate || entry.startDate, blocksByDate);
+        // Only "no time off" blackouts gate PTO — a CLOSED day inside a
+        // vacation week is not a conflict (2026-09-23 review).
+        const overlap = blockedDatesInRange(entry.startDate, entry.endDate || entry.startDate, blocksByDate, { types: ['no_timeoff'] });
         const isException = overlap.length > 0;
         try {
             const ref = await addDoc(collection(db, 'time_off'), {
@@ -4615,7 +4786,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
         // Staff self-serve is a HARD stop on blackout dates. (Managers get an
         // overridable warning in TimeOffModal — they can make an exception.)
-        const blocked = blockedDatesInRange(start, end, blocksByDate);
+        // 2026-09-23 review: only "no time off" blackouts stop a request.
+        // A holiday CLOSURE inside the range (e.g. a week off that spans
+        // Thanksgiving) used to hard-block the whole request.
+        const blocked = blockedDatesInRange(start, end, blocksByDate, { types: ['no_timeoff'] });
         if (blocked.length > 0) {
             const lines = blocked.map(b => `${b.date} (${b.reason})`);
             toast(tx(
@@ -4942,11 +5116,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // Applies both fields; when no overrides remain the field is
         // REMOVED from the record (availabilityForDate treats missing and
         // empty the same, but a dropped key keeps the roster doc clean).
+        // availabilitySetAt (2026-09-23): "All available" saves {} — the
+        // required-availability task reads the stamp so that counts as set.
+        const setAt = new Date().toISOString();
         const applyTo = (s) => {
             const { availabilityWeeks: _drop, ...rest } = s;
             return prunedWeeks
-                ? { ...rest, availability: newAvailability, availabilityWeeks: prunedWeeks }
-                : { ...rest, availability: newAvailability };
+                ? { ...rest, availability: newAvailability, availabilityWeeks: prunedWeeks, availabilitySetAt: setAt }
+                : { ...rest, availability: newAvailability, availabilitySetAt: setAt };
         };
         // Snapshot the pre-change state for the audit trail (read
         // before the optimistic update swaps the record out).
@@ -5034,7 +5211,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 const closed = dateClosed(dStr);
                 const isDoubleDayPrint = todayShifts.length >= 2;
                 let body = '';
-                if (closed) body = '<div class="closed">CLOSED</div>';
+                // 2026-09-23 review: a real shift on a closed day (event,
+                // deep clean) must still print — CLOSED only on an empty day.
+                if (closed && todayShifts.length === 0) body = '<div class="closed">CLOSED</div>';
                 else if (onPto && todayShifts.length === 0) body = '<div class="pto">🌴 Time Off</div>';
                 else if (todayShifts.length === 0) body = '<div class="empty">— Off —</div>';
                 else body = todayShifts.map(sh => {
@@ -5159,7 +5338,7 @@ ${dayBlocks}
                 const cellClosed = dateClosed(dStr);
                 const isToday = dStr === today;
                 let cellHtml = '';
-                if (cellClosed) cellHtml = '<div class="closed">CLOSED</div>';
+                if (cellClosed && cellShifts.length === 0) cellHtml = '<div class="closed">CLOSED</div>';
                 else if (cellOnPto && cellShifts.length === 0) cellHtml = '<div class="pto">🌴 PTO</div>';
                 else if (cellShifts.length === 0) cellHtml = '<div class="empty">—</div>';
                 else {
@@ -5251,9 +5430,10 @@ ${dayBlocks}
             ${days.map((d, i) => {
                 const dStr = toDateStr(d);
                 const isToday = dStr === today;
-                const dayBlocks = (blocksByDate.get(dStr) || []);
-                const isClosed = dayBlocks.some(b => b.type === 'closed');
                 const m = printMealCounts.get(dStr) || { lunch: 0, dinner: 0 };
+                // Same closure rule as the grid (recurring weekday + store
+                // scope + open overrides), and not over a staffed day.
+                const isClosed = dateClosed(dStr) && !(m.lunch || m.dinner);
                 const meals = isClosed ? '' : `<div class="meals">
                     <span class="meal lunch${m.lunch === 0 ? ' zero' : ''}">${isEn ? 'L' : 'A'} ${m.lunch}${mealDots(m.lunchLeads, m.lunchManagers)}</span>
                     <span class="meal dinner${m.dinner === 0 ? ' zero' : ''}">${isEn ? 'D' : 'C'} ${m.dinner}${mealDots(m.dinnerLeads, m.dinnerManagers)}</span>
@@ -5720,6 +5900,19 @@ ${dayBlocks}
         }
         undoBusyRef.current = true;
         try {
+            // Unassign-all / Delete-all-unpublished carry their own plan
+            // (they touch staffing_needs too) — data/weekReset.js.
+            if (entry.kind === 'unassign' || entry.kind === 'clear') {
+                const res = await undoWeekReset(entry);
+                setUndoStack(s => s.filter(en => en !== entry));
+                if (!res.ok) { toast(res.msg, { kind: 'warn', duration: 10000 }); return; }
+                invalidateWeekCache(entry.week?.startStr || toDateStr(weekStart));
+                auditScheduleConfig({ action: 'undo_applied', targetType: 'shift', targetName: entry.label || entry.kind,
+                    after: { kind: entry.kind, restored: res.n } }).catch(() => {});
+                toast(tx(`↩ Undid: ${undoKindLabel(entry, true)}${entry.label ? ` — ${entry.label}` : ''}`,
+                         `↩ Deshecho: ${undoKindLabel(entry, false)}${entry.label ? ` — ${entry.label}` : ''}`), { duration: 8000 });
+                return;
+            }
             // Fresh reads of everything the entry touches. Bulk creates
             // stay within one week → one range query; singles → getDoc.
             const liveById = new Map();
@@ -6058,6 +6251,333 @@ ${dayBlocks}
         }
     };
 
+    // ── Unassign all / Delete all unpublished (Andrew 2026-09-23) ─────────
+    // "when you copy from last week we can unassign all the shifts and then
+    // we can drag and drop the shifts down to the names … make a delete all
+    // unpublished shifts so we can also start over." Both act on exactly
+    // what the grid shows (this week · this side · this store · person
+    // filter) and ONLY on drafts — published shifts were already sent to
+    // staff. An unassigned shift becomes a seat in the blue "Unassigned" row
+    // (a staffing_need — never publishes, never notifies, no hours); drag it
+    // onto a name or tap it to pick someone. Planning is data/weekReset.js.
+    const weekResetBusyRef = useRef(false);
+    const _weekResetScopeLabel = () => {
+        const sideLabel = side === 'boh' ? 'BOH' : 'FOH';
+        const storeLabel = storeLocation === 'both' ? tx('both stores', 'ambas tiendas') : (LOCATION_LABELS[storeLocation] || storeLocation);
+        return `${sideLabel} · ${storeLabel}`;
+    };
+    // Drafts in view, re-read from the SERVER so a stale week cache can never
+    // unassign/delete shifts that are already gone or were published since.
+    const _loadWeekDraftsInView = async () => {
+        const wkStartStr = toDateStr(weekStart);
+        const wkEndStr = toDateStr(addDays(weekStart, 7));
+        const inView = visibleShifts.filter(sh =>
+            sh.published === false && sh.date >= wkStartStr && sh.date < wkEndStr &&
+            !sh.pendingClaimBy && canEditSide(sh.side || side));
+        if (inView.length === 0) return [];
+        const snap = await getDocs(query(collection(db, 'shifts'),
+            where('date', '>=', wkStartStr), where('date', '<', wkEndStr)));
+        const live = new Map();
+        snap.forEach(d => live.set(d.id, d.data()));
+        const out = [];
+        for (const sh of inView) {
+            const data = live.get(sh.id);
+            if (!data || data.published !== false || data.pendingClaimBy) continue;
+            const staffRec = staffByName.get(data.staffName);
+            out.push({
+                id: sh.id, ...data,
+                side: data.side || side,
+                location: data.location || (storeLocation !== 'both' ? storeLocation
+                    : ((staffRec?.location && staffRec.location !== 'both') ? staffRec.location : 'webster')),
+            });
+        }
+        return out;
+    };
+    const _publishedInViewCount = () => {
+        const wkStartStr = toDateStr(weekStart);
+        const wkEndStr = toDateStr(addDays(weekStart, 7));
+        return visibleShifts.filter(sh => sh.published !== false && sh.date >= wkStartStr && sh.date < wkEndStr).length;
+    };
+
+    const askUnassignAll = () => {
+        if (!canEditSide(side)) {
+            toast(tx('You need editor access for this side.', 'Necesitas acceso de editor para este lado.'));
+            return;
+        }
+        const wkStartStr = toDateStr(weekStart);
+        const wkEndStr = toDateStr(addDays(weekStart, 7));
+        const drafts = visibleShifts.filter(sh => sh.published === false && sh.date >= wkStartStr && sh.date < wkEndStr && !sh.pendingClaimBy);
+        if (drafts.length === 0) {
+            toast(tx('No draft shifts to unassign this week (published shifts are never unassigned).',
+                     'No hay turnos borrador para quitar esta semana (los publicados nunca se quitan).'), { duration: 6000 });
+            return;
+        }
+        const people = new Set(drafts.map(d => d.staffName)).size;
+        const published = _publishedInViewCount();
+        setConfirmDialog({
+            title: tx('Unassign all shifts?', '¿Quitar a todos de sus turnos?'),
+            body: tx(
+                `This takes every staff member off all ${drafts.length} draft shift${drafts.length === 1 ? '' : 's'} this week (${_weekResetScopeLabel()}) — ${people} ${people === 1 ? 'person' : 'people'} will have no shifts.\n\nThe shifts stay in the blue "Unassigned" row at the top. Drag each one down onto a name (or tap it to pick someone).` +
+                (personFilter ? `\n\nOnly ${personFilter}'s shifts — the person filter is on.` : '') +
+                (published ? `\n\n${published} published shift${published === 1 ? ' is' : 's are'} left alone.` : '') +
+                `\n\nYou can undo this with ↩ Undo.`,
+                `Esto quita a todo el personal de los ${drafts.length} turno(s) borrador de esta semana (${_weekResetScopeLabel()}) — ${people} persona(s) quedarán sin turnos.\n\nLos turnos quedan en la fila azul "Sin asignar" arriba. Arrastra cada uno hacia un nombre (o tócalo para elegir a alguien).` +
+                (personFilter ? `\n\nSolo los turnos de ${personFilter} — el filtro de persona está activo.` : '') +
+                (published ? `\n\n${published} turno(s) publicado(s) no se tocan.` : '') +
+                `\n\nPuedes deshacerlo con ↩ Deshacer.`,
+            ),
+            confirmLabel: tx(`Unassign ${drafts.length}`, `Quitar ${drafts.length}`),
+            tone: 'danger',
+            onConfirm: () => handleUnassignAll(),
+        });
+    };
+
+    const handleUnassignAll = async () => {
+        if (!canEditSide(side) || weekResetBusyRef.current) return;
+        weekResetBusyRef.current = true;
+        try {
+            const drafts = await _loadWeekDraftsInView();
+            if (drafts.length === 0) {
+                toast(tx('Nothing to unassign — those shifts are gone or were published.',
+                         'Nada que quitar — esos turnos ya no existen o se publicaron.'));
+                return;
+            }
+            const needIds = [...new Set(drafts.map(d => d.fromNeedId).filter(Boolean))];
+            const needsById = new Map();
+            for (const nid of needIds) {
+                const ns = await getDoc(doc(db, 'staffing_needs', nid));
+                if (ns.exists()) needsById.set(nid, ns.data());
+            }
+            const { reopen, groups } = planUnassign(drafts, needsById);
+            // One atomic batch when it fits (a week of one side is far below
+            // the 500-op limit): the new slots appear and the names come off
+            // together, never half-done.
+            const ops = [];
+            const createdNeedIds = [];
+            for (const g of groups) {
+                const ref = doc(collection(db, 'staffing_needs'));
+                createdNeedIds.push(ref.id);
+                ops.push(b => b.set(ref, {
+                    date: g.date, side: g.side, location: g.location,
+                    startTime: g.startTime, endTime: g.endTime,
+                    count: g.count, roleGroup: 'any',
+                    notes: g.notes || '',
+                    isDouble: g.isDouble,
+                    filledStaff: [], filledShiftIds: [],
+                    fromUnassign: true,
+                    unassignedFrom: g.unassignedFrom,
+                    createdBy: staffName,
+                    createdAt: serverTimestamp(),
+                }));
+            }
+            for (const d of drafts) ops.push(b => b.delete(doc(db, 'shifts', d.id)));
+            const BATCH_LIMIT = 450;
+            for (let i = 0; i < ops.length; i += BATCH_LIMIT) {
+                const batch = writeBatch(db);
+                for (const op of ops.slice(i, i + BATCH_LIMIT)) op(batch);
+                await watchdogWrite(batch.commit());
+            }
+            // Seats that came from an existing slot go back to that slot.
+            for (const r of reopen) {
+                await pruneNeedAfterShiftDelete(r.shift);
+            }
+            const keptFillIds = {};
+            for (const nid of new Set(reopen.map(r => r.needId))) {
+                try {
+                    const ns = await getDoc(doc(db, 'staffing_needs', nid));
+                    keptFillIds[nid] = ns.exists() ? [...(ns.data().filledShiftIds || [])] : [];
+                } catch { keptFillIds[nid] = []; }
+            }
+            invalidateWeekCache(toDateStr(weekStart));
+            recordUndo({
+                kind: 'unassign',
+                snapshots: drafts.map(({ id, ...data }) => ({ id, data })),
+                createdNeedIds, keptFillIds,
+                week: { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) },
+                label: `×${drafts.length}`,
+            });
+            auditScheduleConfig({ action: 'unassigned_all', targetType: 'shift', targetName: 'unassign all',
+                after: { count: drafts.length, slots: groups.length, reopened: reopen.length,
+                         week: toDateStr(weekStart), side, location: storeLocation } }).catch(() => {});
+            toast(tx(`✅ Unassigned ${drafts.length} shift${drafts.length === 1 ? '' : 's'} — drag them from the blue Unassigned row onto names.`,
+                     `✅ Se quitaron ${drafts.length} turno(s) — arrástralos de la fila azul Sin asignar hacia los nombres.`),
+                { kind: 'success', duration: 9000 });
+        } catch (e) {
+            console.error('Unassign all failed:', e);
+            toast(tx('Could not unassign — nothing was changed. Check your connection and try again.',
+                     'No se pudo quitar — no se cambió nada. Revisa tu conexión e inténtalo de nuevo.'), { kind: 'error', duration: 8000 });
+        } finally {
+            weekResetBusyRef.current = false;
+        }
+    };
+
+    // The unassigned seats Unassign-all made for this week/view — "start
+    // over" clears those too. Hand-made / template open slots are left.
+    const _unassignSlotsInView = () => {
+        const wkStartStr = toDateStr(weekStart);
+        const wkEndStr = toDateStr(addDays(weekStart, 7));
+        return (staffingNeeds || []).filter(n => n.fromUnassign === true &&
+            n.date >= wkStartStr && n.date < wkEndStr && n.side === side &&
+            (storeLocation === 'both' || n.location === storeLocation));
+    };
+
+    const askDeleteAllUnpublished = () => {
+        if (!canEditSide(side)) {
+            toast(tx('You need editor access for this side.', 'Necesitas acceso de editor para este lado.'));
+            return;
+        }
+        const wkStartStr = toDateStr(weekStart);
+        const wkEndStr = toDateStr(addDays(weekStart, 7));
+        const drafts = visibleShifts.filter(sh => sh.published === false && sh.date >= wkStartStr && sh.date < wkEndStr && !sh.pendingClaimBy);
+        const slots = _unassignSlotsInView();
+        const openSeats = slots.reduce((sum, n) => sum + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0);
+        if (drafts.length === 0 && slots.length === 0) {
+            toast(tx('No unpublished shifts to delete this week.', 'No hay turnos sin publicar para borrar esta semana.'));
+            return;
+        }
+        const published = _publishedInViewCount();
+        const parts = [];
+        if (drafts.length) parts.push(tx(`${drafts.length} draft shift${drafts.length === 1 ? '' : 's'}`, `${drafts.length} turno(s) borrador`));
+        if (openSeats) parts.push(tx(`${openSeats} unassigned shift${openSeats === 1 ? '' : 's'}`, `${openSeats} turno(s) sin asignar`));
+        setConfirmDialog({
+            title: tx('Delete all unpublished shifts?', '¿Borrar todos los turnos sin publicar?'),
+            body: tx(
+                `This deletes ${parts.join(' and ')} this week (${_weekResetScopeLabel()}) so you can start over.` +
+                (personFilter ? `\n\nOnly ${personFilter}'s shifts — the person filter is on.` : '') +
+                (published ? `\n\n${published} published shift${published === 1 ? ' is' : 's are'} kept.` : '') +
+                `\n\nOpen slots you added by hand or from a template stay. You can undo this with ↩ Undo.`,
+                `Esto borra ${parts.join(' y ')} de esta semana (${_weekResetScopeLabel()}) para empezar de nuevo.` +
+                (personFilter ? `\n\nSolo los turnos de ${personFilter} — el filtro de persona está activo.` : '') +
+                (published ? `\n\n${published} turno(s) publicado(s) se mantienen.` : '') +
+                `\n\nLos espacios abiertos hechos a mano o con plantilla se quedan. Puedes deshacerlo con ↩ Deshacer.`,
+            ),
+            confirmLabel: tx('Delete all', 'Borrar todo'),
+            tone: 'danger',
+            onConfirm: () => handleDeleteAllUnpublished(),
+        });
+    };
+
+    const handleDeleteAllUnpublished = async () => {
+        if (!canEditSide(side) || weekResetBusyRef.current) return;
+        weekResetBusyRef.current = true;
+        try {
+            const drafts = await _loadWeekDraftsInView();
+            // Fresh reads of the unassigned slots too (snapshot for undo).
+            const needSnaps = [];
+            for (const n of _unassignSlotsInView()) {
+                if (!canEditSide(n.side)) continue;
+                const ns = await getDoc(doc(db, 'staffing_needs', n.id));
+                if (ns.exists()) needSnaps.push({ id: n.id, data: ns.data() });
+            }
+            if (drafts.length === 0 && needSnaps.length === 0) {
+                toast(tx('Nothing to delete — those shifts are gone or were published.',
+                         'Nada que borrar — esos turnos ya no existen o se publicaron.'));
+                return;
+            }
+            const wipedNeedIds = new Set(needSnaps.map(n => n.id));
+            const ops = [];
+            for (const d of drafts) ops.push(b => b.delete(doc(db, 'shifts', d.id)));
+            for (const n of needSnaps) ops.push(b => b.delete(doc(db, 'staffing_needs', n.id)));
+            const BATCH_LIMIT = 450;
+            for (let i = 0; i < ops.length; i += BATCH_LIMIT) {
+                const batch = writeBatch(db);
+                for (const op of ops.slice(i, i + BATCH_LIMIT)) op(batch);
+                await watchdogWrite(batch.commit());
+            }
+            // Seats in slots that were NOT wiped (template / hand-made) open
+            // back up.
+            for (const d of drafts) {
+                if (d.fromNeedId && !wipedNeedIds.has(d.fromNeedId)) await pruneNeedAfterShiftDelete(d);
+            }
+            invalidateWeekCache(toDateStr(weekStart));
+            recordUndo({
+                kind: 'clear',
+                shiftSnaps: drafts.map(({ id, ...data }) => ({ id, data })),
+                needSnaps,
+                week: { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) },
+                label: `×${drafts.length + needSnaps.length}`,
+            });
+            auditScheduleConfig({ action: 'cleared_unpublished', targetType: 'shift', targetName: 'delete all unpublished',
+                after: { shifts: drafts.length, slots: needSnaps.length, week: toDateStr(weekStart), side, location: storeLocation } }).catch(() => {});
+            toast(tx(`🗑 Deleted ${drafts.length} unpublished shift${drafts.length === 1 ? '' : 's'}${needSnaps.length ? ` and ${needSnaps.length} unassigned slot${needSnaps.length === 1 ? '' : 's'}` : ''}.`,
+                     `🗑 Se borraron ${drafts.length} turno(s) sin publicar${needSnaps.length ? ` y ${needSnaps.length} espacio(s) sin asignar` : ''}.`),
+                { kind: 'success', duration: 8000 });
+        } catch (e) {
+            console.error('Delete all unpublished failed:', e);
+            toast(tx('Could not delete — nothing was removed. Check your connection and try again.',
+                     'No se pudo borrar — no se quitó nada. Revisa tu conexión e inténtalo de nuevo.'), { kind: 'error', duration: 8000 });
+        } finally {
+            weekResetBusyRef.current = false;
+        }
+    };
+
+    // Undo for the two actions above (called from handleUndoEntry).
+    const undoWeekReset = async (entry) => {
+        const wk = entry.week || { startStr: toDateStr(weekStart), endStr: toDateStr(addDays(weekStart, 7)) };
+        const shiftsById = new Map();
+        const snap = await getDocs(query(collection(db, 'shifts'),
+            where('date', '>=', wk.startStr), where('date', '<', wk.endStr)));
+        snap.forEach(d => shiftsById.set(d.id, d.data()));
+        const needIds = entry.kind === 'unassign'
+            ? [...new Set([...(entry.createdNeedIds || []), ...Object.keys(entry.keptFillIds || {})])]
+            : (entry.needSnaps || []).map(n => n.id);
+        const needsById = new Map();
+        for (const nid of needIds) {
+            const ns = await getDoc(doc(db, 'staffing_needs', nid));
+            if (ns.exists()) needsById.set(nid, ns.data());
+        }
+        const clean = (data) => {
+            const out = {};
+            for (const [k, v] of Object.entries(data || {})) {
+                if (v === undefined || typeof v === 'function') continue;
+                if (['createdAt', 'updatedAt', 'reminderSentAt', 'publishedAt'].includes(k)) continue;
+                out[k] = v;
+            }
+            return out;
+        };
+        const BATCH_LIMIT = 450;
+        const runOps = async (ops) => {
+            for (let i = 0; i < ops.length; i += BATCH_LIMIT) {
+                const batch = writeBatch(db);
+                for (const op of ops.slice(i, i + BATCH_LIMIT)) op(batch);
+                await watchdogWrite(batch.commit());
+            }
+        };
+        if (entry.kind === 'unassign') {
+            const plan = planUnassignUndo(entry, { needsById, shiftsById });
+            if (plan.blockedPublished > 0) {
+                return { ok: false, msg: tx(
+                    `Can't undo — ${plan.blockedPublished} of those shifts were already assigned and PUBLISHED. Use "Delete all unpublished" to start over instead.`,
+                    `No se puede deshacer — ${plan.blockedPublished} de esos turnos ya se asignaron y PUBLICARON. Usa "Borrar todos los sin publicar" para empezar de nuevo.`) };
+            }
+            const ops = [];
+            for (const d of plan.deleteShifts) ops.push(b => b.delete(doc(db, 'shifts', d.id)));
+            for (const nid of plan.deleteNeedIds) ops.push(b => b.delete(doc(db, 'staffing_needs', nid)));
+            for (const r of plan.restore) ops.push(b => b.set(doc(db, 'shifts', r.id),
+                { ...clean(r.data), reminderSent: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+            await runOps(ops);
+            // Seats dragged into pre-existing slots come back out; the
+            // original seats go back in.
+            const created = new Set(entry.createdNeedIds || []);
+            for (const d of plan.deleteShifts) {
+                if (d.data?.fromNeedId && !created.has(d.data.fromNeedId)) await pruneNeedAfterShiftDelete({ id: d.id, ...d.data });
+            }
+            for (const r of plan.restore) {
+                if (r.data?.fromNeedId) await relinkNeedAfterShiftRestore(r.data, r.id);
+            }
+            return { ok: true, n: plan.restore.length };
+        }
+        const plan = planClearUndo(entry, { needsById, shiftsById });
+        const ops = [];
+        for (const n of plan.restoreNeeds) ops.push(b => b.set(doc(db, 'staffing_needs', n.id),
+            { ...clean(n.data), createdAt: serverTimestamp() }));
+        for (const r of plan.restoreShifts) ops.push(b => b.set(doc(db, 'shifts', r.id),
+            { ...clean(r.data), reminderSent: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+        await runOps(ops);
+        for (const r of plan.relink) await relinkNeedAfterShiftRestore(r.data, r.id);
+        return { ok: true, n: plan.restoreShifts.length + plan.restoreNeeds.length };
+    };
+
     // ── Auto-populate engine ──
     // For each side-staff with availability + targetHours, distribute their target
     // hours across the week's available days (skipping closed dates and approved
@@ -6251,18 +6771,42 @@ ${dayBlocks}
     };
     const askApproveSwap = (shift) => {
         if (!shift) return;
+        // 2026-09-23 review: the handler bails for a side this editor can't
+        // manage — say so here instead of a dialog that does nothing.
+        if (!canEditSide(shift.side)) {
+            toast(tx(`Only a ${shift.side === 'boh' ? 'BOH' : shift.side === 'foh' ? 'FOH' : ''} schedule editor can decide this one.`,
+                     `Solo un editor de ${shift.side === 'boh' ? 'BOH' : shift.side === 'foh' ? 'FOH' : ''} puede decidir esto.`), { kind: 'warn' });
+            return;
+        }
         const splitInfo = shift.proposedSplit && shift.proposedSplit.startTime && shift.proposedSplit.endTime
             ? tx(
                 `\n\nProposed partial pickup: ${shift.pendingClaimBy} takes ${formatTime12h(shift.proposedSplit.startTime)}–${formatTime12h(shift.proposedSplit.endTime)}. ${shift.staffName} keeps the leftover.`,
                 `\n\nToma parcial propuesta: ${shift.pendingClaimBy} toma ${formatTime12h(shift.proposedSplit.startTime)}–${formatTime12h(shift.proposedSplit.endTime)}. ${shift.staffName} mantiene el resto.`
             )
             : '';
+        // 2026-09-23 review: approving never looked at the NEW owner's day —
+        // a claim could hand someone a shift on their approved time off or on
+        // top of a shift they already work. Warn (the manager still decides).
+        const taker = shift.pendingClaimBy;
+        const takeStart = shift.proposedSplit?.startTime || shift.startTime;
+        const takeEnd = shift.proposedSplit?.endTime || shift.endTime;
+        const warnLines = [];
+        if (taker && isStaffOffOn(taker, shift.date)) {
+            warnLines.push(tx(`⚠️ ${taker} has approved time off on ${shift.date}.`, `⚠️ ${taker} tiene tiempo libre aprobado el ${shift.date}.`));
+        }
+        const clash = taker ? shifts.find(sh => sh.id !== shift.id && sh.staffName === taker && sh.date === shift.date
+            && sh.startTime < takeEnd && sh.endTime > takeStart) : null;
+        if (clash) {
+            warnLines.push(tx(`⚠️ ${taker} already works ${formatTime12h(clash.startTime)}–${formatTime12h(clash.endTime)} that day (overlaps).`,
+                              `⚠️ ${taker} ya trabaja ${formatTime12h(clash.startTime)}–${formatTime12h(clash.endTime)} ese día (se cruza).`));
+        }
+        const warnInfo = warnLines.length ? '\n\n' + warnLines.join('\n') : '';
         setConfirmDialog({
             title: tx('Approve this swap?', '¿Aprobar este cambio?'),
             body: tx(
                 `${shift.pendingClaimBy} will take ${shift.staffName}'s ${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} shift. Both will be notified.`,
                 `${shift.pendingClaimBy} tomará el turno de ${shift.staffName} del ${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}. Ambos serán notificados.`
-            ) + splitInfo,
+            ) + splitInfo + warnInfo,
             confirmLabel: tx('Approve', 'Aprobar'),
             tone: 'primary',
             onConfirm: () => handleApproveSwap(shift),
@@ -6270,6 +6814,13 @@ ${dayBlocks}
     };
     const askDenySwap = (shift) => {
         if (!shift) return;
+        // 2026-09-23 review: the handler bails for a side this editor can't
+        // manage — say so here instead of a dialog that does nothing.
+        if (!canEditSide(shift.side)) {
+            toast(tx(`Only a ${shift.side === 'boh' ? 'BOH' : shift.side === 'foh' ? 'FOH' : ''} schedule editor can decide this one.`,
+                     `Solo un editor de ${shift.side === 'boh' ? 'BOH' : shift.side === 'foh' ? 'FOH' : ''} puede decidir esto.`), { kind: 'warn' });
+            return;
+        }
         setConfirmDialog({
             title: tx('Deny this swap?', '¿Negar este cambio?'),
             body: tx(
@@ -6556,6 +7107,38 @@ ${dayBlocks}
         }
     });
     const onAddSlotCb = useStableCallback((dStr) => { setPrefillNeedDate(dStr); setShowNeedModal(true); });
+    // Drag an Unassigned seat onto a person's day (Andrew 2026-09-23) —
+    // same fill as tapping the seat and picking them (availability +
+    // double-booking confirms run inside fillNeedWithStaff).
+    const onDropNeedCb = useStableCallback((needId, targetName, dateStr) => {
+        const need = staffingNeeds.find(n => n.id === needId);
+        if (!need) return;
+        if (!canEditSide(need.side)) {
+            toast(tx('You need editor access for that side.', 'Necesitas acceso de editor para ese lado.'));
+            return;
+        }
+        if (need.date !== dateStr) {
+            const dayName = (parseLocalDate(need.date) || new Date()).toLocaleDateString(isEn ? 'en-US' : 'es-MX', { weekday: 'long' });
+            toast(tx(`That shift is for ${dayName} (${need.date}) — drop it in the ${dayName} column.`,
+                     `Ese turno es para el ${dayName} (${need.date}) — suéltalo en la columna del ${dayName}.`), { duration: 6000 });
+            return;
+        }
+        if ((need.filledStaff || []).length >= (need.count || 0)) {
+            toast(tx('That seat is already filled.', 'Ese espacio ya está lleno.'));
+            return;
+        }
+        const member = staffList?.find(x => x.name === targetName);
+        if (!member) return;
+        if (dateClosed(dateStr, need.location)) {
+            toast(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
+            return;
+        }
+        if (isStaffOffOn(targetName, dateStr)) {
+            toast(tx(`${targetName} is on approved time-off that date.`, `${targetName} tiene tiempo libre aprobado esa fecha.`));
+            return;
+        }
+        fillNeedWithStaff(need, member, { quiet: true });
+    });
     const onCellClickCb = useStableCallback((staff, dateStr) => {
         if (!canEdit) return;
         if (dateClosed(dateStr)) {
@@ -6583,16 +7166,21 @@ ${dayBlocks}
     const onQuickAddSelectCb = useStableCallback((preset) => {
         if (!quickAddCell) return;
         const { staff, dateStr } = quickAddCell;
-        const inferredSide = resolveStaffSide(staff);
+        // 2026-09-23 review: the cell belongs to THIS grid — its side and
+        // (in a single-store view) its store. Inferring from the staffer's
+        // home side/store put e.g. a BOH-tab tap on a 'both' manager's row
+        // onto FOH (page jumped away; a BOH-only editor got nothing, no
+        // message) and a Webster person's cell on the Maryland grid at
+        // Webster.
         handleAddShift({
             staffName: staff.name,
             date: dateStr,
             startTime: preset.start,
             endTime: preset.end,
-            location: (staff.location && staff.location !== 'both')
-                ? staff.location
-                : (storeLocation !== 'both' ? storeLocation : 'webster'),
-            side: inferredSide,
+            location: storeLocation !== 'both'
+                ? storeLocation
+                : ((staff.location && staff.location !== 'both') ? staff.location : 'webster'),
+            side,
             isShiftLead: !!staff.shiftLead,
             isDouble: !!preset.isDouble,
             notes: '',
@@ -6603,7 +7191,8 @@ ${dayBlocks}
         if (!quickAddCell) return;
         const { staff, dateStr } = quickAddCell;
         setQuickAddCell(null);
-        openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+        openAddModal({ staffName: staff.name, date: dateStr, side,
+            location: storeLocation !== 'both' ? storeLocation : staff.location });
     });
     const onQuickAddCloseCb = useStableCallback(() => setQuickAddCell(null));
     const onStaffClickCb = useStableCallback((name) => setPersonFilter(name));
@@ -6632,6 +7221,7 @@ ${dayBlocks}
     const isStaffOffOnCb = useStableCallback(isStaffOffOn);
     const dateHasOpenOverrideCb = useStableCallback(dateHasOpenOverride);
     const dateClosedByRecurringCb = useStableCallback(dateClosedByRecurring);
+    const dateStatusCb = useStableCallback(dateStatus);
 
     // ── Render ──
     return (
@@ -7042,6 +7632,23 @@ ${dayBlocks}
                                                 {tx(`Undo copy (${lastCopy.ids.length})`, `Deshacer copia (${lastCopy.ids.length})`)}
                                             </button>
                                         )}
+                                        {/* Andrew 2026-09-23 — take everyone off the week's
+                                            drafts (they become drag-able seats in the blue
+                                            Unassigned row), or wipe the drafts to start over. */}
+                                        <button onClick={() => { setShowMoreActions(false); askUnassignAll(); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                            <span className="w-6 h-6 rounded-md bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+                                                <UserMinus size={12} strokeWidth={2.25} aria-hidden="true" />
+                                            </span>
+                                            {tx('Unassign all shifts', 'Quitar a todos de sus turnos')}
+                                        </button>
+                                        <button onClick={() => { setShowMoreActions(false); askDeleteAllUnpublished(); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-red-50 flex items-center gap-2 text-sm text-red-700 font-semibold">
+                                            <span className="w-6 h-6 rounded-md bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+                                                <Trash2 size={12} strokeWidth={2.25} aria-hidden="true" />
+                                            </span>
+                                            {tx('Delete all unpublished', 'Borrar todos los sin publicar')}
+                                        </button>
                                         <button onClick={() => { setShowMoreActions(false); setShowApplyTemplate(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
                                             <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
@@ -7202,7 +7809,7 @@ ${dayBlocks}
                                                 {(n.filledStaff || []).map((name, i) => (
                                                     <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0 bg-green-100 text-green-800 rounded-full text-[10px] font-bold">
                                                         ✓ {name.split(' ')[0]}
-                                                        <button onClick={() => unfillNeedSlot(n, name)}
+                                                        <button onClick={() => askUnfillNeedSlot(n, name)}
                                                             className="text-green-600 hover:text-red-600 ml-0.5">×</button>
                                                     </span>
                                                 ))}
@@ -7535,6 +8142,7 @@ ${dayBlocks}
                                 openSlots={memoOpenSlots}
                                 openOffers={memoOpenOffers}
                                 onFillSlot={onFillSlotCb}
+                                onDropNeed={canEdit ? onDropNeedCb : null}
                                 /* Speed slot add — wires the "+ slot" inline
                                     button on each unassigned-row day cell to
                                     open the StaffingNeedModal pre-filled with
@@ -7572,6 +8180,7 @@ ${dayBlocks}
                                 onDayHeaderClick={canEdit ? onDayHeaderClickCb : null}
                                 onToggleDateOpen={staffIsAdmin ? onToggleDateOpenCb : null}
                                 dateHasOpenOverride={dateHasOpenOverrideCb}
+                                dateStatus={dateStatusCb}
                                 dateClosedByRecurring={dateClosedByRecurringCb}
                                 // closedWeekdays is passed ONLY so React.memo
                                 // re-renders the grid when recurring-closure
@@ -7978,7 +8587,8 @@ ${dayBlocks}
                     onCustomShift={() => {
                         const { staff, dateStr } = fillSlotChooser;
                         setFillSlotChooser(null);
-                        openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+                        openAddModal({ staffName: staff.name, date: dateStr, side,
+            location: storeLocation !== 'both' ? storeLocation : staff.location });
                     }}
                     isEn={isEn}
                 />
@@ -9127,13 +9737,15 @@ function QuickAddSlot({ dateStr, isEn, onAddSlot }) {
 // every unrelated parent tick (notifications, clock, modals). Inner name
 // kept as WeeklyGrid for clean React DevTools display, same pattern as
 // ShiftCube below.
-const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, ghostShifts = EMPTY_CELL_SHIFTS, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onEditShift, movingShiftId, onMoveToCell, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, shiftPresets, onEditPresets, onUpdateShiftTimes, onPtoChipClick,
+const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, ghostShifts = EMPTY_CELL_SHIFTS, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onEditShift, movingShiftId, onMoveToCell, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, dateStatus, closedWeekdays, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, shiftPresets, onEditPresets, onUpdateShiftTimes, onPtoChipClick,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
     // openOffers: from shifts.offerStatus === 'open', per-day chips ("📣 Sara")
     openSlots = [], openOffers = [], side = 'foh', storeLocation = 'webster',
     onFillSlot,
+    // Drag an Unassigned seat onto a person's day (Andrew 2026-09-23).
+    onDropNeed,
     // Speed slot add — surfaces a "+ slot" button in each unassigned-row
     // day cell. Always visible when canEdit so managers can drop slots
     // onto a fresh empty week in one tap each. (Replaced earlier
@@ -9229,7 +9841,9 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
         };
         const onDragOver = (e) => {
             const types = e.dataTransfer && e.dataTransfer.types;
-            if (!types || !Array.from(types).includes('text/shift-id')) return;
+            if (!types) return;
+            const typeList = Array.from(types);
+            if (!typeList.includes('text/shift-id') && !typeList.includes('text/need-id')) return;
             const h = window.innerHeight;
             const y = e.clientY;
             if (y >= h - EDGE) {
@@ -9282,11 +9896,14 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
         const map = new Map();
         for (const d of days) {
             const dStr = toDateStr(d);
+            // Per-store status from the parent (2026-09-23) — the same rule
+            // every generator uses, so the grid can't disagree with them.
+            const st = dateStatus ? dateStatus(dStr) : null;
             const dayBlocks = (blocksByDate?.get(dStr)) || [];
-            const hasOverride = !!(dateHasOpenOverride && dateHasOpenOverride(dStr));
-            const oneOff = !hasOverride && dayBlocks.find(b => b.type === 'closed');
-            const recurringClosed = !hasOverride && !oneOff && !!(dateClosedByRecurring && dateClosedByRecurring(dStr));
-            const closed = !!oneOff || recurringClosed;
+            const hasOverride = st ? st.overridden : !!(dateHasOpenOverride && dateHasOpenOverride(dStr));
+            const oneOff = st ? st.oneOffBlock : (!hasOverride && dayBlocks.find(b => b.type === 'closed'));
+            const recurringClosed = st ? st.recurring : (!hasOverride && !oneOff && !!(dateClosedByRecurring && dateClosedByRecurring(dStr)));
+            const closed = st ? st.closed : (!!oneOff || recurringClosed);
             let reason = null;
             if (oneOff) {
                 reason = (oneOff.reason && oneOff.reason.trim())
@@ -9297,7 +9914,10 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
             map.set(dStr, { closed, reason, hasOverride, oneOff, recurringClosed });
         }
         return map;
-    }, [days, blocksByDate, dateHasOpenOverride, dateClosedByRecurring, isEn]);
+    // closedWeekdays is a dep so a weekly-closure toggle re-renders THIS week
+    // immediately (2026-09-23: the stable callbacks never changed identity,
+    // so the grid kept the old closed map and blocked taps on it).
+    }, [days, blocksByDate, dateHasOpenOverride, dateClosedByRecurring, dateStatus, closedWeekdays, isEn]);
 
     // Group shifts by staff and date for fast lookup. Sorted here ONCE per
     // snapshot (2026-07-26 perf audit M4) — the per-cell `.sort()` in the
@@ -9678,14 +10298,24 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                                             {slots.map(n => {
                                                 const remaining = Math.max(0, (n.count || 0) - (n.filledStaff || []).length);
                                                 const roleGroup = n.roleGroup ? SLOT_ROLE_BY_ID[n.roleGroup] : null;
+                                                // Drag a seat DOWN onto a name (Andrew 2026-09-23);
+                                                // tap still opens the who-can-work picker.
+                                                const canDragSlot = canEdit && !!onDropNeed && remaining > 0;
+                                                const wasList = (n.unassignedFrom || []).length
+                                                    ? ` · ${isEn ? 'was' : 'era'} ${(n.unassignedFrom || []).join(', ')}` : '';
                                                 return (
                                                     <button key={'slot-' + n.id}
                                                         onClick={() => onFillSlot && onFillSlot(n)}
-                                                        title={`${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)}${roleGroup && roleGroup.id !== 'any' ? ' · ' + (isEn ? roleGroup.labelEn : roleGroup.labelEs) : ''}`}
-                                                        className="w-full text-left rounded-md bg-white hover:bg-blue-100 border border-blue-300 px-1.5 py-1 transition active:scale-95 shadow-sm">
+                                                        draggable={canDragSlot}
+                                                        onDragStart={canDragSlot ? (e) => {
+                                                            e.dataTransfer.setData('text/need-id', n.id);
+                                                            e.dataTransfer.effectAllowed = 'move';
+                                                        } : undefined}
+                                                        title={`${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)}${roleGroup && roleGroup.id !== 'any' ? ' · ' + (isEn ? roleGroup.labelEn : roleGroup.labelEs) : ''}${wasList}${canDragSlot ? (isEn ? ' · drag onto a name, or tap' : ' · arrastra a un nombre, o toca') : ''}`}
+                                                        className={`w-full text-left rounded-md bg-white hover:bg-blue-100 border border-blue-300 px-1.5 py-1 transition active:scale-95 shadow-sm ${canDragSlot ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                                                         <div className="flex items-center justify-between gap-1">
                                                             <span className="text-[10px] font-black text-blue-700 tabular-nums truncate">
-                                                                📋 {formatTime12h(n.startTime).replace(':00','')}
+                                                                📋 {formatTime12h(n.startTime).replace(':00','')}{n.fromUnassign ? `–${formatTime12h(n.endTime).replace(':00','')}` : ''}
                                                             </span>
                                                             {remaining > 1 && (
                                                                 <span className="text-[9px] font-bold text-blue-700 leading-tight">×{remaining}</span>
@@ -9852,7 +10482,9 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                                             e.preventDefault();
                                             e.currentTarget.classList.remove('dd-dragover');
                                             const shiftId = e.dataTransfer.getData('text/shift-id');
-                                            if (shiftId && onDropShift) onDropShift(shiftId, s.name, dStr);
+                                            if (shiftId && onDropShift) { onDropShift(shiftId, s.name, dStr); return; }
+                                            const needId = e.dataTransfer.getData('text/need-id');
+                                            if (needId && onDropNeed) onDropNeed(needId, s.name, dStr);
                                         }}
                                         className={`relative border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''} ${movingShiftId && canEdit && !closed ? 'cursor-pointer ring-1 ring-inset ring-dd-green/50 hover:bg-dd-green-50' : ''}`}>
                                         {/* 2026-05-16 — closed-day watermark.
@@ -12424,7 +13056,7 @@ function TimeOffModal({ onClose, onAdd, onRemove, onSetStatus, entries, staffLis
     // Which of the picked dates land on a blackout? A manager can still add
     // it (that's the exception), but we SHOW it so it's a deliberate choice —
     // not a silent override. Staff self-serve hard-blocks these; managers don't.
-    const blockedInRange = blockedDatesInRange(form.startDate, form.endDate, blocksByDate);
+    const blockedInRange = blockedDatesInRange(form.startDate, form.endDate, blocksByDate, { types: ['no_timeoff'] });
     return (
         <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">

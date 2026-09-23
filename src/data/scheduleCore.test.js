@@ -12,8 +12,7 @@ import {
     blockedDatesInRange, stripShiftTimestamps, rehydrateShiftTimestamps,
     formatTime12h, shortTime12h, ptoIsPartial, ptoWindowLabel, timeRangesOverlap,
     hoursBetween, dayPaidHours, isDoubleDay, formatHours, hoursColor,
-    minorShiftWarnings, MINOR_WEEKLY_HOURS_MAX,
-} from './scheduleCore';
+    minorShiftWarnings, MINOR_WEEKLY_HOURS_MAX, storeDateStatus, blockAppliesTo } from './scheduleCore';
 import { GOLDEN_STAFF, goldenBlocksByDate } from './__fixtures__/goldenSchedule';
 
 const byName = (n) => GOLDEN_STAFF.find(s => s.name === n);
@@ -423,5 +422,43 @@ describe('planWeekCopy', () => {
         });
         expect(toCreate).toHaveLength(1);
         expect(skipped.badDate).toBe(1);
+    });
+});
+
+describe('storeDateStatus — closures are per store (2026-09-23)', () => {
+    const MON = '2026-09-28', SUN = '2026-09-27';
+    const cw = { webster: [0], maryland: [0] };
+    it('a Webster-only closure closes Webster, not Maryland, and not the both view', () => {
+        const blocks = [{ type: 'closed', location: 'webster', reason: 'Catering' }];
+        expect(storeDateStatus({ dateStr: MON, loc: 'webster', blocks, closedWeekdays: cw }).closed).toBe(true);
+        expect(storeDateStatus({ dateStr: MON, loc: 'maryland', blocks, closedWeekdays: cw }).closed).toBe(false);
+        expect(storeDateStatus({ dateStr: MON, loc: 'both', blocks, closedWeekdays: cw }).closed).toBe(false);
+    });
+    it('a both-store closure closes everything; per-store closures on both stores close the both view', () => {
+        expect(storeDateStatus({ dateStr: MON, loc: 'maryland', blocks: [{ type: 'closed', location: 'both' }], closedWeekdays: cw }).closed).toBe(true);
+        expect(storeDateStatus({ dateStr: MON, loc: 'maryland', blocks: [{ type: 'closed' }], closedWeekdays: cw }).closed).toBe(true);
+        const two = [{ type: 'closed', location: 'webster' }, { type: 'closed', location: 'maryland' }];
+        expect(storeDateStatus({ dateStr: MON, loc: 'both', blocks: two, closedWeekdays: cw }).closed).toBe(true);
+    });
+    it("a Webster 'open' override on a Sunday opens Webster only", () => {
+        const blocks = [{ type: 'open_override', location: 'webster' }];
+        expect(storeDateStatus({ dateStr: SUN, loc: 'webster', blocks, closedWeekdays: cw })).toMatchObject({ closed: false, overridden: true });
+        expect(storeDateStatus({ dateStr: SUN, loc: 'maryland', blocks, closedWeekdays: cw })).toMatchObject({ closed: true, recurring: true });
+        expect(storeDateStatus({ dateStr: SUN, loc: 'both', blocks, closedWeekdays: cw }).closed).toBe(false);
+    });
+    it('a store override beats a both-store closed block for that store only', () => {
+        const blocks = [{ type: 'closed', location: 'both' }, { type: 'open_override', location: 'webster' }];
+        expect(storeDateStatus({ dateStr: MON, loc: 'webster', blocks, closedWeekdays: cw }).closed).toBe(false);
+        expect(storeDateStatus({ dateStr: MON, loc: 'maryland', blocks, closedWeekdays: cw }).closed).toBe(true);
+    });
+    it('weekly closures accept numbers or numeric strings', () => {
+        expect(storeDateStatus({ dateStr: SUN, loc: 'webster', blocks: [], closedWeekdays: { webster: ['0'] } }).recurring).toBe(true);
+        expect(storeDateStatus({ dateStr: MON, loc: 'webster', blocks: [], closedWeekdays: {} }).closed).toBe(false);
+    });
+    it('blockAppliesTo', () => {
+        expect(blockAppliesTo({ location: 'webster' }, 'webster')).toBe(true);
+        expect(blockAppliesTo({ location: 'webster' }, 'maryland')).toBe(false);
+        expect(blockAppliesTo({ location: 'webster' }, 'both')).toBe(false);
+        expect(blockAppliesTo({}, 'maryland')).toBe(true);
     });
 });

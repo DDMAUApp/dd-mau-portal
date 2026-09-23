@@ -80,3 +80,12 @@ describe('assessDenySwapRequest', () => {
         expect(assessDenySwapRequest(null).reason).toBe('gone');
     });
 });
+
+describe('assessCancelOffer refuses while a claim is pending (2026-09-23)', () => {
+    it('a pending claim blocks cancel and names the claimant', () => {
+        expect(assessCancelOffer({ offerStatus: 'pending', pendingClaimBy: 'Ben' })).toEqual({ ok: false, reason: 'pending_claim', claimant: 'Ben' });
+    });
+    it('an open offer with no claim still cancels', () => {
+        expect(assessCancelOffer({ offerStatus: 'open' })).toEqual({ ok: true, noop: false });
+    });
+});

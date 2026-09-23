@@ -84,7 +84,14 @@ export const TASK_TYPES = {
         // `available` boolean or a from/to window; legacy array slots
         // still count so any old completions stay valid.
         autoComplete: (staff) => {
-            if (!staff || !staff.availability) return false;
+            if (!staff) return false;
+            // "✓ All available" (and saving the untouched defaults) stores
+            // {} — the opt-out default — which has no day keys. The save
+            // path stamps availabilitySetAt so that still counts as SET
+            // (2026-09-23: new hires were blocked by the gate after
+            // choosing All available).
+            if (staff.availabilitySetAt) return true;
+            if (!staff.availability) return false;
             const av = staff.availability;
             if (typeof av !== 'object' || Array.isArray(av)) return false;
             for (const day of Object.keys(av)) {

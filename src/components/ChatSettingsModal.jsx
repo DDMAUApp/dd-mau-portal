@@ -15,15 +15,32 @@
 // everyone's list because members array is empty). The Cloud Function
 // (TODO) can do a true purge on a delay if we ever want it.
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 // 2026-07-13 audit: setDoc is CALLED below (chats_purged tombstone, line
 // ~328) but was missing from this import — the purge flow threw
 // "setDoc is not defined" at runtime. Same class as the 07-11 addDoc bug.
-import { doc, setDoc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch, query, limit, deleteField, arrayUnion, arrayRemove } from 'firebase/firestore';
+import {
+    doc, serverTimestamp, collection, writeBatch, query, limit, deleteField, arrayUnion, arrayRemove,
+    setDoc as _fsSetDoc,
+    deleteDoc as _fsDeleteDoc,
+    updateDoc as _fsUpdateDoc,
+    getDocs as _fsGetDocs,
+} from 'firebase/firestore';
+// 2026-09-23 chat audit m1 — shadow-the-primitives watchdog coverage (same
+// pattern as ChatThread / ChatCenter). Every write here is a user tap; a
+// wedged transport used to leave Save/Leave/Delete spinning forever with no
+// revive. Writes → watchdogWrite, reads → watchdogRead; batch commits are
+// wrapped at their call site.
+import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
+const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
 import {
     canEditChat, SEEN_VISIBILITY_OPTIONS, getSeenByVisibility,
     AUDIENCE_AUTO_KEYS, audienceAutoLabel, audienceMembersFor,
+    leaveBlockedByAutoAudience, mergeCoAdminEdits,
 } from '../data/chat';
 import { canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';
@@ -51,6 +68,42 @@ export default function ChatSettingsModal({
     const [seenByVisibility, setSeenByVisibility] = useState(() => getSeenByVisibility(chat));
     // Auto-add audience (groups only) — see the ✨ section below.
     const [autoAudience, setAutoAudience] = useState(chat.autoAudience || '');
+
+    // ── Follow the LIVE chat (2026-09-23 chat audit C1) ────────────────
+    // Every field above used to be frozen at first render, so a modal left
+    // open while someone else renamed the group / changed co-admins / added
+    // members (or opened on a partial object) wrote that stale copy back on
+    // Save — including `admins: []`. Now each piece re-derives from the live
+    // `chat` prop UNLESS the user has an in-progress local edit of it:
+    //   • name / emoji — until the user types / picks one (dirty refs)
+    //   • co-admins    — until the user toggles one; Save then MERGES the
+    //                    toggles onto the live array (mergeCoAdminEdits)
+    //   • members      — auto-saved; resync whenever no write is in flight
+    //   • read receipts / auto-add — auto-saved; resync from live
+    const nameDirtyRef = useRef(false);
+    const emojiDirtyRef = useRef(false);
+    const coAdminBaselineRef = useRef(null); // admins list when the user first toggled
+    const liveMembersSig = (Array.isArray(chat.members) ? chat.members : []).join('\u0001');
+    const liveAdminsSig = (Array.isArray(chat.admins) ? chat.admins : []).join('\u0001');
+    useEffect(() => {
+        if (!nameDirtyRef.current) setName(chat.name || '');
+    }, [chat.name]);
+    useEffect(() => {
+        if (!emojiDirtyRef.current) setEmoji(chat.emoji || '💬');
+    }, [chat.emoji]);
+    useEffect(() => {
+        if (coAdminBaselineRef.current === null) {
+            setCoAdmins(Array.isArray(chat.admins) ? chat.admins : []);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [liveAdminsSig]);
+    useEffect(() => {
+        setSeenByVisibility(getSeenByVisibility(chat));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chat.seenByVisibility]);
+    useEffect(() => {
+        setAutoAudience(chat.autoAudience || '');
+    }, [chat.autoAudience]);
     async function updateAutoAudience(next) {
         if (next === autoAudience) return;
         const prev = autoAudience;
@@ -69,7 +122,9 @@ export default function ChatSettingsModal({
                     autoAudience: next,
                     ...(missing.length > 0 ? { members: arrayUnion(...missing) } : {}),
                 });
-                if (missing.length > 0) setMembers(m => [...m, ...missing]);
+                // Set-union: the live resync may already have folded the
+                // local echo of this arrayUnion into `members`.
+                if (missing.length > 0) setMembers(m => Array.from(new Set([...m, ...missing])));
                 toast(missing.length > 0
                     ? tx(`Auto-add on — ${missing.length} matching staff joined now.`, `Auto-agregar activado — ${missing.length} del personal se unieron ahora.`)
                     : tx('Auto-add on — new matching staff will join automatically.', 'Auto-agregar activado — el personal nuevo que coincida se unirá automáticamente.'));
@@ -82,6 +137,14 @@ export default function ChatSettingsModal({
     }
     const [showAdd, setShowAdd] = useState(false);
     const [busy, setBusy] = useState(false);
+    // memberBusy is declared up here (was next to addMemberNow) so the live
+    // members resync below can wait out an in-flight add/remove.
+    const [memberBusy, setMemberBusy] = useState(false);
+    useEffect(() => {
+        if (memberBusy) return; // optimistic value stands until the write settles
+        setMembers(Array.isArray(chat.members) ? chat.members : []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [liveMembersSig, memberBusy]);
 
     const addable = useMemo(() => {
         // Location separation (2026-05-16): non-admins only see
@@ -108,11 +171,21 @@ export default function ChatSettingsModal({
         setBusy(true);
         try {
             const patch = {};
-            if (name.trim() && name.trim() !== chat.name) patch.name = name.trim().slice(0, 60);
-            if (emoji && emoji !== chat.emoji) patch.emoji = emoji;
+            if (nameDirtyRef.current && name.trim() && name.trim() !== chat.name) patch.name = name.trim().slice(0, 60);
+            if (emojiDirtyRef.current && emoji && emoji !== chat.emoji) patch.emoji = emoji;
             // Channels: never overwrite members from this modal.
-            if (!isChannel) {
-                patch.admins = coAdmins.filter(n => members.includes(n));
+            // 2026-09-23 chat audit C1: admins is written ONLY when the user
+            // actually toggled a co-admin, and then as a merge of those
+            // toggles onto the LIVE array — never this modal's snapshot
+            // (which could be stale, or [] from a partial object).
+            if (!isChannel && coAdminBaselineRef.current !== null) {
+                const nextAdmins = mergeCoAdminEdits({
+                    liveAdmins: chat.admins,
+                    liveMembers: chat.members,
+                    baseline: coAdminBaselineRef.current,
+                    local: coAdmins,
+                });
+                if (nextAdmins) patch.admins = nextAdmins;
             }
             // Read-receipts visibility is now auto-saved via
             // updateSeenByVisibility (below) when the user taps an
@@ -162,8 +235,8 @@ export default function ChatSettingsModal({
     // Each Add or Remove writes to Firestore immediately so the
     // change is durable the moment the user taps. No "save before
     // closing" gotcha. Optimistic local update so the UI moves
-    // instantly; we rollback if the write fails.
-    const [memberBusy, setMemberBusy] = useState(false);
+    // instantly; we rollback if the write fails. (memberBusy state is
+    // declared near the top — the live resync effect reads it.)
     async function addMemberNow(name) {
         if (!canEdit || isDm || memberBusy) return;
         const prev = members;
@@ -209,6 +282,12 @@ export default function ChatSettingsModal({
         const prevCo = coAdmins;
         const nextCo = prevCo.filter(n => n !== name);
         setCoAdmins(nextCo);
+        // Keep a pending co-admin edit's baseline honest: the removed member
+        // is also arrayRemove'd from admins below, so Save must not treat
+        // them as an explicit co-admin removal/add.
+        if (coAdminBaselineRef.current) {
+            coAdminBaselineRef.current = coAdminBaselineRef.current.filter(n => n !== name);
+        }
         setMemberBusy(true);
         // Heads-up when auto-add would immediately undo this removal
         // (the person still matches the group's audience).
@@ -248,6 +327,25 @@ export default function ChatSettingsModal({
 
     async function handleLeave() {
         if (busy) return;
+        // 2026-09-23 chat audit M6 — in an auto-add group the ADD-only
+        // audience sync (ChatCenter, managers' devices) re-adds anyone who
+        // matches, so Leave "worked" and silently reverted seconds later.
+        // Explain instead of pretending. Uses the modal's live-synced
+        // autoAudience (reflects an Off the user just picked above).
+        const viewerRec = viewer || (staffList || []).find(s => s?.name === staffName) || null;
+        if (leaveBlockedByAutoAudience({ ...chat, autoAudience }, viewerRec)) {
+            const aud = audienceAutoLabel(autoAudience, isEs);
+            toast(canEdit
+                ? tx(
+                    `This group auto-adds ${aud} staff, and that includes you — you'd be added right back. Turn "Auto-add new staff" Off above first, then leave.`,
+                    `Este grupo agrega automáticamente al personal de ${aud}, y eso te incluye — te agregaría de nuevo. Apaga "Auto-agregar personal nuevo" arriba primero y luego sal.`,
+                )
+                : tx(
+                    `You can't leave this group: it auto-adds ${aud} staff, and that includes you — you'd be added right back. Ask a manager to change the group's auto-add setting.`,
+                    `No puedes salir de este grupo: agrega automáticamente al personal de ${aud}, y eso te incluye — te agregaría de nuevo. Pídele a un gerente que cambie el auto-agregar del grupo.`,
+                ), { kind: 'warn', duration: 9000 });
+            return;
+        }
         const ok = window.confirm(tx(
             'Leave this chat? You will stop getting notifications.',
             '¿Salir de este chat? Dejarás de recibir notificaciones.'
@@ -255,13 +353,18 @@ export default function ChatSettingsModal({
         if (!ok) return;
         setBusy(true);
         try {
+            // 2026-09-23 chat audit C1 — atomic arrayRemove of JUST me. The
+            // old whole-array replace was computed from this modal's copy of
+            // the chat (possibly stale, or a partial object with no members/
+            // admins) and could write members: [] / admins: [] for everyone.
             await updateDoc(doc(db, 'chats', chat.id), {
-                members: (chat.members || []).filter(n => n !== staffName),
-                admins: (chat.admins || []).filter(n => n !== staffName),
+                members: arrayRemove(staffName),
+                admins: arrayRemove(staffName),
             });
             onDeleted();
         } catch (e) {
             console.warn('leave failed:', e);
+            toast(tx('Could not leave — check connection and try again.', 'No se pudo salir — revisa la conexión e intenta de nuevo.'), { kind: 'error' });
         } finally {
             setBusy(false);
         }
@@ -355,7 +458,7 @@ export default function ChatSettingsModal({
                     if (snap.empty) break;
                     const batch = writeBatch(db);
                     snap.forEach(d => batch.delete(d.ref));
-                    await batch.commit();
+                    await watchdogWrite(batch.commit());
                     if (snap.size < 400) break;
                 }
             };
@@ -414,6 +517,10 @@ export default function ChatSettingsModal({
 
     function toggleCoAdmin(n) {
         if (!canEdit) return;
+        // First toggle freezes the baseline this edit is relative to (the
+        // co-admins currently shown); from here the list stops following
+        // the live doc until Save merges the toggles onto it.
+        if (coAdminBaselineRef.current === null) coAdminBaselineRef.current = coAdmins.slice();
         setCoAdmins(prev => prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n]);
     }
 
@@ -466,7 +573,7 @@ export default function ChatSettingsModal({
                                             tx('Enter an emoji', 'Ingresa un emoji'),
                                             emoji
                                         );
-                                        if (next) setEmoji(next.slice(0, 2));
+                                        if (next) { emojiDirtyRef.current = true; setEmoji(next.slice(0, 2)); }
                                     }}
                                     className="w-12 h-12 rounded-lg bg-dd-sage-50 border border-dd-line text-2xl flex items-center justify-center disabled:opacity-60"
                                 >
@@ -475,7 +582,7 @@ export default function ChatSettingsModal({
                                 <input
                                     type="text"
                                     value={name}
-                                    onChange={(e) => setName(e.target.value)}
+                                    onChange={(e) => { nameDirtyRef.current = true; setName(e.target.value); }}
                                     disabled={!canEdit}
                                     maxLength={60}
                                     className="flex-1 px-3 py-2 rounded-lg bg-white border border-dd-line text-sm focus:outline-none focus:ring-2 focus:ring-dd-green/30 disabled:bg-dd-bg disabled:text-dd-text-2"

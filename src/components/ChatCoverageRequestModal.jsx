@@ -21,9 +21,22 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import {
-    collection, query, where, onSnapshot, addDoc, doc,
-    serverTimestamp, updateDoc, getDoc,
+    collection, query, where, onSnapshot, doc,
+    serverTimestamp,
+    addDoc as _fsAddDoc,
+    updateDoc as _fsUpdateDoc,
+    getDoc as _fsGetDoc,
 } from 'firebase/firestore';
+// 2026-09-23 chat audit m1 — watchdog shadows (see firestoreRevive.js). The
+// getDoc GATES a user-pressed Post, so it gets WRITE posture (house rule
+// from the 2026-08-29 Money Count fix: a gating read under watchdogRead
+// never escalates and can hang the button forever).
+// (This modal is no longer reachable from the chat + menu — M7 — but stays
+// correct in case it is re-wired.)
+import { watchdogWrite } from '../data/firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+const getDoc = (...a) => watchdogWrite(_fsGetDoc(...a));
 import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
 import { channelDocId } from '../data/chat';

@@ -23,10 +23,13 @@
 //   • Templates — one-tap quick fills for common kitchen messages
 //   • Live preview that mimics the actual sticker
 
-import { useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
-import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs, subscribePrinterWarmState, getCachedPrinterConfig } from '../data/labelPrinting';
+import StickerMatchSuggestions from './StickerMatchSuggestions';
+import { buildStickerMatchIndex, findStickerMatches, stickerNameQuery } from '../data/stickerMatch';
+import { normalize } from '../data/chatSearch';
+import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs, subscribePrinterWarmState, getCachedPrinterConfig, pendingPrintCount } from '../data/labelPrinting';
 
 const RECENTS_KEY = 'ddmau:printCenter:recents';
 const MAX_RECENTS = 6;
@@ -37,6 +40,12 @@ export default function PrintCenter({
     language = 'en',
     isAdmin = false,
     onClose,
+    // Andrew 2026-09-23 — the message box doubles as a search bar over the
+    // existing stickers (sticker page passes these; other hosts don't, and
+    // the feature stays off there). onUseSticker(row) hands the pick back
+    // so the host opens that sticker's normal print screen.
+    stickerMatchRows = null,
+    onUseSticker = null,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
@@ -87,6 +96,25 @@ export default function PrintCenter({
     }, [printLocation, printSlot]);
 
     const [text, setText] = useState('');
+    // "We already have this sticker" — live matches under the box, and a
+    // choice popup if they hit Print on an exact match. keptCustomKey = the
+    // name they chose to keep as custom (suppresses both for that text).
+    const matchIndex = useMemo(
+        () => (onUseSticker && stickerMatchRows ? buildStickerMatchIndex(stickerMatchRows) : null),
+        [stickerMatchRows, onUseSticker]);
+    const deferredText = useDeferredValue(text);
+    const nameQuery = stickerNameQuery(deferredText);
+    const nameKey = normalize(nameQuery);
+    const [keptCustomKey, setKeptCustomKey] = useState(null);
+    const [matchChoice, setMatchChoice] = useState(null); // exact matches awaiting a decision
+    const stickerMatches = useMemo(
+        () => (matchIndex && nameKey && nameKey !== keptCustomKey ? findStickerMatches(nameQuery, matchIndex, { limit: 5 }) : []),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [matchIndex, nameKey, keptCustomKey]);
+    const pickExistingSticker = (row) => {
+        setMatchChoice(null);
+        onUseSticker?.(row);
+    };
     const [size, setSize] = useState('large');
     const [bold, setBold] = useState(true);
     const [align, setAlign] = useState('center');
@@ -150,11 +178,21 @@ export default function PrintCenter({
         () => getLabelSizePresets(printerType),
         [printerType]);
 
-    const handlePrint = async () => {
+    const handlePrint = async (opts = {}) => {
         if (printing) return;
         if (!text.trim()) {
             toast(tx('Type something to print first.', 'Escribe algo para imprimir.'), { kind: 'error' });
             return;
+        }
+        // The name they typed IS an existing sticker → make them choose
+        // (the real one carries its use-by date + allergens).
+        if (matchIndex && !opts.skipMatch) {
+            const q = stickerNameQuery(text);
+            const key = normalize(q);
+            if (key && key !== keptCustomKey) {
+                const exact = findStickerMatches(q, matchIndex, { limit: 3 }).filter(m => m.exact);
+                if (exact.length) { setMatchChoice(exact); return; }
+            }
         }
         if (!printerReady) {
             toast(tx(
@@ -162,6 +200,26 @@ export default function PrintCenter({
                 'No hay impresora configurada. Configúrala en Admin.',
             ), { kind: 'error' });
             return;
+        }
+        // 2026-09-23 review (M4) — the same two guards PrintLabelModal has
+        // (audit 2026-07-22 M4 / 2026-07-26). This panel re-arms Print ~450ms
+        // after a tap (optimistic hand-off), so a second tap while a slow or
+        // sleeping printer is still working used to queue a silent DUPLICATE
+        // that came out when the printer woke. Make both an informed choice;
+        // never auto-drop or re-send a job.
+        if (warmState === 'offline') {
+            const goAnyway = window.confirm(tx(
+                'The printer is not responding. Try to print anyway?',
+                'La impresora no responde. ¿Intentar imprimir de todos modos?',
+            ));
+            if (!goAnyway) return;
+        }
+        if (pendingPrintCount() > 0) {
+            const printToo = window.confirm(tx(
+                'The last print is still being sent to the printer. Print this one too?',
+                'La impresión anterior todavía se está enviando. ¿Imprimir esta también?',
+            ));
+            if (!printToo) return;
         }
         setPrinting(true);
         // Capture the inputs NOW — with the optimistic hand-off below, staff
@@ -321,7 +379,10 @@ export default function PrintCenter({
                                 value={text}
                                 onChange={(e) => setText(e.target.value.slice(0, 2000))}
                                 rows={6}
-                                placeholder={tx(
+                                placeholder={matchIndex
+                                    ? tx('Type a name — matching stickers pop up — or anything else to print. Multiple lines OK.',
+                                         'Escribe un nombre — aparecen etiquetas que coinciden — o lo que quieras imprimir.')
+                                    : tx(
                                     'Type anything — multiple lines OK. Try a template above to start.',
                                     'Escribe lo que quieras — varias líneas. Prueba una plantilla arriba.',
                                 )}
@@ -330,6 +391,12 @@ export default function PrintCenter({
                             <div className="text-[10px] text-dd-text-2/70 mt-0.5 text-right">
                                 {text.length} / 2000
                             </div>
+                            <StickerMatchSuggestions
+                                matches={stickerMatches}
+                                isEs={isEs}
+                                onPick={pickExistingSticker}
+                                onDismiss={() => setKeptCustomKey(nameKey)}
+                            />
                         </div>
 
                         {/* Size + bold + align */}
@@ -508,7 +575,11 @@ export default function PrintCenter({
                             </span>
                             <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 min-h-[120px]"
                                 style={previewBodyStyle}>
-                                {text || (
+                                {/* <span>-wrapped for the same Translate
+                                    removeChild crash class as the Print button
+                                    (Clear swapped a bare text node for the
+                                    placeholder element). */}
+                                {text ? <span>{text}</span> : (
                                     <span className="text-dd-text-2/50 italic font-normal text-sm">
                                         {tx('Type a message to see it here…', 'Escribe un mensaje para verlo aquí…')}
                                     </span>
@@ -612,18 +683,62 @@ export default function PrintCenter({
                         {tx('Clear', 'Limpiar')}
                     </button>
                     <button
-                        onClick={handlePrint}
+                        onClick={() => handlePrint()}
                         disabled={!printerReady || printing || !text.trim()}
                         className={`flex-1 py-2.5 rounded-lg font-bold text-white transition ${(!printerReady || printing || !text.trim())
                             ? 'bg-dd-text-2/40 cursor-not-allowed'
                             : 'bg-dd-green hover:bg-dd-green-700 active:scale-95 shadow-sm'}`}>
+                        {/* Both branches wrapped in ONE stable <span> (2026-09-23
+                            review M4) — same Google-Translate removeChild crash
+                            fix as PrintLabelModal: swapping a bare string for a
+                            multi-node fragment let React try to remove a text
+                            node Translate had already replaced → the tab
+                            crashed. Do NOT collapse back to string/fragment. */}
                         {printing
-                            ? tx('Printing…', 'Imprimiendo…')
-                            : <>🖨 {tx(`Print ${copies > 1 ? copies + '× ' : ''}label`, `Imprimir ${copies > 1 ? copies + '× ' : ''}etiqueta`)}</>}
+                            ? <span>{tx('Printing…', 'Imprimiendo…')}</span>
+                            : <span>🖨 {tx(`Print ${copies > 1 ? copies + '× ' : ''}label`, `Imprimir ${copies > 1 ? copies + '× ' : ''}etiqueta`)}</span>}
                     </button>
                 </div>
             </div>
         </div>
+        {/* Existing-sticker choice (Andrew 2026-09-23): the typed name is
+            already a sticker — use it, or keep the custom print. */}
+        {matchChoice && (
+            <div className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-3"
+                role="dialog" aria-modal="true" onClick={() => setMatchChoice(null)}>
+                <div className="bg-white w-full sm:max-w-sm rounded-2xl shadow-xl p-4" onClick={(e) => e.stopPropagation()}>
+                    <h3 className="text-base font-black text-dd-text">
+                        {tx('We already have this sticker', 'Ya tenemos esta etiqueta')}
+                    </h3>
+                    <p className="text-sm text-dd-text-2 mt-1">
+                        {tx('Use it so the label gets its use-by date and allergens — or keep your custom print.',
+                            'Úsala para que la etiqueta tenga su fecha de uso y alérgenos — o imprime la tuya.')}
+                    </p>
+                    <div className="mt-3 space-y-2">
+                        {matchChoice.map(({ row }) => {
+                            const name = (isEs ? (row.nameEs || row.nameEn) : row.nameEn) || row.nameEs || '';
+                            const cat = isEs ? (row.categoryEs || row.category) : row.category;
+                            return (
+                                <button key={row.id} type="button" onClick={() => pickExistingSticker(row)}
+                                    className="w-full px-3 py-3 rounded-xl bg-dd-green text-white font-black text-left active:scale-[0.99] shadow-sm">
+                                    <span className="block">✓ {tx(`Use “${name}”`, `Usar “${name}”`)}</span>
+                                    {cat && <span className="block text-[11px] font-semibold opacity-85">{cat}</span>}
+                                </button>
+                            );
+                        })}
+                        <button type="button"
+                            onClick={() => { setKeptCustomKey(normalize(stickerNameQuery(text))); setMatchChoice(null); handlePrint({ skipMatch: true }); }}
+                            className="w-full px-3 py-2.5 rounded-xl bg-white border border-dd-line text-dd-text font-bold active:scale-[0.99]">
+                            {tx('Keep my custom print', 'Imprimir la mía')}
+                        </button>
+                        <button type="button" onClick={() => setMatchChoice(null)}
+                            className="w-full py-2 text-sm font-bold text-dd-text-2">
+                            {tx('Cancel', 'Cancelar')}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
         </ModalPortal>
     );
 }

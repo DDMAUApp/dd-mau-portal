@@ -43,6 +43,21 @@ export function locationGroupKey(raw, customByLower) {
     return s;
 }
 
+/** Prefix of the Location view's per-section fold keys in collapsedCats. */
+export const LOC_FOLD_PREFIX = 'loc::';
+
+/** collapsedCats with everything EXCEPT the Location view's folds dropped.
+ *  Clearing the search resets the other views' collapsed categories (as it
+ *  always has) but must not un-fold the location sections someone folded.
+ *  Returns the SAME object when nothing would change (no extra render). */
+export function keepLocationFolds(collapsed) {
+    const keys = Object.keys(collapsed || {});
+    if (keys.every((k) => k.startsWith(LOC_FOLD_PREFIX))) return collapsed;
+    const out = {};
+    for (const k of keys) if (k.startsWith(LOC_FOLD_PREFIX)) out[k] = collapsed[k];
+    return out;
+}
+
 /** Full section title: canonical labels translate; custom ones get title case. */
 export function locationTitle(loc, isEs) {
     if (INVENTORY_LOCATIONS.includes(loc)) return locationLabel(loc, isEs);

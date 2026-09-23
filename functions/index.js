@@ -410,6 +410,19 @@ exports.dispatchNotification = onDocumentCreated(
             // the ping for exactly that population. Manager-authored,
             // rare, deliberate.
             "announcement",
+            // 2026-09-23 review — personal schedule changes/outcomes and
+            // cover requests. Off-shift staff ARE the audience (a cover
+            // request goes to people who aren't working; "you were
+            // scheduled" / "time off approved" is about your own days),
+            // yet the gate was eating them: in 14 days it suppressed 36 of
+            // 82 week_published and 10 of 98 pto_approved pushes. These are
+            // already LOCKED_ON above (can't be muted) for the same reason.
+            "week_published",
+            "shift_added", "shift_deleted", "shift_reassigned",
+            "shift_date_changed", "shift_time_changed",
+            "pto_approved", "pto_denied", "pto_reopened",
+            "swap_approved", "swap_denied",
+            "cover_request", "shift_open",
         ]);
 
         // ── Master notification-policy gate (2026-09-02 chat audit) ──

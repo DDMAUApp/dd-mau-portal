@@ -160,6 +160,108 @@ function bytesToBase64(bytes) {
     return btoa(bin);
 }
 
+// ── IPP response status (2026-09-23 review M3) ───────────────────────────
+// An IPP printer reports job errors INSIDE an HTTP 200 body: bytes 0-1 are
+// the IPP version, bytes 2-3 the status-code, bytes 4-7 the request-id
+// (RFC 8010 §3.1.1). 0x0000-0x00FF = successful-*; anything above is a
+// client/server error (not accepting jobs, busy, bad document…). We used to
+// read only the HTTP status, so a rejected job looked printed.
+//
+// CapacitorHttp with responseType 'arraybuffer' hands back the body as a
+// BASE64 STRING on both native platforms (iOS base64EncodedString; Android
+// Base64.DEFAULT, which wraps lines — hence the whitespace strip). Returns
+// null whenever the body isn't clearly an IPP response, so callers fall back
+// to the old HTTP-status-only behavior instead of inventing a failure.
+export function ippResponseBytes(data) {
+    if (data == null) return null;
+    if (data instanceof Uint8Array) return data;
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    if (typeof data !== 'string') return null;
+    const s = data.replace(/\s+/g, '');
+    if (!s || s.length % 4 === 1 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) return null;
+    try {
+        const bin = atob(s);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    } catch {
+        return null;
+    }
+}
+
+// { version, statusCode, requestId } or null when `data` isn't a
+// recognizable IPP response (wrong version bytes, wrong request-id, no
+// attribute-group delimiter where one must be).
+export function parseIppResponseStatus(data, expectedRequestId = null) {
+    const b = ippResponseBytes(data);
+    if (!b || b.length < 9) return null;
+    const major = b[0], minor = b[1];
+    if ((major !== 1 && major !== 2) || minor > 2) return null;
+    const requestId = ((b[4] << 24) | (b[5] << 16) | (b[6] << 8) | b[7]) >>> 0;
+    if (expectedRequestId != null && requestId !== (expectedRequestId >>> 0)) return null;
+    // Byte 8 must be a delimiter tag (operation-attributes 0x01 … or the
+    // end-of-attributes 0x03) — a cheap guard against a non-IPP body that
+    // happens to start with plausible version bytes.
+    if (b[8] < 0x01 || b[8] > 0x0F) return null;
+    return { version: `${major}.${minor}`, statusCode: (b[2] << 8) | b[3], requestId };
+}
+
+export function ippStatusIsError(code) {
+    return Number(code) > 0x00FF;
+}
+
+const IPP_STATUS_NAMES = Object.freeze({
+    0x0400: 'bad request', 0x0401: 'forbidden', 0x0402: 'not authenticated',
+    0x0403: 'not authorized', 0x0404: 'not possible', 0x0405: 'timeout',
+    0x0406: 'not found', 0x0407: 'gone', 0x0408: 'request too large',
+    0x0409: 'request value too long', 0x040A: 'document format not supported',
+    0x040B: 'attributes or values not supported', 0x040C: 'URI scheme not supported',
+    0x040D: 'charset not supported', 0x040E: 'conflicting attributes',
+    0x040F: 'compression not supported', 0x0410: 'compression error',
+    0x0411: 'document format error', 0x0412: 'document access error',
+    0x0500: 'internal error', 0x0501: 'operation not supported',
+    0x0502: 'service unavailable', 0x0503: 'IPP version not supported',
+    0x0504: 'device error', 0x0505: 'temporary error', 0x0506: 'not accepting jobs',
+    0x0507: 'busy', 0x0508: 'job canceled', 0x0509: 'multiple-document jobs not supported',
+});
+
+// Human-readable reason for the print log / debugging (English only — the
+// staff-facing toast is the bilingual 'printer_rejected' mapping).
+export function ippStatusMessage(code) {
+    const n = Number(code) || 0;
+    const hex = `0x${n.toString(16).padStart(4, '0')}`;
+    const name = IPP_STATUS_NAMES[n]
+        || (n >= 0x0500 ? 'server error' : n >= 0x0400 ? 'client error' : 'error');
+    return `Printer rejected the job: ${name} (IPP ${hex})`;
+}
+
+// Pure: CapacitorHttp response → { ok, status, error?, ippStatus?, message? }.
+// Non-2xx HTTP keeps the old shape ({ ok:false, status }); a 2xx whose body
+// is an IPP error becomes 'printer_rejected'; a 2xx with an unreadable body
+// stays ok (old behavior — never invent a failure we can't see).
+export function interpretIppHttpResponse(res, requestId = null) {
+    const status = Number(res?.status) || 0;
+    if (!(status >= 200 && status < 300)) return { ok: false, status };
+    const ipp = parseIppResponseStatus(res?.data, requestId);
+    if (ipp && ippStatusIsError(ipp.statusCode)) {
+        return {
+            ok: false, status, error: 'printer_rejected',
+            ippStatus: ipp.statusCode, message: ippStatusMessage(ipp.statusCode),
+        };
+    }
+    return ipp ? { ok: true, status, ippStatus: ipp.statusCode } : { ok: true, status };
+}
+
+// Wake/probe verdict (Get-Printer-Attributes). Any HTTP reply still means
+// "awake" — EXCEPT a body that parses as an IPP error, which means the
+// printer answered but isn't ready (booting / service unavailable). Pure.
+export function probeAnsweredReady(res, requestId = 1) {
+    if (!(Number(res?.status) > 0)) return false;
+    const ipp = parseIppResponseStatus(res?.data, requestId);
+    return !(ipp && ippStatusIsError(ipp.statusCode));
+}
+
 // POST one IPP job to the printer. Native only (CapacitorHttp binary body).
 // Returns { ok, status, error } — NEVER throws. When the printer is asleep,
 // off, or its DHCP IP has drifted, iOS's URLSession rejects the CapacitorHttp
@@ -175,7 +277,11 @@ function bytesToBase64(bytes) {
 // (`connectTimeout ?? readTimeout`), so a smaller connect value silently
 // became the TOTAL request budget on iPhone/iPad. See the matching Epson
 // double-print fix in labelPrinting.js sendToPrinter.
-async function postIpp(ip, ippBytes, timeoutMs = 15000) {
+// 2026-09-23 (M3): an HTTP 2xx is only a success when the IPP status-code
+// in the body is too (see parseIppResponseStatus). An IPP-level rejection
+// returns { ok:false, error:'printer_rejected', ippStatus, message } — the
+// caller must NOT re-send (the printer answered; nothing timed out).
+async function postIpp(ip, ippBytes, timeoutMs = 15000, requestId = null) {
     if (!Capacitor.isNativePlatform()) {
         return { ok: false, status: 0, error: 'web_unsupported' };
     }
@@ -189,8 +295,7 @@ async function postIpp(ip, ippBytes, timeoutMs = 15000) {
             connectTimeout: timeoutMs,
             readTimeout: timeoutMs,
         });
-        const status = Number(res?.status) || 0;
-        return { ok: status >= 200 && status < 300, status };
+        return interpretIppHttpResponse(res, requestId);
     } catch (e) {
         // Unreachable printer — surface a clean, mappable code (never the raw
         // iOS string). 'printer timeout' is what errorToHuman in the print
@@ -359,7 +464,9 @@ export async function warmBrotherDirect(ip) {
             connectTimeout: 4000,
             readTimeout: 4000,
         });
-        const ok = Number(res?.status) > 0;               // any HTTP reply = printer is up
+        // Any HTTP reply = printer is up — unless the body is an IPP error
+        // (2026-09-23 M3: that's "answered but not ready", not ready).
+        const ok = probeAnsweredReady(res, 1);
         _brotherReachable.set(ip, ok);
         return ok;
     } catch {
@@ -389,11 +496,22 @@ export async function printBrotherDirect({ ip, lines, footer, footerScale, foote
     // postIpp), so a slow job acceptance could be re-sent → duplicate label.
     // Probe with Get-Printer-Attributes instead: it CANNOT print, so
     // retrying it is always safe. Any HTTP reply = printer awake.
-    let awake = false;
+    // 2026-09-23 (M3): a probe answered with an IPP ERROR body (e.g. service
+    // unavailable while the printer boots) no longer counts as ready — it is
+    // re-probed like a no-answer (safe: Get-Printer-Attributes can't print)
+    // and the status strip goes not-ready. If it still answers-with-error the
+    // job is sent ONCE anyway: its own IPP status (checked below) is the
+    // authority, and a probe verdict alone must never block a printer that
+    // would have accepted the job.
+    let awake = false;   // printer answered at all (any HTTP reply)
+    let ready = false;   // …and not with an IPP error
     for (let attempt = 0; attempt < 2; attempt++) {
         // eslint-disable-next-line no-await-in-loop
-        const probe = await postIpp(ip, buildIppGetPrinterAttributes(ip), 5000);
-        if ((Number(probe?.status) || 0) > 0) { awake = true; break; }
+        const probe = await postIpp(ip, buildIppGetPrinterAttributes(ip), 5000, 1);
+        if ((Number(probe?.status) || 0) > 0) {
+            awake = true;
+            if (probe.error !== 'printer_rejected') { ready = true; break; }
+        }
         // eslint-disable-next-line no-await-in-loop
         if (attempt === 0) await sleep(1200);
     }
@@ -401,7 +519,7 @@ export async function printBrotherDirect({ ip, lines, footer, footerScale, foote
     // confirm guard react immediately (2026-07-26 audit: a failed probe
     // left the last keep-alive verdict — often 'ready' — in place).
     _brotherWarmAt.set(ip, Date.now());
-    _brotherReachable.set(ip, awake);
+    _brotherReachable.set(ip, ready);
     if (!awake) return { ok: false, status: 0, error: 'printer timeout' };
     let last = { ok: false, status: 0 };
     for (let i = 0; i < n; i++) {
@@ -412,14 +530,19 @@ export async function printBrotherDirect({ ip, lines, footer, footerScale, foote
         }
         const ipp = buildIppPrintJob({ host: ip, urf, heightPx: height, jobName: jobName || 'DD Mau Label', requestId: i + 1 });
         // Send each copy ONCE — never re-send a print job (duplicate risk).
+        // An IPP-level rejection (M3) is a final answer too: stop, report it.
         // eslint-disable-next-line no-await-in-loop
-        last = await postIpp(ip, ipp);
+        last = await postIpp(ip, ipp, 15000, i + 1);
         if (!last.ok) {
             // Preserve the transport code ('printer timeout' → friendly Wi-Fi
             // guidance) so the modal doesn't collapse every failure to a vague
             // "printer rejected the job / check paper".
             const err = last.error === 'printer timeout' ? 'printer timeout' : 'printer_rejected';
-            return { ok: false, status: last.status, error: err, copyFailed: i + 1 };
+            return {
+                ok: false, status: last.status, error: err, copyFailed: i + 1,
+                ...(last.ippStatus != null ? { ippStatus: last.ippStatus } : {}),
+                ...(last.message ? { message: last.message } : {}),
+            };
         }
         // eslint-disable-next-line no-await-in-loop
         if (i < n - 1) await sleep(gapMs);

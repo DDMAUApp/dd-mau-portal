@@ -8,7 +8,7 @@
 // a 6th prompts the manager to unpin one first — keeps the banner from
 // becoming a wall of text.
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import TranslatableText from './TranslatableText';
@@ -18,10 +18,27 @@ export default function ChatPinsDrawer({
     chat, language = 'en', staffName,
     targetLang, autoTranslate,
     onClose, onJumpToMessage,
+    // 2026-09-23 chat audit M4 — the thread now keeps a live, index-free
+    // subscription to this chat's pins (it drives the banner + 5-pin cap).
+    // When it hands that list in, the drawer shows exactly what the banner
+    // counts and skips its own ordered query (which depends on a composite
+    // index). null/undefined → the drawer's own query, as before.
+    pins: pinsProp = null,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
-    const [pins, setPins] = useState([]);
+    const usingProp = Array.isArray(pinsProp);
+    const [ownPins, setPins] = useState([]);
+    // Same order + cap as the drawer's own query: most recently pinned first.
+    const pins = useMemo(() => {
+        if (!usingProp) return ownPins;
+        const ms = (t) => (t && typeof t.toMillis === 'function') ? t.toMillis() : (t && t.seconds ? t.seconds * 1000 : 0);
+        return pinsProp
+            .filter(p => p && p.deleted !== true)
+            .slice()
+            .sort((a, b) => (ms(b.pinnedAt) || Number.MAX_SAFE_INTEGER) - (ms(a.pinnedAt) || Number.MAX_SAFE_INTEGER))
+            .slice(0, 20);
+    }, [usingProp, pinsProp, ownPins]);
     // 2026-07-26 audit — this query (pinned == + orderBy pinnedAt) needs a
     // composite index (messages: pinned ASC, pinnedAt DESC — added to
     // firestore.indexes.json in the same release). Before the index existed
@@ -31,7 +48,7 @@ export default function ChatPinsDrawer({
     const [loadError, setLoadError] = useState(null);
 
     useEffect(() => {
-        if (!chat?.id) return;
+        if (!chat?.id || usingProp) return;
         setLoadError(null);
         const q = query(
             collection(db, 'chats', chat.id, 'messages'),
@@ -58,7 +75,7 @@ export default function ChatPinsDrawer({
             setLoadError(err?.code || err?.message || 'load-failed');
         });
         return () => unsub();
-    }, [chat?.id]);
+    }, [chat?.id, usingProp]);
 
     return (
         <ModalPortal>
@@ -72,7 +89,7 @@ export default function ChatPinsDrawer({
                     <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
                 </div>
                 <div className="flex-1 overflow-y-auto">
-                    {loadError ? (
+                    {loadError && !usingProp ? (
                         <div className="p-8 text-center text-sm">
                             <div className="text-2xl mb-2">⚠️</div>
                             <div className="font-bold text-dd-text mb-1">

@@ -48,6 +48,8 @@ export function undoKindLabel(entry, isEn) {
         return isEn ? 'Added shift' : 'Turno agregado';
     }
     if (k === 'delete') return isEn ? 'Deleted shift' : 'Turno eliminado';
+    if (k === 'unassign') return isEn ? 'Unassign all' : 'Quitar a todos';
+    if (k === 'clear') return isEn ? 'Delete all unpublished' : 'Borrar sin publicar';
     if (k === 'update') return isEn ? 'Shift change' : 'Cambio de turno';
     return isEn ? 'Change' : 'Cambio';
 }

@@ -36,9 +36,13 @@ export function assessOffer(live) {
     return { ok: true };
 }
 
-/** Cancel an offer/cover request. Idempotent by design. */
+/** Cancel an offer/cover request. Idempotent by design. Refuses while a
+ *  claim is pending (2026-09-23 review): the cancel used to clear
+ *  pendingClaimBy, silently erasing a claim a manager had been pinged
+ *  about — the claimant was never told. Deny (or approve) it first. */
 export function assessCancelOffer(live) {
     if (!live) return { ok: true, noop: true, reason: 'gone' };
+    if (live.pendingClaimBy) return { ok: false, reason: 'pending_claim', claimant: live.pendingClaimBy };
     if (!live.offerStatus && !live.coverNeeded) return { ok: true, noop: true, reason: 'not_offered' };
     return { ok: true, noop: false };
 }

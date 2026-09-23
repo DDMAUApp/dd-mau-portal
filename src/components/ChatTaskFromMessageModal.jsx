@@ -23,8 +23,15 @@
 import { useState, useMemo, useRef } from 'react';
 import { db } from '../firebase';
 import {
-    collection, doc, addDoc, updateDoc, serverTimestamp,
+    collection, doc, serverTimestamp,
+    addDoc as _fsAddDoc,
+    updateDoc as _fsUpdateDoc,
 } from 'firebase/firestore';
+// 2026-09-23 chat audit m1 — watchdog shadows (see firestoreRevive.js): a
+// wedged transport left "Create task" spinning forever with no revive.
+import { watchdogWrite } from '../data/firestoreRevive';
+const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
 import { toast } from '../toast';

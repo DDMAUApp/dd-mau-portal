@@ -94,11 +94,14 @@ export function useAiSearch({ query, items, enabled = true, debounceMs = 350 }) 
     const [matchingIds, setMatchingIds] = useState(null);
     const [error, setError] = useState(null);
     const reqRef = useRef(0);
+    // Last query we started a request for (trimmed) — see the clear below.
+    const lastQueryRef = useRef(null);
 
     useEffect(() => {
         // Reset state immediately when the consumer disables AI or
         // clears the query — keeps stale results from lingering.
         if (!enabled || !query || !query.trim() || !Array.isArray(items) || items.length === 0) {
+            lastQueryRef.current = null;
             setMatchingIds(null);
             setError(null);
             setLoading(false);
@@ -107,6 +110,16 @@ export function useAiSearch({ query, items, enabled = true, debounceMs = 350 }) 
         const myReq = ++reqRef.current;
         setLoading(true);
         setError(null);
+        // 2026-09-23 review: a NEW query kept showing the PREVIOUS query's
+        // AI matches through the debounce + round trip (typing "egg" then
+        // "beef" briefly listed egg items as beef hits). Clear them when
+        // the query text changes; an items-only refresh (same query) keeps
+        // the current matches so results don't flicker on data echoes.
+        const q = query.trim();
+        if (lastQueryRef.current !== q) {
+            lastQueryRef.current = q;
+            setMatchingIds(null);
+        }
         const t = setTimeout(async () => {
             try {
                 const { matchingIds } = await aiSearchItems({ query, items });

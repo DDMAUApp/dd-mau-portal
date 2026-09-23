@@ -138,3 +138,17 @@ describe('install_pwa.autoComplete', () => {
         expect(def.autoComplete(undefined)).toBe(false);
     });
 });
+
+describe('availability.autoComplete accepts "All available" (2026-09-23)', () => {
+    const ac = (s) => TASK_TYPES.availability.autoComplete(s);
+    it('{} availability counts once the save stamped availabilitySetAt', () => {
+        expect(ac({ availability: {} })).toBe(false);
+        expect(ac({ availability: {}, availabilitySetAt: '2026-09-23T10:00:00Z' })).toBe(true);
+        expect(ac({ availabilitySetAt: '2026-09-23T10:00:00Z' })).toBe(true);
+    });
+    it('explicit days still count; nothing set still does not', () => {
+        expect(ac({ availability: { mon: { available: true } } })).toBe(true);
+        expect(ac({})).toBe(false);
+        expect(ac(null)).toBe(false);
+    });
+});

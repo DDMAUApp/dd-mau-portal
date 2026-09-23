@@ -25,7 +25,7 @@
 //   - Editable build sheet (add/edit/delete components in-app)
 //   - Print history dashboard filtered to this surface
 
-import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, lazy, Suspense, memo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, lazy, Suspense, memo, createContext, useContext } from 'react';
 import {
     getMenuItemBuild,
     findSubRecipe,
@@ -54,14 +54,19 @@ import {
     getStampedDefaults,
     STICKER_SECTIONS,
     CUSTOMER_FACING_KINDS,
+    mergeEditDraft,
+    settledEditIds,
 } from '../data/stickerListsOverride';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
 import { isAdmin } from '../data/staff';
 import { warmPrintConfigs } from '../data/labelPrinting';
+import { parseAllergenText } from '../data/allergenParse';
 import { subscribeAllBuildOverrides, applyBuildOverride } from '../data/buildOverrides';
 import { subscribeAllCustomItems } from '../data/customItems';
 import ExpiringPanel from './ExpiringPanel';
+import StickerMatchSuggestions from './StickerMatchSuggestions';
+import { buildStickerMatchIndex, findStickerMatches } from '../data/stickerMatch';
 
 const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 const BuildEditorModal = lazy(() => import('./BuildEditorModal'));
@@ -332,6 +337,14 @@ export default function DateStickerPrinter({
                     nameEs: c.nameEs,
                     descEn: c.descEn || '',
                     descEs: c.descEs || '',
+                    // 2026-09-23 review: printing a custom item's part from
+                    // SEARCH dropped the parent's allergens (browse passes
+                    // the parent item). Carry them — and its shelf life — on
+                    // the row so both paths print the same label.
+                    allergens: c.allergens || ci.allergens || '',
+                    ...((c.shelfLifeDays ?? ci.shelfLifeDays) ? { shelfLifeDays: c.shelfLifeDays ?? ci.shelfLifeDays } : {}),
+                    ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
+                    ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
                     usedIn: [ci.nameEn],
                     usedInEs: [ci.nameEs || ci.nameEn],
                 }));
@@ -339,6 +352,32 @@ export default function DateStickerPrinter({
         }
         return base;
     }, [customItems, stickerLists, stickerSections]);
+
+    // "Do we already have a sticker called that?" (Andrew 2026-09-23) —
+    // every sticker a cook could mean, INCLUDING the customer-facing kinds
+    // (catering / bottles) the search index hides, for the Custom Print and
+    // "+ Add item" boxes that double as a search bar.
+    const stickerMatchRows = useMemo(() => {
+        const extra = [];
+        for (const section of stickerSections) {
+            if (!CUSTOMER_FACING_KINDS.has(section.kind)) continue;
+            const rows = stickerLists?.[section.key] || section.defaults || [];
+            for (const [i, row] of rows.entries()) {
+                extra.push({
+                    id: `sec::${section.key}::${row.id || i}`,
+                    kind: 'component',
+                    componentKind: section.kind,
+                    nameEn: row.nameEn, nameEs: row.nameEs,
+                    descEn: row.descEn || '', descEs: row.descEs || '',
+                    category: section.titleEn, categoryEs: section.titleEs,
+                    ...(row.shelfLifeDays ? { shelfLifeDays: row.shelfLifeDays } : {}),
+                    ...(row.shelfLifeHours ? { shelfLifeHours: row.shelfLifeHours } : {}),
+                    ...(row.thawedDays ? { thawedDays: row.thawedDays } : {}),
+                });
+            }
+        }
+        return extra.length ? [...searchIndex, ...extra] : searchIndex;
+    }, [searchIndex, stickerSections, stickerLists]);
 
     // AI items mirror the index. 2026-06-13 perf — `searchIndex` gets a new
     // reference on every Firestore snapshot echo (subscribeStickerLists /
@@ -479,6 +518,25 @@ export default function DateStickerPrinter({
 
     // 🆕 New custom item button state.
     const [newItemModal, setNewItemModal] = useState(false);
+    // ✏️ Edit on a ⭐ Custom item (2026-09-23 review M2). Both call sites
+    // used to pass only { id, nameEn, nameEs } — no isCustom — so the
+    // editor took the MENU-item path: it loaded getMenuItemBuild (empty
+    // for a custom name) and saved to /build_overrides, and the edit never
+    // reached the sticker. Everything listed here is a custom item (static
+    // menu items left this page 2026-06-11), so always open the custom
+    // path with the fields it seeds from (category, allergens, ES category).
+    const editCustomItem = (slug, fallback = {}) => {
+        const ci = customItems.find(c => c.slug === slug);
+        setEditingItem({
+            id: slug,
+            nameEn: ci?.nameEn ?? fallback.nameEn ?? '',
+            nameEs: ci?.nameEs ?? fallback.nameEs ?? '',
+            category: ci?.category || fallback.category || 'Custom',
+            categoryEs: ci?.categoryEs || fallback.categoryEs || '',
+            allergens: ci?.allergens ?? fallback.allergens ?? '',
+            isCustom: true,
+        });
+    };
     // 🖨 Custom on-the-spot print modal (PrintCenter). Andrew
     // 2026-05-20: "add a custom print button so we can make custom
     // stickers on the spot".
@@ -503,7 +561,14 @@ export default function DateStickerPrinter({
         const allergens = parseAllergenString(allergenStr);
         // Pull shelf-life from open build (custom items + overrides
         // already merge it onto the build object).
-        const shelfFromBuild = component.shelfLifeDays ?? openBuildRef.current?.shelfLifeDays;
+        // Only printing FROM the expanded item (menuItem passed) may fall back
+        // to its shelf life. 2026-09-23 review: the fallback ran for every
+        // print, so an expanded 14-day custom item leaked its shelf life onto
+        // an unrelated category sticker (or the Today sticker) → use-by
+        // printed days too late.
+        const shelfFromBuild = menuItem
+            ? (component.shelfLifeDays ?? openBuildRef.current?.shelfLifeDays)
+            : component.shelfLifeDays;
         setPrintingComponent({
             titleEn: component.nameEn,
             titleEs: component.nameEs || component.nameEn,
@@ -539,11 +604,29 @@ export default function DateStickerPrinter({
         nameEs: c.nameEs,
         descEn: c.descEn,
         descEs: c.descEs,
+        ...(c.allergens ? { allergens: c.allergens } : {}),
         // Same use-by default as the browse grid (audit finding 4).
         ...(c.shelfLifeDays ? { shelfLifeDays: c.shelfLifeDays } : {}),
         ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
         ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
     }, null), [handlePrintComponent]);
+
+    // A cook picked an EXISTING sticker from the Custom Print / + Add item
+    // suggestions (Andrew 2026-09-23): open that sticker's normal print
+    // screen (never prints by itself). Custom items expand in search.
+    const openMatchedSticker = useCallback((row) => {
+        if (!row) return;
+        if (row.kind === 'menuItem') {
+            setSearch(row.nameEn || row.nameEs || '');
+            setOpenItemId(row.menuItemId);
+            return;
+        }
+        handleSearchPrint({ ...row, kind: row.componentKind || 'side' });
+    }, [handleSearchPrint]);
+    const stickerMatchCtx = useMemo(() => ({
+        index: buildStickerMatchIndex(stickerMatchRows),
+        onPick: openMatchedSticker,
+    }), [stickerMatchRows, openMatchedSticker]);
 
     // Anyone-can-add (2026-07-26 audit fix): the add now goes through a
     // Firestore TRANSACTION (addStickerRow) instead of rewriting the full
@@ -814,7 +897,7 @@ export default function DateStickerPrinter({
                                                 build={openItemId === item.menuItemId ? openBuild : null}
                                                 onPrintComponent={handlePrintComponent}
                                                 adminUser={adminUser}
-                                                onEdit={() => setEditingItem({ id: item.menuItemId, nameEn: item.nameEn, nameEs: item.nameEs })}
+                                                onEdit={() => editCustomItem(item.menuItemId, item)}
                                                 hasOverride={overrides.has(item.menuItemId)}
                                             />
                                         ))}
@@ -854,6 +937,7 @@ export default function DateStickerPrinter({
                             </span>
                             <span className="text-xl shrink-0">🏷</span>
                         </button>
+                        <StickerMatchContext.Provider value={stickerMatchCtx}>
                         <BuildSheetBrowse
                             isEs={isEs}
                             tx={tx}
@@ -866,6 +950,7 @@ export default function DateStickerPrinter({
                             sectionFilter={sectionFilter}
                             sections={stickerSections}
                         />
+                        </StickerMatchContext.Provider>
                         {/* ⭐ Custom items — Andrew 2026-06-24: "when a new item
                             is added to the stickers make it live + stay." These
                             used to appear ONLY in search; now they're a permanent
@@ -892,7 +977,7 @@ export default function DateStickerPrinter({
                                             build={openItemId === item.id ? openBuild : null}
                                             onPrintComponent={handlePrintComponent}
                                             adminUser={adminUser}
-                                            onEdit={() => setEditingItem({ id: item.id, nameEn: item.nameEn, nameEs: item.nameEs })}
+                                            onEdit={() => editCustomItem(item.id, item)}
                                             hasOverride={overrides.has(item.id)}
                                         />
                                     ))}
@@ -973,6 +1058,8 @@ export default function DateStickerPrinter({
                         language={language}
                         isAdmin={adminUser}
                         onClose={() => setCustomPrintOpen(false)}
+                        stickerMatchRows={stickerMatchRows}
+                        onUseSticker={(row) => { setCustomPrintOpen(false); openMatchedSticker(row); }}
                     />
                 </Suspense>
             )}
@@ -1331,6 +1418,12 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     // doesn't re-introduce the just-deleted row inside mergeDrafts.
     // Cleared when the user exits edit mode.
     const deletedIdsRef = useRef(new Set());
+    // 2026-09-23 review (M8): which rows THIS device edited / created in
+    // this Edit session. Everything else follows the live server list, so
+    // the whole-section save can't revert another device's renames, shelf
+    // lives or deletions (see mergeEditDraft). Cleared with edit mode.
+    const touchedIdsRef = useRef(new Set());
+    const addedIdsRef = useRef(new Set());
 
     // Debounced save — flush 600ms after the last edit. Firing
     // immediately on every keystroke would burn write quota and
@@ -1380,12 +1473,27 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
             // Leaving edit mode resets the per-session deletion log;
             // next time they re-enter we trust the live items[].
             deletedIdsRef.current = new Set();
+            touchedIdsRef.current = new Set();
+            addedIdsRef.current = new Set();
             const next = normalizeForEdit(items);
             draftRef.current = next;
             setDraft(next);
         } else {
             setDraft(prev => {
-                const merged = mergeDrafts(prev, normalizeForEdit(items), deletedIdsRef.current);
+                const incoming = normalizeForEdit(items);
+                const merged = mergeEditDraft(prev, incoming, {
+                    touchedIds: touchedIdsRef.current,
+                    addedIds: addedIdsRef.current,
+                    deletedIds: deletedIdsRef.current,
+                });
+                // Rows whose text now matches the server (our save landed)
+                // go back to following the server. Unsaved differences keep
+                // them touched. (Idempotent — safe if React re-runs this.)
+                for (const id of settledEditIds(merged, incoming)) touchedIdsRef.current.delete(id);
+                // A locally-added row the server now has is a normal row
+                // (still touched while its text differs) — so a later
+                // remote delete of it is honored, not resurrected.
+                for (const r of incoming) addedIdsRef.current.delete(r.id);
                 draftRef.current = merged;
                 return merged;
             });
@@ -1406,6 +1514,7 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
     // Edit handlers — keep `draft` authoritative locally, fire
     // queueSave on every change.
     const updateRow = (id, patch) => {
+        touchedIdsRef.current.add(id);
         setDraft(prev => {
             const next = prev.map(r => r.id === id ? { ...r, ...patch } : r);
             draftRef.current = next;
@@ -1417,6 +1526,8 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
         // Remember this deletion so mergeDrafts doesn't undo it on
         // the next live subscription tick (before our save lands).
         deletedIdsRef.current.add(id);
+        touchedIdsRef.current.delete(id);
+        addedIdsRef.current.delete(id);
         setDraft(prev => {
             const next = prev.filter(r => r.id !== id);
             draftRef.current = next;
@@ -1439,9 +1550,14 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
         if (ok) deleteRow(id, { save: false });
     };
     const addRow = () => {
+        // Id minted OUTSIDE the updater so a StrictMode double-invoke can't
+        // register one id and render another.
+        const newId = makeStickerRowId(`${sectionKey}-new`);
+        addedIdsRef.current.add(newId);
+        touchedIdsRef.current.add(newId);
         setDraft(prev => {
             const next = [...prev, {
-                id: makeStickerRowId(`${sectionKey}-new`),
+                id: newId,
                 nameEn: '',
                 nameEs: '',
                 descEn: '',
@@ -1710,11 +1826,25 @@ function CategoryEditor({ sections, stickerLists, staffName, isEs, tx }) {
 // Collapsed "+ Add item" dashed button → tiny inline form (EN + optional ES
 // name). Saves the row to the section's live list; the subscription echoes
 // it back into the grid (in its alphabetical spot) within a second.
+// Existing-sticker lookup for the "+ Add item" box (Andrew 2026-09-23) —
+// provided by the page so the memo'd sections don't need new props.
+const StickerMatchContext = createContext(null);
+
 function AddItemCell({ isEs, tx, existing, sectionKey, onAdd }) {
     const [open, setOpen] = useState(false);
     const [nameEn, setNameEn] = useState('');
     const [nameEs, setNameEs] = useState('');
     const [busy, setBusy] = useState(false);
+    // The name box doubles as a search bar over every existing sticker.
+    const matchCtx = useContext(StickerMatchContext);
+    const nameDeferred = useDeferredValue(nameEn);
+    const [keptKey, setKeptKey] = useState(null);
+    const typedKey = stickerNameKey(nameDeferred);
+    const matches = useMemo(() => (open && matchCtx?.index && typedKey && typedKey !== keptKey
+        ? findStickerMatches(nameDeferred, matchCtx.index, { limit: 5 }) : []),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [open, matchCtx, typedKey, keptKey]);
+    const close = () => { setOpen(false); setNameEn(''); setNameEs(''); setKeptKey(null); };
     const save = async () => {
         const en = nameEn.trim();
         if (!en || busy) return;
@@ -1724,6 +1854,21 @@ function AddItemCell({ isEs, tx, existing, sectionKey, onAdd }) {
         if ((existing || []).some(r => stickerNameKey(r.nameEn) === stickerNameKey(en))) {
             window.alert(tx('That item is already in this category.', 'Ese artículo ya está en esta categoría.'));
             return;
+        }
+        // Same sticker already exists in ANOTHER category → make it a choice.
+        if (matchCtx?.index && stickerNameKey(en) !== keptKey) {
+            const exact = findStickerMatches(en, matchCtx.index, { limit: 1 }).find(m => m.exact);
+            if (exact) {
+                const row = exact.row;
+                const name = (isEs ? (row.nameEs || row.nameEn) : row.nameEn) || '';
+                const cat = (isEs ? (row.categoryEs || row.category) : row.category) || '';
+                const addAnyway = window.confirm(tx(
+                    `“${name}” is already a sticker${cat ? ` in ${cat}` : ''}.\n\nOK = add yours here anyway\nCancel = go back (tap “Print this” to use the existing one)`,
+                    `“${name}” ya es una etiqueta${cat ? ` en ${cat}` : ''}.\n\nAceptar = agregar la tuya aquí de todos modos\nCancelar = regresar (toca “Imprimir” para usar la existente)`,
+                ));
+                if (!addAnyway) return;
+                setKeptKey(stickerNameKey(en));
+            }
         }
         setBusy(true);
         try {
@@ -1736,7 +1881,7 @@ function AddItemCell({ isEs, tx, existing, sectionKey, onAdd }) {
                 window.alert(tx('Could not save — try again.', 'No se pudo guardar — inténtalo de nuevo.'));
                 return;
             }
-            setNameEn(''); setNameEs(''); setOpen(false);
+            close();
         } finally { setBusy(false); }
     };
     if (!open) {
@@ -1761,10 +1906,21 @@ function AddItemCell({ isEs, tx, existing, sectionKey, onAdd }) {
                 className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold disabled:opacity-40 active:scale-95">
                 {busy ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
             </button>
-            <button type="button" onClick={() => { setOpen(false); setNameEn(''); setNameEs(''); }}
+            <button type="button" onClick={close}
                 className="px-2.5 py-2 rounded-lg bg-white border border-dd-line text-dd-text-2 text-xs font-bold active:scale-95">
                 ✕
             </button>
+            {matches.length > 0 && (
+                <div className="basis-full">
+                    <StickerMatchSuggestions
+                        matches={matches}
+                        isEs={isEs}
+                        pickLabel={tx('Print this →', 'Imprimir →')}
+                        onPick={(row) => { close(); matchCtx.onPick(row); }}
+                        onDismiss={() => setKeptKey(typedKey)}
+                    />
+                </div>
+            )}
         </div>
     );
 }
@@ -1787,41 +1943,12 @@ function normalizeForEdit(items) {
     }));
 }
 
-// Merge an incoming list from the subscription with the user's
-// in-progress draft. Rows the user has touched (different from
-// the incoming version) win; brand-new rows from another device
-// get appended. Best-effort — no MVCC, last write wins on conflicts.
-//
-// 2026-05-24 fix: pass `deletedIds` so a row the user just deleted
-// locally doesn't reappear on the next subscription tick before our
-// save has propagated. Without this, deleteRow → 600ms debounce →
-// subscription fires with stale items[] → the deleted row is
-// resurrected into draft, confusing the user.
-function mergeDrafts(draft, incoming, deletedIds) {
-    const incomingById = new Map(incoming.map(r => [r.id, r]));
-    const out = [];
-    for (const d of draft) {
-        const i = incomingById.get(d.id);
-        if (i) {
-            // Keep the draft (user's typed value).
-            out.push(d);
-            incomingById.delete(d.id);
-        } else {
-            // Draft has an id the incoming doesn't — keep the draft
-            // (it's probably a new row the user just added).
-            out.push(d);
-        }
-    }
-    // Any incoming rows not in draft = new from another device …
-    // UNLESS the user just deleted that id locally and the save is
-    // still in flight. In that case the incoming row is the stale
-    // pre-delete version — skip it.
-    for (const i of incomingById.values()) {
-        if (deletedIds && deletedIds.has(i.id)) continue;
-        out.push(i);
-    }
-    return out;
-}
+// Draft ⇄ live-list merge lives in stickerListsOverride.js as the pure,
+// unit-tested mergeEditDraft (2026-09-23 review M8). The old inline
+// mergeDrafts kept EVERY draft row verbatim — untouched rows and rows
+// another device had deleted — so this device's next whole-section save
+// reverted other devices' edits. The 2026-05-24 deletedIds rule (a row
+// deleted here isn't resurrected by a stale echo) is kept there.
 
 // One inline-edit row. Name EN + Name ES side by side, with a
 // trash button at the right.
@@ -1880,27 +2007,11 @@ function EditableFlatRow({ row, tone, isEs, tx, sectionKey, sections = STICKER_S
 // Parse the menu.js allergens string (e.g. "Soy, Fish (vinaigrette).
 // Optional peanut.") into the allergen code list our label printer
 // understands. Forgiving — unrecognized words just don't get added.
-function parseAllergenString(s) {
-    if (!s) return [];
-    const lower = String(s).toLowerCase();
-    const map = {
-        'milk':     'milk',     'dairy':    'milk',
-        'egg':      'egg',      'eggs':     'egg',
-        'fish':     'fish',     'salmon':   'fish',
-        'shellfish':'shellfish','shrimp':   'shellfish','crab': 'shellfish',
-        'soy':      'soy',
-        'wheat':    'wheat',    'gluten':   'wheat',
-        'peanut':   'peanut',   'peanuts':  'peanut',
-        'tree nut': 'treenut',  'treenut':  'treenut',  'coconut': 'treenut',
-        'sesame':   'sesame',
-        'msg':      'msg',
-    };
-    const out = new Set();
-    for (const [key, code] of Object.entries(map)) {
-        if (lower.includes(key)) out.add(code);
-    }
-    return Array.from(out);
-}
+// 2026-09-23 review: moved to src/data/allergenParse.js — it emitted
+// non-canonical codes ('egg', 'shellfish') that no allergen chip matched,
+// matched substrings ("shellfish" also added fish, "eggplant" added egg) and
+// missed common words (cashews, butter, lobster…). Now whole-word, canonical.
+const parseAllergenString = parseAllergenText;
 
 // Component kind → recipe category (used by PrintLabelModal's
 // shelf-life defaults — Sauces=7d, Proteins=3d, etc.)

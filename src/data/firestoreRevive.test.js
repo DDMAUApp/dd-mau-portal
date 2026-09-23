@@ -111,6 +111,7 @@ describe('watchdogWrite', () => {
 describe('escalation to reload (persistence-layer wedge)', () => {
     it('reloads when a write is STILL stuck after the revive', async () => {
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         sessionStorage.clear();
@@ -124,6 +125,7 @@ describe('escalation to reload (persistence-layer wedge)', () => {
 
     it('does NOT reload when the revive unsticks the write in time', async () => {
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         sessionStorage.clear();
@@ -138,6 +140,7 @@ describe('escalation to reload (persistence-layer wedge)', () => {
 
     it('never reload-loops — guarded to once per window', async () => {
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         sessionStorage.clear();
@@ -151,6 +154,7 @@ describe('escalation to reload (persistence-layer wedge)', () => {
     // the write-stuck reload must never fire mid-keystroke.
     it('waits for typing to stop before the write-stuck reload', async () => {
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         sessionStorage.clear();
@@ -168,6 +172,7 @@ describe('escalation to reload (persistence-layer wedge)', () => {
 
     it('a write that lands DURING the idle wait stands the reload down', async () => {
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         sessionStorage.clear();
@@ -204,7 +209,7 @@ describe('watchdogRead (2026-08-09 audit — reads must not reload or feed the p
         const states = [];
         subscribeInFlightWrites(s => states.push(s));
         watchdogRead(new Promise(() => {}));
-        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0 });
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false });
     });
 
     it('returns the original promise semantics untouched', async () => {
@@ -219,7 +224,7 @@ describe('in-flight write tracking (SyncPill feed)', () => {
         const { watchdogWrite, subscribeInFlightWrites } = await loadFresh();
         const states = [];
         subscribeInFlightWrites(s => states.push(s));
-        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0 });
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false });
 
         let resolveA, rejectB;
         const a = watchdogWrite(new Promise(res => { resolveA = res; }));
@@ -232,7 +237,7 @@ describe('in-flight write tracking (SyncPill feed)', () => {
 
         rejectB(new Error('denied'));
         await expect(b).rejects.toThrow('denied');
-        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0 });
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false });
     });
 
     it('flags stuck once the hang timer fires, clears when the write lands', async () => {
@@ -242,14 +247,14 @@ describe('in-flight write tracking (SyncPill feed)', () => {
 
         let resolveLate;
         const wrapped = watchdogWrite(new Promise(res => { resolveLate = res; }));
-        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 0 });
+        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 0, hardStuck: false });
 
         await vi.advanceTimersByTimeAsync(WRITE_HANG_MS + 100);
-        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 1 });
+        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 1, hardStuck: false });
 
         resolveLate('flushed');
         await wrapped;
-        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0 });
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false });
     });
 
     it('unsubscribe stops callbacks; a throwing subscriber cannot break the write', async () => {
@@ -527,6 +532,7 @@ describe('progress-based watchdog (2026-09-09 — inventory tap bursts)', () => 
 
     it('a DIFFERENT write settling after the revive stands the reload down', async () => {
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         sessionStorage.clear();
@@ -549,6 +555,7 @@ describe('progress-based watchdog (2026-09-09 — inventory tap bursts)', () => 
 
     it('button taps defer the reload until 5 s after the last tap', async () => {
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         sessionStorage.clear();
@@ -575,9 +582,11 @@ describe('progress-based watchdog (2026-09-09 — inventory tap bursts)', () => 
         mod.__setReloadImplForTests(reload);
         sessionStorage.clear();
         registerReloadStash('inventory', () => { order.push('stash'); return { loc: 'webster', counts: { eggs: 2 } }; });
-        getDocFromCache.mockImplementation(() => { order.push('drain'); return Promise.resolve({ exists: () => true }); });
+        // local queue answers with an error ⇒ health not proven ⇒ reload path
+        getDocFromCache.mockImplementation(() => { order.push('drain'); return Promise.reject(new Error('idb wedged')); });
         expect(await mod.escalateReload('write-stuck-after-revive', { page: 'inventory' })).toBe(true);
-        expect(order).toEqual(['stash', 'drain', 'stash', 'reload']);   // stash again after the drain
+        // pre-probe, then stash → drain → stash → reload
+        expect(order).toEqual(['drain', 'stash', 'drain', 'stash', 'reload']);
         const rep = JSON.parse(sessionStorage.getItem(mod.PENDING_REPORT_KEY));
         expect(rep.reason).toBe('write-stuck-after-revive');
         expect(rep.drained).toBe(true);
@@ -726,6 +735,7 @@ describe('review fixes (2026-09-09 round 3)', () => {
     it('a stalled TRANSACTION revives at the 8× valve but never RELOADS while writes settle; reloads once the stream is quiet', async () => {
         sessionStorage.clear();
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         mod.watchdogTransaction(new Promise(() => {}));
@@ -769,6 +779,7 @@ describe('review fixes (2026-09-09 round 3b)', () => {
     it('a dead re-dialed stream still escalates: no ack 8 s after the dial → pill, 18 s → reload', async () => {
         sessionStorage.clear();
         const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));   // local queue NOT provably healthy (2026-09-23)
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         let snap = null; mod.subscribeInFlightWrites(s => { snap = s; });
@@ -823,3 +834,71 @@ describe('review fixes (2026-09-09 round 3b)', () => {
     });
 });
 
+
+describe('write-stuck reload only when it can help (2026-09-23 field telemetry)', () => {
+    it('local queue HEALTHY ⇒ no reload, guard untouched, one skip row', async () => {
+        sessionStorage.clear();
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        expect(await mod.escalateReload('write-stuck-after-revive')).toBe(false);
+        expect(reload).not.toHaveBeenCalled();
+        expect(sessionStorage.getItem('ddmau:reviveReloadAt')).toBeNull();
+        expect(logError).toHaveBeenCalledWith(expect.objectContaining({ feature: 'firestoreRevive:reload-skipped', meta: expect.objectContaining({ why: 'queue-healthy' }) }));
+        logError.mockClear();
+        await mod.escalateReload('write-stuck-after-revive');
+        expect(logError).not.toHaveBeenCalled();                 // throttled: one row per 10 min
+    });
+    it('a stuck write on a healthy device keeps waiting — never reloads — and still saves when the network recovers', async () => {
+        sessionStorage.clear();
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        let res; const w = mod.watchdogWrite(new Promise(r => { res = r; }));
+        await vi.advanceTimersByTimeAsync(mod.WRITE_HANG_MS + mod.WRITE_ESCALATE_MS * 6);
+        expect(disableNetwork).toHaveBeenCalled();                // revived
+        expect(reload).not.toHaveBeenCalled();                    // but never reloaded
+        res('ok'); await w;
+    });
+    it('loop cap: after 2 write-stuck reloads in the window, stop reloading and flag hardStuck until a write lands', async () => {
+        sessionStorage.clear();
+        const mod = await loadFresh();
+        getDocFromCache.mockRejectedValue(new Error('idb wedged'));
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        let snap = null; mod.subscribeInFlightWrites(s => { snap = s; });
+        expect(await mod.escalateReload('write-stuck-after-revive')).toBe(true);
+        vi.setSystemTime(Date.now() + mod.RELOAD_GUARD_MS + 1000);
+        expect(await mod.escalateReload('write-stuck-after-revive')).toBe(true);
+        vi.setSystemTime(Date.now() + mod.RELOAD_GUARD_MS + 1000);
+        expect(await mod.escalateReload('write-stuck-after-revive')).toBe(false);   // capped
+        expect(reload).toHaveBeenCalledTimes(2);
+        expect(snap.hardStuck).toBe(true);
+        expect(logError).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ why: 'loop-cap' }) }));
+        await mod.watchdogWrite(Promise.resolve('ok'));
+        expect(snap.hardStuck).toBe(false);                        // real progress clears it
+        vi.setSystemTime(Date.now() + mod.WRITE_STUCK_LOOP_WINDOW_MS + 1000);
+        expect(await mod.escalateReload('write-stuck-after-revive')).toBe(true);    // window passed
+    });
+    it('local queue UNRESPONSIVE ⇒ reload right after the 5 s probe (no second 5 s wait)', async () => {
+        sessionStorage.clear();
+        const mod = await loadFresh();
+        getDocFromCache.mockReturnValue(new Promise(() => {}));
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        const p = mod.escalateReload('write-stuck-after-revive');
+        await vi.advanceTimersByTimeAsync(mod.DRAIN_CAP_MS + 50);
+        expect(await p).toBe(true);
+        expect(reload).toHaveBeenCalledTimes(1);
+        const rep = JSON.parse(sessionStorage.getItem(mod.PENDING_REPORT_KEY));
+        expect(rep.drained).toBe(false);
+        expect(rep.preProbe).toBe('timeout');
+    });
+    it('other reasons (probe-stuck) keep their old behavior — no pre-probe', async () => {
+        sessionStorage.clear();
+        const mod = await loadFresh();
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        expect(await mod.escalateReload('probe-stuck')).toBe(true);
+    });
+});
