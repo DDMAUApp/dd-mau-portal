@@ -174,7 +174,7 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
             const worked = jp.lines.filter((l) => l.reg_hours + l.ot_hours > 0);
             const srcLabel = { locked: 'locked', toast: 'Toast', override: 'your locked rate', last: 'last known' };
             const detail = worked
-                .map((l) => `${l.job}: ${fmtG(l.reg_hours)}h reg + ${fmtG(l.ot_hours)}h OT @ $${money2(l.rate)} (${srcLabel[l.source] || 'no rate'})`)
+                .map((l) => `${l.job}: ${fmtG(round2(l.reg_hours))}h reg + ${fmtG(round2(l.ot_hours))}h OT @ $${money2(l.rate)} (${srcLabel[l.source] || 'no rate'})`)
                 .join('; ');
             rowsByKey[key].merge_detail = detail;
             const amt = jobPayAmounts(jp, t.reg_hours, t.ot_hours);
@@ -184,7 +184,7 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
                 + `taken over the whole pay period) and for any cross-store overtime.`));
             for (const l of jp.missing) {
                 checks.push(check(`jobnorate:${key}:${l.key}`, 'fail', `${name}: no pay rate for the ${l.job} job`,
-                    `They worked ${fmtG(l.reg_hours + l.ot_hours)}h as ${l.job} but Toast gave no rate and there's nothing to fall back on. Lock a rate for ${l.job} on the People step and re-run.`));
+                    `They worked ${fmtG(round2(l.reg_hours + l.ot_hours))}h as ${l.job} but Toast gave no rate and there's nothing to fall back on. Lock a rate for ${l.job} on the People step and re-run.`));
             }
             for (const l of worked) {
                 if (l.source === 'locked' && l.toast_rate && Math.abs(l.rate - l.toast_rate) > 0.005) {
@@ -204,7 +204,7 @@ export function runLocation(loc, toastEmps, masterData, cardTipsCents, cashTipsC
         }
         if (!jp && t.multi_line) {
             const detail = t.lines
-                .map((ln) => `${ln.job || 'job'}: ${fmtG(ln.reg_hours)}h reg + ${fmtG(ln.ot_hours)}h OT @ $${fmtG(ln.rate)}`)
+                .map((ln) => `${ln.job || 'job'}: ${fmtG(round2(ln.reg_hours))}h reg + ${fmtG(round2(ln.ot_hours))}h OT @ $${fmtG(ln.rate)}`)
                 .join('; ');
             rowsByKey[key].merge_detail = detail;
             checks.push(check(`merge:${key}`, 'warn', `${m.first} ${m.last}: multiple jobs merged`,

@@ -156,3 +156,11 @@ describe('the roster remembers jobs between imports (People & DD page)', () => {
         expect(r.WG.people[KEY].last_jobs).toBeUndefined();
     });
 });
+
+describe('job detail text never shows float noise', () => {
+    it('23.310000000000002h prints as 23.31h', async () => {
+        const { res, row } = await run([`"Diaz, Rosa",FOH,23.310000000000002,0,15,${LOC}`, `"Diaz, Rosa",BOH,9.7,0,16,${LOC}`]);
+        expect(row.merge_detail).toContain('FOH: 23.31h reg');
+        expect(res.checks.find((x) => x.id === `jobs:${KEY}`).detail).not.toMatch(/\d\.\d{5,}/);
+    });
+});
