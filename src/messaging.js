@@ -852,7 +852,7 @@ function _routePushTap(data) {
     if (tab === 'chat' && data?.chatId) tab = `chat:${data.chatId}`;
     // De-dupe: a replayed/duplicate tap for the same notification must not
     // navigate twice. Fall back to the tab string when no id is present.
-    const id = String(data?.notifId || data?.id || data?.['gcm.message_id'] || data?.google?.['message_id'] || `tab:${tab}`);
+    const id = String(data?.notifId || data?.id || data?.['gcm.message_id'] || data?.google?.['message_id'] || data?._nativeId || `tab:${tab}`);
     if (_seenTapIds.has(id)) return;
     _seenTapIds.add(id);
     if (_seenTapIds.size > 50) { _seenTapIds.clear(); _seenTapIds.add(id); } // cap the set
@@ -872,7 +872,10 @@ export async function initEarlyPushTapCapture() {
         const plugin = await loadNativePushPlugin();
         if (!plugin) { _earlyTapWired = false; return; } // allow a later retry
         await plugin.addListener('pushNotificationActionPerformed', (event) => {
-            try { _routePushTap(event?.notification?.data || {}); }
+            // 2026-09-25 chat review #1 — Android puts the message id on
+            // notification.id, not in data; pass it so the de-dupe keys on
+            // the notification instead of the tab.
+            try { _routePushTap({ ...(event?.notification?.data || {}), _nativeId: event?.notification?.id }); }
             catch (e) { console.warn('[push][native] tap route failed:', e?.message); }
         });
     } catch (e) {

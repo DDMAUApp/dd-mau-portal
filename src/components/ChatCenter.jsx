@@ -59,7 +59,7 @@ import { isAdminId } from '../data/staff';
 // row and to every Sentry event. See src/data/logger.js for the ring.
 import { breadcrumb } from '../data/logger';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
-import { chatDocEqual } from './chatThreadHelpers';
+import { chatDocEqual, chatDocEqualExceptOwnTyping } from './chatThreadHelpers';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
@@ -92,7 +92,9 @@ const ChatAnnouncementComposer = lazy(() => import('./ChatAnnouncementComposer')
 // 2026-08-18 — assign a training module (with due date) from the chat "+"
 // menu; sends one 📚 DM per person. Same audience as Announcement.
 const TrainingAssignForm = lazy(() => import('./TrainingAssignForm'));
-const ChatCoverageRequestModal = lazy(() => import('./ChatCoverageRequestModal').then(m => ({ default: m.default })));
+// (2026-09-25 — ChatCoverageRequestModal's lazy import + state + render were
+// removed: nothing could open it since the M7 menu-row removal. The file
+// stays; coverage lives in the Schedule tab.)
 const ChatPhotoIssueModal = lazy(() => import('./ChatPhotoIssueModal').then(m => ({ default: m.default })));
 const ChatSearchPanel = lazy(() => import('./ChatSearchPanel').then(m => ({ default: m.default })));
 const ChatNotifSettings = lazy(() => import('./ChatNotifSettings').then(m => ({ default: m.default })));
@@ -123,6 +125,10 @@ function saveChatListCache(staffName, list) {
             type: c.type || 'group',
             name: c.name || '',
             kind: c.kind || null,
+            // 2026-09-25 chat review #19 — the avatar renders the group /
+            // channel emoji; without it every cached group row painted the
+            // 👥 fallback and flickered to its real emoji on the live list.
+            ...(c.emoji ? { emoji: String(c.emoji) } : {}),
             // members only for DMs (display name + avatar need the other
             // person); channel member arrays would bloat the cache.
             ...(c.type === 'dm' ? { members: c.members || [] } : {}),
@@ -332,7 +338,12 @@ export default function ChatCenter({
             const prevById = chatObjsRef.current;
             const nextById = new Map();
             snap.forEach(d => {
-                const fresh = { id: d.id, ...d.data() };
+                // 2026-09-25 chat review #9 — 'estimate': this device's own
+                // pending serverTimestamp writes (the thread's read marker)
+                // read as a local time estimate instead of NULL, so opening
+                // an already-read chat no longer flashes it unread (and
+                // re-sorts it to the top) until the server ack.
+                const fresh = { id: d.id, ...d.data({ serverTimestamps: 'estimate' }) };
                 const prev = prevById.get(d.id);
                 const chatObj = (prev && chatDocEqual(prev, fresh)) ? prev : fresh;
                 nextById.set(d.id, chatObj);
@@ -639,22 +650,44 @@ export default function ChatCenter({
     // has time.
     const deferredSearch = useDeferredValue(search);
     const [showNewChat, setShowNewChat] = useState(false);
+    // 2026-09-25 chat review #22 — false, or the id of the chat the settings
+    // modal was opened FOR. A boolean let a deep-link / search jump switch the
+    // active chat underneath an open modal, which then showed (and could
+    // save) the previous chat's form state against the new chat.
     const [showSettings, setShowSettings] = useState(false);
     const [showAnnouncement, setShowAnnouncement] = useState(false);
     const [showAssignTraining, setShowAssignTraining] = useState(false);
     const [assignTrainingBusy, setAssignTrainingBusy] = useState(false);
-    const [showCoverage, setShowCoverage] = useState(false);
     const [showIssue, setShowIssue] = useState(false);
     const [showSearchPanel, setShowSearchPanel] = useState(false);
     const [showNotifSettings, setShowNotifSettings] = useState(false);
     const [showActionMenu, setShowActionMenu] = useState(false);  // FAB expand
     const [longPressedChat, setLongPressedChat] = useState(null); // chat-list long-press action sheet
+    // 2026-09-25 chat review #20 — ONE list-wide minute tick so the rows'
+    // relative times ("now" / "5m" / "3h") advance; memoized rows only
+    // re-rendered on a data change, so they froze. Passed as a prop purely
+    // to invalidate the row memo (formatChatTime reads Date.now()). Skipped
+    // while hidden; bumps on return to the foreground.
+    const [minuteTick, setMinuteTick] = useState(0);
+    useEffect(() => {
+        if (typeof document === 'undefined') return undefined;
+        const bump = () => { if (document.visibilityState === 'visible') setMinuteTick(t => t + 1); };
+        const id = setInterval(bump, 60_000);
+        document.addEventListener('visibilitychange', bump);
+        return () => { clearInterval(id); document.removeEventListener('visibilitychange', bump); };
+    }, []);
+    // #22 — close the settings modal when the active chat changes to a
+    // different one (the long-press "Manage members" path sets both in the
+    // same batch, so its own open survives).
+    useEffect(() => {
+        setShowSettings(prev => (prev && prev !== activeChatId ? false : prev));
+    }, [activeChatId]);
 
     const canAnnounce = canPostAnnouncements(viewer, isAdmin, isManager);
     // (2026-09-23 chat audit M7 — the "Request coverage" menu row is hidden:
-    // it posts into the purged system channels and always errored. The
-    // modal code stays below, unreferenced from the menu. Coverage lives
-    // in the Schedule tab.)
+    // it posts into the purged system channels and always errored. Coverage
+    // lives in the Schedule tab. 2026-09-25: the unreachable modal state +
+    // render were removed from this file too.)
 
     // 2026-07-21 (chat audit follow-up) — stabilize the open thread's `chat`
     // prop reference. The chats onSnapshot returns a NEW array on every
@@ -673,12 +706,15 @@ export default function ChatCenter({
         // the pane shows a brief "Opening…" state meanwhile.
         const found = row && !row._cached ? row : null;
         const prev = activeChatStableRef.current;
-        if (prev && found && prev.id === found.id && chatDocEqual(prev, found)) {
+        // 2026-09-25 — ignore the viewer's OWN typing heartbeat (written
+        // every ~2s while composing): the thread never shows it, and it was
+        // re-rendering the whole open thread while the viewer typed.
+        if (prev && found && prev.id === found.id && chatDocEqualExceptOwnTyping(prev, found, staffName)) {
             return prev;
         }
         activeChatStableRef.current = found;
         return found;
-    }, [allChats, activeChatId]);
+    }, [allChats, activeChatId, staffName]);
 
     // A chat is selected but only its warm-cache row exists so far — the
     // live list hasn't landed. Drives the pane's "Opening…" state.
@@ -842,7 +878,8 @@ export default function ChatCenter({
         // press → Manage members) must not pop up on the NEXT chat opened.
         setShowSettings(false);
     }, []);
-    const handleOpenSettings = useCallback(() => setShowSettings(true), []);
+    // #22 — opened FOR the current chat (ref: stays a stable callback).
+    const handleOpenSettings = useCallback(() => setShowSettings(activeChatIdRef.current || false), []);
 
     // 2026-05-27 — Andrew: "when in a chat room the bottom navigation
     // bar at the bottom can disappear." Toggle a body data attribute
@@ -1090,6 +1127,7 @@ export default function ChatCenter({
                                 onClick={handleSelectChat}
                                 onLongPress={handleLongPressChat}
                                 isEs={isEs}
+                                minuteTick={minuteTick}
                             />
                         ))
                     )}
@@ -1299,24 +1337,6 @@ export default function ChatCenter({
                     </ModalPortal>
                 </Suspense>
             )}
-            {showCoverage && (
-                <Suspense fallback={null}>
-                    <ChatCoverageRequestModal
-                        language={language}
-                        staffName={staffName}
-                        staffList={staffList}
-                        viewer={viewer}
-                        onClose={() => setShowCoverage(false)}
-                        onPosted={({ chatId }) => {
-                            setShowCoverage(false);
-                            if (chatId) {
-                                setActiveChatId(chatId);
-                                setMobileShowList(false);
-                            }
-                        }}
-                    />
-                </Suspense>
-            )}
             {showIssue && (
                 <Suspense fallback={null}>
                     <ChatPhotoIssueModal
@@ -1378,16 +1398,19 @@ export default function ChatCenter({
                         // Same strand guard as handleSelectChat for a warm-cache row.
                         if (longPressedChat._cached) seenActiveChatRef.current = longPressedChat.id;
                         setActiveChatId(longPressedChat.id);
-                        setShowSettings(true);
+                        setShowSettings(longPressedChat.id);
                         setLongPressedChat(null);
                     }}
                 />
             )}
 
             {/* ── Group settings modal ─────────────────────────── */}
-            {showSettings && activeChat && (
+            {showSettings && activeChat && showSettings === activeChat.id && (
                 <Suspense fallback={null}>
                     <ChatSettingsModal
+                        // #22 — keyed so its form state can never carry over
+                        // from another chat.
+                        key={activeChat.id}
                         chat={activeChat}
                         language={language}
                         staffName={staffName}
@@ -1431,9 +1454,11 @@ export default function ChatCenter({
 // tab mounted. Splitting it (hoisted function for the body, const
 // memo wrapper at the bottom) makes the body always available
 // even before the memo wrapper has been built. Andrew 2026-05-22.
+// `minuteTick` (2026-09-25 #20) is intentionally not destructured: it only
+// exists to invalidate the memo once a minute so `time` below recomputes.
 function ChatListItemInner({ chat, viewerName, active, onClick, onLongPress, isEs }) {
     const name = chatDisplayName(chat, viewerName);
-    const subtitle = previewOf(chat.lastMessage, isEs ? 'es' : 'en') || subtitleFor(chat, isEs);
+    const subtitle = previewOf(chat.lastMessage, isEs ? 'es' : 'en', { viewerName, isDm: chat.type === 'dm' }) || subtitleFor(chat, isEs);
     const unread = isChatUnread(chat, viewerName);
     const time = formatChatTime(chat.lastActivityAt);
 

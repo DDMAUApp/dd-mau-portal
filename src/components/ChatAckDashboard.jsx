@@ -107,7 +107,12 @@ export default function ChatAckDashboard({
         ))) return;
         setNudging(true);
         try {
-            await Promise.all(pending.map(name =>
+            // 2026-09-25 chat review #15 — count what actually went out.
+            // notifyStaff never throws: it resolves the new doc id, or null
+            // when the write failed — so the old unconditional "Reminders
+            // sent ✓" also covered reminders that never went out.
+            const targets = [...pending];
+            const results = await Promise.allSettled(targets.map(name =>
                 notifyStaff({
                     forStaff: name,
                     type: 'announcement',
@@ -117,17 +122,28 @@ export default function ChatAckDashboard({
                     link: '/chat',
                     tag: `nudge:${message.id}:${name}:${Date.now()}`,
                     createdBy: staffName,
-                }).catch(() => {})
+                })
             ));
-            recordAudit({
-                action: 'chat.announcement.nudge',
-                actorName: staffName,
-                actorId: viewer?.id,
-                targetType: 'message',
-                targetId: message?.id,
-                details: { count: pending.length, chatId: chat?.id },
-            });
-            toast(tx('Reminders sent ✓', 'Recordatorios enviados ✓'), { kind: 'success' });
+            const sent = results.filter(r => r.status === 'fulfilled' && r.value).length;
+            const failed = targets.length - sent;
+            if (sent > 0) {
+                recordAudit({
+                    action: 'chat.announcement.nudge',
+                    actorName: staffName,
+                    actorId: viewer?.id,
+                    targetType: 'message',
+                    targetId: message?.id,
+                    details: { count: sent, failed, chatId: chat?.id },
+                });
+            }
+            if (failed === 0) {
+                toast(tx(`Reminders sent ✓ (${sent})`, `Recordatorios enviados ✓ (${sent})`), { kind: 'success' });
+            } else if (sent === 0) {
+                toast(tx('Reminders failed — check connection.', 'No se enviaron los recordatorios — revisa la conexión.'), { kind: 'error' });
+            } else {
+                toast(tx(`Sent ${sent} of ${targets.length} reminders — ${failed} failed.`,
+                         `${sent} de ${targets.length} recordatorios enviados — ${failed} fallaron.`), { kind: 'warn' });
+            }
         } catch (e) {
             console.warn('nudge failed:', e);
         } finally {

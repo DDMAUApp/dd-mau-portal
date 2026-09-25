@@ -178,3 +178,112 @@ export function planNotifSweepDelay({ now, lastSweepAt = 0, settleMs = 4000, min
 export function needsFollowUpNotifSweep({ firedAt, lastRequestAt, settleMs = 4000 }) {
     return Number.isFinite(lastRequestAt) && lastRequestAt > firedAt - settleMs;
 }
+
+// ── 2026-09-25 chat review — pure helpers behind the thread fixes ────────
+
+// Millis from a Firestore Timestamp OR the warm-cache `{seconds}` shape
+// (localStorage paint). 0 when missing / pending (serverTimestamp not yet
+// resolved reads as null).
+export function tsToMillis(ts) {
+    const ms = tsMillis(ts);
+    return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
+// #21 — does `msg` continue `prev`'s run (same sender within 5 min)? Then the
+// bubble hides the sender label + avatar. Used `createdAt.toMillis` only, so
+// cold-cache (`{seconds}`) messages never grouped and every bubble repeated
+// the name/avatar. A pending message (no createdAt yet) never groups.
+export function isSameSenderRun(prev, msg, windowMs = 5 * 60 * 1000) {
+    if (!prev || !msg || prev.senderName !== msg.senderName) return false;
+    const a = tsToMillis(prev.createdAt);
+    const b = tsToMillis(msg.createdAt);
+    if (!a || !b) return false;
+    return (b - a) < windowMs;
+}
+
+// #9 — does this viewer's read marker actually need a write? Skipping the
+// no-op write avoids the pending-serverTimestamp echo that flashed an already-
+// read chat as unread in the list (and ~one write per chat open). Needed when
+// the marker is older than (a) the newest loaded message from SOMEONE ELSE
+// (own messages never count as unread / never appear in your own Seen-by —
+// the server also stamps the sender's marker on every send) or (b) the chat's
+// lastActivityAt when the list preview isn't the viewer's own message (the
+// exact test isChatUnread uses).
+export function markReadNeeded(chat, messages, me) {
+    if (!me) return false;
+    const readMs = tsToMillis(chat?.lastReadByName?.[me]);
+    let newestOther = 0;
+    for (const m of (Array.isArray(messages) ? messages : [])) {
+        if (!m || m.senderName === me) continue;
+        const ms = tsToMillis(m.createdAt);
+        if (ms > newestOther) newestOther = ms;
+    }
+    const lm = chat?.lastMessage;
+    const activityMs = (lm && lm.sender === me) ? 0 : tsToMillis(chat?.lastActivityAt);
+    const target = Math.max(newestOther, activityMs);
+    if (!target) return !readMs && Array.isArray(messages) && messages.some(m => m && m.senderName !== me);
+    return readMs < target;
+}
+
+// #14 — after a per-chat notification sweep fires, what next?
+//   'followup' — a mark-read request landed inside the sweep's settle window
+//                (its notification may not have existed yet) → re-arm now.
+//   'late'     — one bounded late sweep ~15s later: the CF writes the
+//                notification a beat after the message, and a cold start can
+//                push that past the settle window, leaving the badge stuck.
+//   null       — done (the late sweep never re-arms another late sweep).
+export const LATE_NOTIF_SWEEP_MS = 15000;
+export function nextNotifSweepStep({ firedAt, lastRequestAt, wasLate = false, settleMs = 4000 }) {
+    if (needsFollowUpNotifSweep({ firedAt, lastRequestAt, settleMs })) return 'followup';
+    return wasLate ? null : 'late';
+}
+
+// Improvement — ChatCenter's activeChat stabilization: ignore the viewer's
+// OWN typing heartbeat (typingByName[me] every ~2s while composing) so it
+// doesn't re-render the whole open thread. The thread never shows the
+// viewer's own typing, so nothing visible depends on that key.
+export function chatDocEqualExceptOwnTyping(a, b, me) {
+    if (a === b) return true;
+    if (!a || !b || !me) return chatDocEqual(a, b);
+    const strip = (c) => {
+        const t = c.typingByName;
+        if (!t || typeof t !== 'object' || !Object.prototype.hasOwnProperty.call(t, me)) return c;
+        const rest = { ...t };
+        delete rest[me];
+        return { ...c, typingByName: rest };
+    };
+    return chatDocEqual(strip(a), strip(b));
+}
+
+// #11 — "Load older" scroll-restore record ({ height, top, firstId, at }).
+// Decide per layout pass. The record used to live until ANY growth, so a
+// load that prepended nothing left it armed and the next arrival at the
+// BOTTOM threw the view back to the old spot. Now:
+//   • drop  — viewer is pinned to the bottom (the ResizeObserver owns that),
+//             or the record is stale (> TTL) with no bigger window in flight
+//             (hard cap 30s even if one seems in flight);
+//   • wait  — nothing prepended yet (first message unchanged: a cache echo of
+//             the old window, or growth at the bottom only);
+//   • apply — older rows were prepended: keep the reading position.
+export const SCROLL_RESTORE_TTL_MS = 3000;
+export const SCROLL_RESTORE_HARD_CAP_MS = 30000;
+export function planScrollRestore(pending, { now, firstId, atBottom, scrollHeight, inFlight = false }) {
+    if (!pending) return { action: 'none' };
+    if (atBottom) return { action: 'drop' };
+    const age = Number.isFinite(pending.at) ? now - pending.at : Infinity;
+    if (age > SCROLL_RESTORE_HARD_CAP_MS) return { action: 'drop' };
+    if (!inFlight && age > SCROLL_RESTORE_TTL_MS) return { action: 'drop' };
+    if (firstId === pending.firstId) return { action: 'wait' };
+    const grewBy = (Number(scrollHeight) || 0) - (Number(pending.height) || 0);
+    if (grewBy > 0) return { action: 'apply', top: (Number(pending.top) || 0) + grewBy };
+    return { action: 'wait' };
+}
+
+// #2 — after a jump's scrollIntoView settles, is the viewport at the bottom?
+// (Same 100px threshold as the scroll handler.) The jump forces atBottom
+// false so auto-scroll doesn't fight scrollIntoView; this re-measures the
+// REAL position so a jump to a message already near the bottom (no scroll
+// events fire) doesn't leave auto-scroll + mark-read off for good.
+export function isNearBottom({ scrollHeight, scrollTop, clientHeight }, threshold = 100) {
+    return ((Number(scrollHeight) || 0) - (Number(scrollTop) || 0) - (Number(clientHeight) || 0)) < threshold;
+}

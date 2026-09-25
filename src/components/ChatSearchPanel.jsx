@@ -13,7 +13,7 @@
 //   • has-media (image/video/audio)
 //   • is-announcement / is-coverage / is-issue
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { chatDisplayName, ChatAvatar } from './ChatShared';
@@ -63,12 +63,23 @@ export default function ChatSearchPanel({
         () => (Array.isArray(chats) ? chats.slice(0, 25).map(c => c.id) : []).sort().join('\n'),
         [chats]
     );
+    // 2026-09-25 chat review (improvement) — INCREMENTAL fetch. A chat moving
+    // into the top-25 (any new message in chat #26 reorders the list) used to
+    // re-read all 25 × 200 messages; now only chats not already fetched (or
+    // in flight) are read, and results MERGE into what we have. A chat that
+    // falls out of the top-25 keeps its already-fetched results (still
+    // searchable — allResults resolves it against the full chat list). A
+    // failed read is forgotten so the next id-set change retries it.
+    const fetchedIdsRef = useRef(new Set());   // fetched OR in flight
+    const mountedRef = useRef(true);
+    useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
     useEffect(() => {
         const targetIds = searchChatIdsKey ? searchChatIdsKey.split('\n') : [];
-        if (targetIds.length === 0) return;
-        let cancelled = false;
+        const fresh = targetIds.filter(id => id && !fetchedIdsRef.current.has(id));
+        if (fresh.length === 0) return;
+        fresh.forEach(id => fetchedIdsRef.current.add(id));
         setLoading(true);
-        Promise.all(targetIds.map(async chatId => {
+        Promise.all(fresh.map(async chatId => {
             try {
                 const ref = query(
                     collection(db, 'chats', chatId, 'messages'),
@@ -80,27 +91,38 @@ export default function ChatSearchPanel({
                 // 2026-08-25: the date cutoff moved into the allResults memo —
                 // the fetch is date-independent (always newest 200/chat), so
                 // toggling 7d↔30d↔all must NOT refetch up to 5,000 docs.
-                snap.forEach(d => list.push({ id: d.id, chatId, ...d.data() }));
+                // 2026-09-25: the search haystack is built ONCE here (it was
+                // rebuilt for every message on every keystroke).
+                snap.forEach(d => {
+                    const m = { id: d.id, chatId, ...d.data() };
+                    m._hay = buildHaystack(m);
+                    list.push(m);
+                });
                 return [chatId, list];
             } catch (e) {
                 console.warn('search read failed for chat', chatId, e);
-                return [chatId, []];
+                fetchedIdsRef.current.delete(chatId);   // retry on the next id-set change
+                return [chatId, null];
             }
         })).then(pairs => {
-            if (cancelled) return;
-            const map = {};
-            for (const [id, list] of pairs) map[id] = list;
-            setMessagesByChat(map);
+            if (!mountedRef.current) return;
+            setMessagesByChat(prev => {
+                const next = { ...prev };
+                for (const [id, list] of pairs) if (list) next[id] = list;
+                return next;
+            });
             setLoading(false);
         });
-        return () => { cancelled = true; };
     }, [searchChatIdsKey]);
 
     // Pre-expand the query into [{term, expansions:Set}] once per
     // query-input change. Each token must match SOME synonym in the
     // message's haystack for the message to appear (AND across tokens,
     // OR across synonyms — see chatSearch.haystackMatches).
-    const expandedTokens = useMemo(() => expandQueryTerms(q), [q]);
+    // 2026-09-25 — deferred: the input stays snappy while the filter over
+    // up to 5,000 messages runs as low-priority work.
+    const deferredQ = useDeferredValue(q);
+    const expandedTokens = useMemo(() => expandQueryTerms(deferredQ), [deferredQ]);
 
     const allResults = useMemo(() => {
         const out = [];
@@ -138,7 +160,7 @@ export default function ChatSearchPanel({
                 // and searching "photo" finds image messages even when
                 // the caption is blank.
                 if (expandedTokens.length > 0) {
-                    const hay = buildHaystack(m);
+                    const hay = m._hay ?? buildHaystack(m);
                     if (!haystackMatches(hay, expandedTokens)) continue;
                 }
                 out.push({ message: m, chat });
@@ -271,7 +293,7 @@ export default function ChatSearchPanel({
                                     </div>
                                     <div className="text-[11px] font-bold text-dd-text-2">{message.senderName}</div>
                                     <div className="text-[13px] text-dd-text line-clamp-2 mt-0.5">
-                                        {highlight(message.text || (message.type === 'image' ? '📷 Photo' : message.type === 'audio' ? '🎤 Voice' : message.type), q)}
+                                        {highlight(message.text || (message.type === 'image' ? '📷 Photo' : message.type === 'audio' ? '🎤 Voice' : message.type), deferredQ)}
                                     </div>
                                 </div>
                             </button>

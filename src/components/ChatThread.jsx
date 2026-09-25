@@ -80,8 +80,8 @@ import { ref as sref, uploadBytesResumable, getDownloadURL, deleteObject } from 
 import { ChatAvatar, chatDisplayName } from './ChatShared';
 // Pure formatters lifted out 2026-05-23 — see chatThreadHelpers.js
 // for the rationale on the incremental ChatThread split.
-import { previewScheduledList, relativeTime, groupByDate, sortPinsForBanner, planNotifSweepDelay, needsFollowUpNotifSweep } from './chatThreadHelpers';
-import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen, canEditMessage, isMessageEditable, isChatLastMessage, lastMessagePatchFor } from '../data/chat';
+import { previewScheduledList, relativeTime, groupByDate, sortPinsForBanner, planNotifSweepDelay, nextNotifSweepStep, LATE_NOTIF_SWEEP_MS, isSameSenderRun, markReadNeeded, planScrollRestore, isNearBottom } from './chatThreadHelpers';
+import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen, canEditMessage, isMessageEditable, previewShowsMessage, lastMessagePatchFor } from '../data/chat';
 // 2026-05-24 — Andrew: "make all messages in the chat push regardless
 // if they are working or not." Removed the off-shift gate UI entirely.
 // Server-side chat_message/chat_mention are already in
@@ -110,6 +110,7 @@ import { fixText as aiFixText } from '../data/aiFixText';
 import TranslatableText, { renderWithMentions } from './TranslatableText';
 import { openTrainingModule } from '../data/trainingDeepLink';
 import ModalPortal from './ModalPortal';
+import { ChatPhoto, ChatVideoTile, normalizeVideoMime } from './ChatMedia';
 import { fileToScaledBlobWithDims } from '../data/parseReceipt';
 
 // Lazy-load the heavier modals — keeps the chat-thread chunk small for
@@ -358,7 +359,10 @@ function ChatThreadInner({
     //                that bumps subscriptionGen to force a re-sub.
     //   subscriptionGen → manual reset key. Bumped by Retry to force
     //                a fresh subscription without changing chat.id.
-    const [loading, setLoading] = useState(() => !_msgCache.has(chat?.id));
+    // 2026-09-25 chat review #3 — derived from the INITIAL paint (memory
+    // cache OR the localStorage layer), not the memory cache alone: a cold
+    // start that painted persisted messages is not "loading".
+    const [loading, setLoading] = useState(() => messages.length === 0);
     const [loadError, setLoadError] = useState(null);
     const [subscriptionGen, setSubscriptionGen] = useState(0);
     // 2026-09-23 chat audit M1 — STATE mirror of serverConfirmedRef (the ref,
@@ -379,8 +383,18 @@ function ChatThreadInner({
         return () => document.removeEventListener('visibilitychange', onVis);
     }, []);
 
+    // 2026-09-25 chat review #3 — the chat this instance last reset for. The
+    // thread is keyed per chat (ChatCenter key + the error boundary key), so
+    // on MOUNT the initial state above already painted memory → localStorage
+    // cache; re-running the reset there did `setMessages(_msgCache.get(id) ||
+    // [])`, which WIPED the cold-start localStorage paint (the memory map is
+    // empty after a cold start) back to the spinner. Only a real in-place
+    // chat switch resets now, and it uses the same two-layer cache.
+    const resetForChatRef = useRef(chat?.id);
     useEffect(() => {
         if (!chat?.id) return;
+        if (resetForChatRef.current === chat.id) return;   // mount — initial state covers it
+        resetForChatRef.current = chat.id;
         // Reset pagination AND messages AND loading state on chat
         // switch. Resetting messages is the key fix for the "shows
         // previous chat's content briefly" symptom. Resetting loading
@@ -393,9 +407,9 @@ function ChatThreadInner({
         // Paint this chat's last-known messages instantly from the module cache
         // (only fall back to the spinner when we have nothing to show). The
         // onSnapshot below revalidates within ms.
-        const cached = _msgCache.get(chat.id);
-        setMessages(cached || []);
-        setLoading(!cached);
+        const cached = _msgCache.get(chat.id) || _loadPersistedMessages(chat.id);
+        setMessages(cached);
+        setLoading(!cached.length);
         setLoadError(null);
     }, [chat?.id]);
 
@@ -473,8 +487,13 @@ function ChatThreadInner({
                 setServerConfirmed(true);
             }
             clearTimeout(timeoutId);
+            // 2026-09-25 chat review #10 — "pending" means the MESSAGE itself
+            // isn't server-acked yet (createdAt serverTimestamp still null),
+            // not "this doc has any local write": a reaction / pin / vote on an
+            // old message set hasPendingWrites and flashed "🕓 Sending…" on it.
+            const isUnsent = (d) => d.metadata.hasPendingWrites && d.get('createdAt') == null;
             let pendingSig = '';
-            snap.forEach(d => { if (d.metadata.hasPendingWrites) pendingSig += d.id + ','; });
+            snap.forEach(d => { if (isUnsent(d)) pendingSig += d.id + ','; });
             if (!firstEmit && pendingSig === lastPendingSig && snap.docChanges().length === 0) {
                 // Metadata-only (cache→server confirm, sync-state flip).
                 // Only the history-exhausted decision can depend on it.
@@ -494,7 +513,7 @@ function ChatThreadInner({
             snap.forEach(d => list.push({
                 id: d.id,
                 ...d.data(),
-                ...(d.metadata.hasPendingWrites ? { _pending: true } : {}),
+                ...(isUnsent(d) ? { _pending: true } : {}),
             }));
             // Snapshot is newest-first because of the desc order; reverse
             // so render order stays oldest-first / newest-at-bottom.
@@ -602,7 +621,12 @@ function ChatThreadInner({
     function loadOlderMessages() {
         const el = scrollRef.current;
         if (el) {
-            scrollRestoreRef.current = { height: el.scrollHeight, top: el.scrollTop };
+            // #11 — `at` + `firstId` let planScrollRestore tell a real
+            // prepend from bottom growth and expire a restore that never ran.
+            scrollRestoreRef.current = {
+                height: el.scrollHeight, top: el.scrollTop,
+                firstId: messages[0]?.id || null, at: Date.now(),
+            };
         }
         setMessageLimit(n => Math.min(n + 50, MAX_MESSAGE_LIMIT));
     }
@@ -622,25 +646,55 @@ function ChatThreadInner({
     const notifSweepTimerRef = useRef(null);
     const lastNotifSweepAtRef = useRef(0);
     const lastNotifSweepReqAtRef = useRef(0);
+    // 2026-09-25 chat review #14 — plus ONE bounded late sweep ~15s after a
+    // sweep that had no follow-up: a cold-started CF can write the last
+    // message's notification after the settle window, which left the badge
+    // stuck until the next message / tab exit (see nextNotifSweepStep). A
+    // new message's mark-read re-requests as before, so the late one only
+    // matters for the last message of a burst.
     const requestNotifSweep = useCallback(() => {
         if (!staffName || !chat?.id) return;
         lastNotifSweepReqAtRef.current = Date.now();
         if (notifSweepTimerRef.current) return; // the queued sweep covers it
         const who = staffName;
         const cid = chat.id;
-        const arm = () => {
-            const delay = planNotifSweepDelay({ now: Date.now(), lastSweepAt: lastNotifSweepAtRef.current });
+        const arm = (isLate = false) => {
+            const delay = isLate
+                ? LATE_NOTIF_SWEEP_MS
+                : planNotifSweepDelay({ now: Date.now(), lastSweepAt: lastNotifSweepAtRef.current });
             notifSweepTimerRef.current = setTimeout(() => {
                 const firedAt = Date.now();
                 lastNotifSweepAtRef.current = firedAt;
                 markChatNotificationsRead(who, { chatId: cid, max: 200 }).finally(() => {
                     notifSweepTimerRef.current = null;
-                    if (needsFollowUpNotifSweep({ firedAt, lastRequestAt: lastNotifSweepReqAtRef.current })) arm();
+                    const step = nextNotifSweepStep({ firedAt, lastRequestAt: lastNotifSweepReqAtRef.current, wasLate: isLate });
+                    if (step === 'followup') arm(false);
+                    else if (step === 'late') arm(true);
                 });
             }, delay);
         };
-        arm();
+        arm(false);
     }, [staffName, chat?.id]);
+
+    // 2026-09-25 chat review #9 / #23 — the one read-marker writer both
+    // mark-read effects use (fire-time checks stay in the effects).
+    //  • #9: skip the write when this viewer's marker already covers every
+    //    loaded message from someone else (and the list's lastActivityAt) —
+    //    the no-op write's pending serverTimestamp is what flashed an
+    //    already-read chat as unread in the list. Reads the LIVE chat /
+    //    messages (latestThreadRef, declared below; set during render).
+    //  • #23: FieldPath varargs, not a template dot-path — staff names are
+    //    free text and a "." in one wrote a nested map instead of the key
+    //    (same house rule as announcements.js / handleAck).
+    // The per-chat notification sweep is still requested either way.
+    const writeReadMarker = () => {
+        if (!chat?.id || !staffName) return;
+        const live = latestThreadRef.current;
+        requestNotifSweep();
+        if (!markReadNeeded(live?.chat || chat, live?.messages || messages, staffName)) return;
+        quietUpdateDoc(doc(db, 'chats', chat.id), new FieldPath('lastReadByName', staffName), serverTimestamp())
+            .catch(e => console.warn('markRead failed:', e));
+    };
 
     // ── Mark read on view + on each new message ────────────────────
     // We write a single lastReadByName.{name} timestamp on the chat doc.
@@ -663,7 +717,6 @@ function ChatThreadInner({
         // server-confirmed data, or while the app/tab is hidden. Both are
         // deps below, so the effect re-arms the moment either flips.
         if (!serverConfirmed || !pageVisible) return;
-        const ref = doc(db, 'chats', chat.id);
         const t = setTimeout(() => {
             // 2026-06-14 — only mark fully-read when the viewer is actually at
             // the bottom (i.e. has seen the newest messages). Before, any
@@ -678,9 +731,7 @@ function ChatThreadInner({
             if (!atBottomRef.current) return;
             if (!serverConfirmedRef.current) return;   // cache paint — not seen yet
             if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-            quietUpdateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
-                .catch(e => console.warn('markRead failed:', e));
-            requestNotifSweep();
+            writeReadMarker();
         }, 1500);
         return () => clearTimeout(t);
         // CORRECTNESS FIX (audit P2, 2026-07-14): key on the NEWEST message's
@@ -728,17 +779,31 @@ function ChatThreadInner({
     // loadOlderMessages). Runs before paint; only fires while a restore is
     // pending, and only once real growth is observed (the cache may re-fire
     // the OLD window first with no new content — skip that one).
+    // 2026-09-25 chat review #11 — the record is now timestamped + tagged
+    // with the first message id at tap time (planScrollRestore): a load that
+    // prepended nothing left it armed forever and the next arrival at the
+    // BOTTOM threw the view back up. Applies only once older rows really
+    // prepended; dropped when stale with no bigger window in flight, or when
+    // the viewer is pinned to the bottom.
     useLayoutEffect(() => {
         const pending = scrollRestoreRef.current;
         if (!pending) return;
         const el = scrollRef.current;
         if (!el) return;
-        const grewBy = el.scrollHeight - pending.height;
-        if (grewBy > 0) {
-            el.scrollTop = pending.top + grewBy;
+        const plan = planScrollRestore(pending, {
+            now: Date.now(),
+            firstId: messages[0]?.id || null,
+            atBottom: atBottomRef.current,
+            scrollHeight: el.scrollHeight,
+            inFlight: hasMore && messages.length < messageLimit,
+        });
+        if (plan.action === 'apply') {
+            el.scrollTop = plan.top;
+            scrollRestoreRef.current = null;
+        } else if (plan.action === 'drop') {
             scrollRestoreRef.current = null;
         }
-    }, [messages[0]?.id, messages.length]);
+    }, [messages[0]?.id, messages.length, hasMore, messageLimit]);
 
     // 2026-07-21 (chat audit, bug #1) — mark-read when you scroll back DOWN to
     // the bottom. The main mark-read effect only re-runs on a NEW message id;
@@ -755,14 +820,11 @@ function ChatThreadInner({
         const wasAtBottom = prevAtBottomForReadRef.current;
         prevAtBottomForReadRef.current = atBottom;
         if (!chat?.id || !staffName || !atBottom || wasAtBottom || !messages.length) return;
-        const ref = doc(db, 'chats', chat.id);
         const t = setTimeout(() => {
             if (!atBottomRef.current) return;
             if (!serverConfirmedRef.current) return;   // cache paint — not seen yet
             if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-            quietUpdateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
-                .catch(() => { /* best-effort */ });
-            requestNotifSweep();
+            writeReadMarker();   // #9/#23 — skips the no-op write, FieldPath-safe
         }, 1500);
         return () => clearTimeout(t);
     }, [chat?.id, staffName, atBottom, messages.length]);
@@ -794,18 +856,39 @@ function ChatThreadInner({
         if (!el || !inner) return;
         if (typeof ResizeObserver === 'undefined') return; // very old browsers
         let lastH = inner.getBoundingClientRect().height;
+        // 2026-09-25 chat review #13 — also watch the SCROLL CONTAINER's own
+        // height. When the composer grows (multi-line draft, reply pill,
+        // staged attachment) the list viewport shrinks while scrollTop stays
+        // put, so the newest message slid below the fold. Re-pin when the
+        // viewport shrinks while pinned to the bottom.
+        let lastViewH = el.clientHeight;
         const ro = new ResizeObserver(() => {
             const h = inner.getBoundingClientRect().height;
-            if (h === lastH) return;
+            const viewH = el.clientHeight;
+            const contentChanged = h !== lastH;
+            const viewShrank = viewH < lastViewH;
             lastH = h;
+            lastViewH = viewH;
+            if (!contentChanged && !viewShrank) return;
             // Only re-anchor if the user was already pinned to bottom.
             // If they've scrolled up to read older messages, leave them.
             if (!atBottomRef.current) return;
             el.scrollTop = el.scrollHeight;
         });
         ro.observe(inner);
+        ro.observe(el);
         return () => ro.disconnect();
     }, []);
+    // 2026-09-25 chat review (improvement) — the viewer's own send always
+    // lands in view: re-pin to the bottom even when they had scrolled up to
+    // read history (their new bubble used to appear off-screen). The auto-
+    // scroll effect then follows the new message in (atBottom dep).
+    function pinToBottom() {
+        atBottomRef.current = true;
+        setAtBottom(true);
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+    }
     function handleScroll() {
         // 2026-06-25 perf — the scroll-freeze fix. Previously this read
         // scrollHeight (forces layout) and called setAtBottom on EVERY scroll
@@ -1096,6 +1179,46 @@ function ChatThreadInner({
         if (!id) return;
         setLocalJump(prev => ({ id, n: (prev?.n || 0) + 1 }));
     }, []);
+    // 2026-09-25 chat review #2 — jump timers live in a ref, cleared only by
+    // the NEXT jump or unmount. They used to be the jump effect's cleanup, so
+    // any listener update right after the jump (the effect depends on
+    // `messages`) killed the 160ms scroll + the 2.8s highlight clear while the
+    // re-run bailed on lastJumpedRef — and the forced setAtBottom(false) had
+    // already run, so auto-scroll + mark-read stayed OFF. After the smooth
+    // scroll settles (~650ms) we re-measure the real position instead of
+    // trusting the forced false (a target already near the bottom scrolls
+    // nothing and fires no scroll event to correct it).
+    const jumpTimersRef = useRef([]);
+    const clearJumpTimers = () => {
+        jumpTimersRef.current.forEach(clearTimeout);
+        jumpTimersRef.current = [];
+    };
+    useEffect(() => () => clearJumpTimers(), []);
+    function performJump(targetId) {
+        if (!targetId) return;
+        clearJumpTimers();
+        setHighlightMsgId(targetId);
+        // Off BEFORE scrolling so the bottom auto-pin / ResizeObserver don't
+        // fight scrollIntoView (ref too — they read it synchronously).
+        atBottomRef.current = false;
+        setAtBottom(false);
+        // 160ms (was 60): the progressive first paint (P1-1) fills the older
+        // rows in ≤120ms, and the target may be one of them.
+        jumpTimersRef.current.push(setTimeout(() => {
+            const el = document.getElementById(`msg-${targetId}`);
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            jumpTimersRef.current.push(setTimeout(() => {
+                const sc = scrollRef.current;
+                if (!sc) return;
+                const next = isNearBottom(sc);
+                if (next !== atBottomRef.current) {
+                    atBottomRef.current = next;
+                    setAtBottom(next);
+                }
+            }, 650));
+        }, 160));
+        jumpTimersRef.current.push(setTimeout(() => setHighlightMsgId(null), 2800));
+    }
     useEffect(() => {
         if (!jumpTargetId) return;
         if (!messages.some(m => m.id === jumpTargetId)) return;
@@ -1106,16 +1229,8 @@ function ChatThreadInner({
         // message and re-arms the highlight timer.
         if (lastJumpedRef.current === jumpKey) return;
         lastJumpedRef.current = jumpKey;
-        setHighlightMsgId(jumpTargetId);
-        setAtBottom(false);
-        // 160ms (was 60): the progressive first paint (P1-1) fills the older
-        // rows in ≤120ms, and the target may be one of them.
-        const t = setTimeout(() => {
-            const el = document.getElementById(`msg-${jumpTargetId}`);
-            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 160);
-        const t2 = setTimeout(() => setHighlightMsgId(null), 2800);
-        return () => { clearTimeout(t); clearTimeout(t2); };
+        performJump(jumpTargetId);
+        // No cleanup on purpose — see jumpTimersRef.
     }, [jumpKey, jumpTargetId, messages]);
 
     // 2026-07-26 audit — the effect above is a silent no-op when the search
@@ -1287,9 +1402,11 @@ function ChatThreadInner({
         // nobody cares about. Ephemeral, best-effort, self-expiring (5s TTL)
         // — a wedged transport still gets revived by the real send/read
         // traffic, which IS watchdogged.
-        _fsUpdateDoc(doc(db, 'chats', chat.id), {
-            [`typingByName.${staffName}`]: serverTimestamp(),
-        }).catch(() => {});
+        // 2026-09-25 chat review #23 — FieldPath varargs: a "." in a staff
+        // name made the template dot-path write a nested map.
+        _fsUpdateDoc(doc(db, 'chats', chat.id),
+            new FieldPath('typingByName', staffName), serverTimestamp(),
+        ).catch(() => {});
     }
     useEffect(() => {
         // Filter the chat.typingByName map for fresh entries (<5s old),
@@ -1407,6 +1524,7 @@ function ChatThreadInner({
         setReplyTarget(null);
         clearDraftStash();  // ST5 — a sent draft must never resurrect
         setTimeout(() => { sendingRef.current = false; }, 0);
+        pinToBottom();      // own send always lands in view (2026-09-25)
         try {
             await sendMessage({
                 chat, staffName, viewer, staffList,
@@ -1533,16 +1651,23 @@ function ChatThreadInner({
         try {
             let uploadFile = file;
             let width, height, duration;
+            let posterBlob = null;
+            // The upload's real type: a resized photo is ALWAYS a JPEG (it was
+            // stored as .heic/.png with the original type before 2026-09-25).
+            let mimeType = file.type;
             if (kind === 'image') {
                 const resized = await resizeImage(file, MAX_IMAGE_DIM);
                 uploadFile = resized.blob;
                 width = resized.width;
                 height = resized.height;
+                mimeType = 'image/jpeg';
             } else if (kind === 'video') {
                 const meta = await probeVideo(file);
                 duration = meta.duration;
                 width = meta.width;
                 height = meta.height;
+                posterBlob = meta.posterBlob || null;
+                mimeType = normalizeVideoMime(file.type, file.name);
             }
             // Build a local preview URL the composer can render. Note:
             // the useEffect cleanup above revokes the PREVIOUS value's
@@ -1553,9 +1678,15 @@ function ChatThreadInner({
                 kind,
                 uploadFile,
                 previewUrl,
-                mimeType: file.type,
+                mimeType,
                 width, height, duration,
-                filename: file.name || '',
+                posterBlob,
+                posterPreviewUrl: posterBlob ? URL.createObjectURL(posterBlob) : null,
+                // Photos upload as .jpg (the resize output), whatever the
+                // camera named them.
+                filename: kind === 'image'
+                    ? `${(file.name || 'photo').replace(/\.[^.]+$/, '')}.jpg`
+                    : (file.name || ''),
             });
         } catch (err) {
             console.warn(`${kind} stage failed:`, err);
@@ -1626,6 +1757,22 @@ function ChatThreadInner({
             });
             uploadTaskRef.current = null;
             const url = await getDownloadURL(r);
+            // Video poster (captured on this phone at pick time): tiny JPEG,
+            // so the bubble shows a frame immediately for everyone. Best-
+            // effort — the server makes one too if this fails.
+            let thumbnailUrl = null;
+            let thumbnailPath = null;
+            if (att.kind === 'video' && att.posterBlob) {
+                try {
+                    thumbnailPath = `chats/${chat.id}/${att.storageId}_thumb.jpg`;
+                    const tr = sref(storage, thumbnailPath);
+                    await uploadBytesResumable(tr, att.posterBlob, { contentType: 'image/jpeg' });
+                    thumbnailUrl = await getDownloadURL(tr);
+                } catch (e) {
+                    console.warn('video poster upload failed (non-fatal):', e);
+                    thumbnailUrl = null; thumbnailPath = null;
+                }
+            }
             await sendMessage({
                 chat, staffName, viewer, staffList,
                 type: att.kind,
@@ -1641,6 +1788,7 @@ function ChatThreadInner({
                 width: att.width,
                 height: att.height,
                 duration: att.duration,
+                ...(thumbnailUrl ? { thumbnailUrl, thumbnailPath } : {}),
                 // C8 — document bubbles render name + size and need them on
                 // the message doc (the Storage URL is opaque).
                 ...(att.kind === 'file' ? { filename: att.filename, size: att.size } : {}),
@@ -1693,6 +1841,9 @@ function ChatThreadInner({
     // text-only messages.
     async function handleSend() {
         if (pendingAttachment) {
+            // Own send lands in view (2026-09-25) — pinned here, in the
+            // dispatcher, so the attachment upload path stays untouched.
+            pinToBottom();
             await sendStagedAttachment();
         } else {
             await handleSendText();
@@ -1814,6 +1965,9 @@ function ChatThreadInner({
         return () => {
             if (pendingAttachment?.previewUrl) {
                 try { URL.revokeObjectURL(pendingAttachment.previewUrl); } catch {}
+            }
+            if (pendingAttachment?.posterPreviewUrl) {
+                try { URL.revokeObjectURL(pendingAttachment.posterPreviewUrl); } catch {}
             }
         };
     }, [pendingAttachment]);
@@ -1941,6 +2095,25 @@ function ChatThreadInner({
         }
     }
 
+    // 2026-09-25 chat review #7 — patch chat.lastMessage only while it still
+    // shows THIS message. Runs after the awaited message write: a cheap
+    // prefilter on the latest chat doc this thread rendered (no read when it
+    // clearly isn't the preview), then a re-check inside a transaction on the
+    // server copy, so a message that landed in between never gets ITS preview
+    // blanked/overwritten. Strict match — lastMessage.id, or lastMessage.ts ===
+    // the message's createdAt (previewShowsMessage). Fire-and-forget.
+    function patchPreviewIfShowing(message, patch, kind) {
+        if (!patch || !message?.id || !chat?.id) return;
+        const liveChat = latestThreadRef.current?.chat || chat;
+        if (!previewShowsMessage(liveChat, message)) return;
+        const chatRef = doc(db, 'chats', chat.id);
+        watchdogTransaction(runTransaction(db, async (txn) => {
+            const snap = await txn.get(chatRef);
+            if (!snap.exists() || !previewShowsMessage(snap.data(), message)) return;
+            txn.update(chatRef, patch);
+        })).catch(e => console.warn(`lastMessage (${kind}) patch failed:`, e));
+    }
+
     // Delete (soft) a message. Author can always; managers can delete
     // any in their channel. Audit log records the actor + content for
     // dispute resolution.
@@ -1951,24 +2124,19 @@ function ChatThreadInner({
         if (!canOwn && !canAny) return;
         const ok = window.confirm(tx('Delete this message?', '¿Eliminar este mensaje?'));
         if (!ok) return;
-        // 2026-09-23 chat audit M5 — decide BEFORE the write (the local echo
-        // flips the message to deleted) whether it's the one the chat-list
-        // preview shows; if so the preview must stop quoting it for everyone.
-        const live = latestThreadRef.current || { chat, messages };
-        const isPreviewed = isChatLastMessage(live.chat, message, live.messages[live.messages.length - 1]?.id);
         try {
             await updateDoc(doc(db, 'chats', chat.id, 'messages', message.id), {
                 deleted: true,
                 deletedBy: staffName,
                 deletedAt: serverTimestamp(),
             });
-            if (isPreviewed) {
-                const patch = lastMessagePatchFor('delete', message);
-                // Best-effort + not awaited: the delete itself already landed;
-                // a failed preview patch must not report the delete failed.
-                if (patch) updateDoc(doc(db, 'chats', chat.id), patch)
-                    .catch(e => console.warn('lastMessage (delete) patch failed:', e));
-            }
+            // 2026-09-23 chat audit M5 — if the chat-list preview quotes this
+            // message, it must stop quoting it for everyone. 2026-09-25 chat
+            // review #7 — decided AFTER the write, against the latest chat doc
+            // (see patchPreviewIfShowing), not before it.
+            // Best-effort + not awaited: the delete itself already landed;
+            // a failed preview patch must not report the delete failed.
+            patchPreviewIfShowing(message, lastMessagePatchFor('delete', message), 'delete');
             recordAudit({
                 action: 'chat.message.delete',
                 actorName: staffName,
@@ -2038,8 +2206,6 @@ function ChatThreadInner({
             setEditingMessageId(null);
             return;
         }
-        const live = latestThreadRef.current || { chat, messages };
-        const isPreviewed = isChatLastMessage(live.chat, message, live.messages[live.messages.length - 1]?.id);
         try {
             // 2026-05-24 audit fix: edit was leaving the stale `mentions[]`
             // array on the doc — if a user edited "hey team" → "hey @Andrea",
@@ -2065,11 +2231,8 @@ function ChatThreadInner({
             });
             // 2026-09-23 chat audit M5 — keep the chat-list preview in step
             // with an edit of the previewed (newest) text message. Best-effort.
-            if (isPreviewed) {
-                const patch = lastMessagePatchFor('edit', message, trimmed);
-                if (patch) updateDoc(doc(db, 'chats', chat.id), patch)
-                    .catch(e => console.warn('lastMessage (edit) patch failed:', e));
-            }
+            // (#7 — matched after the write, by id / ts; see below.)
+            patchPreviewIfShowing(message, lastMessagePatchFor('edit', message, trimmed), 'edit');
             recordAudit({
                 action: 'chat.message.edit',
                 actorName: staffName,
@@ -2176,6 +2339,7 @@ function ChatThreadInner({
         if (!payload || pollSubmitting || pollSubmittingRef.current) return;
         pollSubmittingRef.current = true;
         setPollSubmitting(true);
+        pinToBottom();      // own send always lands in view (2026-09-25)
         try {
             await sendMessage({
                 chat, staffName, viewer, staffList,
@@ -2206,7 +2370,14 @@ function ChatThreadInner({
     async function handleVote(message, optionId) {
         if (!message?.id || !optionId) return;
         const poll = message.poll;
-        if (!poll || !isPollOpen(poll)) return;
+        if (!poll) return;
+        if (!isPollOpen(poll)) {
+            // 2026-09-25 chat review #17 — the card only re-evaluates `open`
+            // on re-render, so after closesAt passes the options still look
+            // tappable; the tap used to silently do nothing.
+            toast(tx('Poll closed', 'Encuesta cerrada'), { kind: 'info' });
+            return;
+        }
         const ref = doc(db, 'chats', chat.id, 'messages', message.id);
         const currentArr = Array.isArray(poll.votes?.[optionId]) ? poll.votes[optionId] : [];
         const alreadyVoted = currentArr.includes(staffName);
@@ -2333,19 +2504,19 @@ function ChatThreadInner({
     }
 
     // Bulk-nudge every unread reader. Used by "Nudge all" in the
-    // SeenBySheet header. Sequential awaits (not Promise.all) so a
-    // failure on one push doesn't abort the rest — each notifyStaff
-    // already swallows its own errors, but explicit sequencing makes
-    // the audit log readable in order.
+    // SeenBySheet header. 2026-09-25 chat review #15 — in PARALLEL with
+    // allSettled (was sequential: N round-trips before any feedback), and it
+    // RETURNS the names that failed so the sheet can un-mark those rows
+    // instead of showing "✓ Nudged" for a push that never went out.
     async function handleNudgeAll(message, targetNames) {
-        if (!message?.id || !Array.isArray(targetNames) || targetNames.length === 0) return;
-        let ok = 0;
-        for (const name of targetNames) {
-            // eslint-disable-next-line no-await-in-loop
-            if (await handleNudge(message, name, { quiet: true })) ok += 1;
-        }
+        if (!message?.id || !Array.isArray(targetNames) || targetNames.length === 0) return [];
+        const results = await Promise.allSettled(
+            targetNames.map(name => handleNudge(message, name, { quiet: true })));
+        const failedNames = targetNames.filter((_, i) =>
+            !(results[i].status === 'fulfilled' && results[i].value === true));
+        const ok = targetNames.length - failedNames.length;
         // m11 — report what actually went out (was always "Nudged N").
-        const failed = targetNames.length - ok;
+        const failed = failedNames.length;
         if (failed === 0) {
             toast(tx(`Nudged ${ok}`, `${ok} recordados`), { kind: 'success' });
         } else if (ok === 0) {
@@ -2354,6 +2525,7 @@ function ChatThreadInner({
             toast(tx(`Nudged ${ok} of ${targetNames.length} — ${failed} failed.`,
                      `${ok} de ${targetNames.length} recordados — ${failed} fallaron.`), { kind: 'warn' });
         }
+        return failedNames;
     }
 
     // Close a poll. Only the creator or admin can close.
@@ -2361,8 +2533,13 @@ function ChatThreadInner({
         if (!message?.id) return;
         if (!isAdmin && message.senderName !== staffName) return;
         try {
+            // 2026-09-25 chat review #17 — Timestamp.now(), not
+            // serverTimestamp(): a pending serverTimestamp reads back as NULL
+            // until the ack, so isPollOpen stayed true and the card kept its
+            // vote buttons (offline: indefinitely). Client time is fine for a
+            // manual close stamp.
             await updateDoc(doc(db, 'chats', chat.id, 'messages', message.id), {
-                'poll.closedAt': serverTimestamp(),
+                'poll.closedAt': Timestamp.now(),
             });
         } catch (e) {
             console.warn('poll close failed:', e);
@@ -2625,6 +2802,16 @@ function ChatThreadInner({
     // Function does the actual delivery so closing the app doesn't
     // strand the message.
     async function handleScheduleSend(sendAt) {
+        // 2026-09-25 chat review #16 — scheduled messages are text-only (the
+        // CF delivers payload.text); with a staged photo/video/file/voice memo
+        // this used to schedule just the caption and silently drop the
+        // attachment. The composer hides the option too; this is the backstop.
+        if (pendingAttachment) {
+            toast(tx('Scheduled messages can’t include attachments — send it now, or remove the attachment first.',
+                     'Los mensajes programados no pueden llevar adjuntos — envíalo ahora o quita el adjunto.'),
+                  { kind: 'warn' });
+            return;
+        }
         const body = getDraft().trim();
         if (!body) return;
         // 2026-07-21 (chat audit, bug #3) — re-entry guard. Unlike the live-send
@@ -2884,9 +3071,11 @@ function ChatThreadInner({
                         </div>
                         {group.messages.map((msg, i) => {
                             const prev = group.messages[i - 1];
-                            const sameSender = prev?.senderName === msg.senderName
-                                && msg.createdAt?.toMillis && prev?.createdAt?.toMillis
-                                && (msg.createdAt.toMillis() - prev.createdAt.toMillis()) < 5 * 60 * 1000;
+                            // 2026-09-25 chat review #21 — Timestamp OR the
+                            // cold-cache {seconds} shape (was toMillis-only,
+                            // so a cache paint repeated name + avatar on
+                            // every bubble until the live snapshot landed).
+                            const sameSender = isSameSenderRun(prev, msg);
                             return (
                                 // PERF-1, 2026-05-30: was rendering
                                 // `MessageBubbleInner` directly, which silently
@@ -2901,7 +3090,13 @@ function ChatThreadInner({
                                 <MessageBubble
                                     message={msg}
                                     chat={chat}
-                                    lastReadSig={lastReadSig}
+                                    // 2026-09-25 chat review #5 — only bubbles
+                                    // whose receipts this viewer can SEE depend on
+                                    // lastReadByName; for the rest the sig is ''
+                                    // so a member's read receipt no longer
+                                    // re-renders every bubble (the common case —
+                                    // default visibility is admins-only).
+                                    lastReadSig={canSeeReceiptsForMessage(chat, msg, viewer, isAdmin) ? lastReadSig : ''}
                                     membersSig={membersSig}
                                     isMine={msg.senderName === staffName}
                                     showSender={!sameSender && chat.type !== 'dm'}
@@ -2938,16 +3133,12 @@ function ChatThreadInner({
                                     onStartEdit={() => setEditingMessageId(msg.id)}
                                     onCancelEdit={() => setEditingMessageId(null)}
                                     onSaveEdit={(newText) => handleEditMessage(msg, newText)}
-                                    onJumpToReply={(targetId) => {
-                                        if (!targetId) return;
-                                        setHighlightMsgId(targetId);
-                                        setAtBottom(false);
-                                        setTimeout(() => {
-                                            const el = document.getElementById(`msg-${targetId}`);
-                                            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                            setTimeout(() => setHighlightMsgId(null), 2500);
-                                        }, 60);
-                                    }}
+                                    // 2026-09-25 chat review #2 — quote taps ride
+                                    // the shared jump path: loads older messages
+                                    // when the original is outside the window, and
+                                    // re-measures atBottom afterwards (the old
+                                    // inline version left it stuck false).
+                                    onJumpToReply={requestJumpToMessage}
                                 />
                                 </div>
                             );
@@ -3381,9 +3572,12 @@ function MessageBubbleInner({
     }
 
     // ── Soft-deleted: render a placeholder ────────────────────
+    // 2026-09-25 chat review #2 — the placeholder (and system rows) carry the
+    // `msg-` id too, so a jump to a deleted message (a reply quote, a pin)
+    // lands on it instead of silently doing nothing.
     if (message.deleted) {
         return (
-            <div className="text-center text-[11px] text-dd-text-2 italic py-1">
+            <div id={`msg-${message.id}`} className={`text-center text-[11px] text-dd-text-2 italic py-1 transition ${highlighted ? 'bg-amber-100/50 rounded-xl' : ''}`}>
                 {isEs ? '(mensaje eliminado)' : '(message deleted)'}
             </div>
         );
@@ -3392,7 +3586,7 @@ function MessageBubbleInner({
     // ── System events: minimal centered text ──────────────────
     if (message.type === 'system' || message.type === 'system_event') {
         return (
-            <div className="text-center text-[11px] text-dd-text-2 italic py-1">
+            <div id={`msg-${message.id}`} className={`text-center text-[11px] text-dd-text-2 italic py-1 transition ${highlighted ? 'bg-amber-100/50 rounded-xl' : ''}`}>
                 {message.text}
             </div>
         );
@@ -3576,7 +3770,9 @@ function MessageBubbleInner({
     return (
         <div
             id={`msg-${message.id}`}
-            className={`flex gap-2 items-end ${isMine ? 'justify-end' : 'justify-start'} mb-0.5 transition ${highlighted ? 'bg-amber-100/50 rounded-xl' : ''}`}
+            // `group` — the desktop ☺︎ react button below reveals on
+            // group-hover; without the class it never appeared (2026-09-25).
+            className={`group flex gap-2 items-end ${isMine ? 'justify-end' : 'justify-start'} mb-0.5 transition ${highlighted ? 'bg-amber-100/50 rounded-xl' : ''}`}
             onContextMenu={(e) => { e.preventDefault(); setShowActions(true); }}
         >
             {!isMine && (
@@ -3648,22 +3844,23 @@ function MessageBubbleInner({
                             </button>
                         )}
                         {message.type === 'image' && (
-                            <MediaImage url={message.mediaUrl} alt="Photo" />
+                            // 2026-09-25 — real aspect (portrait photos were
+                            // cropped to 4:3) + full-screen viewer with
+                            // pinch/double-tap zoom (ChatMedia.jsx).
+                            <ChatPhoto url={message.mediaUrl} width={message.width} height={message.height} alt="Photo" isEs={isEs} />
                         )}
                         {message.type === 'video' && (
-                            // 2026-07-27 audit C6 — preload="none": with
-                            // "metadata" every video in the render window
-                            // fetched despite content-visibility clipping.
-                            // Poster (when the upload captured one) keeps a
-                            // frame visible; controls-initiated play still
-                            // works with preload none.
-                            <video src={message.mediaUrl} controls playsInline preload="none"
-                                poster={message.thumbnailUrl || undefined}
-                                width="320" height="240" style={{ aspectRatio: '4 / 3' }}
-                                className="rounded-lg w-auto max-w-full max-h-[360px] bg-dd-bg/40" />
+                            // 2026-09-25 — poster tile; tap opens the in-app
+                            // full-screen player (Android's WebView blocks
+                            // native full-screen) playing the server's 720p
+                            // H.264 copy → plays on every phone. Loads
+                            // nothing until tapped (was a blank inline box).
+                            <ChatVideoTile message={message} isEs={isEs} />
                         )}
                         {message.type === 'audio' && (
-                            <AudioPlayer src={message.mediaUrl} duration={message.duration} isMine={isMine} />
+                            // 2026-09-25 — Android memos are WebM/Opus; the server adds an AAC
+                            // .m4a copy (playbackUrl) that every iPhone plays.
+                            <AudioPlayer src={message.playbackUrl || message.mediaUrl} duration={message.duration} isMine={isMine} />
                         )}
                         {message.type === 'file' && (
                             /* C8 — document card. Tap opens the file via the
@@ -3853,8 +4050,20 @@ function msgFieldsEqual(a, b) {
     // linkedTaskId; without this the memo kept the chip hidden after
     // "Make task" until some other field changed.
     if ((a.linkedTaskId || '') !== (b.linkedTaskId || '')) return false;
+    // 2026-09-25 — media fields. The server's video transcode (and the
+    // poster) land as an UPDATE on the message; without these the bubble
+    // kept its blank/old tile until some unrelated field changed.
+    if ((a.mediaUrl || '') !== (b.mediaUrl || '')) return false;
+    if ((a.thumbnailUrl || '') !== (b.thumbnailUrl || '')) return false;
+    if ((a.posterUrl || '') !== (b.posterUrl || '')) return false;
+    if ((a.playbackUrl || '') !== (b.playbackUrl || '')) return false;
+    if ((a.width || 0) !== (b.width || 0) || (a.height || 0) !== (b.height || 0)) return false;
+    if ((a.playbackWidth || 0) !== (b.playbackWidth || 0) || (a.playbackHeight || 0) !== (b.playbackHeight || 0)) return false;
+    if (!!a.transcodeFailedAt !== !!b.transcodeFailedAt) return false;
     if ((a.coverageStatus || '') !== (b.coverageStatus || '')) return false;
-    if ((a.coverageClaimedBy || '') !== (b.coverageClaimedBy || '')) return false;
+    // 2026-09-25 — was `coverageClaimedBy`, a field nothing ever writes;
+    // coverage.js writes (and CoverageCard reads) `claimedBy`.
+    if ((a.claimedBy || '') !== (b.claimedBy || '')) return false;
     // Timestamps must compare by value — Firestore rebuilds Timestamp
     // instances per snapshot, so identity compare would fail every emission
     // and permanently defeat the bubble memo (scroll-freeze class).
@@ -3986,41 +4195,6 @@ function InlineEditor({ initialText, isMine, isEs, onSave, onCancel }) {
 }
 
 // Image bubble with lightbox-on-tap. Lazy-loads via the browser.
-function MediaImage({ url, alt }) {
-    const [zoom, setZoom] = useState(false);
-    if (!url) return null;
-    return (
-        <>
-            {/* 2026-05-30 perf — intrinsic 4:3 width/height + matching CSS
-                aspectRatio so the browser reserves vertical space BEFORE the
-                image bytes arrive. Without these, lazy-loaded chat photos
-                snap from 0px to natural height on first paint and shove the
-                rest of the message stream around (CLS). */}
-            <img
-                src={url}
-                alt={alt}
-                loading="lazy"
-                decoding="async"
-                width="320"
-                height="240"
-                onClick={() => setZoom(true)}
-                style={{ aspectRatio: '4 / 3' }}
-                className="rounded-lg w-auto max-w-full max-h-[360px] object-cover cursor-zoom-in bg-dd-bg/40"
-            />
-            {zoom && (
-                <ModalPortal>
-                <div
-                    className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out"
-                    onClick={() => setZoom(false)}
-                >
-                    <img src={url} alt={alt} className="max-w-full max-h-full object-contain" />
-                </div>
-                </ModalPortal>
-            )}
-        </>
-    );
-}
-
 // Audio player — pill with play/pause + duration. Native <audio>
 // controls are inconsistent across mobile browsers; we wrap our own.
 function AudioPlayer({ src, duration, isMine }) {
@@ -4236,12 +4410,20 @@ function Composer({
             });
             if (!changed) {
                 toast(isEs ? '✓ Ya está bien' : '✓ Looks good', { kind: 'success' });
+            } else if (_liveDraftRef.current !== original) {
+                // 2026-09-25 chat review #12 — the user kept typing (or sent)
+                // while the AI call was in flight; applying the result would
+                // wipe what they typed (or resurrect a sent message).
+                toast(isEs ? 'El mensaje cambió — corrección omitida' : 'Message changed — fix skipped', { kind: 'info' });
             } else {
-                setDraft(fixed);
+                // Functional updates re-check at apply time (same-tick typing).
+                setDraft(prev => (prev === original ? fixed : prev));
                 toast(isEs ? '✨ Corregido' : '✨ Fixed', {
                     kind: 'success',
                     actionLabel: isEs ? 'Deshacer' : 'Undo',
-                    onAction: () => setDraft(original),
+                    // Undo only while the draft is still exactly the fix —
+                    // never clobber text typed (or a send) after it.
+                    onAction: () => setDraft(prev => (prev === fixed ? original : prev)),
                     duration: 6000,
                 });
             }
@@ -4492,7 +4674,15 @@ function Composer({
                             draggable={false}
                         />
                     )}
-                    {pendingAttachment.kind === 'video' && (
+                    {pendingAttachment.kind === 'video' && pendingAttachment.posterPreviewUrl && (
+                        <img
+                            src={pendingAttachment.posterPreviewUrl}
+                            alt=""
+                            className="w-14 h-14 rounded-md object-cover shrink-0 bg-black"
+                            draggable={false}
+                        />
+                    )}
+                    {pendingAttachment.kind === 'video' && !pendingAttachment.posterPreviewUrl && (
                         <video
                             src={pendingAttachment.previewUrl}
                             muted
@@ -4708,7 +4898,9 @@ function Composer({
                                 tone="purple"
                             />
                         )}
-                        {!empty && onOpenSchedule && (
+                        {/* #16 (2026-09-25) — hidden while an attachment is
+                            staged: scheduling is text-only. */}
+                        {!empty && onOpenSchedule && !hasAttachment && (
                             <AttachMenuItem
                                 Icon={Calendar}
                                 label={isEs ? 'Programar envío' : 'Schedule send'}
@@ -4875,7 +5067,7 @@ function Composer({
 async function sendMessage({
     chat, staffName, viewer, staffList,
     type, text = '', mediaUrl, mediaPath, mediaType,
-    duration, width, height, thumbnailUrl,
+    duration, width, height, thumbnailUrl, thumbnailPath,
     filename, size,                       // C8 — type 'file' document metadata
     replyTo, poll, eightySixData, forceDeliver = false,
 }) {
@@ -4921,6 +5113,7 @@ async function sendMessage({
         ...(width != null ? { width } : {}),
         ...(height != null ? { height } : {}),
         ...(thumbnailUrl ? { thumbnailUrl } : {}),
+        ...(thumbnailPath ? { thumbnailPath } : {}),
         ...(filename ? { filename } : {}),
         ...(size != null ? { size } : {}),
         ...replyToField,
@@ -4960,20 +5153,52 @@ async function resizeImage(file, maxDim) {
     return fileToScaledBlobWithDims(file, maxDim, 0.85);
 }
 
+// Reads duration + display size and grabs a small JPEG poster (long side
+// 640) so the bubble shows a frame the moment it's sent. 2026-09-25: it had
+// no time limit — a clip this phone can't decode (HEVC on some Androids)
+// never fired either event and the composer stayed frozen. Every path now
+// resolves within ~8s; the poster is best-effort (null when undecodable —
+// the server makes one either way).
 async function probeVideo(file) {
     return new Promise((resolve) => {
         const url = URL.createObjectURL(file);
         const v = document.createElement('video');
-        v.preload = 'metadata';
-        v.onloadedmetadata = () => {
-            const meta = { duration: Math.round(v.duration || 0), width: v.videoWidth, height: v.videoHeight };
+        let meta = {};
+        let settled = false;
+        const finish = (poster = null) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            try { v.removeAttribute('src'); v.load(); } catch { /* ignore */ }
             URL.revokeObjectURL(url);
-            resolve(meta);
+            resolve({ ...meta, posterBlob: poster });
         };
-        v.onerror = () => { URL.revokeObjectURL(url); resolve({}); };
+        const timer = setTimeout(() => finish(null), 8000);
+        v.muted = true;
+        v.playsInline = true;
+        v.setAttribute('playsinline', '');
+        v.preload = 'auto';
+        v.onloadedmetadata = () => {
+            meta = { duration: Math.round(v.duration || 0), width: v.videoWidth, height: v.videoHeight };
+            try { v.currentTime = Math.min(0.5, (v.duration || 1) / 2); } catch { finish(null); }
+        };
+        v.onseeked = () => {
+            try {
+                const w = v.videoWidth, h = v.videoHeight;
+                if (!w || !h) { finish(null); return; }
+                const k = Math.min(1, 640 / Math.max(w, h));
+                const c = document.createElement('canvas');
+                c.width = Math.round(w * k); c.height = Math.round(h * k);
+                c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+                c.toBlob((b) => { c.width = 0; c.height = 0; finish(b && b.size > 1000 ? b : null); }, 'image/jpeg', 0.72);
+            } catch { finish(null); }
+        };
+        v.onerror = () => finish(null);
         v.src = url;
     });
 }
+
+
 
 // ─────────────────────────────────────────────────────────────────
 // SPECIALTY MESSAGE CARDS
@@ -5810,11 +6035,33 @@ function SeenBySheet({
         }, 30_000);
     }
 
+    // 2026-09-25 chat review #15 — the row flips to "✓ Nudged" optimistically
+    // (instant feedback + blocks a double tap), then UN-marks when the push
+    // write actually failed (handleNudge resolves false; notifyStaff returns
+    // null on failure — it never throws). handleNudge already toasted.
+    function unmarkNudged(names) {
+        const drop = new Set(names);
+        if (drop.size === 0) return;
+        setRecentlyNudged(prev => {
+            if (![...drop].some(n => prev.has(n))) return prev;
+            const next = new Set(prev);
+            drop.forEach(n => next.delete(n));
+            return next;
+        });
+    }
     function nudgeOne(name) {
         if (!nudgeAllowed) return;
         if (recentlyNudged.has(name)) return;
-        onNudge?.(name);
         markNudged(name);
+        Promise.resolve(onNudge?.(name))
+            .then(ok => { if (ok === false) unmarkNudged([name]); })
+            .catch(() => unmarkNudged([name]));
+    }
+    function nudgeAll(names) {
+        names.forEach(markNudged);
+        Promise.resolve(onNudgeAll?.(names))
+            .then(failed => { if (Array.isArray(failed)) unmarkNudged(failed); })
+            .catch(() => unmarkNudged(names));
     }
 
     // ── SMS escalation ("Text") — manual, admin's own phone ────────
@@ -5923,10 +6170,7 @@ function SeenBySheet({
                         cooldown per name to prevent spam. */}
                     {nudgeAllowed && nudgeAllTargets.length > 0 && (
                         <button
-                            onClick={() => {
-                                onNudgeAll?.(nudgeAllTargets);
-                                nudgeAllTargets.forEach(markNudged);
-                            }}
+                            onClick={() => nudgeAll(nudgeAllTargets)}
                             className="px-2.5 py-1.5 rounded-full bg-dd-green text-white text-[11px] font-black shadow-sm hover:bg-dd-green-700 active:scale-95 transition shrink-0"
                             title={tx('Send a reminder push to everyone who hasn\'t read this',
                                        'Enviar recordatorio a quienes no han leído')}

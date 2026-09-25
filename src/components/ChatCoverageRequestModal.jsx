@@ -22,7 +22,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import {
     collection, query, where, onSnapshot, doc,
-    serverTimestamp,
+    serverTimestamp, FieldPath,
     addDoc as _fsAddDoc,
     updateDoc as _fsUpdateDoc,
     getDoc as _fsGetDoc,
@@ -174,16 +174,18 @@ export default function ChatCoverageRequestModal({
                 createdAt: serverTimestamp(),
             });
 
-            await updateDoc(doc(db, 'chats', chatId), {
-                lastMessage: {
+            // 2026-09-25 chat review #23 — varargs so the read marker uses a
+            // FieldPath (a "." in a staff name broke the template dot-path).
+            await updateDoc(doc(db, 'chats', chatId),
+                'lastMessage', {
                     text: `🙋 ${staffName} ${tx('needs coverage', 'necesita cobertura')} — ${pickedShift.date}`,
                     sender: staffName,
                     ts: serverTimestamp(),
                     type: 'coverage_request',
                 },
-                lastActivityAt: serverTimestamp(),
-                [`lastReadByName.${staffName}`]: serverTimestamp(),
-            });
+                'lastActivityAt', serverTimestamp(),
+                new FieldPath('lastReadByName', staffName), serverTimestamp(),
+            );
 
             recordAudit({
                 action: 'chat.coverage.request',

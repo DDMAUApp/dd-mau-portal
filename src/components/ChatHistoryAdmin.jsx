@@ -425,7 +425,7 @@ function renderMessageBody(m, isEs) {
                         <img src={m.mediaUrl} alt="" loading="lazy" decoding="async"
                             className="max-h-40 rounded border border-gray-200" />
                     ) : (
-                        <video src={m.mediaUrl} controls preload="none"
+                        <video src={m.playbackUrl || m.mediaUrl} poster={m.thumbnailUrl || m.posterUrl || undefined} controls playsInline preload="none"
                             className="max-h-40 rounded border border-gray-200" />
                     )
                 ) : (

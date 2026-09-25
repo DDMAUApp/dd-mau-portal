@@ -11,6 +11,19 @@
         "*.local"
       ],
       "predeploy": []
+    },
+    {
+      "source": "functions-media",
+      "codebase": "media",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local",
+        "*.test.js"
+      ],
+      "predeploy": []
     }
   ],
   "firestore": {

@@ -305,11 +305,39 @@ export function mergeCoAdminEdits({ liveAdmins, liveMembers, baseline, local }) 
 // fall back to "it's the newest message loaded in the thread AND the preview
 // was written by the same sender". An explicit lastMessage.id wins if a
 // future writer adds one.
+// (2026-09-25: ChatThread now uses the strict previewShowsMessage below;
+// this heuristic is kept for its existing tests / any external caller.)
 export function isChatLastMessage(chat, message, newestLoadedId) {
     const lm = chat && chat.lastMessage;
     if (!lm || typeof lm !== 'object' || !message || !message.id) return false;
     if (lm.id) return lm.id === message.id;
     if (!newestLoadedId || newestLoadedId !== message.id) return false;
+    if (lm.sender && message.senderName && lm.sender !== message.senderName) return false;
+    return true;
+}
+
+// 2026-09-25 chat review #7 — STRICT version of the check above for the
+// delete/edit preview patch, evaluated AFTER the awaited write against the
+// latest chat doc (and again inside the patch transaction). Matches only on
+//   • lastMessage.id — the onChatMessageCreated CF stamps it (2026-09-25+), or
+//   • lastMessage.ts === the message's createdAt (the CF has stamped ts from
+//     the message's own createdAt since 2026-09-02) + same sender.
+// Anything else → false = skip the patch. The heuristic above ("newest loaded
+// message") was decided before the awaited write, so a message that arrived
+// meanwhile could get ITS preview blanked/overwritten.
+function _msOf(ts) {
+    if (!ts || typeof ts !== 'object') return 0;
+    if (typeof ts.toMillis === 'function') return ts.toMillis() || 0;
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+    return 0;
+}
+export function previewShowsMessage(chat, message) {
+    const lm = chat && chat.lastMessage;
+    if (!lm || typeof lm !== 'object' || !message || !message.id) return false;
+    if (lm.id) return lm.id === message.id;
+    const lmMs = _msOf(lm.ts);
+    const msgMs = _msOf(message.createdAt);
+    if (!lmMs || !msgMs || lmMs !== msgMs) return false;
     if (lm.sender && message.senderName && lm.sender !== message.senderName) return false;
     return true;
 }
@@ -402,23 +430,47 @@ export function parseMentions(text, staffList) {
 // built inside sendMessage stays English-only because the Cloud
 // Function recipient may speak a different language than the sender —
 // see blockingForOwner note for the server-side fix.
-export function previewOf(msg, language = 'en') {
+export function previewOf(msg, language = 'en', { viewerName = null, isDm = false } = {}) {
     if (!msg) return '';
     const es = language === 'es';
     const tx = (en, esStr) => (es ? esStr : en);
     if (msg.deleted) return tx('(deleted)', '(eliminado)');
-    const who = msg.senderName ? msg.senderName.split(' ')[0] + ': ' : '';
+    // 2026-09-25 chat review #8 — the chat-list preview (chat.lastMessage)
+    // stores `sender`, not `senderName`, and carries NO structured payload
+    // (no eightySixData / poll / filename): the onChatMessageCreated CF bakes
+    // the rendered preview into `text` ("🚫 86: Chicken", "📊 Lunch?",
+    // "📎 menu.pdf"). Reading only the structured fields made every stored 86
+    // preview say "🚫 86: item" and polls/files lose their text. Read either
+    // sender field, and fall back to the stored text when the structured
+    // field is missing (message objects keep the localized structured form).
+    const senderName = msg.sender || msg.senderName;
+    // Chat-list rows (viewer-aware, 2026-09-25): a 1:1 chat needs no name —
+    // the row IS that person; your own last message reads "You:".
+    const who = !senderName || isDm ? ''
+        : (viewerName && senderName === viewerName) ? tx('You: ', 'Tú: ')
+        : String(senderName).split(' ')[0] + ': ';
+    const flat = (msg.text || '').replace(/\s+/g, ' ').trim();
+    const clip = (t) => (t.length > 60 ? t.slice(0, 57) + '…' : t);
+    const withIcon = (icon, t) => (t.startsWith(icon) ? t : `${icon} ${t}`);
     if (msg.type === 'image') return who + tx('📷 Photo', '📷 Foto');
     if (msg.type === 'video') return who + tx('🎬 Video', '🎬 Video');
     if (msg.type === 'audio') return who + tx('🎤 Voice message', '🎤 Mensaje de voz');
-    if (msg.type === 'file') return who + `📎 ${msg.filename || tx('File', 'Archivo')}`;
-    if (msg.type === 'poll') return who + '📊 ' + (msg.poll?.question || tx('Poll', 'Encuesta'));
+    if (msg.type === 'file') {
+        if (msg.filename) return who + `📎 ${msg.filename}`;
+        return who + (flat ? clip(withIcon('📎', flat)) : `📎 ${tx('File', 'Archivo')}`);
+    }
+    if (msg.type === 'poll') {
+        if (msg.poll?.question) return who + '📊 ' + msg.poll.question;
+        return who + (flat ? clip(withIcon('📊', flat)) : '📊 ' + tx('Poll', 'Encuesta'));
+    }
     if (msg.type === 'eighty_six_alert') {
-        const d = msg.eightySixData || {};
-        const prefix = d.transition === 'in'
+        const d = msg.eightySixData;
+        if (!d && flat) return who + clip(flat);
+        const dd = d || {};
+        const prefix = dd.transition === 'in'
             ? tx('✅ Back in stock', '✅ De vuelta en stock')
             : tx('🚫 86', '🚫 86');
-        return who + `${prefix}: ${d.itemName || tx('item', 'artículo')}`;
+        return who + `${prefix}: ${dd.itemName || tx('item', 'artículo')}`;
     }
     if (msg.type === 'system') return msg.text || '';
     if (msg.type === 'training_assignment') {
@@ -428,8 +480,7 @@ export function previewOf(msg, language = 'en') {
         // through to the text preview when there is no title to show.
         if (title) return who + (tr.reminder ? tx('⏰ Training reminder: ', '⏰ Recordatorio: ') : tx('📚 Required training: ', '📚 Capacitación requerida: ')) + title;
     }
-    const t = (msg.text || '').replace(/\s+/g, ' ').trim();
-    return who + (t.length > 60 ? t.slice(0, 57) + '…' : t);
+    return who + clip(flat);
 }
 
 // Has a viewer read this chat up through the latest message?

@@ -437,13 +437,19 @@ exports.dispatchNotification = onDocumentCreated(
         } catch (e) {
             logger.warn(`chat_prefs read failed for ${forStaff} (failing open):`, e?.message);
         }
+        // 2026-09-25 chat review #4 — the settings screen calls this the
+        // "Master switch for all phone alerts", but it sat INSIDE the
+        // forceDeliver gate, and every chat message / announcement is
+        // forceDeliver — so turning it off never stopped chat pushes. A
+        // person who switched phone alerts off gets none (the in-app bell
+        // still records everything). No one had it off when this shipped.
+        if (userPrefs.pushEnabled === false) {
+            try {
+                await snap.ref.update({ pushSuppressed: true, pushSuppressedReason: "push_disabled" });
+            } catch { /* stamp is best-effort */ }
+            return;
+        }
         if (notif.forceDeliver !== true) {
-            if (userPrefs.pushEnabled === false) {
-                try {
-                    await snap.ref.update({ pushSuppressed: true, pushSuppressedReason: "push_disabled" });
-                } catch { /* stamp is best-effort */ }
-                return;
-            }
             const qh = userPrefs.quietHours;
             if (qh && qh.start && qh.end) {
                 // Restaurant-local time; the server runs UTC. Handles
@@ -683,6 +689,11 @@ exports.dispatchNotification = onDocumentCreated(
                 // open the exact conversation instead of just the chat list.
                 // Old clients ignore the extra key — fully backward compatible.
                 ...(notif.chatId ? { chatId: String(notif.chatId) } : {}),
+                // 2026-09-25 chat review #1 — per-notification id for the tap
+                // de-dupe (messaging.js _routePushTap). Android had none, so
+                // every tap fell back to "tab:chat:{id}" and a SECOND push
+                // for the same chat in a session was ignored as a duplicate.
+                notifId: String(snap.id),
                 link: notif.link || "/",
             },
             android: {
@@ -698,7 +709,12 @@ exports.dispatchNotification = onDocumentCreated(
                     body: pushBody,
                     channelId: "dd_default_channel",
                     sound: "default",
-                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                    // 2026-09-25 chat review #1 — `clickAction:
+                    // "FLUTTER_NOTIFICATION_CLICK"` (a Flutter leftover) was
+                    // REMOVED: no activity in this app declares that intent
+                    // action, so tapping a push in the Android tray opened
+                    // nothing. Without it the tap launches MainActivity and
+                    // Capacitor fires pushNotificationActionPerformed.
                 },
             },
             apns: {
@@ -1634,8 +1650,32 @@ exports.sendScheduledChatMessages = onSchedule(
                     logger.warn(`mention parse failed for scheduled ${sDoc.id}:`, e);
                 }
 
+                // 2026-09-25 chat review #6 — a scheduled message into a
+                // chat that was deleted since must not resurrect it.
+                const chatSnapNow = await db.doc(`chats/${chatId}`).get();
+                if (!chatSnapNow.exists || chatSnapNow.data()?.deletedAt) {
+                    await sDoc.ref.update({
+                        status: "error",
+                        error: "chat no longer exists",
+                        deliveredAt: FieldValue.serverTimestamp(),
+                    });
+                    return;
+                }
+
                 // 2) Append the message to the chat's messages subcollection
                 //    using the same shape ChatThread's sendMessage uses.
+                //
+                // 2026-09-25 chat review #6 — `serverFanout: true` hands the
+                // chat-list preview + notification fan-out to
+                // onChatMessageCreated, the SAME path live messages use. The
+                // old in-line copy here (a) wrote no chatId on notifications,
+                // so a push tap opened the chat list instead of the
+                // conversation and the per-chat read sweep never cleared
+                // them; (b) wrote the preview with set({merge}) — a stale
+                // lastMessage.deleted survived, and `lastReadByName.<name>`
+                // became a literal junk top-level field instead of the read
+                // marker; (c) titled DM pushes "Chat"; (d) knew nothing of
+                // reply / mention types.
                 const msgDoc = {
                     senderName: createdBy,
                     senderId: createdById || null,
@@ -1645,6 +1685,7 @@ exports.sendScheduledChatMessages = onSchedule(
                     mentions,
                     createdAt: FieldValue.serverTimestamp(),
                     scheduledSourceId: sDoc.id,
+                    serverFanout: true,
                 };
                 if (payload.replyTo && payload.replyTo.id) {
                     msgDoc.replyTo = {
@@ -1658,65 +1699,6 @@ exports.sendScheduledChatMessages = onSchedule(
                     msgDoc.poll = payload.poll;
                 }
                 const ref = await db.collection("chats").doc(chatId).collection("messages").add(msgDoc);
-
-                // 3) Denormalize chat preview + bump lastActivityAt so the
-                //    chat list reorders and unread dots light up.
-                const preview = payload.type === "image" ? "📷 Photo"
-                    : payload.type === "video" ? "🎬 Video"
-                    : payload.type === "audio" ? "🎤 Voice"
-                    : payload.type === "poll" ? `📊 ${(payload.poll && payload.poll.question) || "Poll"}`
-                    : text;
-                await db.doc(`chats/${chatId}`).set({
-                    lastMessage: {
-                        text: String(preview).slice(0, 200),
-                        sender: createdBy,
-                        ts: FieldValue.serverTimestamp(),
-                        type: payload.type,
-                    },
-                    lastActivityAt: FieldValue.serverTimestamp(),
-                    [`lastReadByName.${createdBy}`]: FieldValue.serverTimestamp(),
-                }, { merge: true });
-
-                // 4) Fan out per-recipient notification docs (chat
-                //    members minus the sender). dispatchNotification
-                //    handles the actual FCM send.
-                let members = [];
-                try {
-                    const chatSnap = await db.doc(`chats/${chatId}`).get();
-                    if (chatSnap.exists && Array.isArray(chatSnap.data().members)) {
-                        members = chatSnap.data().members;
-                    }
-                } catch (e) {
-                    logger.warn(`chat members lookup failed for ${chatId}:`, e);
-                }
-                const chatName = (await db.doc(`chats/${chatId}`).get()).data()?.name || "Chat";
-                // Carry the sender's "Notify anyway" intent FROM
-                // scheduling TIME into delivery time. The client
-                // stamps payload.forceDeliver=true when the sender
-                // flipped the off-shift override before scheduling;
-                // without honoring it here, the dispatcher would
-                // re-apply the off-shift gate at delivery and could
-                // silently suppress a message the sender explicitly
-                // chose to send through.
-                const scheduledForceDeliver = payload.forceDeliver === true;
-                const recipients = members.filter(n => n && n !== createdBy);
-                await Promise.all(recipients.map(async (to) => {
-                    const mentioned = mentions.includes(to);
-                    await db.collection("notifications").add({
-                        forStaff: to,
-                        type: mentioned ? "chat_mention" : "chat_message",
-                        title: mentioned ? `@${createdBy} → ${chatName}` : chatName,
-                        body: String(`${createdBy}: ${preview}`).slice(0, 140),
-                        deepLink: "chat",
-                        link: "/chat",
-                        tag: `chat:${chatId}:${to}`,
-                        priority: "high",
-                        ...(scheduledForceDeliver ? { forceDeliver: true } : {}),
-                        createdAt: FieldValue.serverTimestamp(),
-                        read: false,
-                        createdBy: "system",
-                    }).catch(e => logger.warn(`scheduled notify failed for ${to}:`, e));
-                }));
 
                 // 5) Stamp success on the source doc.
                 await sDoc.ref.update({
@@ -6451,6 +6433,20 @@ exports.onChatMessageCreated = onDocumentCreated(
         }
         if (chat.deletedAt) return; // soft-deleted chat — no fan-out
 
+        // 2026-09-25 chat review #7 — build the preview + pushes from the
+        // message's CURRENT state. On a cold start this runs seconds after
+        // the write; a message deleted (or edited) in that window used to
+        // come back in the chat-list preview and in everyone's push.
+        try {
+            const liveSnap = await event.data.ref.get();
+            if (!liveSnap.exists) return;
+            const live = liveSnap.data() || {};
+            if (live.deleted) return;
+            if (typeof live.text === "string") msg.text = live.text;
+        } catch (e) {
+            logger.warn(`onChatMessageCreated: live re-read failed (${chatId}/${messageId}), using trigger copy:`, e?.message);
+        }
+
         // Preview — mirrors the client's previewOf() shapes (chat.js).
         // English-only on purpose: the preview may be read by recipients
         // in either language and the writer's language is unknown; the
@@ -6476,17 +6472,36 @@ exports.onChatMessageCreated = onDocumentCreated(
         // dot that won't clear" class). The message's createdAt always
         // precedes any reader's mark-read, so readMs >= lastActivityAt.
         const msgTs = msg.createdAt || FieldValue.serverTimestamp();
+        // 2026-09-25 chat review #7 — transactional + newest-wins. Two
+        // messages close together can be processed out of order (separate
+        // instances, cold starts); an unconditional update let the OLDER
+        // one overwrite the preview and move lastActivityAt backwards (the
+        // sender of the newer message then missed the unread dot). Also
+        // stamps lastMessage.id so the client's delete/edit patch can tell
+        // exactly which message the preview shows.
+        const myMs = msg.createdAt?.toMillis ? msg.createdAt.toMillis() : Date.now();
         try {
-            await db.doc(`chats/${chatId}`).update({
-                lastMessage: {
-                    text: preview.slice(0, 200),
-                    sender,
-                    ts: msgTs,
-                    type,
-                },
-                lastActivityAt: msgTs,
-                [`typingByName.${sender}`]: null,
-                [`lastReadByName.${sender}`]: FieldValue.serverTimestamp(),
+            const chatRef = db.doc(`chats/${chatId}`);
+            await db.runTransaction(async (tx) => {
+                const cs = await tx.get(chatRef);
+                if (!cs.exists) return;
+                const cur = (cs.data() || {}).lastMessage || null;
+                const curMs = cur?.ts?.toMillis ? cur.ts.toMillis() : 0;
+                const update = {
+                    [`typingByName.${sender}`]: null,
+                    [`lastReadByName.${sender}`]: FieldValue.serverTimestamp(),
+                };
+                if (curMs <= myMs) {
+                    update.lastMessage = {
+                        text: preview.slice(0, 200),
+                        sender,
+                        ts: msgTs,
+                        type,
+                        id: messageId,
+                    };
+                    update.lastActivityAt = msgTs;
+                }
+                tx.update(chatRef, update);
             });
         } catch (e) {
             logger.warn(`onChatMessageCreated: preview update failed (${chatId}):`, e?.message);
