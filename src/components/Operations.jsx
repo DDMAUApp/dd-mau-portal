@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue, la
 import { db, storage } from '../firebase';
 import {
     doc, onSnapshot, query, collection, orderBy, limit, where, serverTimestamp,
-    deleteField, arrayUnion, runTransaction, increment, FieldPath,
+    deleteField, arrayUnion, runTransaction as _fsRunTransaction, increment, FieldPath,
     setDoc as _fsSetDoc,
     getDoc as _fsGetDoc,
     getDocs as _fsGetDocs,
@@ -20,7 +20,7 @@ import {
 // shadows give every existing call site watchdog coverage without touching
 // them. Writes → watchdogWrite (revive + SyncPill + escalation), reads →
 // watchdogRead (revive on hang only).
-import { watchdogWrite, watchdogRead } from '../data/firestoreRevive';
+import { watchdogWrite, watchdogRead, watchdogTransaction } from '../data/firestoreRevive';
 import { taskDueOnDay, recurrenceLabelFor, assigneesOnDay } from '../data/checklistRecurrence';
 // 2026-08-25 audit — per-task transactional checklist writers (see the
 // block comment above mutateOpsChecklistTask in taskPlan.js). The nine
@@ -33,6 +33,13 @@ const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 const getDocs = (...a) => watchdogRead(_fsGetDocs(...a));
+// 2026-09-25 (Andrew: "trying to add items to the inventory list but its not
+// working") — transactions were the one UNshadowed primitive here. A
+// transaction must read the live doc from the SERVER first; on a wedged
+// transport (after the phone sleeps) that read hung forever with no revive,
+// no pill, no error — every catalog add/edit/move/delete silently never
+// happened. Same shadow Schedule.jsx uses.
+const runTransaction = (...a) => watchdogTransaction(_fsRunTransaction(...a));
 // ⚠ EMPTY-FROM-CACHE LIE (2026-08-12, Andrew: "recent orders not showing
 // up" mid-order): a slow default-source getDocs (>8s on store Wi-Fi)
 // trips watchdogRead's revive network-cycle, and Firestore resolves the
@@ -1044,6 +1051,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             }, [invCompactView]);
             const [invShowAddForm, setInvShowAddForm] = useState(null);
             const [invNewName, setInvNewName] = useState("");
+            // Which add box is saving right now ('cat:N' | 'loc:X' | 'form:N'), 2026-09-25.
+            const [invAddingKey, setInvAddingKey] = useState(null);
             const [invNewNameEs, setInvNewNameEs] = useState("");
             const [invNewSupplier, setInvNewSupplier] = useState("");
             const [invNewOrderDay, setInvNewOrderDay] = useState("Fri");
@@ -4985,6 +4994,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // the saved doc lacks vanished until the next snapshot), and it is
             // NOT shown at all while an admin-activated list owns the screen
             // (M1: the list view used to be swapped for the raw ops list).
+            // One add in flight at a time per box; the typed name stays put
+            // until the save really lands (2026-09-25). After 10s tell the
+            // user it's the connection, not them.
+            const withAddProgress = async (key, run) => {
+                setInvAddingKey(key);
+                const slow = setTimeout(() => {
+                    toast(language === 'es'
+                        ? 'Conexión lenta — todavía agregando…'
+                        : 'Slow connection — still adding…', { kind: 'info', duration: 5000 });
+                }, 10000);
+                try { return await run(); }
+                finally { clearTimeout(slow); setInvAddingKey(null); }
+            };
             const mutateInventory = async (transformer) => {
                 try {
                     const out = await runTransaction(db, async (txn) => {
@@ -5153,9 +5175,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 const translated = autoTranslateItem(input);
                 const targetName = customInventory[targetCatIdx]?.name;
-                setWriteInValues(prev => ({ ...prev, [sourceCatIdx]: "" }));
-                setWriteInDest(prev => ({ ...prev, [sourceCatIdx]: { catIdx: sourceCatIdx, location: '' } }));
-                await mutateInventory((live, data) => {
+                if (invAddingKey) return;
+                const result = await withAddProgress(`cat:${sourceCatIdx}`, () => mutateInventory((live, data) => {
                     // Locate the category in the LIVE doc by NAME, not by index: the saved
                     // array can be shorter / a different order than the rendered (merged)
                     // list, so live[targetCatIdx] could hit the wrong category — or none
@@ -5175,7 +5196,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         location,
                     };
                     return working.map((cat, i) => i === idx ? { ...cat, items: [...cat.items, newItem] } : cat);
-                });
+                }));
+                if (!result) return;   // mutateInventory toasted; the typed text stays
+                setWriteInValues(prev => ({ ...prev, [sourceCatIdx]: "" }));
+                setWriteInDest(prev => ({ ...prev, [sourceCatIdx]: { catIdx: sourceCatIdx, location: '' } }));
+                toast(language === 'es' ? `✓ ${translated.name} agregado` : `✓ ${translated.name} added`, { kind: 'success' });
             };
 
             // By-Location quick add (Andrew 2026-07-30). Same durable write as
@@ -5205,14 +5230,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     return;
                 }
                 const translated = autoTranslateItem(input);
-                setLocWriteIn(prev => ({ ...prev, [loc]: '' }));
+                if (invAddingKey) return;
                 // The check above reads LOCAL state, which two managers adding
                 // the same item at the same moment would both pass — and this
                 // list is permanent, so the duplicate sticks. Re-check inside
                 // the transaction against the LIVE doc, where only one writer
                 // can win.
                 let raceDupe = false;
-                const result = await mutateInventory((live, data) => {
+                const result = await withAddProgress(`loc:${loc}`, () => mutateInventory((live, data) => {
                     raceDupe = isDuplicateInventoryName(live, {
                         location: loc, name: translated.name, nameEs: translated.nameEs,
                     });
@@ -5233,7 +5258,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         location: loc,
                     };
                     return working.map((c, i) => i === idx ? { ...c, items: [...c.items, newItem] } : c);
-                });
+                }));
                 if (raceDupe) {
                     // Lost the race. Put their text back so the typing isn't
                     // thrown away, and say what actually happened rather than
@@ -5245,6 +5270,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     return;
                 }
                 if (result) {
+                    setLocWriteIn(prev => ({ ...prev, [loc]: '' }));
                     // Confirm explicitly: an active search/filter can hide the
                     // row that was just created, which otherwise reads as "the
                     // Add button did nothing".
@@ -5265,7 +5291,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     supplier: invNewSupplier.trim(), orderDay: invNewOrderDay,
                 };
                 const targetName = customInventory[catIdx]?.name;
-                await mutateInventory((live, data) => {
+                if (invAddingKey) return;
+                const result = await withAddProgress(`form:${catIdx}`, () => mutateInventory((live, data) => {
                     // Find the category in the LIVE doc by NAME (saved order/length can
                     // differ from the rendered list) so the add never lands on the wrong
                     // category or silently no-ops. Create it if the saved doc lacks it.
@@ -5283,8 +5310,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         orderDay: captured.orderDay, pack: "", price: null, subcat: "",
                     };
                     return working.map((cat, i) => i === idx ? { ...cat, items: [...cat.items, newItem] } : cat);
-                });
+                }));
+                if (!result) return;   // form (and typing) stays open on failure
                 setInvNewName(""); setInvNewNameEs(""); setInvNewSupplier(""); setInvNewOrderDay("Fri"); setInvShowAddForm(null);
+                toast(language === 'es' ? `✓ ${captured.name} agregado` : `✓ ${captured.name} added`, { kind: 'success' });
             };
 
             // Planner context from the LIVE doc (inside a transaction).
@@ -9897,10 +9926,10 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                 className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-mint-500" />
                                                             {expanded && (
                                                                 <button onClick={() => quickAddItem(catIdx)}
-                                                                    disabled={!(dest.location || '').trim()}
+                                                                    disabled={!(dest.location || '').trim() || invAddingKey === `cat:${catIdx}`}
                                                                     title={!(dest.location || '').trim() ? (language === "es" ? "Elige una ubicación primero" : "Pick a location first") : ""}
                                                                     className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed">
-                                                                    {language === "es" ? "Agregar" : "Add"}
+                                                                    {invAddingKey === `cat:${catIdx}` ? (language === "es" ? "Agregando…" : "Adding…") : (language === "es" ? "Agregar" : "Add")}
                                                                 </button>
                                                             )}
                                                         </div>
@@ -9947,7 +9976,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                             placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
                                                     </div>
                                                     <div className="flex gap-2">
-                                                        <button onClick={() => addInvItem(catIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Agregar" : "Add"}</button>
+                                                        <button onClick={() => addInvItem(catIdx)} disabled={invAddingKey === `form:${catIdx}`} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700 disabled:opacity-50">{invAddingKey === `form:${catIdx}` ? (language === "es" ? "Agregando…" : "Adding…") : (language === "es" ? "Agregar" : "Add")}</button>
                                                         <button onClick={() => setInvShowAddForm(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                     </div>
                                                 </div>
@@ -10175,8 +10204,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                 className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-base sm:text-sm bg-white focus:outline-none focus:border-mint-500" />
                                                             {expanded && (
                                                                 <button onClick={() => quickAddItemAtLocation(loc, defaultCatIdx)}
-                                                                    className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition">
-                                                                    {language === 'es' ? 'Agregar' : 'Add'}
+                                                                    disabled={invAddingKey === `loc:${loc}`}
+                                                                    className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition disabled:opacity-50">
+                                                                    {invAddingKey === `loc:${loc}` ? (language === 'es' ? 'Agregando…' : 'Adding…') : (language === 'es' ? 'Agregar' : 'Add')}
                                                                 </button>
                                                             )}
                                                         </div>
