@@ -23,7 +23,7 @@
  *   • Add/edit/delete shifts: admin OR staff with role containing "Manager"
  *     (see canEditSchedule() in src/data/staff.js)
  */
-import { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { db } from '../firebase';
 import { toast, undoToast } from '../toast';
@@ -9716,6 +9716,57 @@ function OpenShiftsCalendarBar({
 // template plus to slots plus") — direct slot creation is the common
 // case; the multi-day template apply still lives in More Actions →
 // Apply Template for power use.
+// Floating preset picker for an empty/any grid cell (2026-09-25). Rendered
+// through a portal with FIXED positioning from the anchor cell's screen rect,
+// so it (a) never changes the table's column widths, (b) is never clipped by
+// the grid's scroll box / zoom wrapper, and (c) stays on screen: opens left of
+// the cell on Fri/Sat, and moves up when it would run off the bottom. Follows
+// scroll/resize; Esc closes.
+function QuickAddPresetPopover({ alignRight, onClose, children }) {
+    const anchorRef = useRef(null);
+    const popRef = useRef(null);
+    const [pos, setPos] = useState(null);
+    useLayoutEffect(() => {
+        const place = () => {
+            const a = anchorRef.current, p = popRef.current;
+            if (!a) return;
+            const r = a.getBoundingClientRect();
+            const w = p ? p.offsetWidth : 120, h = p ? p.offsetHeight : 200;
+            const vw = window.innerWidth, vh = window.innerHeight;
+            let left = alignRight ? r.right - w : r.left;
+            left = Math.max(8, Math.min(left, vw - w - 8));
+            let top = r.top;
+            if (top + h > vh - 8) top = Math.max(8, vh - 8 - h);
+            setPos(prev => (prev && prev.top === top && prev.left === left) ? prev : { top, left });
+        };
+        place();
+        const raf = requestAnimationFrame(place);   // re-place once the popover has its real size
+        window.addEventListener('scroll', place, true);
+        window.addEventListener('resize', place);
+        const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+        window.addEventListener('keydown', onKey);
+        return () => {
+            cancelAnimationFrame(raf);
+            window.removeEventListener('scroll', place, true);
+            window.removeEventListener('resize', place);
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [alignRight, onClose]);
+    return (
+        <>
+            <div ref={anchorRef} className="h-6" aria-hidden="true" />
+            {createPortal(
+                <div ref={popRef} onClick={(e) => e.stopPropagation()}
+                    style={{ position: 'fixed', top: pos ? pos.top : -9999, left: pos ? pos.left : -9999, zIndex: 60 }}
+                    className="w-max max-w-[180px] space-y-1 bg-dd-green-50 rounded-lg p-1 ring-2 ring-dd-green/40 shadow-xl">
+                    {children}
+                </div>,
+                document.body,
+            )}
+        </>
+    );
+}
+
 function QuickAddSlot({ dateStr, isEn, onAddSlot }) {
     const tx = (en, es) => (isEn ? en : es);
     return (
@@ -10592,13 +10643,18 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                                                 if (isActive) {
                                                     const side = resolveStaffSide(s);
                                                     const presets = (shiftPresets && shiftPresets[side]) || getShiftPresets(side);
+                                                    // 2026-09-25 (Andrew: "the box is too large — make the
+                                                    // window fit what the preset times are"). The picker used
+                                                    // to render IN the table cell, so opening it stretched the
+                                                    // whole day column and shoved the grid sideways. Now it's a
+                                                    // body-level popover anchored to the cell, sized to its
+                                                    // buttons (QuickAddPresetPopover below).
                                                     return (
-                                                        <div onClick={(e) => e.stopPropagation()}
-                                                            className="space-y-1 bg-dd-green-50 rounded-lg p-1.5 ring-2 ring-dd-green/40 shadow-card">
+                                                        <QuickAddPresetPopover alignRight={i >= 5} onClose={onQuickAddClose}>
                                                             {presets.map(p => (
                                                                 <button key={p.label} type="button"
                                                                     onClick={() => onQuickAddSelect && onQuickAddSelect(p)}
-                                                                    className="w-full px-1.5 py-1 rounded-md bg-white border border-dd-green/30 text-dd-green-700 text-[10px] font-bold hover:bg-dd-sage-50 hover:border-dd-green active:scale-95 transition">
+                                                                    className="block w-full px-1.5 py-1 rounded-md bg-white border border-dd-green/30 text-dd-green-700 text-[11px] font-bold whitespace-nowrap text-center hover:bg-dd-sage-50 hover:border-dd-green active:scale-95 transition">
                                                                     {p.label}
                                                                 </button>
                                                             ))}
@@ -10624,7 +10680,7 @@ const WeeklyGrid = memo(function WeeklyGrid({ weekStart, staffSummary, shifts, g
                                                                     ✕
                                                                 </button>
                                                             </div>
-                                                        </div>
+                                                        </QuickAddPresetPopover>
                                                     );
                                                 }
                                                 if (cellShifts.length === 0) {
