@@ -16,6 +16,7 @@
 // a clear visual walk-through, ready the instant the URL loads.
 
 import { useEffect, useState } from 'react';
+import { AndroidPlayStoreCard } from './InstallAppButton';
 
 function detectPlatform() {
     if (typeof navigator === 'undefined') return 'unknown';
@@ -57,7 +58,16 @@ export default function InstallSplash({ onSkip, language = 'en' }) {
                     <IOSSteps tx={tx} />
                 )}
                 {platform === 'android' && (
-                    <AndroidSteps tx={tx} />
+                    // 2026-09-25 — Android installs the real app from Google
+                    // Play (same link as every other install button), not the
+                    // website-to-home-screen shortcut this used to walk through.
+                    <div className="space-y-3">
+                        <AndroidPlayStoreCard language={language} />
+                        <Step n={2} title={tx('Open DD Mau from the app icon', 'Abre DD Mau desde el ícono de la app')}
+                            body={tx('Sign in with your PIN and tap Allow when it asks for notifications.',
+                                     'Entra con tu PIN y toca Permitir cuando pida notificaciones.')}
+                            icon="🔔" />
+                    </div>
                 )}
                 {platform === 'desktop' && (
                     <DesktopHint tx={tx} />
@@ -105,28 +115,6 @@ function IOSSteps({ tx }) {
     );
 }
 
-function AndroidSteps({ tx }) {
-    return (
-        <div className="space-y-3">
-            <Step n={1} title={tx('Tap the three-dot menu', 'Toca el menú de tres puntos')}
-                body={tx('Top-right of Chrome.', 'Esquina superior derecha de Chrome.')}
-                icon="⋮" />
-            <Step n={2} title={tx('Tap "Install app" or "Add to Home screen"',
-                                  'Toca "Instalar app" o "Añadir a pantalla de inicio"')}
-                body={tx('Some versions of Chrome show one or the other — pick whichever is there.',
-                         'Algunas versiones de Chrome muestran una u otra — toca la que aparezca.')}
-                icon="➕" />
-            <Step n={3} title={tx('Confirm "Install"', 'Confirma "Instalar"')}
-                body={tx('A DD Mau icon will be added to your Home Screen.',
-                         'Un ícono de DD Mau se agregará a tu pantalla de inicio.')}
-                icon="✅" />
-            <Step n={4} title={tx('Open from the Home Screen icon', 'Ábrelo desde el ícono de la pantalla de inicio')}
-                body={tx('You\'ll be prompted for notification permission on first open — tap Allow.',
-                         'Te pedirá permiso de notificaciones al abrir — toca Permitir.')}
-                icon="🔔" />
-        </div>
-    );
-}
 
 function DesktopHint({ tx }) {
     return (

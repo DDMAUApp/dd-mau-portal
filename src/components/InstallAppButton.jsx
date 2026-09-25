@@ -18,6 +18,33 @@ export const IOS_APP_URL = 'https://apps.apple.com/us/app/dd-mau-staff/id6776881
 export const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=com.ddmau.staff';
 export const ANDROID_JOIN_URL = 'https://play.google.com/apps/testing/com.ddmau.staff';
 
+// One Android install card for every web-app surface that asks an Android
+// staffer to install (Andrew 2026-09-25: "make sure the web app install
+// button to get the android app is this same page"). Opens the Play listing
+// — the same ANDROID_APP_URL as the lock-screen sheet, the phone download
+// gate and the "Send app link" chat. While the app is a CLOSED test, the
+// note keeps the tester path visible; drop it when the listing is public.
+export function AndroidPlayStoreCard({ language }) {
+    const tx = (en, es) => (language === 'es' ? es : en);
+    return (
+        <div className="bg-white border-2 border-dd-line rounded-xl p-4">
+            <button type="button" onClick={() => openExternalUrl(ANDROID_APP_URL)}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-dd-green text-white font-black active:scale-95 transition shadow-sm">
+                <span className="text-2xl">🤖</span>
+                <span className="flex-1 text-left">{tx('Get the app on Google Play', 'Obtén la app en Google Play')}</span>
+                <span aria-hidden="true">›</span>
+            </button>
+            <p className="text-[11px] text-dd-text-2 mt-3 leading-snug">
+                {tx('If Google Play says “not available,” ask a manager to add your Google email to the tester list, then ',
+                    'Si Google Play dice “no disponible”, pide a un gerente que agregue tu correo de Google a la lista de probadores, y luego ')}
+                <button type="button" onClick={() => openExternalUrl(ANDROID_JOIN_URL)} className="underline text-cyan-700 font-semibold">
+                    {tx('join the test here', 'únete a la prueba aquí')}
+                </button>.
+            </p>
+        </div>
+    );
+}
+
 // Loose email shape check — we only need to reject obvious typos / empty
 // submits before writing. Play Console does the authoritative validation
 // when Andrew pastes the address into the tester list.

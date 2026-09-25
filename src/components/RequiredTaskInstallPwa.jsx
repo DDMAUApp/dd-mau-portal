@@ -33,6 +33,7 @@
 import { useEffect, useState } from 'react';
 import { patchStaffRecordByName } from '../data/staffDoc';
 import { toast } from '../toast';
+import { AndroidPlayStoreCard } from './InstallAppButton';
 
 // Detect environment once per render. Cheap.
 function detectEnv() {
@@ -120,7 +121,9 @@ export default function RequiredTaskInstallPwa({
         <div className="p-5 max-w-md mx-auto">
             <div className="text-5xl mb-3 text-center">📲</div>
             <h2 className="text-xl font-black text-dd-text mb-2 text-center">
-                {tx('Add DD Mau to your home screen', 'Agrega DD Mau a tu pantalla')}
+                {env.isAndroid
+                    ? tx('Get the DD Mau app', 'Obtén la app de DD Mau')
+                    : tx('Add DD Mau to your home screen', 'Agrega DD Mau a tu pantalla')}
             </h2>
             <p className="text-sm text-dd-text-2 mb-4 text-center leading-relaxed">
                 {tx(
@@ -192,35 +195,14 @@ export default function RequiredTaskInstallPwa({
                 </div>
             )}
 
-            {/* ── Android Chrome path ────────────────────────────────── */}
+            {/* ── Android path (2026-09-25) — install the real app from
+                Google Play (same link as every other install button), not a
+                Chrome home-screen shortcut of the website. Opening the app
+                stamps pwaInstalled (App.jsx counts the native shell), which
+                closes this task by itself. ─────────────────────────── */}
             {env.isAndroid && (
-                <div className="bg-white border-2 border-dd-line rounded-xl p-4 mb-4">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-3">
-                        {tx('Steps on Android (Chrome)', 'Pasos en Android (Chrome)')}
-                    </div>
-                    <ol className="space-y-3 text-sm text-dd-text">
-                        <li className="flex items-start gap-3">
-                            <span className="bg-dd-green text-white rounded-full w-6 h-6 flex items-center justify-center font-black text-xs flex-shrink-0">1</span>
-                            <span>{tx(
-                                'Tap the three-dot menu in the top-right of Chrome.',
-                                'Toca el menú de tres puntos arriba a la derecha en Chrome.',
-                            )}</span>
-                        </li>
-                        <li className="flex items-start gap-3">
-                            <span className="bg-dd-green text-white rounded-full w-6 h-6 flex items-center justify-center font-black text-xs flex-shrink-0">2</span>
-                            <span>{tx(
-                                'Tap “Install app” or “Add to Home screen” (wording varies by Chrome version).',
-                                'Toca “Instalar app” o “Añadir a la pantalla principal.”',
-                            )}</span>
-                        </li>
-                        <li className="flex items-start gap-3">
-                            <span className="bg-dd-green text-white rounded-full w-6 h-6 flex items-center justify-center font-black text-xs flex-shrink-0">3</span>
-                            <span>{tx(
-                                'Confirm the install. The DD Mau icon will appear on your home screen — open from there.',
-                                'Confirma la instalación. El ícono DD Mau aparecerá en tu pantalla — ábrelo desde ahí.',
-                            )}</span>
-                        </li>
-                    </ol>
+                <div className="mb-4">
+                    <AndroidPlayStoreCard language={language} />
                 </div>
             )}
 
@@ -265,7 +247,9 @@ export default function RequiredTaskInstallPwa({
                 className="w-full py-3 rounded-xl bg-dd-green text-white font-black text-base active:scale-95 transition disabled:opacity-50">
                 {confirming
                     ? tx('Saving…', 'Guardando…')
-                    : tx('✓ I have added DD Mau to my home screen', '✓ Listo, ya la agregué')}
+                    : env.isAndroid
+                        ? tx('✓ I installed the DD Mau app', '✓ Ya instalé la app de DD Mau')
+                        : tx('✓ I have added DD Mau to my home screen', '✓ Listo, ya la agregué')}
             </button>
 
             <p className="text-[10px] text-dd-text-2 mt-3 text-center leading-relaxed">
