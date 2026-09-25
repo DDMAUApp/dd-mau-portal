@@ -41,6 +41,7 @@ const REFRESHING_PAINT_MS = 300; // brief window so user sees the spinner
 // Standalone refresh action — same cache-bust + reload sequence used by the
 // pull gesture, exposed so a desktop button (or a future "refresh" menu
 // item) can trigger the exact same recovery without touch events.
+let _refreshing = false;   // one refresh at a time (double taps)
 export async function forceRefresh() {
     // Every forced reload snapshots page state first (2026-09-09) — the
     // deploy broadcast, hourly version poll, chunk-error reload and Danger
@@ -50,9 +51,34 @@ export async function forceRefresh() {
     // below is a NO-OP: the WebView loads from the active Capgo bundle, not the
     // network, so a query-string reload re-runs the SAME bundle. Apply any
     // pending OTA bundle first; if that reloads the WebView, we're done.
+    // 2026-09-25 (Andrew: "i cant refreash my app its stuck") — the native
+    // path downloads the newest bundle before reloading, with NO time limit
+    // and nothing on screen: on a slow/wedged connection (exactly when
+    // people reach for Refresh) the button looked dead. Say it's working,
+    // give the OTA path 15s, then reload the WebView regardless — a reload
+    // alone clears the stuck-connection state; the update applies next time.
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+        const { toast } = await import('../../toast');
+        toast('🔄 Refreshing… / Actualizando…', { kind: 'info', duration: 15000 });
+    } catch { /* toast is cosmetic */ }
     try {
         const { applyNativeOtaRefresh } = await import('../../capacitor-bridge');
-        if (await applyNativeOtaRefresh()) return;
+        const native = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
+        const applied = await Promise.race([
+            applyNativeOtaRefresh(),
+            new Promise((r) => setTimeout(() => r('timeout'), native ? 15000 : 0)),
+        ]);
+        if (applied === true) return;
+        if (applied === 'timeout' && native) {
+            try {
+                const { CapacitorUpdater } = await import('@capgo/capacitor-updater');
+                await Promise.race([CapacitorUpdater.reload(), new Promise((r) => setTimeout(r, 3000))]);
+            } catch { /* fall through to a plain reload */ }
+            window.location.reload();
+            return;
+        }
     } catch { /* not native / import failed — fall through to the web path */ }
     try {
         if ('serviceWorker' in navigator) {
