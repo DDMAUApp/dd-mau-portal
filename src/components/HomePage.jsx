@@ -376,6 +376,37 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
         else if (key === 'ok') { if (pin.length === 4 && staffListReady) handlePinSubmit(); }
     };
 
+    // Physical keyboard (2026-09-26, Andrew: "trying to log into the web
+    // version and my pin wont work") — on a laptop people TYPE the PIN, and
+    // the keypad only listened for taps/clicks, so typed digits did nothing.
+    // Digits (top row or numpad) add, Backspace deletes, Esc clears, Enter
+    // submits. Ignored while typing in a real text box (invite-recovery
+    // form) and while the "which person are you?" picker is up.
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+            if (collisionMatches.length > 1) return;
+            if (isLocked) return;
+            if (/^[0-9]$/.test(e.key)) {
+                e.preventDefault();
+                setError("");
+                setPin(p => p.length < 4 ? p + e.key : p);
+            } else if (e.key === 'Backspace') {
+                e.preventDefault();
+                setPin(p => p.slice(0, -1));
+            } else if (e.key === 'Escape') {
+                handleClear();
+            } else if (e.key === 'Enter') {
+                if (pin.length === 4 && staffListReady) { e.preventDefault(); handlePinSubmit(); }
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isLocked, pin, staffListReady, collisionMatches.length]);
+
     return (
         // 2026-05-27 — lock screen Liquid-Glass refresh.
         // Andrew: "lets make the lock screen with the logo instead of
