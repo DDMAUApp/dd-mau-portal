@@ -240,6 +240,7 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
                             <div className="grid grid-cols-2 gap-1.5">
                                 {[
                                     { k: 'showPreppedLabel', en: 'PREPPED label',  es: 'Etiqueta HECHO' },
+                                    { k: 'showPrepWeekday',  en: 'Day (MONDAY)',    es: 'Día (LUNES)' },
                                     { k: 'showTime',         en: 'Time',            es: 'Hora' },
                                     { k: 'showTitle',        en: 'Item title',      es: 'Título' },
                                     { k: 'showUseBy',        en: 'Use by',          es: 'Caduca' },
@@ -503,10 +504,6 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
                                     { v: '12h', label: '12-hour (2:15p)' },
                                     { v: '24h', label: '24-hour (14:15)' },
                                 ]} />
-                            <ToggleRow
-                                checked={draft.showPrepWeekday !== false}
-                                onChange={(v) => update({ showPrepWeekday: v })}
-                                label={tx('Day of the week above the date (MONDAY)', 'Día de la semana sobre la fecha (LUNES)')} />
                             <ToggleRow
                                 checked={draft.showUseByWeekday !== false}
                                 onChange={(v) => update({ showUseByWeekday: v })}
