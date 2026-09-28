@@ -83,8 +83,13 @@ export default function PrintLabelModal({
     // Format "Default shelf life (days)" (2026-09-23 M5 — that setting used
     // to be unreachable). Initial value uses the Epson format (the Brother
     // toggle starts OFF); `defaultDays` below follows the selected printer.
+    // Items flagged thawedByDefault (always stickered on thaw day) open on
+    // the thawed clock.
+    const startThawed = !!recipe?.thawedByDefault && Number(recipe?.thawedDays) > 0;
     const [shelfLifeDays, setShelfLifeDays] = useState(
-        () => resolveShelfLifeDays(recipe, epsonFormat?.defaultShelfLifeDays));
+        () => (startThawed
+            ? Math.floor(Number(recipe.thawedDays))
+            : resolveShelfLifeDays(recipe, epsonFormat?.defaultShelfLifeDays)));
     // Once staff pick a day count themselves, a late-arriving format
     // snapshot must never overwrite it.
     const daysTouchedRef = useRef(false);
@@ -97,13 +102,13 @@ export default function PrintLabelModal({
     // unit; everything else stays on days. Staff can flip the unit per
     // print.
     const defaultHours = Number(recipe?.shelfLifeHours) > 0 ? Math.floor(Number(recipe.shelfLifeHours)) : 4;
-    const [lifeUnit, setLifeUnit] = useState(Number(recipe?.shelfLifeHours) > 0 ? 'hours' : 'days');
+    const [lifeUnit, setLifeUnit] = useState(Number(recipe?.shelfLifeHours) > 0 && !startThawed ? 'hours' : 'days');
     const [shelfLifeHours, setShelfLifeHours] = useState(defaultHours);
     // Thaw state (feature #6): items with a `thawedDays` shelf life get a
     // Fresh/Thawed toggle — Thawed switches the day clock to the shorter
     // thawed life and stamps ❄ THAWED on the label.
     const thawedDays = Number(recipe?.thawedDays) > 0 ? Math.floor(Number(recipe.thawedDays)) : 0;
-    const [thawed, setThawed] = useState(false);
+    const [thawed, setThawed] = useState(startThawed);
     const [notes, setNotes] = useState('');
     // Andrew 2026-05-20 — "and then how many copies we want to print".
     // Prep labels can print N at once, stitched into one envelope so

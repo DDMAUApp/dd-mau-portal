@@ -465,7 +465,7 @@ function assertSectionKey(sectionKey) {
     }
 }
 
-function cleanRows(sectionKey, items) {
+export function cleanRows(sectionKey, items) {
     return (Array.isArray(items) ? items : []).map((item, i) => {
         const row = {
             id:     String(item.id || makeStickerRowId(`${sectionKey}-${item.nameEn || 'row'}-${i}`)).slice(0, 60),
@@ -487,6 +487,10 @@ function cleanRows(sectionKey, items) {
         // freezer — enables the Fresh/Thawed toggle in the print modal.
         const td = Number(item.thawedDays);
         if (Number.isFinite(td) && td > 0) row.thawedDays = Math.min(30, Math.max(1, Math.floor(td)));
+        // Always stickered on THAW day (2026-09-28 — Andrew: lemongrass meats
+        // are marinated raw, frozen, and stickered the day they're thawed):
+        // the print modal opens on the Thawed clock + ❄ THAWED line.
+        if (item.thawedByDefault === true && row.thawedDays) row.thawedByDefault = true;
         return row;
     }).filter(r => r.nameEn || r.nameEs); // drop fully-empty rows
 }

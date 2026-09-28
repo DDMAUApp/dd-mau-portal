@@ -63,6 +63,13 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
     const setOne = (sk, id, v) => setEdits((e) => ({ ...e, [key(sk, id)]: v.replace(/[^0-9]/g, '').slice(0, 2) }));
     const setUnit = (sk, id, u) => setEdits((e) => ({ ...e, [`${key(sk, id)}:u`]: u === 'h' ? 'h' : 'd' }));
     const setThaw = (sk, id, v) => setEdits((e) => ({ ...e, [`${key(sk, id)}:t`]: v.replace(/[^0-9]/g, '').slice(0, 2) }));
+    // "Always thawed" — item is stickered the day it's thawed (lemongrass
+    // meats), so printing starts on the Thawed clock. Needs a ❄ value.
+    const alwaysFor = (sk, row) => {
+        const k = `${key(sk, row.id)}:a`;
+        return (k in edits) ? edits[k] : row.thawedByDefault === true;
+    };
+    const toggleAlways = (sk, row) => setEdits((e) => ({ ...e, [`${key(sk, row.id)}:a`]: !alwaysFor(sk, row) }));
 
     // "Set all in this section to N days" — every DAY-clock row; hour-clock
     // rows are skipped (see applySetAllDays).
@@ -110,6 +117,7 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
                     // the Fresh/Thawed toggle in the print modal.
                     const t = parseInt(thawFor(sk, r), 10) || 0;
                     if (t > 0) row.thawedDays = Math.min(30, t); else delete row.thawedDays;
+                    if (t > 0 && alwaysFor(sk, r)) row.thawedByDefault = true; else delete row.thawedByDefault;
                     return row;
                 });
                 // eslint-disable-next-line no-await-in-loop
@@ -184,6 +192,13 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
                                                     placeholder="❄"
                                                     title={tx('Thawed shelf life (days)', 'Vida útil descongelado (días)')}
                                                     className="w-11 px-1 py-1.5 text-center text-sm rounded-lg border border-sky-200 bg-sky-50/40 tabular-nums focus:border-sky-500 outline-none" />
+                                                <button type="button" onClick={() => toggleAlways(s.key, r)}
+                                                    disabled={!(parseInt(thawFor(s.key, r), 10) > 0)}
+                                                    aria-pressed={alwaysFor(s.key, r)}
+                                                    title={tx('Always stickered on the day it thaws — printing starts on Thawed', 'Siempre se etiqueta el día que se descongela')}
+                                                    className={`px-1.5 py-1.5 text-[10px] font-bold rounded-lg border disabled:opacity-30 ${alwaysFor(s.key, r) ? 'bg-sky-600 text-white border-sky-700' : 'bg-white text-sky-700 border-sky-200'}`}>
+                                                    {tx('always', 'siempre')}
+                                                </button>
                                             </div>
                                         ))}
                                     </div>
@@ -191,8 +206,8 @@ export default function ShelfLifeMatrix({ language = 'en', byName, onClose }) {
                             );
                         })}
                         <p className="text-[11px] text-dd-text-2 px-1 pb-2 leading-snug">
-                            {tx('Blank = category default. Pick "hrs" for line items that discard the same day (the label prints a discard time). "Set all (days)" skips items on an hours clock. The ❄ box = shelf life in DAYS once thawed — items with one get a Fresh/Thawed button when printing.',
-                                'Vacío = valor por defecto. Elige "hrs" para artículos que se desechan el mismo día (la etiqueta imprime hora de descarte). "Todos (días)" no cambia los artículos en horas. La casilla ❄ = días de vida útil una vez descongelado — esos artículos muestran un botón Fresco/Descongelado al imprimir.')}
+                            {tx('Blank = category default. Pick "hrs" for line items that discard the same day (the label prints a discard time). "Set all (days)" skips items on an hours clock. The ❄ box = shelf life in DAYS once thawed — items with one get a Fresh/Thawed button when printing. "always" = stickered on the day it thaws (starts on Thawed).',
+                                'Vacío = valor por defecto. Elige "hrs" para artículos que se desechan el mismo día (la etiqueta imprime hora de descarte). "Todos (días)" no cambia los artículos en horas. La casilla ❄ = días de vida útil una vez descongelado — esos artículos muestran un botón Fresco/Descongelado al imprimir. "siempre" = se etiqueta el día que se descongela (empieza en Descongelado).')}
                         </p>
                     </div>
 

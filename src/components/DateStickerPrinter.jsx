@@ -312,6 +312,7 @@ export default function DateStickerPrinter({
                     ...(row.shelfLifeDays ? { shelfLifeDays: row.shelfLifeDays } : {}),
                     ...(row.shelfLifeHours ? { shelfLifeHours: row.shelfLifeHours } : {}),
                     ...(row.thawedDays ? { thawedDays: row.thawedDays } : {}),
+                    ...(row.thawedByDefault ? { thawedByDefault: true } : {}),
                 }));
             }
         }
@@ -345,6 +346,7 @@ export default function DateStickerPrinter({
                     ...((c.shelfLifeDays ?? ci.shelfLifeDays) ? { shelfLifeDays: c.shelfLifeDays ?? ci.shelfLifeDays } : {}),
                     ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
                     ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
+                    ...(c.thawedByDefault ? { thawedByDefault: true } : {}),
                     usedIn: [ci.nameEn],
                     usedInEs: [ci.nameEs || ci.nameEn],
                 }));
@@ -373,6 +375,7 @@ export default function DateStickerPrinter({
                     ...(row.shelfLifeDays ? { shelfLifeDays: row.shelfLifeDays } : {}),
                     ...(row.shelfLifeHours ? { shelfLifeHours: row.shelfLifeHours } : {}),
                     ...(row.thawedDays ? { thawedDays: row.thawedDays } : {}),
+                    ...(row.thawedByDefault ? { thawedByDefault: true } : {}),
                 });
             }
         }
@@ -587,6 +590,7 @@ export default function DateStickerPrinter({
             ...(shelfFromBuild ? { shelfLifeDays: shelfFromBuild } : {}),
             ...(component.shelfLifeHours ? { shelfLifeHours: component.shelfLifeHours } : {}),
             ...(component.thawedDays ? { thawedDays: component.thawedDays } : {}),
+            ...(component.thawedByDefault ? { thawedByDefault: true } : {}),
         });
     }, []);
     const handleBrowsePrint = useCallback((c) => handlePrintComponent(c, null), [handlePrintComponent]);
@@ -609,6 +613,7 @@ export default function DateStickerPrinter({
         ...(c.shelfLifeDays ? { shelfLifeDays: c.shelfLifeDays } : {}),
         ...(c.shelfLifeHours ? { shelfLifeHours: c.shelfLifeHours } : {}),
         ...(c.thawedDays ? { thawedDays: c.thawedDays } : {}),
+        ...(c.thawedByDefault ? { thawedByDefault: true } : {}),
     }, null), [handlePrintComponent]);
 
     // A cook picked an EXISTING sticker from the Custom Print / + Add item
@@ -1637,6 +1642,7 @@ const BuildSheetFlatSection = memo(function BuildSheetFlatSection({
         ...(s.shelfLifeDays ? { shelfLifeDays: s.shelfLifeDays } : {}),
         ...(s.shelfLifeHours ? { shelfLifeHours: s.shelfLifeHours } : {}),
         ...(s.thawedDays ? { thawedDays: s.thawedDays } : {}),
+        ...(s.thawedByDefault ? { thawedByDefault: true } : {}),
     }));
     // Empty sections still render (2026-07-24) — a brand-new category needs
     // its header + "+ Add item" visible or nobody could put the first item in.

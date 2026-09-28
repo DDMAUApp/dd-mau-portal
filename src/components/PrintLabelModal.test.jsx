@@ -115,6 +115,21 @@ describe('M6 — Thawed → Fresh restores the hour clock', () => {
     });
 });
 
+describe('always-thawed items (lemongrass meats, 2026-09-28)', () => {
+    it('open on the Thawed clock and print ❄ THAWED with the thawed life', async () => {
+        renderModal({ titleEn: 'Lemongrass Chicken', allergens: [], category: 'Proteins', kind: 'protein', shelfLifeDays: 2, thawedDays: 2, thawedByDefault: true });
+        expect(screen.getByRole('button', { name: /Thawed \(2d\)/ }).className).toMatch(/bg-sky-600/);
+        await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Print label/ })); });
+        const args = h.printPrepLabel.mock.calls[0][0];
+        expect(args.thawState).toBe('thawed');
+        expect(args.shelfLifeDays).toBe(2);
+    });
+    it('items without the flag still open on Fresh', () => {
+        renderModal({ titleEn: 'Peanut Dressing', allergens: [], category: 'Sauces & Dressings', shelfLifeDays: 5, thawedDays: 5 });
+        expect(screen.getByRole('button', { name: /Fresh \/ Frozen/ }).className).toMatch(/bg-dd-green/);
+    });
+});
+
 describe('M1 — bottle description survives the editable rebuild', () => {
     it('previews the description on a bottles sticker', () => {
         renderModal({ titleEn: 'Sriracha Mayo', allergens: [], category: 'Other', kind: 'bottles', descEn: 'Creamy garlic chili kick' });

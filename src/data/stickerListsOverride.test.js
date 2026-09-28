@@ -126,3 +126,15 @@ describe('settledEditIds', () => {
         expect([...settledEditIds([{ id: 'a', nameEn: 'X' }], [{ id: 'a', nameEn: 'X', nameEs: '', descEn: '' }])]).toEqual(['a']);
     });
 });
+
+import { cleanRows } from './stickerListsOverride';
+describe('always-thawed flag (2026-09-28 lemongrass meats)', () => {
+    it('survives a save when the item has a thawed life', () => {
+        const [r] = cleanRows('proteins', [{ id: 'p', nameEn: 'Lemongrass Pork', shelfLifeDays: 3, thawedDays: 3, thawedByDefault: true }]);
+        expect(r).toMatchObject({ shelfLifeDays: 3, thawedDays: 3, thawedByDefault: true });
+    });
+    it('is dropped without a thawed life (nothing to switch to)', () => {
+        const [r] = cleanRows('proteins', [{ id: 'p', nameEn: 'X', shelfLifeDays: 3, thawedByDefault: true }]);
+        expect(r.thawedByDefault).toBeUndefined();
+    });
+});
