@@ -923,12 +923,17 @@ export function buildLabelPayload({
     // default one step above the date, admin-set via Label Format
     // weekdayScale. HEIGHT honors it; WIDTH is fit to the roll so a long
     // name (WEDNESDAY) prints tall-and-narrow instead of wrapping.
+    // 2026-09-28 round 3 (40 mm roll: "above monday there is too much
+    // space"): the default follows the date's PRINTED size (fitDateScale —
+    // 2 on a 40 mm roll), not its configured 5, and the height never runs
+    // more than one step past the width. A 3-wide × 6-tall MONDAY magnified
+    // the font's built-in top gap 6× — the blank band above the word.
     const cfgWeekday = Math.max(2, Math.min(8,
-        Number(format?.weekdayScale) || (cfgDateScale + 1)));
-    const weekdayHeightScale = cfgWeekday;
+        Number(format?.weekdayScale) || (fitDateScale + 1)));
     const weekdayScale = prepWeekday
         ? Math.max(2, Math.min(cfgWeekday, Math.floor(cols / prepWeekday.length)))
         : cfgWeekday;
+    const weekdayHeightScale = Math.max(weekdayScale, Math.min(cfgWeekday, weekdayScale + 1));
 
     const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][useByDate.getDay()];
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];

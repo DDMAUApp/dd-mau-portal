@@ -72,6 +72,18 @@ describe('prep date stamp weekday', () => {
         expect(buildLabelPayload({ ...base, format: { weekdayScale: null, dateNumberScale: 4 } }).weekdayHeightScale).toBe(5);
     });
 
+    it('40 mm roll: day is one step above the PRINTED date, never over-stretched (round 3)', () => {
+        const fmt = { dateNumberScale: 5 };   // live Epson setting
+        const p = buildLabelPayload({ ...base, format: fmt, paperWidthMm: 40 });
+        expect(p.dateNumberScale).toBe(2);    // date shrinks to fit 21 cols
+        expect(p.weekdayScale).toBe(3);
+        expect(p.weekdayHeightScale).toBe(3); // was 6 tall → blank band above
+        expect(renderEposXml(p)).toMatch(/<text width="3" height="3"\/><text>MONDAY/);
+        const wed = buildLabelPayload({ ...base, format: fmt, paperWidthMm: 40, prepDate: new Date(2026, 8, 30) });
+        expect(wed.weekdayScale).toBe(2);
+        expect(wed.weekdayHeightScale).toBeLessThanOrEqual(wed.weekdayScale + 1);
+    });
+
     it('long day names fit a narrow roll (never wrap)', () => {
         const p = buildLabelPayload({ ...base, prepDate: new Date(2026, 8, 30), paperWidthMm: 40, language: 'es' });
         expect(p.prepWeekday).toBe('MIÉRCOLES');
