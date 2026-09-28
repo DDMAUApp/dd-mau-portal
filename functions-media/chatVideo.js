@@ -64,10 +64,12 @@ function isNonAacAudio(msg) {
     return msg && msg.type === 'audio' && /\.(webm|ogg|oga|opus)$/i.test(String(msg.mediaPath || ''));
 }
 
-// Should this message doc be processed?
-function needsTranscode(msg) {
+// Should this message doc be processed? `prefix` = the Storage folder the
+// trigger owns ('chats/' for chat messages, 'recipe_media/' for recipe
+// training videos — same doc shape: type + mediaPath).
+function needsTranscode(msg, prefix = 'chats/') {
     if (!msg || !msg.mediaPath || typeof msg.mediaPath !== 'string') return false;
-    if (!msg.mediaPath.startsWith('chats/') || msg.playbackUrl || msg.deleted) return false;
+    if (!msg.mediaPath.startsWith(prefix) || msg.playbackUrl || msg.deleted) return false;
     return msg.type === 'video' || isNonAacAudio(msg);
 }
 
@@ -130,8 +132,8 @@ async function uploadWithToken(bucket, localPath, dest, contentType) {
 
 // Do the work for one message. Never throws; returns a status string.
 //   msgRef: DocumentReference of chats/{chatId}/messages/{id}
-async function processChatVideo({ msgRef, msg, bucket, ffmpegPath, log = console, timeoutMs = 480000, FieldValue }) {
-    if (!needsTranscode(msg)) return 'skip';
+async function processChatVideo({ msgRef, msg, bucket, ffmpegPath, log = console, timeoutMs = 480000, FieldValue, prefix = 'chats/' }) {
+    if (!needsTranscode(msg, prefix)) return 'skip';
     const work = fs.mkdtempSync(path.join(os.tmpdir(), 'chatvid-'));
     const ext = (path.posix.extname(msg.mediaPath) || '.mov').toLowerCase();
     const src = path.join(work, `src${ext}`);

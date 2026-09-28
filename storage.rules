@@ -243,6 +243,19 @@ service firebase.storage {
       allow delete: if true;     // admin re-uploads / TV cleanup
     }
 
+    // Recipe training photos / videos (2026-09-28). RecipeForm uploads a
+    // downscaled JPEG or the original video (≤250MB, same cap as chat);
+    // the media Cloud Function writes {id}_720.mp4 / {id}_poster.jpg next
+    // to it (admin SDK, bypasses rules). Delete = the editor cleaning up an
+    // upload it abandoned (Cancel / ✕ before save).
+    // Path: recipe_media/{id}.{ext} and recipe_media/{id}_thumb.jpg
+    match /recipe_media/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 250 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*|video/.*');
+      allow delete: if true;
+    }
+
     // Menu import staging path (2026-06-02, Phase 1 audit).
     // Path: menu_imports/{slugPrefix}_{ts}.{ext} — MenuImportModal
     // uploads source PDFs/images here as a temporary staging slot

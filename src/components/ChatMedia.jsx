@@ -138,7 +138,9 @@ export const ChatVideoTile = memo(function ChatVideoTile({ message, isEs }) {
 // Photos: pinch / double-tap / wheel zoom, drag to pan, swipe down to close.
 // Videos: autoplay with controls; on a load error try the next source, then
 // offer "Open in browser" (Android's Chrome tab plays what the WebView can't).
-export function ChatMediaViewer({ kind, sources, poster, alt = '', processing = false, originalUrl, isEs, onClose }) {
+// `watermark` (optional): faint name + time burned over the media — the
+// recipe book's confidentiality watermark follows its photos full-screen.
+export function ChatMediaViewer({ kind, sources, poster, alt = '', processing = false, originalUrl, isEs, onClose, watermark = null }) {
     const tx = (en, es) => (isEs ? es : en);
     const [srcIdx, setSrcIdx] = useState(0);
     const [failed, setFailed] = useState(false);
@@ -308,6 +310,16 @@ export function ChatMediaViewer({ kind, sources, poster, alt = '', processing = 
                         <span className="inline-block px-3 py-1 rounded-full bg-black/60 text-white/85 text-[11px]">
                             {tx('Preparing a faster version for all phones…', 'Preparando una versión más rápida para todos…')}
                         </span>
+                    </div>
+                )}
+                {watermark && (
+                    <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+                        {['18%', '58%'].map(top => (
+                            <span key={top} className="absolute whitespace-nowrap font-extrabold tracking-wider text-base"
+                                style={{ top, left: '-15%', transform: 'rotate(-22deg)', color: 'rgba(255,255,255,0.16)' }}>
+                                {watermark}{'   ·   '}{watermark}{'   ·   '}{watermark}
+                            </span>
+                        ))}
                     </div>
                 )}
                 <button

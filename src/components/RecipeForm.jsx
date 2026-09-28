@@ -12,11 +12,34 @@
 //     save (the on-screen list falls back EN↔ES per language, so a missing
 //     Spanish line silently showed English before)
 
-import { useMemo, useState } from 'react';
+//   • 2026-09-28 — 📷 photos/videos on any English ingredient/step line +
+//     an optional 🔥 Cook-to-order (service) section next to 🥣 Prep
+//     (data/recipeMedia.js has the storage shape). Crash-safe draft in
+//     localStorage (camera round-trips can kill the WebView).
+
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '../data/translations';
 import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone } from '../data/allergens';
 import { splitIngredientLine, joinIngredientParts, unitsFor } from '../data/ingredientParts';
 import { toast } from '../toast';
+import {
+    FIELD_MEDIA_KEY, SERVICE_FIELDS, hasServiceSection, mediaAt, mediaCount, allMediaItems,
+    shiftMediaOnRemove, shiftMediaOnSplice, addMediaItem, removeMediaItem, compactListWithMedia, applyVideoResults,
+} from '../data/recipeMedia';
+import { uploadRecipeMedia, fetchVideoResult, deleteRecipeMediaFiles } from '../data/recipeMediaUpload';
+import { RecipeMediaTile } from './RecipeMedia';
+
+const DRAFT_PREFIX = 'ddmau:recipeEditDraft:';
+const DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+const readDraft = (key) => {
+    if (!key) return null;
+    try {
+        const d = JSON.parse(localStorage.getItem(DRAFT_PREFIX + key) || 'null');
+        if (!d || !d.form || !(Date.now() - d.at < DRAFT_TTL_MS)) return null;
+        return d;
+    } catch { return null; }
+};
+const clearDraft = (key) => { if (key) { try { localStorage.removeItem(DRAFT_PREFIX + key); } catch { /* storage blocked */ } } };
 
 export const BLANK_RECIPE = {
     titleEn: "", titleEs: "", emoji: "🍽️", category: "",
@@ -27,7 +50,7 @@ export const BLANK_RECIPE = {
     instructionsEn: [""], instructionsEs: [""],
 };
 
-export default function RecipeForm({ language, recipe, categories = [], embedded = false, onSave, onCancel }) {
+export default function RecipeForm({ language, recipe, categories = [], embedded = false, onSave, onCancel, draftKey = null, staffName = '' }) {
     const isEdit = !!recipe;
     const isEs = language === "es";
     const tx = (en, es) => (isEs ? es : en);
@@ -46,9 +69,44 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
             ingredientsEs: list(recipe.ingredientsEs),
             instructionsEn: list(recipe.instructionsEn),
             instructionsEs: list(recipe.instructionsEs),
+            serviceIngredientsEn: list(recipe.serviceIngredientsEn),
+            serviceIngredientsEs: list(recipe.serviceIngredientsEs),
+            serviceInstructionsEn: list(recipe.serviceInstructionsEn),
+            serviceInstructionsEs: list(recipe.serviceInstructionsEs),
+            media: recipe.media && typeof recipe.media === 'object' ? recipe.media : {},
         };
     });
     const [aiBusy, setAiBusy] = useState(false);
+    const [hasService, setHasService] = useState(() => hasServiceSection(recipe));
+    const allowMedia = !embedded;
+
+    // ── crash-safe draft (restore banner) ──
+    const initialJsonRef = useRef(null);
+    if (initialJsonRef.current == null) initialJsonRef.current = JSON.stringify({ form, hasService });
+    const [draftOffer, setDraftOffer] = useState(() => {
+        const d = readDraft(draftKey);
+        return d && JSON.stringify({ form: d.form, hasService: !!d.hasService }) !== initialJsonRef.current ? d : null;
+    });
+    useEffect(() => {
+        if (!draftKey || draftOffer) return undefined;
+        const json = JSON.stringify({ form, hasService });
+        const t = setTimeout(() => {
+            try {
+                if (json === initialJsonRef.current) localStorage.removeItem(DRAFT_PREFIX + draftKey);
+                else localStorage.setItem(DRAFT_PREFIX + draftKey, JSON.stringify({ at: Date.now(), form, hasService }));
+            } catch { /* storage full / blocked — the draft is a convenience */ }
+        }, 600);
+        return () => clearTimeout(t);
+    }, [form, hasService, draftKey, draftOffer]);
+
+    // ── media uploads ──
+    const [uploads, setUploads] = useState([]);           // { uid, field, idx, kind, pct, name }
+    const tasksRef = useRef(new Map());                     // uid → upload task (cancel)
+    const sessionUploadsRef = useRef(new Map());            // id → item uploaded in THIS edit (cleanup on cancel)
+    const fileInputRef = useRef(null);
+    const pickTargetRef = useRef(null);                     // { field, idx }
+    const uploading = uploads.length > 0;
+    useEffect(() => () => { for (const t of tasksRef.current.values()) { try { t.cancel(); } catch { /* done */ } } }, []);
 
     const toggleAllergen = (code) => {
         setForm(prev => {
@@ -64,8 +122,10 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
     });
     const addListItem = (field) => setForm(prev => ({ ...prev, [field]: [...prev[field], ""] }));
     const removeListItem = (field, idx) => setForm(prev => {
-        if (prev[field].length <= 1) return { ...prev, [field]: [""] };
-        return { ...prev, [field]: prev[field].filter((_, i) => i !== idx) };
+        const key = FIELD_MEDIA_KEY[field];
+        const media = key ? shiftMediaOnRemove(prev.media, key, idx) : prev.media;
+        if (prev[field].length <= 1) return { ...prev, [field]: [""], media };
+        return { ...prev, [field]: prev[field].filter((_, i) => i !== idx), media };
     });
     // Paste a whole list at once: if a pasted value contains newlines,
     // split it into rows (Andrew pastes ingredient blocks from notes).
@@ -80,8 +140,10 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
         setForm(prev => {
             const arr = [...prev[field]];
             const cur = (arr[idx] || '').trim();
-            arr.splice(idx, 1, ...(cur ? [cur + ' ' + rows[0], ...rows.slice(1)] : rows));
-            return { ...prev, [field]: arr };
+            const added = cur ? [cur + ' ' + rows[0], ...rows.slice(1)] : rows;
+            arr.splice(idx, 1, ...added);
+            const key = FIELD_MEDIA_KEY[field];
+            return { ...prev, [field]: arr, media: key ? shiftMediaOnSplice(prev.media, key, idx, added.length) : prev.media };
         });
     };
 
@@ -92,29 +154,162 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
         return out;
     }, [categories]);
 
-    const cleanedForm = () => {
+    // Blank lines drop out on save; media follows its line (English lists
+    // are the anchor). `blanks` = lines that would lose a photo.
+    const buildSave = () => {
         const clean = (arr) => (Array.isArray(arr) ? arr.map(s => String(s ?? '').trim()).filter(Boolean) : []);
-        return {
+        const out = {
             ...form,
             titleEn: form.titleEn.trim(),
             titleEs: (form.titleEs || '').trim(),
             category: (form.category || '').trim(),
             emoji: (form.emoji || '').trim() || '🍽️',
             allergens: Array.isArray(form.allergens) ? form.allergens : [],
-            ingredientsEn: clean(form.ingredientsEn),
             ingredientsEs: clean(form.ingredientsEs),
-            instructionsEn: clean(form.instructionsEn),
             instructionsEs: clean(form.instructionsEs),
         };
+        let media = { ...(form.media || {}) };
+        const blanks = [];
+        const anchors = ['ingredientsEn', 'instructionsEn', ...(hasService ? ['serviceIngredientsEn', 'serviceInstructionsEn'] : [])];
+        for (const f of anchors) {
+            const key = FIELD_MEDIA_KEY[f];
+            const r = compactListWithMedia(form[f], media[key]);
+            out[f] = r.list;
+            if (Object.keys(r.bucket).length) media[key] = r.bucket; else delete media[key];
+            r.blankWithMedia.forEach(n => blanks.push({ field: f, n }));
+        }
+        if (hasService) {
+            out.serviceIngredientsEs = clean(form.serviceIngredientsEs);
+            out.serviceInstructionsEs = clean(form.serviceInstructionsEs);
+        }
+        if (!hasService || !hasServiceSection(out)) {
+            SERVICE_FIELDS.forEach(f => { delete out[f]; });
+            delete media.svcIng; delete media.svcStep;
+        }
+        if (mediaCount(media)) out.media = media; else delete out.media;
+        return { out, blanks };
     };
+    const cleanedForm = () => buildSave().out;
 
-    const handleSave = () => {
+    const [saving, setSaving] = useState(false);
+    const handleSave = async () => {
         if (!form.titleEn.trim()) { toast(tx("English title is required", "Se requiere título en inglés")); return; }
-        const cleaned = cleanedForm();
-        if (cleaned.ingredientsEn.length === 0 && cleaned.ingredientsEs.length === 0) {
+        if (uploading) { toast(tx("Wait for the photo/video upload to finish", "Espera a que termine de subir la foto/video")); return; }
+        const { out: cleaned, blanks } = buildSave();
+        if (blanks.length) {
+            const b = blanks[0];
+            const what = /ngredient/.test(b.field) ? tx('Ingredient', 'Ingrediente') : tx('Step', 'Paso');
+            toast(tx(`${what} ${b.n} has a photo/video but no words — type something for it (or remove the photo).`,
+                `${what} ${b.n} tiene foto/video pero no tiene texto — escribe algo (o quita la foto).`), { kind: 'warn' });
+            return;
+        }
+        const ingCount = cleaned.ingredientsEn.length + cleaned.ingredientsEs.length
+            + (cleaned.serviceIngredientsEn?.length || 0) + (cleaned.serviceIngredientsEs?.length || 0);
+        if (ingCount === 0) {
             toast(tx("Add at least one ingredient", "Agrega al menos un ingrediente")); return;
         }
-        onSave(cleaned);
+        setSaving(true);
+        try {
+            // Videos: copy in the Cloud Function's phone-friendly copy +
+            // poster if it's ready (≤4s; otherwise the viewer asks later).
+            const pendingVideos = allMediaItems(cleaned.media).filter(it => it.kind === 'video' && !it.playbackUrl);
+            if (pendingVideos.length) {
+                const results = await Promise.all(pendingVideos.map(it => Promise.race([
+                    fetchVideoResult(it.id), new Promise(res => setTimeout(() => res(null), 4000)),
+                ])));
+                const byId = {};
+                pendingVideos.forEach((it, i) => { if (results[i]) byId[it.id] = results[i]; });
+                cleaned.media = applyVideoResults(cleaned.media, byId);
+            }
+            const ok = await onSave(cleaned);
+            if (ok !== false) { clearDraft(draftKey); sessionUploadsRef.current.clear(); }
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleCancel = () => {
+        for (const t of tasksRef.current.values()) { try { t.cancel(); } catch { /* done */ } }
+        // Uploaded during this edit and never saved → delete (best-effort).
+        for (const it of sessionUploadsRef.current.values()) deleteRecipeMediaFiles(it);
+        sessionUploadsRef.current.clear();
+        clearDraft(draftKey);
+        onCancel?.();
+    };
+
+    // ── 📷 attach: one hidden picker, aimed at a line before it opens ──
+    const openPicker = (field, idx) => {
+        pickTargetRef.current = { field, idx };
+        fileInputRef.current?.click();
+    };
+    const onFilesPicked = async (e) => {
+        const files = [...(e.target.files || [])];
+        e.target.value = '';
+        const target = pickTargetRef.current;
+        if (!files.length || !target) return;
+        const key = FIELD_MEDIA_KEY[target.field];
+        for (const file of files) {
+            const uid = Math.random().toString(36).slice(2);
+            setUploads(u => [...u, { uid, field: target.field, idx: target.idx, pct: 0, name: file.name || '' }]);
+            try {
+                const item = await uploadRecipeMedia(file, {
+                    staffName,
+                    onTask: (task) => tasksRef.current.set(uid, task),
+                    onProgress: (pct) => setUploads(u => u.map(x => (x.uid === uid && x.pct !== pct ? { ...x, pct } : x))),
+                });
+                sessionUploadsRef.current.set(item.id, item);
+                setForm(prev => ({ ...prev, media: addMediaItem(prev.media, key, target.idx, item) }));
+            } catch (err) {
+                const code = err?.code || err?.message || '';
+                if (code !== 'storage/canceled') {
+                    console.warn('recipe media upload failed:', err);
+                    toast(code === 'too_big'
+                        ? tx('Too large — videos up to 250 MB.', 'Muy grande — videos hasta 250 MB.')
+                        : code === 'unsupported'
+                            ? tx('Pick a photo or a video.', 'Elige una foto o un video.')
+                            : tx("Upload didn't finish — check Wi-Fi and try again.", 'No se terminó de subir — revisa el Wi-Fi e inténtalo de nuevo.'),
+                    { kind: 'error' });
+                }
+            } finally {
+                tasksRef.current.delete(uid);
+                setUploads(u => u.filter(x => x.uid !== uid));
+            }
+        }
+    };
+    const cancelUpload = (uid) => { try { tasksRef.current.get(uid)?.cancel(); } catch { /* done */ } };
+    const removeMedia = (field, idx, item) => {
+        const key = FIELD_MEDIA_KEY[field];
+        setForm(prev => ({ ...prev, media: removeMediaItem(prev.media, key, idx, item.id) }));
+        if (sessionUploadsRef.current.has(item.id)) {
+            sessionUploadsRef.current.delete(item.id);
+            deleteRecipeMediaFiles(item);
+        }
+    };
+    const attachButton = (field, idx) => (allowMedia && FIELD_MEDIA_KEY[field]) ? (
+        <button type="button" onClick={() => openPicker(field, idx)}
+            className="flex-shrink-0 w-8 rounded border border-gray-300 bg-white text-sm leading-none"
+            title={tx('Add photo or video', 'Agregar foto o video')} aria-label={tx('Add photo or video', 'Agregar foto o video')}>📷</button>
+    ) : null;
+    const rowMedia = (field, idx) => {
+        const key = FIELD_MEDIA_KEY[field];
+        if (!allowMedia || !key) return null;
+        const items = mediaAt(form.media, key, idx);
+        const pending = uploads.filter(u => u.field === field && u.idx === idx);
+        if (!items.length && !pending.length) return null;
+        return (
+            <div className="flex flex-wrap gap-2 pl-6 pt-1.5 pb-1 mb-1">
+                {items.map(it => (
+                    <RecipeMediaTile key={it.id} item={it} size="sm" isEs={isEs}
+                        onRemove={() => removeMedia(field, idx, it)} removeLabel={tx('Remove photo', 'Quitar foto')} />
+                ))}
+                {pending.map(u => (
+                    <span key={u.uid} className="relative w-14 h-14 rounded-lg border border-dashed border-mint-600 bg-mint-50 flex flex-col items-center justify-center text-[10px] font-bold text-mint-700 tabular-nums">
+                        <span>{u.pct}%</span>
+                        <button type="button" onClick={() => cancelUpload(u.uid)} className="text-[10px] underline text-gray-500">{tx('cancel', 'cancelar')}</button>
+                    </span>
+                ))}
+            </div>
+        );
     };
 
     // ✨ Auto-fill Spanish + allergens from the English side. Only EMPTY
@@ -127,7 +322,16 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
         setAiBusy(true);
         try {
             const { completeRecipeDraft } = await import('../data/recipeImport');
-            const ai = await completeRecipeDraft(src, { categories: categoryOptions });
+            // The AI only knows one ingredient + one step list: send Prep as
+            // is, and Cook-to-order as its own small "recipe" alongside.
+            const { media: _m, serviceIngredientsEn: sIe, serviceIngredientsEs: sIs, serviceInstructionsEn: sSe, serviceInstructionsEs: sSs, ...mainSrc } = src;
+            const svcSrc = hasService && ((sIe || []).length || (sSe || []).length || (sIs || []).length || (sSs || []).length)
+                ? { titleEn: src.titleEn, titleEs: src.titleEs, ingredientsEn: sIe || [], ingredientsEs: sIs || [], instructionsEn: sSe || [], instructionsEs: sSs || [], allergens: [] }
+                : null;
+            const [ai, aiSvc] = await Promise.all([
+                completeRecipeDraft(mainSrc, { categories: categoryOptions }),
+                svcSrc ? completeRecipeDraft(svcSrc, { categories: categoryOptions }).catch(() => null) : null,
+            ]);
             setForm(prev => {
                 const emptyList = (arr) => !Array.isArray(arr) || arr.every(s => !String(s || '').trim());
                 const next = { ...prev };
@@ -140,11 +344,17 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
                 if (emptyList(prev.instructionsEn) && ai.instructionsEn?.length) next.instructionsEn = ai.instructionsEn;
                 if (!prev.category?.trim() && ai.category) next.category = ai.category;
                 if ((!prev.emoji || prev.emoji === '🍽️') && ai.emoji) next.emoji = ai.emoji;
-                const merged = new Set([...(prev.allergens || []), ...(ai.allergens || [])]);
+                if (aiSvc) {
+                    if (emptyList(prev.serviceIngredientsEs) && aiSvc.ingredientsEs?.length) next.serviceIngredientsEs = aiSvc.ingredientsEs;
+                    if (emptyList(prev.serviceInstructionsEs) && aiSvc.instructionsEs?.length) next.serviceInstructionsEs = aiSvc.instructionsEs;
+                    if (emptyList(prev.serviceIngredientsEn) && aiSvc.ingredientsEn?.length) next.serviceIngredientsEn = aiSvc.ingredientsEn;
+                    if (emptyList(prev.serviceInstructionsEn) && aiSvc.instructionsEn?.length) next.serviceInstructionsEn = aiSvc.instructionsEn;
+                }
+                const merged = new Set([...(prev.allergens || []), ...(ai.allergens || []), ...(aiSvc?.allergens || [])]);
                 next.allergens = ALLERGEN_ORDER.filter(c => merged.has(c));
                 return next;
             });
-            const addedTags = (ai.allergens || []).filter(c => !(cleanedForm().allergens || []).includes(c));
+            const addedTags = [...new Set([...(ai.allergens || []), ...(aiSvc?.allergens || [])])].filter(c => !(cleanedForm().allergens || []).includes(c));
             toast(tx(
                 `✨ Filled Spanish${addedTags.length ? ` + tagged ${addedTags.map(c => allergenLabel(c, 'en')).join(', ')}` : ''} — please double-check`,
                 `✨ Español completado${addedTags.length ? ` + alérgenos: ${addedTags.map(c => allergenLabel(c, 'es')).join(', ')}` : ''} — revísalo`,
@@ -202,7 +412,8 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
                     // casing) stays selectable so nothing silently rewrites.
                     const unitOptions = parts.unit && !units.includes(parts.unit) ? [parts.unit, ...units] : units;
                     return (
-                        <div key={i} className="flex gap-1 mb-1">
+                        <div key={i}>
+                        <div className="flex gap-1 mb-1">
                             <span className="text-xs text-gray-400 mt-2 w-5 text-right flex-shrink-0">{i + 1}.</span>
                             <input
                                 className="w-14 flex-shrink-0 border border-gray-300 rounded px-1 py-1.5 text-sm text-center"
@@ -238,7 +449,10 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
                                     pasteList(field, i, e);
                                 }}
                             />
-                            <button type="button" onClick={() => { setRowDraft(null); removeListItem(field, i); }} className="text-red-400 text-sm px-1" aria-label="remove">✕</button>
+                            {attachButton(field, i)}
+                            <button type="button" disabled={uploading && !!FIELD_MEDIA_KEY[field]} onClick={() => { setRowDraft(null); removeListItem(field, i); }} className="text-red-400 text-sm px-1 disabled:opacity-30" aria-label="remove">✕</button>
+                        </div>
+                        {rowMedia(field, i)}
                         </div>
                     );
                 })}
@@ -251,16 +465,21 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
         <div className="mb-3">
             <label className="block text-xs font-bold text-gray-600 mb-1">{label} <span className="text-gray-400 font-normal">({(form[field] || []).filter(s => String(s || '').trim()).length})</span></label>
             {form[field].map((item, i) => (
-                <div key={i} className="flex gap-1 mb-1">
+                <div key={i}>
+                <div className="flex gap-1 mb-1">
                     <span className="text-xs text-gray-400 mt-2 w-5 text-right flex-shrink-0">{i + 1}.</span>
-                    <input
-                        className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                    <textarea
+                        rows={1}
+                        className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-1.5 text-sm resize-none [field-sizing:content] min-h-[34px]"
                         value={item}
-                        onChange={e => updateListItem(field, i, e.target.value)}
+                        onChange={e => updateListItem(field, i, e.target.value.replace(/\r?\n/g, ' '))}
                         onPaste={e => pasteList(field, i, e)}
                         placeholder={`${label} ${i + 1}`}
                     />
-                    <button type="button" onClick={() => removeListItem(field, i)} className="text-red-400 text-sm px-1" aria-label="remove">✕</button>
+                    {attachButton(field, i)}
+                    <button type="button" disabled={uploading && !!FIELD_MEDIA_KEY[field]} onClick={() => removeListItem(field, i)} className="text-red-400 text-sm px-1 disabled:opacity-30" aria-label="remove">✕</button>
+                </div>
+                {rowMedia(field, i)}
                 </div>
             ))}
             <button type="button" onClick={() => addListItem(field)} className="text-xs text-mint-700 font-bold mt-1">{tx("+ Add", "+ Agregar")}</button>
@@ -275,8 +494,24 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
                 <h2 className="text-xl font-bold text-mint-700">
                     {isEdit ? tx("Edit Recipe", "Editar Receta") : tx("New Recipe", "Nueva Receta")}
                 </h2>
-                <button type="button" onClick={onCancel} className="text-gray-500 text-sm underline">{tx("Cancel", "Cancelar")}</button>
+                <button type="button" onClick={handleCancel} className="text-gray-500 text-sm underline">{tx("Cancel", "Cancelar")}</button>
             </div>
+            {draftOffer && (
+                <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 flex items-center gap-2 flex-wrap">
+                    <span className="flex-1 min-w-[12rem]">
+                        {tx('You have unsaved changes from ', 'Tienes cambios sin guardar de las ')}
+                        <b>{new Date(draftOffer.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</b>
+                        {tx(' — restore them?', ' — ¿recuperarlos?')}
+                    </span>
+                    <button type="button" onClick={() => { setForm(draftOffer.form); setHasService(!!draftOffer.hasService); setDraftOffer(null); }}
+                        className="px-3 py-1 rounded-full bg-amber-600 text-white text-xs font-bold">{tx('Restore', 'Recuperar')}</button>
+                    <button type="button" onClick={() => { clearDraft(draftKey); setDraftOffer(null); }}
+                        className="px-3 py-1 rounded-full bg-white border border-amber-300 text-amber-800 text-xs font-bold">{tx('Discard', 'Descartar')}</button>
+                </div>
+            )}
+            {allowMedia && (
+                <input ref={fileInputRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={onFilesPicked} />
+            )}
 
             <div className="space-y-3">
                 <div className="flex gap-2">
@@ -358,6 +593,20 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
                     </div>
                 </div>
 
+                {allowMedia && (
+                    <p className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+                        📷 {tx('Tap 📷 on any English line to add photos or videos — they show on that line in both languages. Great for training: show the knife cut, the color when it’s done, the plating.',
+                            'Toca 📷 en cualquier línea en inglés para agregar fotos o videos — se ven en esa línea en los dos idiomas. Ideal para entrenar: el corte, el color cuando está listo, el emplatado.')}
+                    </p>
+                )}
+
+                {hasService && (
+                    <div className="border-t-2 border-mint-600 pt-3 mt-3">
+                        <h3 className="font-extrabold text-base text-mint-800">🥣 {tx('Prep', 'Preparación')}</h3>
+                        <p className="text-[11px] text-gray-500">{tx('Made ahead in a batch — the multiplier scales this part.', 'Se prepara antes en lote — el multiplicador escala esta parte.')}</p>
+                    </div>
+                )}
+
                 <div className="border-t pt-3 mt-3">
                     <h3 className="font-bold text-sm text-amber-800 mb-2">📝 {t("ingredients", language)} {countHint('ingredientsEn', 'ingredientsEs')}</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 md:gap-4">
@@ -374,13 +623,58 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
                     </div>
                 </div>
 
+                {hasService ? (
+                    <>
+                        <div className="border-t-2 border-orange-500 pt-3 mt-4 flex items-start justify-between gap-2">
+                            <div>
+                                <h3 className="font-extrabold text-base text-orange-700">🔥 {tx('Cook to order (service)', 'Al momento (servicio)')}</h3>
+                                <p className="text-[11px] text-gray-500">{tx('What the line does for each order — amounts are per order and never multiplied.', 'Lo que hace la línea por cada orden — cantidades por orden, nunca se multiplican.')}</p>
+                            </div>
+                            <button type="button" disabled={uploading}
+                                onClick={() => {
+                                    const n = ['serviceIngredientsEn', 'serviceIngredientsEs', 'serviceInstructionsEn', 'serviceInstructionsEs']
+                                        .reduce((a, f) => a + (form[f] || []).filter(x => String(x || '').trim()).length, 0);
+                                    if (n && !confirm(tx('Remove the Cook-to-order section and its lines?', '¿Quitar la sección Al momento y sus líneas?'))) return;
+                                    setHasService(false);
+                                    setForm(prev => {
+                                        const media = { ...(prev.media || {}) };
+                                        delete media.svcIng; delete media.svcStep;
+                                        return { ...prev, serviceIngredientsEn: [''], serviceIngredientsEs: [''], serviceInstructionsEn: [''], serviceInstructionsEs: [''], media };
+                                    });
+                                }}
+                                className="text-[11px] text-red-600 font-bold underline flex-shrink-0 disabled:opacity-40">{tx('Remove section', 'Quitar sección')}</button>
+                        </div>
+                        <div className="border-t pt-3 mt-3">
+                            <h3 className="font-bold text-sm text-orange-800 mb-2">📝 {tx('Ingredients per order', 'Ingredientes por orden')} {countHint('serviceIngredientsEn', 'serviceIngredientsEs')}</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 md:gap-4">
+                                {renderIngredientEditor("serviceIngredientsEn", tx("English", "Inglés"))}
+                                {renderIngredientEditor("serviceIngredientsEs", tx("Spanish", "Español"))}
+                            </div>
+                        </div>
+                        <div className="border-t pt-3 mt-3">
+                            <h3 className="font-bold text-sm text-orange-800 mb-2">👨‍🍳 {tx('Cook-to-order steps', 'Pasos al momento')} {countHint('serviceInstructionsEn', 'serviceInstructionsEs')}</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 md:gap-4">
+                                {renderListEditor("serviceInstructionsEn", tx("English", "Inglés"))}
+                                {renderListEditor("serviceInstructionsEs", tx("Spanish", "Español"))}
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                    <button type="button" onClick={() => setHasService(true)}
+                        className="w-full mt-3 py-2.5 rounded-lg border-2 border-dashed border-orange-300 text-orange-700 text-sm font-bold bg-orange-50/50">
+                        🔥 {tx('+ Add a Cook-to-order (service) section', '+ Agregar sección Al momento (servicio)')}
+                    </button>
+                )}
+
                 <button
                     type="button"
                     onClick={handleSave}
-                    disabled={aiBusy}
+                    disabled={aiBusy || saving || uploading}
                     className="w-full bg-mint-700 text-white font-bold py-3 rounded-lg text-lg mt-4 disabled:opacity-60"
                 >
-                    {embedded ? tx("Done editing", "Listo") : isEdit ? tx("Save Changes", "Guardar Cambios") : tx("Add Recipe", "Agregar Receta")}
+                    {uploading ? tx("Uploading…", "Subiendo…")
+                        : saving ? tx("Saving…", "Guardando…")
+                        : embedded ? tx("Done editing", "Listo") : isEdit ? tx("Save Changes", "Guardar Cambios") : tx("Add Recipe", "Agregar Receta")}
                 </button>
             </div>
         </div>

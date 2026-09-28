@@ -63,3 +63,16 @@ test('voice memos: only WebM/Ogg (Android) get an AAC copy', () => {
     assert.match(a, /-c:a aac/);
     assert.match(a, /-vn/);
 });
+
+test('recipe training videos use the same pipeline under recipe_media/', () => {
+    const doc = { type: 'video', mediaPath: 'recipe_media/1700_ab12cd.mov' };
+    assert.equal(needsTranscode(doc), false);                       // chat trigger ignores it
+    assert.equal(needsTranscode(doc, 'recipe_media/'), true);
+    assert.equal(needsTranscode({ type: 'video', mediaPath: 'chats/c1/x.mov' }, 'recipe_media/'), false);
+    assert.equal(needsTranscode({ ...doc, playbackUrl: 'x' }, 'recipe_media/'), false);
+    assert.deepEqual(outputPaths(doc.mediaPath), {
+        playbackPath: 'recipe_media/1700_ab12cd_720.mp4',
+        posterPath: 'recipe_media/1700_ab12cd_poster.jpg',
+        audioPath: 'recipe_media/1700_ab12cd_aac.m4a',
+    });
+});

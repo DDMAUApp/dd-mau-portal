@@ -43,6 +43,9 @@ export function buildRecipeHaystack(recipe) {
     if (recipe.emoji)    parts.push(recipe.emoji);
     if (Array.isArray(recipe.ingredientsEn)) parts.push(recipe.ingredientsEn.join(' '));
     if (Array.isArray(recipe.ingredientsEs)) parts.push(recipe.ingredientsEs.join(' '));
+    // Cook-to-order (service) section, 2026-09-28.
+    if (Array.isArray(recipe.serviceIngredientsEn)) parts.push(recipe.serviceIngredientsEn.join(' '));
+    if (Array.isArray(recipe.serviceIngredientsEs)) parts.push(recipe.serviceIngredientsEs.join(' '));
     if (Array.isArray(recipe.allergens)) {
         for (const code of recipe.allergens) {
             parts.push(allergenLabel(code, 'en'));

@@ -48,3 +48,36 @@ exports.transcodeChatVideo = onDocumentCreated(
         logger.info(`transcodeChatVideo ${event.params.chatId}/${event.params.messageId}: ${status}`);
     },
 );
+
+// Recipe training video → same 720p MP4 + poster (2026-09-28). RecipeForm
+// writes recipe_media/{id} = { type:'video', mediaPath:'recipe_media/…' }
+// after the upload; results land on THAT doc (playbackUrl, posterUrl,
+// thumbnailUrl, playbackWidth/Height | transcodeFailedAt). This function
+// never touches config/recipes — the app reads the result lazily and copies
+// it into the recipe on its next save.
+exports.transcodeRecipeVideo = onDocumentCreated(
+    {
+        document: 'recipe_media/{mediaId}',
+        region: 'us-central1',
+        memory: '4GiB',
+        cpu: 4,
+        timeoutSeconds: 540,
+        concurrency: 8,
+        maxInstances: 5,
+        retry: false,
+    },
+    async (event) => {
+        const doc = event.data?.data();
+        if (!needsTranscode(doc, 'recipe_media/')) return;
+        const status = await oneAtATime(() => processChatVideo({
+            msgRef: event.data.ref,
+            msg: doc,
+            bucket: admin.storage().bucket(),
+            ffmpegPath,
+            log: logger,
+            FieldValue: admin.firestore.FieldValue,
+            prefix: 'recipe_media/',
+        }));
+        logger.info(`transcodeRecipeVideo ${event.params.mediaId}: ${status}`);
+    },
+);

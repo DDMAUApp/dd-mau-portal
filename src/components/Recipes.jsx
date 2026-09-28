@@ -23,6 +23,8 @@ import { scaleIngredient, parseQuantity } from '../data/recipeScale';
 import { splitIngredientLine } from '../data/ingredientParts';
 import { toast } from '../toast';
 import RecipeForm from './RecipeForm';
+import { RecipeMediaStrip } from './RecipeMedia';
+import { hasServiceSection, mediaAt, mediaCount } from '../data/recipeMedia';
 // 2026-05-20 — date-code label printing on Epson TM-L100. Lazy so
 // the preview + ePOS-Print XML helpers only enter the bundle when a
 // staffer actually opens the modal (most sessions won't print).
@@ -133,6 +135,9 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // in the card render). Session-only, like the multiplier itself.
     const [ratioDrafts, setRatioDrafts] = useState({});           // { recipeId: { idx, have } }
     const [ratioAppliedByRecipe, setRatioAppliedByRecipe] = useState({}); // { recipeId: { have, unit, rest, mult } }
+    // 🥣 Prep | 🔥 Cook to order tab per recipe (only recipes that have a
+    // service section show the switch). Session-only, like the multiplier.
+    const [sectionTab, setSectionTab] = useState({}); // { recipeId: 'prep' | 'service' }
     const commitMultiplierDraft = (recipeId) => {
         const raw = multiplierDrafts[recipeId];
         if (raw === undefined) return;
@@ -162,14 +167,17 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // scaled with the SAME scaleIngredient the screen uses, so the print
     // matches the on-screen quantities exactly.
     const [printingIngredientsId, setPrintingIngredientsId] = useState(null);
-    const handlePrintIngredients = async (recipe) => {
+    // Cook-to-order (service) prints its per-order list, never multiplied.
+    const handlePrintIngredients = async (recipe, section = 'prep') => {
         if (printingIngredientsId) return;
-        const mult = recipeMultipliers[recipe.id] || 1;
-        const src = isEs
-            ? (recipe.ingredientsEs?.length ? recipe.ingredientsEs : recipe.ingredientsEn)
-            : (recipe.ingredientsEn?.length ? recipe.ingredientsEn : recipe.ingredientsEs);
+        const svc = section === 'service';
+        const mult = svc ? 1 : (recipeMultipliers[recipe.id] || 1);
+        const en = svc ? recipe.serviceIngredientsEn : recipe.ingredientsEn;
+        const es = svc ? recipe.serviceIngredientsEs : recipe.ingredientsEs;
+        const src = isEs ? (es?.length ? es : en) : (en?.length ? en : es);
         const lines = (src || []).map(item => scaleIngredient(item, mult));
-        const title = isEs ? (recipe.titleEs || recipe.titleEn) : recipe.titleEn;
+        const baseTitle = isEs ? (recipe.titleEs || recipe.titleEn) : recipe.titleEn;
+        const title = svc ? `${baseTitle} — ${isEs ? 'Al momento' : 'Cook to order'}` : baseTitle;
         setPrintingIngredientsId(recipe.id);
         let res;
         try {
@@ -205,6 +213,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                 userAgent: typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '',
                 viewedAt: serverTimestamp(),
                 printed: true,
+                ...(svc ? { printSection: 'service' } : {}),
                 printMultiplier: mult,
                 printLineCount: lines.length,
                 blurCount: 0,
@@ -628,9 +637,13 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
             const id = await upsertRecipe(recipeData, existingId);
             toast(isEs ? "✓ Receta guardada." : "✓ Recipe saved.");
             setExpandedRecipe(id);
+            return true;
         } catch (err) {
             console.error("Error saving recipe:", err);
-            toast((isEs ? "Error al guardar: " : "Save failed: ") + (err.message || err), { kind: 'error' });
+            // The editor's crash-safe draft is kept on failure — reopening
+            // the recipe offers to restore it.
+            toast((isEs ? "Error al guardar (tus cambios siguen en el editor al reabrir): " : "Save failed (reopen the editor to restore your changes): ") + (err.message || err), { kind: 'error' });
+            return false;
         }
     };
 
@@ -691,6 +704,8 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
             categories={categoryNames}
             onSave={saveRecipe}
             onCancel={() => setEditMode(null)}
+            draftKey={editMode === "add" ? "new" : String(editMode.id)}
+            staffName={staffName}
         />;
     }
 
@@ -763,6 +778,21 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         const usingFallbackLang = isEs
             ? !(recipe.ingredientsEs?.length) && !!(recipe.ingredientsEn?.length)
             : !(recipe.ingredientsEn?.length) && !!(recipe.ingredientsEs?.length);
+        // 🥣 Prep | 🔥 Cook to order. Recipes without a service section
+        // render exactly as before (prep = the only section).
+        const hasSvc = hasServiceSection(recipe);
+        const tab = hasSvc ? (sectionTab[recipe.id] || 'prep') : 'prep';
+        const svc = tab === 'service';
+        const pick = (en, es) => (isEs ? (es?.length ? es : en) : (en?.length ? en : es)) || [];
+        const shownIngredients = svc ? pick(recipe.serviceIngredientsEn, recipe.serviceIngredientsEs) : ingredients;
+        const shownSteps = svc ? pick(recipe.serviceInstructionsEn, recipe.serviceInstructionsEs) : instructions;
+        const shownFallback = svc
+            ? (isEs ? !(recipe.serviceIngredientsEs?.length) && !!(recipe.serviceIngredientsEn?.length) : !(recipe.serviceIngredientsEn?.length) && !!(recipe.serviceIngredientsEs?.length))
+            : usingFallbackLang;
+        const effMult = svc ? 1 : mult;
+        const ingKey = svc ? 'svcIng' : 'ing';
+        const stepKey = svc ? 'svcStep' : 'step';
+        const nMedia = mediaCount(recipe.media);
         // ⚖️ Ratio anchors (Andrew 2026-09-01: "recipe asks for 10 lb of
         // cabbage but the weight is always different — if I make it with
         // 6.75 lb it will recalculate everything else"). Every ingredient
@@ -804,6 +834,12 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                 {yieldText && !isExpanded && (
                                     <p className="text-[11px] text-gray-500 truncate mt-0.5">{yieldText}</p>
                                 )}
+                                {!isExpanded && (hasSvc || nMedia > 0) && (
+                                    <p className="text-[10px] font-bold text-gray-500 mt-0.5 flex gap-2">
+                                        {hasSvc && <span className="text-orange-700">🔥 {isEs ? 'Prep + al momento' : 'Prep + cook to order'}</span>}
+                                        {nMedia > 0 && <span>📷 {nMedia}</span>}
+                                    </p>
+                                )}
                                 {sortedAllergens.length > 0 && !isExpanded && (
                                     <div className="flex flex-wrap gap-1 mt-1">
                                         {sortedAllergens.slice(0, 4).map(code => (
@@ -828,7 +864,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                 </div>
 
                 {isExpanded && (
-                    <div className="border-t border-gray-200 p-3 md:p-4 recipe-watermark overflow-hidden" data-watermark={watermarkText}>
+                    <div className="border-t border-gray-200 p-3 md:p-4 recipe-watermark overflow-hidden" style={{ overflow: 'clip' }} data-watermark={watermarkText}>
                         {/* Top strip: prep-label print + allergen banner + admin actions.
                             The two things you check before sticking a label on a
                             container sit together at the very top. */}
@@ -877,9 +913,28 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                             </div>
                         )}
 
+                        {hasSvc && (
+                            <div role="tablist" className="grid grid-cols-2 gap-1 p-1 mb-3 rounded-xl bg-gray-100 border border-gray-200">
+                                {[
+                                    { k: 'prep', label: isEs ? '🥣 Preparación' : '🥣 Prep', on: 'bg-white text-mint-800 shadow' },
+                                    { k: 'service', label: isEs ? '🔥 Al momento' : '🔥 Cook to order', on: 'bg-orange-500 text-white shadow' },
+                                ].map(o => (
+                                    <button key={o.k} type="button" role="tab" aria-selected={tab === o.k}
+                                        onClick={(e) => { e.stopPropagation(); setSectionTab(prev => ({ ...prev, [recipe.id]: o.k })); }}
+                                        className={`py-2 rounded-lg text-sm font-bold transition ${tab === o.k ? o.on : 'text-gray-600'}`}>
+                                        {o.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                         <div className="lg:grid lg:grid-cols-5 lg:gap-6">
                             {/* Left column: meta · multiplier · ingredients */}
                             <div className="lg:col-span-2">
+                                {svc ? (
+                                    <div className="mb-3 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-xs text-orange-800 font-medium">
+                                        🔥 {isEs ? 'Por orden — cantidades para UNA orden; el multiplicador no aplica aquí.' : 'Per order — amounts are for ONE order; the multiplier doesn’t apply here.'}
+                                    </div>
+                                ) : (<>
                                 <div className="flex gap-2 mb-3 text-xs">
                                     <div className="bg-blue-50 rounded-lg px-2 py-2 flex-1 text-center min-w-0">
                                         <div className="font-bold text-blue-700">{t("prepTime", language)}</div>
@@ -985,15 +1040,16 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                         </div>
                                     )}
                                 </div>
+                                </>)}
 
                                 <div className="mb-4 lg:mb-0">
                                     <div className="flex items-center justify-between border-b pb-1 mb-2">
-                                        <h4 className="font-bold text-sm text-gray-800">📝 {t("ingredients", language)}
-                                            {usingFallbackLang && <span className="ml-1 text-[10px] font-normal text-gray-400">({isEs ? 'solo en inglés' : 'Spanish only'})</span>}
+                                        <h4 className="font-bold text-sm text-gray-800">📝 {svc ? (isEs ? 'Ingredientes por orden' : 'Ingredients per order') : t("ingredients", language)}
+                                            {shownFallback && <span className="ml-1 text-[10px] font-normal text-gray-400">({isEs ? 'solo en inglés' : 'Spanish only'})</span>}
                                         </h4>
                                         {/* Prints exactly the scaled quantities shown below */}
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); handlePrintIngredients(recipe); }}
+                                            onClick={(e) => { e.stopPropagation(); handlePrintIngredients(recipe, tab); }}
                                             disabled={printingIngredientsId === recipe.id}
                                             translate="no"
                                             className="notranslate text-xs bg-purple-600 text-white px-3 py-1 rounded-full font-bold hover:bg-purple-700 active:scale-95 transition disabled:opacity-50 flex items-center gap-1">
@@ -1002,18 +1058,25 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                                 marked translate="no"/.notranslate. Keep both. */}
                                             {printingIngredientsId === recipe.id
                                                 ? <span>{isEs ? 'Imprimiendo…' : 'Printing…'}</span>
-                                                : <span>🖨 {isEs ? 'Imprimir' : 'Print'}{mult !== 1 ? ` ${mult}x` : ''}</span>}
+                                                : <span>🖨 {isEs ? 'Imprimir' : 'Print'}{effMult !== 1 ? ` ${effMult}x` : ''}</span>}
                                         </button>
                                     </div>
+                                    {shownIngredients.length === 0 && (
+                                        <p className="text-xs text-gray-400 italic">{isEs ? 'Sin ingredientes.' : 'No ingredients.'}</p>
+                                    )}
                                     <ul className="space-y-1.5">
-                                        {ingredients.map((item, i) => {
-                                            const displayItem = scaleIngredient(item, mult);
-                                            const scaled = mult !== 1 && displayItem !== item;
+                                        {shownIngredients.map((item, i) => {
+                                            const displayItem = scaleIngredient(item, effMult);
+                                            const scaled = effMult !== 1 && displayItem !== item;
                                             const isSub = /^\s*[—–-]\s+/.test(String(item || ''));
+                                            const lineMedia = mediaAt(recipe.media, ingKey, i);
                                             return (
                                                 <li key={i} className={`text-sm md:text-[15px] text-gray-800 flex items-start gap-2 ${isSub ? 'pl-4' : ''}`}>
                                                     <span className="text-mint-400 mt-0.5 flex-shrink-0">•</span>
-                                                    <span className={scaled ? 'text-purple-800 font-semibold' : ''}>{displayItem}</span>
+                                                    <div className="min-w-0 flex-1">
+                                                        <span className={scaled ? 'text-purple-800 font-semibold' : ''}>{displayItem}</span>
+                                                        <RecipeMediaStrip items={lineMedia} size="sm" isEs={isEs} watermark={watermarkText} className="mt-1" />
+                                                    </div>
                                                 </li>
                                             );
                                         })}
@@ -1023,17 +1086,20 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
 
                             {/* Right column: instructions */}
                             <div className="lg:col-span-3">
-                                <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">👨‍🍳 {t("instructions", language)}</h4>
-                                {instructions.length === 0 && (
+                                <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">👨‍🍳 {svc ? (isEs ? 'Pasos al momento' : 'Cook-to-order steps') : t("instructions", language)}</h4>
+                                {shownSteps.length === 0 && (
                                     <p className="text-xs text-gray-400 italic">{isEs ? 'Sin instrucciones todavía.' : 'No instructions yet.'}</p>
                                 )}
                                 <ol className="space-y-2.5">
-                                    {instructions.map((step, i) => (
+                                    {shownSteps.map((step, i) => (
                                         <li key={i} className="text-sm md:text-[15px] text-gray-800 flex items-start gap-2.5 leading-snug">
-                                            <span className="bg-mint-700 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">{i + 1}</span>
+                                            <span className={`${svc ? 'bg-orange-500' : 'bg-mint-700'} text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5`}>{i + 1}</span>
                                             {/* Instructions are never scaled — "repeat 3 times", "step 2",
                                                 "cut into 4" would all go wrong. Ingredients + yields only. */}
-                                            <span className="pt-0.5">{step}</span>
+                                            <div className="min-w-0 flex-1 pt-0.5">
+                                                <span>{step}</span>
+                                                <RecipeMediaStrip items={mediaAt(recipe.media, stepKey, i)} size="lg" isEs={isEs} watermark={watermarkText} className="mt-1.5" />
+                                            </div>
                                         </li>
                                     ))}
                                 </ol>
