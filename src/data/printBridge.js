@@ -390,6 +390,12 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
         // line ~1339) — the two printers now agree.
         lines.push({ text: String(payload.prepDateLabel), scale: 0.7, bold: payload.dateBold !== false });
     }
+    // Day of the week over the date (2026-09-28) — same bold as the date,
+    // a size step smaller so "WEDNESDAY" fits the Brother tape.
+    if (payload.prepWeekday) {
+        const wd = Math.max(Number(payload.weekdayScale) || Number(payload.dateNumberScale) || 5, 1);
+        lines.push({ text: String(payload.prepWeekday), scale: wd * 0.35, bold: payload.dateBold !== false });
+    }
     if (payload.prepDateNumber) {
         const dateScale = Math.max(Number(payload.dateNumberScale) || 5, 1);
         lines.push({

@@ -1028,6 +1028,13 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                     {payload.prepDateLabel}
                 </div>
             )}
+            {payload.prepWeekday && !nameFirst && (
+                <div {...editAttrs}
+                    className={`${dateBold ? 'font-black' : 'font-normal'} text-dd-text leading-none mb-0.5 whitespace-nowrap${editCls}`}
+                    style={{ fontSize: `${8 * (Number(payload.weekdayScale) || Number(payload.dateNumberScale) || 5)}px` }}>
+                    {payload.prepWeekday}
+                </div>
+            )}
             {payload.prepDateNumber ? (
                 <div {...editAttrs}
                     className={`${dateBold ? 'font-black' : 'font-normal'} tabular-nums text-dd-text leading-none mb-0.5${editCls}`}
@@ -1040,7 +1047,7 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
                         fontSize: nameFirst ? '14px' : `${8 * (Number(payload.dateNumberScale) || 5)}px`,
                         letterSpacing: '-1px',
                     }}>
-                    {payload.prepDateNumber}{nameFirst && payload.prepTimeBig ? ` ${payload.prepTimeBig}` : ''}
+                    {nameFirst && payload.prepWeekday ? `${payload.prepWeekday} ` : ''}{payload.prepDateNumber}{nameFirst && payload.prepTimeBig ? ` ${payload.prepTimeBig}` : ''}
                 </div>
             ) : payload.prepDateBig ? (
                 <div {...editAttrs}

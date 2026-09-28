@@ -29,7 +29,7 @@ import ModalPortal from './ModalPortal';
 import StickerMatchSuggestions from './StickerMatchSuggestions';
 import { buildStickerMatchIndex, findStickerMatches, stickerNameQuery } from '../data/stickerMatch';
 import { normalize } from '../data/chatSearch';
-import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs, subscribePrinterWarmState, getCachedPrinterConfig, pendingPrintCount } from '../data/labelPrinting';
+import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET, warmPrintConfigs, subscribePrinterWarmState, getCachedPrinterConfig, pendingPrintCount, freeTextWeekday } from '../data/labelPrinting';
 
 const RECENTS_KEY = 'ddmau:printCenter:recents';
 const MAX_RECENTS = 6;
@@ -588,7 +588,10 @@ export default function PrintCenter({
                                     <div className="mt-2 pt-2 border-t border-dd-line/40 text-[10px] text-dd-text-2 font-mono font-normal text-center"
                                         style={{ textAlign: 'center' }}>
                                         {stampDate && (
-                                            <div>{previewDateStamp()}</div>
+                                            <>
+                                                <div className="font-bold">{freeTextWeekday()}</div>
+                                                <div>{previewDateStamp()}</div>
+                                            </>
                                         )}
                                         {stampSignature && (
                                             <div>— {staffName || tx('me', 'yo')}</div>

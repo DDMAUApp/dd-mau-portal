@@ -754,6 +754,9 @@ export function prepDateWithTime(date, hhmm, now = new Date()) {
 // payload shape:
 //   { titleLines: string[], metaLines: string[], allergens: string[],
 //     ingredients: string[], location: string, footer: string }
+export const WEEKDAYS_EN_FULL = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+export const WEEKDAYS_ES_FULL = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
+
 export function buildLabelPayload({
     itemName,
     itemNameEs,
@@ -908,6 +911,17 @@ export function buildLabelPayload({
             ? `${prepDateLabel} ${prepDateNumber}`
             : prepDateNumber;
     const prepTimeBig    = (!showDate || format?.showTime === false) ? '' : fmtTime(prepDate);
+    // Day of the week over the date stamp (Andrew 2026-09-28: "any day
+    // stamp i want the day of the week … todays stickers should have
+    // MONDAY and under that 9/28"). Full word, label language, same big
+    // bold treatment as the date — width-fit so WEDNESDAY / MIÉRCOLES
+    // never wrap on a narrow roll. Off via Label Format showPrepWeekday.
+    const prepWeekday = (!showDate || format?.showPrepWeekday === false)
+        ? ''
+        : (isEs ? WEEKDAYS_ES_FULL : WEEKDAYS_EN_FULL)[prepDate.getDay()];
+    const weekdayScale = prepWeekday
+        ? Math.max(2, Math.min(fitDateScale, Math.floor(cols / prepWeekday.length)))
+        : fitDateScale;
 
     const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][useByDate.getDay()];
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];
@@ -1020,6 +1034,8 @@ export function buildLabelPayload({
         prepDateLabel,    // e.g. "PREPPED" — small text above the date number
         prepDateNumber,   // e.g. "05/20/26" — printed HUGE
         prepDateBig,      // legacy combined "PREPPED 05/20/26"
+        prepWeekday,      // e.g. "MONDAY" — printed big, right above the date
+        weekdayScale,     // its width-fit Epson scale (≤ dateNumberScale)
         prepTimeBig,
         // Giant use-by band — weekday for day clocks, discard time for
         // hour clocks. Empty string = don't render.
@@ -1248,7 +1264,7 @@ function renderPrepLabelBody(payload) {
         }
         lines.push(`<text width="1" height="1"/>`);
         pushDiv(divEq);
-        const dateLine = [payload.prepDateLabel,
+        const dateLine = [payload.prepDateLabel, payload.prepWeekday,
             payload.prepDateNumber || payload.prepDateBig,
             payload.prepTimeBig].filter(Boolean).join(' ');
         if (dateLine) {
@@ -1280,6 +1296,13 @@ function renderPrepLabelBody(payload) {
     if (payload.prepDateLabel) {
         lines.push(`<text width="2" height="2"/>`);
         lines.push(`<text>${escapeXml(payload.prepDateLabel)}&#10;</text>`);
+    }
+    // Day of the week right above the date (2026-09-28). Same bold as
+    // the date; own width-fit scale so long names never wrap.
+    if (payload.prepWeekday) {
+        const wd = Math.max(2, Math.min(8, Number(payload.weekdayScale) || Number(payload.dateNumberScale) || 5));
+        lines.push(`<text width="${wd}" height="${wd}"/>`);
+        lines.push(`<text>${escapeXml(payload.prepWeekday)}&#10;</text>`);
     }
     if (payload.prepDateNumber) {
         // Dynamic scale from format config (default 5). Epson supports
@@ -1499,7 +1522,7 @@ export function buildLabelPreviewModel(payload) {
         }
         pushTitle2();
         pushDiv(divEq);
-        const dateLine = [payload.prepDateLabel,
+        const dateLine = [payload.prepDateLabel, payload.prepWeekday,
             payload.prepDateNumber || payload.prepDateBig,
             payload.prepTimeBig].filter(Boolean).join(' ');
         if (dateLine) {
@@ -1511,6 +1534,10 @@ export function buildLabelPreviewModel(payload) {
         pushDiv(divDash);
     } else {
         if (payload.prepDateLabel) push(payload.prepDateLabel, { w: 2, h: 2, em: dateBold, center: true });
+        if (payload.prepWeekday) {
+            const wd = Math.max(2, Math.min(8, Number(payload.weekdayScale) || Number(payload.dateNumberScale) || 5));
+            push(payload.prepWeekday, { w: wd, h: wd, em: dateBold, center: true });
+        }
         if (payload.prepDateNumber) {
             const dateScale = Math.max(2, Math.min(8, Number(payload.dateNumberScale) || 5));
             push(payload.prepDateNumber, { w: dateScale, h: dateScale, em: dateBold, center: true });
@@ -1647,6 +1674,9 @@ function renderPrepLabelHtmlBody(payload) {
     const dateLabel = payload.prepDateLabel
         ? `<div class="prep-date-label">${escapeHtml(payload.prepDateLabel)}</div>`
         : '';
+    const weekdayHtml = payload.prepWeekday
+        ? `<div class="prep-weekday">${escapeHtml(payload.prepWeekday)}</div>`
+        : '';
     const dateNumber = payload.prepDateNumber
         ? `<div class="prep-date-number">${escapeHtml(payload.prepDateNumber)}</div>`
         : (payload.prepDateBig
@@ -1655,6 +1685,7 @@ function renderPrepLabelHtmlBody(payload) {
     return [
         '<div class="label">',
         dateLabel,
+        weekdayHtml,
         dateNumber,
         payload.prepTimeBig ? `<div class="prep-time">${escapeHtml(payload.prepTimeBig)}</div>` : '',
         '<div class="divider"></div>',
@@ -1672,6 +1703,11 @@ function renderPrepLabelHtmlBody(payload) {
 // Shared "printed at" stamp for free-text labels — one format for the
 // Epson XML, Brother HTML/PDF and Brother direct-IPP paths so the
 // date toggle prints identically everywhere. e.g. "07/10/26 8:15a".
+// Day of the week printed on its own line above the stamp (2026-09-28 —
+// "any day stamp i want the day of the week").
+export function freeTextWeekday(d = new Date()) {
+    return WEEKDAYS_EN_FULL[d.getDay()];
+}
 export function freeTextDateStamp(d = new Date()) {
     const mo = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
@@ -1721,7 +1757,7 @@ function renderFreeTextHtmlBody(freePayload) {
 
     const footerLines = [];
     if (freePayload.stampDate) {
-        footerLines.push(freeTextDateStamp());
+        footerLines.push(freeTextWeekday(), freeTextDateStamp());
     }
     if (freePayload.stampSignature && freePayload.signature) {
         footerLines.push(`— ${freePayload.signature}`);
@@ -1774,6 +1810,7 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFo
    that size the date + title off HEIGHT so 4 lines (date / title
    / use-by / by-name) all fit on a 25mm-tall Brother small. */
 .prep-date-label { font-size: ${mm(w * 0.08)}; font-weight: 700; text-align: center; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1; }
+.prep-weekday { font-size: ${mm(w * 0.15)}; font-weight: 900; text-align: center; line-height: 1; white-space: nowrap; }
 .prep-date-number { font-size: ${mm(w * 0.28)}; font-weight: 900; text-align: center; letter-spacing: -1px; line-height: 0.95; }
 .page.compact .prep-date-number { font-size: ${mm(h * 0.36)}; line-height: 1; }
 .prep-date { font-size: ${mm(w * 0.16)}; font-weight: 900; text-align: center; letter-spacing: -0.5px; line-height: 1.05; }
@@ -1892,6 +1929,12 @@ function renderPrepLabelOnPdfPage(page, payload, fonts, widthMm, heightMm, compa
     if (payload.prepDateLabel) {
         const size = compact ? mmToPt(heightMm * 0.07) : mmToPt(widthMm * 0.08);
         drawCentered(String(payload.prepDateLabel).toUpperCase(), fontBold, size);
+    }
+    // Day of the week (2026-09-28) — big, right above the date. Sized so
+    // the longest name (WEDNESDAY / MIÉRCOLES) fits the label width.
+    if (payload.prepWeekday) {
+        const size = compact ? mmToPt(heightMm * 0.14) : mmToPt(widthMm * 0.13);
+        drawCentered(payload.prepWeekday, fontBold, size);
     }
     // Date number — the HUGE focal element.
     if (payload.prepDateNumber) {
@@ -2019,6 +2062,7 @@ function renderFreeTextOnPdfPage(page, payload, fonts, widthMm, heightMm /* , co
     const footerLines = [];
     if (payload.stampDate) {
         const d = new Date();
+        footerLines.push(freeTextWeekday(d));
         const mm = String(d.getMonth() + 1).padStart(2, '0');
         const dd = String(d.getDate()).padStart(2, '0');
         const yy = String(d.getFullYear()).slice(-2);
@@ -2314,7 +2358,7 @@ function renderFreeTextBody(freePayload) {
     // doesn't dwarf the user's content.
     const footerLines = [];
     if (freePayload.stampDate) {
-        footerLines.push(freeTextDateStamp());
+        footerLines.push(freeTextWeekday(), freeTextDateStamp());
     }
     if (freePayload.stampSignature && freePayload.signature) {
         footerLines.push(`— ${freePayload.signature}`);
@@ -2557,6 +2601,7 @@ async function _printFreeTextImpl({
             // path (Andrew 2026-07-10). Rendered smaller + non-bold so
             // they read as a footer, not part of the message.
             if (stampDate) {
+                lines.push({ text: freeTextWeekday(), scale: 0.55, bold: true });
                 lines.push({ text: freeTextDateStamp(), scale: 0.55, bold: false });
             }
             if (stampSignature && signature) {

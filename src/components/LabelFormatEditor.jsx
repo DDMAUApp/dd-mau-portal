@@ -498,6 +498,10 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
                                     { v: '24h', label: '24-hour (14:15)' },
                                 ]} />
                             <ToggleRow
+                                checked={draft.showPrepWeekday !== false}
+                                onChange={(v) => update({ showPrepWeekday: v })}
+                                label={tx('Day of the week above the date (MONDAY)', 'Día de la semana sobre la fecha (LUNES)')} />
+                            <ToggleRow
                                 checked={draft.showUseByWeekday !== false}
                                 onChange={(v) => update({ showUseByWeekday: v })}
                                 label={tx('Show weekday on use-by line (Wed)', 'Mostrar día de la semana')} />

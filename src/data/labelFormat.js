@@ -116,6 +116,8 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
     dateFormat:         'mm/dd/yy',   // or 'dd/mm/yy'
     timeFormat:         '12h',         // or '24h'
     showUseByWeekday:   true,
+    // Big "MONDAY" line above the prep date stamp (2026-09-28).
+    showPrepWeekday:    true,
 
     // Defaults
     defaultShelfLifeDays: 5,
@@ -445,7 +447,7 @@ export async function saveLabelFormat({ format, byName, printer = 'epson' }) {
     const safe = {};
     const BOOL_FIELDS = ['showPreppedLabel', 'showTime', 'showTitle', 'showUseBy',
         'showByName', 'showLocation', 'showAllergens', 'showIngredients',
-        'showNotes', 'showFooter', 'showUseByWeekday', 'showUseByBand',
+        'showNotes', 'showFooter', 'showUseByWeekday', 'showPrepWeekday', 'showUseByBand',
         'titleBold', 'showDividers', 'showTitleTranslation',
         // 2026-07-27 "every text editable" per-block bold toggles.
         'dateBold', 'timeBold', 'metaBold', 'title2Bold', 'bandBold',
