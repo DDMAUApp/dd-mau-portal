@@ -297,6 +297,12 @@ export default function LabelFormatEditor({ language = 'en', byName, startExpand
                                 onBoldChange={(v) => update({ title2Bold: v })}
                                 hint={tx('The smaller second-language line under the item name', 'La línea del nombre en el otro idioma')} />
                             <SliderRow
+                                label={tx('Day of the week size (MONDAY)', 'Tamaño del día (LUNES)')}
+                                value={draft.weekdayScale ?? Math.min(8, (Number(draft.dateNumberScale) || 5) + 1)}
+                                onChange={(v) => update({ weekdayScale: v })}
+                                min={2} max={8} step={1}
+                                hint={tx('Prints right above the date · long days print tall to fit', 'Va sobre la fecha · los días largos se imprimen altos para caber')} />
+                            <SliderRow
                                 label={tx('Date number size', 'Tamaño de fecha')}
                                 value={draft.dateNumberScale}
                                 onChange={(v) => update({ dateNumberScale: v })}

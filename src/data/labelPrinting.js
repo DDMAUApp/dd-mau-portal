@@ -919,9 +919,16 @@ export function buildLabelPayload({
     const prepWeekday = (!showDate || format?.showPrepWeekday === false)
         ? ''
         : (isEs ? WEEKDAYS_ES_FULL : WEEKDAYS_EN_FULL)[prepDate.getDay()];
+    // Size (Andrew 2026-09-28 round 2: "make the day a little bigger"):
+    // default one step above the date, admin-set via Label Format
+    // weekdayScale. HEIGHT honors it; WIDTH is fit to the roll so a long
+    // name (WEDNESDAY) prints tall-and-narrow instead of wrapping.
+    const cfgWeekday = Math.max(2, Math.min(8,
+        Number(format?.weekdayScale) || (cfgDateScale + 1)));
+    const weekdayHeightScale = cfgWeekday;
     const weekdayScale = prepWeekday
-        ? Math.max(2, Math.min(fitDateScale, Math.floor(cols / prepWeekday.length)))
-        : fitDateScale;
+        ? Math.max(2, Math.min(cfgWeekday, Math.floor(cols / prepWeekday.length)))
+        : cfgWeekday;
 
     const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][useByDate.getDay()];
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];
@@ -1035,7 +1042,8 @@ export function buildLabelPayload({
         prepDateNumber,   // e.g. "05/20/26" — printed HUGE
         prepDateBig,      // legacy combined "PREPPED 05/20/26"
         prepWeekday,      // e.g. "MONDAY" — printed big, right above the date
-        weekdayScale,     // its width-fit Epson scale (≤ dateNumberScale)
+        weekdayScale,        // Epson WIDTH scale (fit to the roll)
+        weekdayHeightScale,  // Epson HEIGHT scale (the configured size)
         prepTimeBig,
         // Giant use-by band — weekday for day clocks, discard time for
         // hour clocks. Empty string = don't render.
@@ -1301,7 +1309,8 @@ function renderPrepLabelBody(payload) {
     // the date; own width-fit scale so long names never wrap.
     if (payload.prepWeekday) {
         const wd = Math.max(2, Math.min(8, Number(payload.weekdayScale) || Number(payload.dateNumberScale) || 5));
-        lines.push(`<text width="${wd}" height="${wd}"/>`);
+        const wh = Math.max(wd, Math.min(8, Number(payload.weekdayHeightScale) || wd));
+        lines.push(`<text width="${wd}" height="${wh}"/>`);
         lines.push(`<text>${escapeXml(payload.prepWeekday)}&#10;</text>`);
     }
     if (payload.prepDateNumber) {
@@ -1536,7 +1545,8 @@ export function buildLabelPreviewModel(payload) {
         if (payload.prepDateLabel) push(payload.prepDateLabel, { w: 2, h: 2, em: dateBold, center: true });
         if (payload.prepWeekday) {
             const wd = Math.max(2, Math.min(8, Number(payload.weekdayScale) || Number(payload.dateNumberScale) || 5));
-            push(payload.prepWeekday, { w: wd, h: wd, em: dateBold, center: true });
+            const wh = Math.max(wd, Math.min(8, Number(payload.weekdayHeightScale) || wd));
+            push(payload.prepWeekday, { w: wd, h: wh, em: dateBold, center: true });
         }
         if (payload.prepDateNumber) {
             const dateScale = Math.max(2, Math.min(8, Number(payload.dateNumberScale) || 5));
@@ -1810,7 +1820,7 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFo
    that size the date + title off HEIGHT so 4 lines (date / title
    / use-by / by-name) all fit on a 25mm-tall Brother small. */
 .prep-date-label { font-size: ${mm(w * 0.08)}; font-weight: 700; text-align: center; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1; }
-.prep-weekday { font-size: ${mm(w * 0.15)}; font-weight: 900; text-align: center; line-height: 1; white-space: nowrap; }
+.prep-weekday { font-size: ${mm(w * 0.18)}; font-weight: 900; text-align: center; line-height: 1; white-space: nowrap; }
 .prep-date-number { font-size: ${mm(w * 0.28)}; font-weight: 900; text-align: center; letter-spacing: -1px; line-height: 0.95; }
 .page.compact .prep-date-number { font-size: ${mm(h * 0.36)}; line-height: 1; }
 .prep-date { font-size: ${mm(w * 0.16)}; font-weight: 900; text-align: center; letter-spacing: -0.5px; line-height: 1.05; }
@@ -1933,8 +1943,10 @@ function renderPrepLabelOnPdfPage(page, payload, fonts, widthMm, heightMm, compa
     // Day of the week (2026-09-28) — big, right above the date. Sized so
     // the longest name (WEDNESDAY / MIÉRCOLES) fits the label width.
     if (payload.prepWeekday) {
-        const size = compact ? mmToPt(heightMm * 0.14) : mmToPt(widthMm * 0.13);
-        drawCentered(payload.prepWeekday, fontBold, size);
+        // Big, but never wider than the label (WEDNESDAY / MIÉRCOLES).
+        const want = compact ? mmToPt(heightMm * 0.2) : mmToPt(widthMm * 0.2);
+        const fitW = (mmToPt(widthMm) - padding * 2) / Math.max(1, fontBold.widthOfTextAtSize(payload.prepWeekday, 1));
+        drawCentered(payload.prepWeekday, fontBold, Math.min(want, fitW));
     }
     // Date number — the HUGE focal element.
     if (payload.prepDateNumber) {

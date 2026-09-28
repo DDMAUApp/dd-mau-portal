@@ -63,6 +63,9 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
 
     // Size scaling
     dateNumberScale: 5,    // Epson: width=height=5. Brother CSS: ~28% of label width
+    // Day-of-week line above the date (2026-09-28). null = one step above
+    // the date (the default Andrew asked for); 2..8 = fixed size.
+    weekdayScale:    null,
     titleScale:      2,    // Epson: width=height=2. Brother CSS: medium-large
     // Giant use-by band ("SAT" weekday / discard time). Ceiling — the
     // renderer still auto-shrinks so the text fits the roll. 4 was the
@@ -455,7 +458,7 @@ export async function saveLabelFormat({ format, byName, printer = 'epson' }) {
     const STRING_FIELDS = ['preppedLabelTextEn', 'preppedLabelTextEs',
         'useByLabelTextEn', 'useByLabelTextEs',
         'footerText', 'dateFormat', 'timeFormat'];
-    const NUMBER_FIELDS = ['dateNumberScale', 'titleScale', 'useByBandScale',
+    const NUMBER_FIELDS = ['dateNumberScale', 'weekdayScale', 'titleScale', 'useByBandScale',
         'timeScale', 'metaScale', 'title2Scale', 'defaultShelfLifeDays',
         // 2026-07-27 "every text editable" per-block size scales.
         'allergensScale', 'ingredientsScale', 'notesScale', 'footerScale'];
@@ -469,7 +472,9 @@ export async function saveLabelFormat({ format, byName, printer = 'epson' }) {
         }
     }
     for (const k of NUMBER_FIELDS) {
-        if (k in format && Number.isFinite(Number(format[k]))) {
+        // null/'' = "use the default" (weekdayScale) — Number(null) is 0,
+        // which would otherwise save as size 1.
+        if (k in format && format[k] != null && format[k] !== '' && Number.isFinite(Number(format[k]))) {
             safe[k] = Math.max(1, Math.min(99, Number(format[k])));
         }
     }
@@ -536,6 +541,9 @@ export async function saveLabelFormat({ format, byName, printer = 'epson' }) {
 export function clampLabelFormat(format) {
     const f = { ...format };
     f.dateNumberScale = Math.max(2, Math.min(8, Number(f.dateNumberScale) || 5));
+    f.weekdayScale = (f.weekdayScale == null || f.weekdayScale === '' || !Number(f.weekdayScale))
+        ? null
+        : Math.max(2, Math.min(8, Number(f.weekdayScale)));
     // 8 = Epson max (2026-07-26 "make the item font larger" — was 4, which
     // silently undid the editor's bigger slider on save).
     f.titleScale = Math.max(1, Math.min(8, Number(f.titleScale) || 2));

@@ -1031,7 +1031,7 @@ const LabelPreview = memo(function LabelPreview({ payload, onEditDate }) {
             {payload.prepWeekday && !nameFirst && (
                 <div {...editAttrs}
                     className={`${dateBold ? 'font-black' : 'font-normal'} text-dd-text leading-none mb-0.5 whitespace-nowrap${editCls}`}
-                    style={{ fontSize: `${8 * (Number(payload.weekdayScale) || Number(payload.dateNumberScale) || 5)}px` }}>
+                    style={{ fontSize: `${8 * (Number(payload.weekdayHeightScale) || Number(payload.weekdayScale) || Number(payload.dateNumberScale) || 5)}px`, maxWidth: '100%', overflow: 'hidden' }}>
                     {payload.prepWeekday}
                 </div>
             )}

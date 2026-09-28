@@ -184,6 +184,17 @@ describe('saveLabelFormat targets the right doc', () => {
     });
 });
 
+describe('day-of-week size (2026-09-28)', () => {
+    it('saving the editor with the size untouched keeps the default (never size 1)', async () => {
+        await saveLabelFormat({ format: { ...DEFAULT_LABEL_FORMAT, titleScale: 2 }, byName: 'Andrew' });
+        expect(docs.get(EPSON).weekdayScale).toBeUndefined();
+    });
+    it('a chosen size saves', async () => {
+        await saveLabelFormat({ format: { weekdayScale: 7 }, byName: 'Andrew' });
+        expect(docs.get(EPSON).weekdayScale).toBe(7);
+    });
+});
+
 describe('Epson subscription is unaffected by the split', () => {
     it('emits the Epson doc with following:false', () => {
         setDocData(EPSON, { titleScale: 7 });

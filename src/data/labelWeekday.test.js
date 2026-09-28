@@ -48,6 +48,30 @@ describe('prep date stamp weekday', () => {
         expect(lines.indexOf('MONDAY')).toBe(lines.indexOf('09/28/26') - 1);
     });
 
+    it('prints one size step bigger than the date by default (round 2: "a little bigger")', () => {
+        const p = buildLabelPayload(base);               // date scale 5 on the 80 mm roll
+        expect(p.dateNumberScale).toBe(5);
+        expect(p.weekdayHeightScale).toBe(6);
+        expect(p.weekdayScale).toBe(6);                  // MONDAY fits 6-wide on 48 cols
+        expect(renderEposXml(p)).toMatch(/<text width="6" height="6"\/><text>MONDAY/);
+        // Brother: bigger than the date line too
+        const lines = payloadToBridgeFormat(p).lines;
+        const wd = lines.find(l => l.text === 'MONDAY'), dt = lines.find(l => l.text === '09/28/26');
+        expect(wd.scale).toBeGreaterThan(dt.scale);
+    });
+
+    it('long names print tall-and-narrow instead of wrapping', () => {
+        const p = buildLabelPayload({ ...base, prepDate: new Date(2026, 8, 30) });   // WEDNESDAY, 9 chars
+        expect(p.weekdayScale * 9).toBeLessThanOrEqual(p.cols);
+        expect(p.weekdayHeightScale).toBe(6);
+        expect(renderEposXml(p)).toMatch(new RegExp(`<text width="${p.weekdayScale}" height="6"/><text>WEDNESDAY`));
+    });
+
+    it('Label Format weekdayScale sets the size', () => {
+        expect(buildLabelPayload({ ...base, format: { weekdayScale: 8 } }).weekdayHeightScale).toBe(8);
+        expect(buildLabelPayload({ ...base, format: { weekdayScale: null, dateNumberScale: 4 } }).weekdayHeightScale).toBe(5);
+    });
+
     it('long day names fit a narrow roll (never wrap)', () => {
         const p = buildLabelPayload({ ...base, prepDate: new Date(2026, 8, 30), paperWidthMm: 40, language: 'es' });
         expect(p.prepWeekday).toBe('MIÉRCOLES');
