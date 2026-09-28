@@ -48,7 +48,16 @@ export const BLANK_RECIPE = {
     allergens: [],
     ingredientsEn: [""], ingredientsEs: [""],
     instructionsEn: [""], instructionsEs: [""],
+    // 2026-09-28 — Cook-to-order lists MUST exist on a blank recipe too:
+    // "+ Add a Cook-to-order section" on a NEW recipe crashed on
+    // form.serviceIngredientsEn.map (v1.0.487).
+    serviceIngredientsEn: [""], serviceIngredientsEs: [""],
+    serviceInstructionsEn: [""], serviceInstructionsEs: [""],
+    media: {},
 };
+// Every editor list read goes through this — a missing list (older draft,
+// partial import doc) shows one blank row instead of crashing.
+const rows = (v) => (Array.isArray(v) && v.length > 0 ? v : [""]);
 
 export default function RecipeForm({ language, recipe, categories = [], embedded = false, onSave, onCancel, draftKey = null, staffName = '' }) {
     const isEdit = !!recipe;
@@ -116,16 +125,17 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
     };
     const updateField = (field, val) => setForm(prev => ({ ...prev, [field]: val }));
     const updateListItem = (field, idx, val) => setForm(prev => {
-        const arr = [...prev[field]];
+        const arr = [...rows(prev[field])];
         arr[idx] = val;
         return { ...prev, [field]: arr };
     });
-    const addListItem = (field) => setForm(prev => ({ ...prev, [field]: [...prev[field], ""] }));
+    const addListItem = (field) => setForm(prev => ({ ...prev, [field]: [...rows(prev[field]), ""] }));
     const removeListItem = (field, idx) => setForm(prev => {
         const key = FIELD_MEDIA_KEY[field];
         const media = key ? shiftMediaOnRemove(prev.media, key, idx) : prev.media;
-        if (prev[field].length <= 1) return { ...prev, [field]: [""], media };
-        return { ...prev, [field]: prev[field].filter((_, i) => i !== idx), media };
+        const cur = rows(prev[field]);
+        if (cur.length <= 1) return { ...prev, [field]: [""], media };
+        return { ...prev, [field]: cur.filter((_, i) => i !== idx), media };
     });
     // Paste a whole list at once: if a pasted value contains newlines,
     // split it into rows (Andrew pastes ingredient blocks from notes).
@@ -138,7 +148,7 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
         const rows = text.split(/\r?\n/).map(s => s.replace(/^\s*(?:[-•*·]\s+|\d+[.)](?=\s)\s*)/, '').trim()).filter(Boolean);
         if (!rows.length) return;
         setForm(prev => {
-            const arr = [...prev[field]];
+            const arr = [...rows(prev[field])];
             const cur = (arr[idx] || '').trim();
             const added = cur ? [cur + ' ' + rows[0], ...rows.slice(1)] : rows;
             arr.splice(idx, 1, ...added);
@@ -394,7 +404,7 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
         return (
             <div className="mb-3">
                 <label className="block text-xs font-bold text-gray-600 mb-1">{label} <span className="text-gray-400 font-normal">({(form[field] || []).filter(s => String(s || '').trim()).length})</span></label>
-                {form[field].map((item, i) => {
+                {rows(form[field]).map((item, i) => {
                     const key = `${field}:${i}`;
                     const active = rowDraft?.key === key ? rowDraft : null;
                     const parts = active || splitIngredientLine(item, lang);
@@ -464,7 +474,7 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
     const renderListEditor = (field, label) => (
         <div className="mb-3">
             <label className="block text-xs font-bold text-gray-600 mb-1">{label} <span className="text-gray-400 font-normal">({(form[field] || []).filter(s => String(s || '').trim()).length})</span></label>
-            {form[field].map((item, i) => (
+            {rows(form[field]).map((item, i) => (
                 <div key={i}>
                 <div className="flex gap-1 mb-1">
                     <span className="text-xs text-gray-400 mt-2 w-5 text-right flex-shrink-0">{i + 1}.</span>
@@ -503,7 +513,7 @@ export default function RecipeForm({ language, recipe, categories = [], embedded
                         <b>{new Date(draftOffer.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</b>
                         {tx(' — restore them?', ' — ¿recuperarlos?')}
                     </span>
-                    <button type="button" onClick={() => { setForm(draftOffer.form); setHasService(!!draftOffer.hasService); setDraftOffer(null); }}
+                    <button type="button" onClick={() => { setForm({ ...BLANK_RECIPE, ...draftOffer.form }); setHasService(!!draftOffer.hasService); setDraftOffer(null); }}
                         className="px-3 py-1 rounded-full bg-amber-600 text-white text-xs font-bold">{tx('Restore', 'Recuperar')}</button>
                     <button type="button" onClick={() => { clearDraft(draftKey); setDraftOffer(null); }}
                         className="px-3 py-1 rounded-full bg-white border border-amber-300 text-amber-800 text-xs font-bold">{tx('Discard', 'Descartar')}</button>

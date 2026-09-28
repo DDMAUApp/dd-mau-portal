@@ -143,4 +143,33 @@ describe('RecipeForm media + sections', () => {
         fireEvent.click(screen.getByText('Cancel'));
         expect(deleted).toEqual(['m1']);
     });
+
+    // v1.0.487 crash (Andrew 2026-09-28): "+ Add a Cook-to-order section"
+    // on a NEW recipe → undefined is not an object (f[r].map).
+    it('NEW recipe: adding the Cook-to-order section works and saves', async () => {
+        const onSave = vi.fn(async () => true);
+        render(<RecipeForm language="en" recipe={null} onSave={onSave} onCancel={() => {}} draftKey="new" />);
+        fireEvent.click(screen.getByText(/Add a Cook-to-order/));
+        expect(screen.getByText(/Cook to order \(service\)/)).toBeTruthy();
+        fireEvent.change(screen.getByPlaceholderText('Recipe name in English'), { target: { value: 'Banh Mi' } });
+        const items = screen.getAllByPlaceholderText('ingredient');
+        // prep EN, prep ES, service EN, service ES
+        expect(items.length).toBe(4);
+        fireEvent.change(items[2], { target: { value: 'baguette' } });
+        const steps = screen.getAllByPlaceholderText(/English 1/);
+        fireEvent.change(steps[steps.length - 1], { target: { value: 'Toast bread 2 minutes' } });
+        fireEvent.click(screen.getAllByText('+ Add')[4]);   // add a service ingredient row
+        await act(async () => { fireEvent.click(screen.getByText('Add Recipe')); });
+        const saved = onSave.mock.calls[0][0];
+        expect(saved.serviceIngredientsEn).toEqual(['baguette']);
+        expect(saved.serviceInstructionsEn).toEqual(['Toast bread 2 minutes']);
+        expect(saved.ingredientsEn).toEqual([]);
+    });
+
+    it('a recipe/draft missing the new lists still opens the section (import review, old drafts)', () => {
+        const legacy = { titleEn: 'Old', ingredientsEn: ['1 cup rice'] };   // no ES, no service, no media
+        render(<RecipeForm language="en" recipe={legacy} embedded onSave={vi.fn()} onCancel={() => {}} />);
+        fireEvent.click(screen.getByText(/Add a Cook-to-order/));
+        expect(screen.getAllByPlaceholderText('ingredient').length).toBe(4);
+    });
 });
