@@ -427,6 +427,45 @@ function stripDraftLayer(obj) {
     return out;
 }
 
+// ── Save merge (2026-09-28) ─────────────────────────────────────────────
+// Andrew: "i resize the images to fit and change the scrolling announcements
+// but it keeps reverting". webster-photos went v48→v59 in 7 min, alternating
+// fit contain/cover and the ticker text: every Save wrote the WHOLE editor
+// form, so a second (or stale) editor put back the field the first had just
+// changed. It also silently deleted fields the editor doesn't manage
+// (contrastBoost, alertsMuted, reloadRequestedAt).
+//   • keys the payload doesn't carry → keep the server's value (unmanaged)
+//   • keys this editor did NOT change (payload == base, the doc as the
+//     editor opened it) but someone else did (server != base) → keep the
+//     server's value — only the fields THIS save changed are written.
+// The editor clears a field by sending null explicitly, so omission never
+// means "clear".
+const META_KEYS = new Set(['tvId', 'updatedAt', 'updatedBy', 'publishedVersion', 'publishedAt', 'publishedBy', ...['draftSnapshot', 'draftSavedAt', 'draftSavedBy']]);
+function stableJson(v) {
+    if (v === undefined) return 'undefined';
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (typeof v.toMillis === 'function') return `ts:${v.toMillis()}`;
+    if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`;
+    return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(',')}}`;
+}
+export function mergeTvLiveSave(payload, base, prev) {
+    const next = { ...(payload || {}) };
+    const kept = [];
+    if (prev && typeof prev === 'object') {
+        for (const k of Object.keys(prev)) {
+            if (META_KEYS.has(k)) continue;
+            if (!(k in next)) { next[k] = prev[k]; continue; }
+            if (base && typeof base === 'object'
+                && stableJson(next[k]) === stableJson(base[k])
+                && stableJson(prev[k]) !== stableJson(base[k])) {
+                next[k] = prev[k];
+                kept.push(k);
+            }
+        }
+    }
+    return { next, kept };
+}
+
 // Sanitize the tvId the way the rest of this file expects (matches
 // saveTvConfig's previous behavior).
 function normalizeTvId(tvId) {
@@ -459,7 +498,7 @@ export async function requestTvReload(tvId, byName) {
     }, { merge: true });
 }
 
-export async function saveTvConfig({ tvId, payload, byName }) {
+export async function saveTvConfig({ tvId, payload, byName, base = null }) {
     if (!tvId) throw new Error('tvId required');
     const cleanId = normalizeTvId(tvId);
     const rootRef = doc(db, COLLECTION, cleanId);
@@ -471,6 +510,7 @@ export async function saveTvConfig({ tvId, payload, byName }) {
     // version counter starts at 1 with no v0 row, which is the
     // correct "this is the first publish" representation.
     let nextVersion = 1;
+    let keptFromServer = [];
     await runTransaction(db, async (tx) => {
         const snap = await tx.get(rootRef);
         const prev = snap.exists() ? snap.data() : null;
@@ -506,8 +546,14 @@ export async function saveTvConfig({ tvId, payload, byName }) {
         if (prev?.draftSnapshot)  draftFields.draftSnapshot  = prev.draftSnapshot;
         if (prev?.draftSavedAt)   draftFields.draftSavedAt   = prev.draftSavedAt;
         if (prev?.draftSavedBy)   draftFields.draftSavedBy   = prev.draftSavedBy;
+        const merged = mergeTvLiveSave(
+            stripDraftLayer(payload || {}),
+            base ? stripDraftLayer(base) : null,
+            prev ? stripDraftLayer(prev) : null,
+        );
+        keptFromServer = merged.kept;
         tx.set(rootRef, {
-            ...stripDraftLayer(payload || {}),
+            ...merged.next,
             tvId: cleanId,
             updatedAt: serverTimestamp(),
             updatedBy: byName || null,
@@ -528,8 +574,10 @@ export async function saveTvConfig({ tvId, payload, byName }) {
             location: payload?.location,
             layout: payload?.layout,
             version: nextVersion,
+            ...(keptFromServer.length ? { keptFromServer } : {}),
         },
     });
+    return { version: nextVersion, keptFromServer };
 }
 
 // Copy an existing TV screen to the OTHER location as a brand-new, INDEPENDENT
@@ -640,19 +688,19 @@ export async function publishTvConfigDraft({ tvId, byName }) {
             });
         }
         snapshotPublished = draft;
+        // 2026-09-28: a full (non-merge) set already drops the draft fields —
+        // the old deleteField() sentinels are REJECTED by Firestore outside
+        // merge writes. Unmanaged fields (contrastBoost, alertsMuted…) are
+        // carried over from the live doc via mergeTvLiveSave.
+        const merged = mergeTvLiveSave(stripDraftLayer(draft), null, stripDraftLayer(prev));
         tx.set(rootRef, {
-            ...stripDraftLayer(draft),
+            ...merged.next,
             tvId: cleanId,
             updatedAt: serverTimestamp(),
             updatedBy: byName || null,
             publishedVersion: nextVersion,
             publishedAt: serverTimestamp(),
             publishedBy: byName || null,
-            // Explicit deletes so the next snapshot reader sees a
-            // clean "no draft" state.
-            draftSnapshot: deleteField(),
-            draftSavedAt:  deleteField(),
-            draftSavedBy:  deleteField(),
         });
     });
     recordAudit({
@@ -723,17 +771,18 @@ export async function rollbackTvConfig({ tvId, versionId, byName }) {
         delete restore.supersededBy;
         delete restore.reason;
         delete restore.rolledBackTo;
+        // 2026-09-28: no deleteField() in a non-merge set (Firestore rejects
+        // it — rollback always failed); the full set drops the draft fields.
+        const live = rootSnap.exists() ? stripDraftLayer(rootSnap.data()) : null;
+        const merged = mergeTvLiveSave(restore, null, live);
         tx.set(rootRef, {
-            ...restore,
+            ...merged.next,
             tvId: cleanId,
             updatedAt: serverTimestamp(),
             updatedBy: byName || null,
             publishedVersion: nextVersion,
             publishedAt: serverTimestamp(),
             publishedBy: byName || null,
-            draftSnapshot: deleteField(),
-            draftSavedAt:  deleteField(),
-            draftSavedBy:  deleteField(),
         });
     });
     recordAudit({

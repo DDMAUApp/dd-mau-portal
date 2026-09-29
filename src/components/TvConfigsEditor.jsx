@@ -761,8 +761,13 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 await saveTvConfigDraft({ tvId: finalId, payload, byName });
                 toast(tx('✓ Draft saved — click Publish on the card to push live', '✓ Borrador guardado — toca Publicar para enviar en vivo'), { kind: 'success' });
             } else {
-                await saveTvConfig({ tvId: finalId, payload, byName });
-                toast(tx('✓ Saved & published', '✓ Guardado y publicado'), { kind: 'success' });
+                // base = the screen as this editor opened it: only the fields
+                // changed HERE are written (see mergeTvLiveSave).
+                const res = await saveTvConfig({ tvId: finalId, payload, byName, base: isNew ? null : initial });
+                const kept = res?.keptFromServer || [];
+                toast(kept.length
+                    ? tx(`✓ Saved & published — kept newer ${kept.join(', ')} from another save`, `✓ Guardado — se conservó ${kept.join(', ')} más reciente`)
+                    : tx('✓ Saved & published', '✓ Guardado y publicado'), { kind: 'success' });
             }
             onClose();
         } catch (e) {
