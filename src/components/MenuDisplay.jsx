@@ -29,9 +29,10 @@
 //                 (good for "today's specials" feel)
 
 import { Component, useEffect, useMemo, useRef, useState } from 'react';
-import { collection, doc, onSnapshot, query, where, limit, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where, limit, setDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
 import { db } from '../firebase';
 import { isTvImpersonationBlocked } from '../data/tvHeartbeatGate';
+import { tvConfigIsStale, mayReloadForStale } from '../data/tvStaleConfig';
 import { MENU_DATA } from '../data/menu';
 import { useMenuConfigLegacy } from '../data/menuConfig';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
@@ -349,6 +350,41 @@ function MenuDisplayInner({ tvId = 'webster' }) {
             setLastSnapshotAt(Date.now());
         });
         return unsub;
+    }, [tvId]);
+
+    // Stale-listener check (2026-09-28, Webster photo TV showed the old
+    // slideshow for hours after a publish while its heartbeat stayed green —
+    // see tvStaleConfig.js). Every 3 min the real TV asks the SERVER for its
+    // config; if a newer version is published than what's on screen, show it
+    // now, then reload once (≤ 1 per 20 min) to get a fresh live listener.
+    const tvConfigRef = useRef(tvConfig);
+    tvConfigRef.current = tvConfig;
+    useEffect(() => {
+        if (!tvId || NO_IMPERSONATE) return undefined;
+        let alive = true;
+        const check = async () => {
+            try {
+                const snap = await Promise.race([
+                    getDocFromServer(doc(db, 'tv_configs', tvId)),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20_000)),
+                ]);
+                if (!alive || !snap?.exists?.()) return;
+                const server = { tvId, ...snap.data() };
+                if (!tvConfigIsStale(tvConfigRef.current, server)) return;
+                console.warn('tv config listener stale — applying server copy', tvId, server.publishedVersion);
+                setTvConfig(server);
+                saveCachedTvConfig(tvId, server);
+                let last = null;
+                try { last = sessionStorage.getItem('ddmau:tv_stale_reload_at'); } catch { /* storage blocked */ }
+                if (mayReloadForStale(last)) {
+                    try { sessionStorage.setItem('ddmau:tv_stale_reload_at', String(Date.now())); } catch { /* ignore */ }
+                    setTimeout(() => { try { window.location.reload(); } catch { /* ignore */ } }, 5_000);
+                }
+            } catch { /* offline / timeout — the next check retries */ }
+        };
+        const first = setTimeout(check, 60_000);
+        const id = setInterval(check, 3 * 60_000);
+        return () => { alive = false; clearTimeout(first); clearInterval(id); };
     }, [tvId]);
 
     // Remote reload — Andrew 2026-06-10: "how can i reset the pi
