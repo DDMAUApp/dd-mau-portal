@@ -6,6 +6,7 @@
 // kiosk URL for each TV, and pick layout + category filter.
 
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import { TV_TRANSITIONS } from '../data/tvTransitions';
 import { asPreviewUrl } from '../data/tvHeartbeatGate';
 import { MENU_DATA as LEGACY_MENU_DATA } from '../data/menu';
 import { useMenuConfigLegacy } from '../data/menuConfig';
@@ -1234,15 +1235,8 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                             <span className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-1">
                                                 {tx('Transition', 'Transición')}
                                             </span>
-                                            <div className="grid grid-cols-3 gap-1.5">
-                                                {[
-                                                    { id: 'fade',       icon: '🌊', en: 'Fade',       es: 'Atenuar' },
-                                                    { id: 'cut',        icon: '✂️', en: 'Cut',        es: 'Corte' },
-                                                    { id: 'slide-left', icon: '⏩', en: 'Slide L→R',  es: 'Desliz I→D' },
-                                                    { id: 'slide-up',   icon: '⬆️', en: 'Slide up',   es: 'Desliz arriba' },
-                                                    { id: 'zoom',       icon: '🔍', en: 'Zoom in',    es: 'Acercar' },
-                                                    { id: 'ken-burns',  icon: '🎬', en: 'Ken Burns',  es: 'Ken Burns' },
-                                                ].map(opt => (
+                                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                                                {TV_TRANSITIONS.map(opt => (
                                                     <button key={opt.id} type="button"
                                                         onClick={() => setImageTransition(opt.id)}
                                                         className={`px-2 py-1.5 rounded text-[10.5px] font-bold border transition flex flex-col items-center gap-0.5 ${

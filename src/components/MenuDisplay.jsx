@@ -33,6 +33,7 @@ import { collection, doc, onSnapshot, query, where, limit, setDoc, serverTimesta
 import { db } from '../firebase';
 import { isTvImpersonationBlocked } from '../data/tvHeartbeatGate';
 import { tvConfigIsStale, mayReloadForStale } from '../data/tvStaleConfig';
+import { resolveTransition, tvSlideStyle } from '../data/tvTransitions';
 import { MENU_DATA } from '../data/menu';
 import { useMenuConfigLegacy } from '../data/menuConfig';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
@@ -948,6 +949,15 @@ function ImageModeLayout({
     // order is the identity permutation so currentUrlIdx === idx and
     // everything below behaves exactly like the pre-shuffle render.
     const currentUrlIdx = realIdx(idx);
+    // Which slide is LEAVING (push / wipe / circle / flip animate it out)
+    // + a change counter for the 🎲 Random mix. Tracked in a ref during
+    // render so the very first render after a change already knows both.
+    const slideHistRef = useRef({ cur: currentUrlIdx, prev: null, n: 0 });
+    if (slideHistRef.current.cur !== currentUrlIdx) {
+        slideHistRef.current = { cur: currentUrlIdx, prev: slideHistRef.current.cur, n: slideHistRef.current.n + 1 };
+    }
+    const prevUrlIdx = slideHistRef.current.prev;
+    const effTransition = resolveTransition(imageTransition, slideHistRef.current.n);
     const nextPos = (idx + 1) % Math.max(1, safeUrls.length);
     const nextUrl = safeUrls.length > 1 ? safeUrls[realIdx(nextPos)] : null;
     useEffect(() => {
@@ -1085,61 +1095,14 @@ function ImageModeLayout({
                 // image keeps moving while it's on screen.
                 const isCurrent = i === currentUrlIdx;
                 const ms = Math.max(100, Math.min(3000, Number(imageTransitionMs) || 700));
-                const slideStyle = (() => {
-                    const base = {
-                        inset: 0,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        pointerEvents: isCurrent ? 'auto' : 'none',
-                    };
-                    switch (imageTransition) {
-                        case 'cut':
-                            return {
-                                ...base,
-                                opacity: isCurrent ? 1 : 0,
-                                transition: 'none',
-                            };
-                        case 'slide-left':
-                            return {
-                                ...base,
-                                opacity: isCurrent ? 1 : 0,
-                                transform: isCurrent ? 'translateX(0)' : 'translateX(100%)',
-                                transition: `opacity ${ms}ms ease, transform ${ms}ms cubic-bezier(0.4,0,0.2,1)`,
-                            };
-                        case 'slide-up':
-                            return {
-                                ...base,
-                                opacity: isCurrent ? 1 : 0,
-                                transform: isCurrent ? 'translateY(0)' : 'translateY(100%)',
-                                transition: `opacity ${ms}ms ease, transform ${ms}ms cubic-bezier(0.4,0,0.2,1)`,
-                            };
-                        case 'zoom':
-                            return {
-                                ...base,
-                                opacity: isCurrent ? 1 : 0,
-                                transform: isCurrent ? 'scale(1)' : 'scale(0.92)',
-                                transition: `opacity ${ms}ms ease, transform ${ms}ms cubic-bezier(0.4,0,0.2,1)`,
-                            };
-                        case 'ken-burns':
-                            // Outer layer fades; inner image runs a
-                            // slow zoom-pan animation while active
-                            // (set on the inner div via className
-                            // below).
-                            return {
-                                ...base,
-                                opacity: isCurrent ? 1 : 0,
-                                transition: `opacity ${ms}ms ease`,
-                            };
-                        case 'fade':
-                        default:
-                            return {
-                                ...base,
-                                opacity: isCurrent ? 1 : 0,
-                                transition: `opacity ${ms}ms ease`,
-                            };
-                    }
-                })();
+                const slideStyle = {
+                    inset: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    pointerEvents: isCurrent ? 'auto' : 'none',
+                    ...tvSlideStyle(effTransition, isCurrent ? 'current' : (i === prevUrlIdx ? 'prev' : 'idle'), ms),
+                };
                 // Per-image animation class for ken-burns / zoom-during-dwell.
                 // Driven by a keyframe animation defined inline below the
                 // map. Only applied when this slide IS the current one.
@@ -1148,9 +1111,9 @@ function ImageModeLayout({
                 // — cinematic feel instead of every photo drifting the
                 // same way.
                 const KB_VARIANTS = ['tv-kb-tl', 'tv-kb-tr', 'tv-kb-bl', 'tv-kb-br'];
-                const innerAnimClass = isCurrent && imageTransition === 'ken-burns'
+                const innerAnimClass = isCurrent && effTransition === 'ken-burns'
                     ? KB_VARIANTS[idx % 4]
-                    : isCurrent && imageTransition === 'zoom'
+                    : isCurrent && effTransition === 'zoom'
                     ? 'tv-zoom-in'
                     : '';
                 return (
@@ -1164,7 +1127,7 @@ function ImageModeLayout({
                                 // animationDuration matches the
                                 // dwell time so the zoom completes
                                 // just as we swap to the next slide.
-                                animationDuration: isCurrent && (imageTransition === 'ken-burns' || imageTransition === 'zoom')
+                                animationDuration: isCurrent && (effTransition === 'ken-burns' || effTransition === 'zoom')
                                     ? `${imageRotateSeconds}s`
                                     : undefined,
                             }}>
