@@ -149,14 +149,87 @@ export function orderQuizOptions(options, seedStr) {
         .map(x => x.o);
 }
 
+// Lesson body. Plain paragraphs as before, plus three light markers
+// (2026-10-17, Manager Training — the source docs are full of tables and
+// callout boxes): "## Heading", "!! TITLE: body" callouts, and consecutive
+// "| a | b |" rows = one table (first row is the header). Works with the
+// in-app lesson editor too (one line per paragraph).
+export function parseLessonBlocks(content) {
+    const blocks = [];
+    for (const raw of (content || [])) {
+        const para = String(raw ?? "");
+        const t = para.trim();
+        if (t.startsWith("|")) {
+            const cells = t.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+            const last = blocks[blocks.length - 1];
+            if (last && last.type === "table") last.rows.push(cells);
+            else blocks.push({ type: "table", rows: [cells] });
+        } else if (t.startsWith("## ")) {
+            blocks.push({ type: "heading", text: t.slice(3).trim() });
+        } else if (t.startsWith("!! ")) {
+            const body = t.slice(3).trim();
+            const i = body.indexOf(": ");
+            blocks.push(i > 0 && i < 60
+                ? { type: "callout", title: body.slice(0, i), text: body.slice(i + 2) }
+                : { type: "callout", title: "", text: body });
+        } else {
+            blocks.push({ type: "p", text: para });
+        }
+    }
+    return blocks;
+}
+
+function LessonBody({ content }) {
+    const blocks = parseLessonBlocks(content);
+    return (
+        <div className="space-y-3 text-gray-800 text-[15px] md:text-base leading-relaxed">
+            {blocks.map((b, i) => {
+                if (b.type === "heading") {
+                    return <h3 key={i} className="text-base md:text-lg font-bold text-mint-800 pt-2">{b.text}</h3>;
+                }
+                if (b.type === "callout") {
+                    return (
+                        <div key={i} className="rounded-xl border-l-4 border-amber-500 bg-amber-50 px-3.5 py-2.5">
+                            {b.title && <div className="text-[11px] font-black tracking-wider uppercase text-amber-800 mb-0.5">{b.title}</div>}
+                            <div className="text-gray-900">{b.text}</div>
+                        </div>
+                    );
+                }
+                if (b.type === "table") {
+                    const [head, ...rows] = b.rows;
+                    return (
+                        <div key={i} className="overflow-x-auto -mx-1 px-1">
+                            <table className="w-full text-[13px] md:text-sm border-collapse rounded-lg overflow-hidden">
+                                <thead>
+                                    <tr>{head.map((c, j) => <th key={j} className="text-left font-bold bg-mint-700 text-white px-2.5 py-1.5 align-top">{c}</th>)}</tr>
+                                </thead>
+                                <tbody>
+                                    {rows.map((r, ri) => (
+                                        <tr key={ri} className={ri % 2 ? "bg-gray-50" : "bg-white"}>
+                                            {r.map((c, j) => <td key={j} className={`px-2.5 py-1.5 align-top border-t border-gray-200 ${j === 0 ? "font-semibold text-gray-900" : ""}`}>{c}</td>)}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    );
+                }
+                const para = b.text;
+                return <p key={i} className={para.startsWith("•") || para.startsWith("—") || /^\d+\./.test(para) ? "ml-2" : ""}>{para}</p>;
+            })}
+        </div>
+    );
+}
+
 // Module track display order + label
-const TRACK_ORDER = ["new-hire", "stations", "menu", "service-safety", "manager-ops"];
+const TRACK_ORDER = ["new-hire", "stations", "menu", "service-safety", "manager-ops", "manager-program"];
 const TRACK_LABELS = {
     "new-hire": { en: "New Hire Track", es: "Capacitación de Nuevo Empleado" },
     "stations": { en: "Stations", es: "Estaciones" },
     "menu": { en: "Menu Mastery", es: "Dominio del Menú" },
     "service-safety": { en: "Service & Safety", es: "Servicio y Seguridad" },
     "manager-ops": { en: "Manager Ops", es: "Operaciones de Gerente" },
+    "manager-program": { en: "Manager Training", es: "Capacitación de Gerentes" },
 };
 const TRACK_ICONS = {
     "new-hire": "🌱",
@@ -164,6 +237,7 @@ const TRACK_ICONS = {
     "menu": "📖",
     "service-safety": "🛡️",
     "manager-ops": "👔",
+    "manager-program": "🎖️",
 };
 
 // Allergen matrix table — renders a structured, color-coded chart inside a lesson.
@@ -473,18 +547,27 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
     }, [myAssignments]);
 
     // Filter modules by tier + apply lesson overrides
+    // Modules an admin ASSIGNED to this staffer are always visible, whatever
+    // their tier (2026-10-17: Manager Training sections assigned to staff
+    // who aren't shift leads yet — the banner, deep link and pop-up need the
+    // module to exist in their list).
+    const assignedModuleIds = useMemo(
+        () => new Set(myOpenAssignments(assignments, staffName).map(a => a.moduleId)),
+        [assignments, staffName],
+    );
     const visibleModules = useMemo(() => MODULES.filter(m => {
         // `draft: true` modules are visible to admins only (tagged DRAFT)
         // until the owner approves the text and the flag is removed.
         if (m.draft && !adminUser) return false;
+        if (assignedModuleIds.has(m.id)) return true;
         if (m.tier === "all") return true;
-        if (m.tier === "lead") return isLead;
+        if (m.tier === "lead") return isLead || !!isManager;
         if (m.tier === "admin") return adminUser;
         return false;
     }).map(m => ({
         ...m,
         lessons: m.lessons.map(l => applyLessonOverride(l, overrides[`${m.id}__${l.id}`])),
-    })), [isLead, adminUser, overrides]);
+    })), [isLead, isManager, adminUser, overrides, assignedModuleIds]);
 
     const activeModule = useMemo(() => visibleModules.find(m => m.id === activeModuleId), [activeModuleId, visibleModules]);
 
@@ -1046,11 +1129,7 @@ export default function TrainingHub({ staffName, language, staffList, isManager 
                     );
                 })()}
 
-                <div className="space-y-3 text-gray-800 text-[15px] md:text-base leading-relaxed">
-                    {content.map((para, i) => (
-                        <p key={i} className={para.startsWith("•") || para.startsWith("—") || /^\d+\./.test(para) ? "ml-2" : ""}>{para}</p>
-                    ))}
-                </div>
+                <LessonBody content={content} />
                 {activeLesson.matrix && <AllergenMatrix matrix={activeLesson.matrix} isEn={isEn} />}
                 <div className="mt-6 flex gap-2">
                     {lIdx > 0 && (

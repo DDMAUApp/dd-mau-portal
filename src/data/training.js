@@ -1,7 +1,7 @@
 // DD Mau training modules — schema v2.
 //
 // Each module: id, code, titleEn/Es, icon, track (new-hire | stations | menu |
-// service-safety | manager-ops), tier (all | lead | admin), durationMin,
+// service-safety | manager-ops | manager-program), tier (all | lead | admin), durationMin,
 // lessons[], quiz{ passThreshold, questions[] }.
 //
 // Each lesson: id, titleEn/Es, contentEn/Es. Content is an array of paragraphs
@@ -37,6 +37,8 @@
 // file represents, and the export script didn't know about Firestore
 // overrides — so the round-trip created a foot-gun pair. The in-app
 // Edit button is now the only sanctioned text-edit path.
+
+import { MANAGER_PROGRAM_MODULES } from './trainingManagerProgram';
 
 export const MODULES = [
     {
@@ -4341,6 +4343,10 @@ export const MODULES = [
         }
     }
 ];
+
+// 🎖️ Manager Training track (Manager Leadership Program sections) — kept in
+// their own file; see trainingManagerProgram.js.
+MODULES.push(...MANAGER_PROGRAM_MODULES);
 
 // Legacy export — keeps any imports of the old name working until the
 // renderer migration in the next commit.

@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { MODULES } from './training';
 
 const TIERS = ['all', 'lead', 'admin'];
-const TRACKS = ['new-hire', 'stations', 'menu', 'service-safety', 'manager-ops'];
+const TRACKS = ['new-hire', 'stations', 'menu', 'service-safety', 'manager-ops', 'manager-program'];
 const EXISTING_CODES = new Set(MODULES.map(m => m.code));
 
 describe('training catalog — module structure', () => {
@@ -91,6 +91,25 @@ describe('training catalog — quizzes', () => {
                 }
                 expect(optIds.has(q.correct),
                     `${q.id} correct="${q.correct}" matches no option`).toBe(true);
+            }
+        }
+    });
+});
+
+import { parseLessonBlocks } from '../components/TrainingHub';
+describe('lesson markers (Manager Training)', () => {
+    it('groups table rows, headings and callouts', () => {
+        const b = parseLessonBlocks(['## Hi', '| A | B |', '| 1 | 2 |', '!! NOTE: be kind', 'plain', '| x | y |']);
+        expect(b.map(x => x.type)).toEqual(['heading', 'table', 'callout', 'p', 'table']);
+        expect(b[1].rows).toEqual([['A', 'B'], ['1', '2']]);
+        expect(b[2]).toMatchObject({ title: 'NOTE', text: 'be kind' });
+    });
+    it('every Manager Training table row has as many cells as its header', () => {
+        for (const m of MODULES.filter(x => x.track === 'manager-program')) {
+            for (const l of m.lessons) for (const content of [l.contentEn, l.contentEs]) {
+                for (const blk of parseLessonBlocks(content).filter(x => x.type === 'table')) {
+                    for (const row of blk.rows) expect(row.length, `${l.id}: ${row.join(' | ')}`).toBe(blk.rows[0].length);
+                }
             }
         }
     });

@@ -136,6 +136,8 @@ const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
 const RequiredTaskFlow = lazy(() => import('./components/RequiredTaskFlow'));
+// 2026-10-17 — "new lesson" pop-up after sign-in for assigned training.
+const TrainingAssignmentPopup = lazy(() => import('./components/TrainingAssignmentPopup'));
 const MenuDisplay = lazy(() => import('./components/MenuDisplay'));
 // Pi-side pairing screen — full-screen 6-digit code entry. Lazy
 // because only a TV that's deliberately hitting /?pair=1 ever needs
@@ -2749,6 +2751,9 @@ export default function App() {
                     staffName={staffName}
                     viewer={currentStaffRecord}
                 />
+                <Suspense fallback={null}>
+                    <TrainingAssignmentPopup language={language} staffName={staffName} />
+                </Suspense>
                 {/* 2026-05-27 — Andrew: "the bug report at the bottom
                     right of the home page need to be deleted. lets
                     delete the staff enter bug program." The
