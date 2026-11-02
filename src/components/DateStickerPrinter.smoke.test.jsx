@@ -83,6 +83,21 @@ describe('DateStickerPrinter smoke', () => {
         expect(screen.getByText('RECEIVED')).toBeInTheDocument();
     });
 
+    it('a tap on the 🍚 Fried Rice Rice sticker opens the rice log', async () => {
+        render(
+            <DateStickerPrinter
+                language="en"
+                staffName="Andrew Shih"
+                storeLocation="webster"
+                staffList={[{ id: 1, name: 'Andrew Shih', role: 'Owner' }]}
+            />,
+        );
+        await act(async () => {
+            screen.getByText('Fried Rice Rice').closest('button').click();
+        });
+        expect(await screen.findByText('Fried Rice Rice Log')).toBeInTheDocument();
+    });
+
     it('renders on "both" location (admin) without crashing', () => {
         render(
             <DateStickerPrinter

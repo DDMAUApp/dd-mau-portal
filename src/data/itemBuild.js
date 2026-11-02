@@ -703,4 +703,7 @@ export const COMPONENT_KIND_TONE = Object.freeze({
     // facing framed labels. Distinct tone so a bottle label is never
     // mistaken for a prep sticker.
     bottles:  { bg: 'bg-amber-50',   text: 'text-amber-900',   icon: '🍾', labelEn: 'Bottle',   labelEs: 'Botella' },
+    // 2026-11-02 (Andrew): fried-rice rice cooling batches — opens the
+    // Rice Log, not a plain sticker. Sky tone keeps it distinct from food.
+    rice_batch: { bg: 'bg-sky-100', text: 'text-sky-950', icon: '🍚', labelEn: 'Rice batch', labelEs: 'Lote de arroz' },
 });

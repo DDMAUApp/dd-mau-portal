@@ -93,6 +93,21 @@ export const STICKER_SECTIONS = Object.freeze([
         defaults: BUILD_SHEET_RICE_NOODLES,
     },
     {
+        // 2026-11-02 (Andrew): FRIED RICE RICE — the health department
+        // wants every batch of room-temp-cooled rice logged. Tapping this
+        // sticker opens the Rice Log (RiceLogPanel) instead of the generic
+        // print modal: it logs the batch to /rice_log and prints a COOKED /
+        // FRIDGE BY / TOSS sticker. Routed by KIND, so a renamed row or
+        // reordered section still opens the log.
+        key: 'friedRiceRice',
+        kind: 'rice_batch',
+        titleEn: '🍚 Fried Rice Rice',
+        titleEs: '🍚 Arroz para Arroz Frito',
+        defaults: [
+            { nameEn: 'Fried Rice Rice', nameEs: 'Arroz para Arroz Frito', descEn: 'Batch log + cooling sticker', descEs: 'Registro de lote + etiqueta de enfriamiento' },
+        ],
+    },
+    {
         key: 'sauces',
         kind: 'sauce',
         titleEn: '🥢 Sauces & Dressings',
@@ -279,6 +294,7 @@ export function getStampedDefaults(sectionKey) {
 const VALID_SECTION_KINDS = [
     'base', 'topping', 'protein', 'sauce', 'broth', 'side', 'garnish',
     'note', 'drink', 'other', 'chemical', 'status', 'catering', 'bottles',
+    'rice_batch',
 ];
 export function resolveSections(data) {
     const ov = Array.isArray(data?.sectionsOverride) ? data.sectionsOverride : null;

@@ -780,6 +780,12 @@ export function buildLabelPayload({
     // ("Sweet, tangy, garlic-chili classic"). Only rendered when the
     // kind's format opts in via showItemDesc (bottles today).
     desc = '',
+    // Extra meta lines printed ABOVE the use-by line (2026-11-02, rice
+    // cooling stickers: "BATCH #3", "FRIDGE BY 12:15p"). Each entry is a
+    // plain string or { en, es, at?: Date, text?: string } — `at` is
+    // formatted with this label's own time format so it matches the
+    // printed prep/use-by times.
+    extraMetaLines = [],
     // Andrew 2026-05-20: "make a label edit button so i can go in
     // and edit all the labels format at once". `format` carries the
     // admin's saved label preferences — section toggles, sizes, text
@@ -938,6 +944,14 @@ export function buildLabelPayload({
     const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][useByDate.getDay()];
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];
     const metaLines = [];
+    for (const x of (Array.isArray(extraMetaLines) ? extraMetaLines : [])) {
+        if (!x) continue;
+        if (typeof x === 'string') { metaLines.push(x.slice(0, 40)); continue; }
+        const label = isEs ? (x.es || x.en || '') : (x.en || x.es || '');
+        const val = (x.at instanceof Date && !isNaN(x.at)) ? fmtTime(x.at) : String(x.text ?? '');
+        const line = `${label} ${val}`.trim();
+        if (line) metaLines.push(line.slice(0, 40));
+    }
     if (format?.showUseBy !== false) {
         // Admin-overridable label word (2026-07-27 — e.g. "DISCARD BY").
         const useByLabel = isEs
@@ -3050,6 +3064,8 @@ async function _printPrepLabelImpl({
     // Hour-based shelf life + thaw state (2026-07-26 features #2/#6) —
     // when shelfLifeHours is set it overrides the day clock entirely.
     shelfLifeHours = null, thawState = null,
+    // Passed straight to buildLabelPayload (rice batch stickers).
+    extraMetaLines = [],
     notes, byName, copies = 1, source = 'recipe',
     // Andrew 2026-06-24: portioning a sauce made on an EARLIER date —
     // double-clicking the date in the print preview overrides it so the
@@ -3131,6 +3147,7 @@ async function _printPrepLabelImpl({
             // recipe object (descEn) — only rendered when the kind's
             // format opts in (showItemDesc).
             desc: recipe?.descEn || recipe?.desc || '',
+            extraMetaLines,
             format,
             paperWidthMm: printer.paperWidthMm,
             leftOffsetMm: printer.leftOffsetMm,

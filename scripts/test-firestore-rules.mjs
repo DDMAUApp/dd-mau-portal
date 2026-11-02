@@ -24,6 +24,7 @@ import {
     FieldPath,
     getFirestore, connectFirestoreEmulator, doc, collection,
     setDoc, addDoc, updateDoc, deleteDoc, getDoc, serverTimestamp, Timestamp,
+    arrayUnion, getDocs, query, where,
 } from 'firebase/firestore';
 
 const PROJECT = 'dd-mau-staff-app';
@@ -276,6 +277,32 @@ await allow('chats: message create', () => setDoc(doc(db, 'chats', 'c2', 'messag
 await allow('chats: acks subcollection (catch-all)', () => setDoc(doc(db, 'chats', 'c2', 'acks', 'a1'), { by: 'Bob' }));
 await allow('chats: message delete (photo-issue rollback)', () => deleteDoc(doc(db, 'chats', 'c1', 'messages', 'm1')));
 await allow('chats: chat delete (ChatSettingsModal)', () => deleteDoc(doc(db, 'chats', 'c1')));
+
+// ── 16. Rice cooling log (2026-11-02) — health-department record ─────
+// Payload shapes match src/data/riceLog.js buildRiceBatchDoc + mark* writes.
+const riceBatch = (over = {}) => ({
+    location: 'webster', cookDay: '2026-11-02', batchNo: 1,
+    cookedAt: '2026-11-02T15:00:00.000Z', fridgeByAt: '2026-11-02T17:00:00.000Z', tossByAt: '2026-11-02T19:00:00.000Z',
+    cookedBy: 'Probe Cook', status: 'cooling', stickerCount: 0, prints: [], notes: '', createdAt: serverTimestamp(),
+    ...over,
+});
+await allow('rice_log: new batch', () => setDoc(doc(db, 'rice_log', 'rb1'), riceBatch()));
+await allow('rice_log: second batch', () => setDoc(doc(db, 'rice_log', 'rb2'), riceBatch({ batchNo: 2 })));
+await allow('rice_log: list a store-day (panel query)', () => getDocs(query(collection(db, 'rice_log'), where('location', '==', 'webster'), where('cookDay', '==', '2026-11-02'))));
+await deny('rice_log: create already finished', () => setDoc(doc(db, 'rice_log', 'rbx'), riceBatch({ status: 'used' })));
+await deny('rice_log: create bad store', () => setDoc(doc(db, 'rice_log', 'rby'), riceBatch({ location: 'both' })));
+await deny('rice_log: create missing cook time', () => setDoc(doc(db, 'rice_log', 'rbz'), riceBatch({ cookedAt: null })));
+await allow('rice_log: sticker print entry', () => updateDoc(doc(db, 'rice_log', 'rb1'), { prints: arrayUnion({ at: '2026-11-02T15:01:00.000Z', by: 'Probe Cook', copies: 1, ok: true }), stickerCount: 1 }));
+await deny('rice_log: backdate cooked time', () => updateDoc(doc(db, 'rice_log', 'rb1'), { cookedAt: '2026-11-02T16:30:00.000Z' }));
+await deny('rice_log: stretch toss deadline', () => updateDoc(doc(db, 'rice_log', 'rb1'), { tossByAt: '2026-11-02T23:00:00.000Z' }));
+await deny('rice_log: renumber batch', () => updateDoc(doc(db, 'rice_log', 'rb1'), { batchNo: 9 }));
+await allow('rice_log: into fridge with temp', () => updateDoc(doc(db, 'rice_log', 'rb1'), { status: 'fridge', fridgedAt: '2026-11-02T16:30:00.000Z', fridgedBy: 'Probe Cook', fridgeTempF: 68 }));
+await deny('rice_log: rewrite a finished outcome', () => updateDoc(doc(db, 'rice_log', 'rb1'), { status: 'used', usedAt: '2026-11-02T16:40:00.000Z', usedBy: 'Probe Cook' }));
+await deny('rice_log: edit a finished temp', () => updateDoc(doc(db, 'rice_log', 'rb1'), { fridgeTempF: 40 }));
+await allow('rice_log: late print entry on finished batch', () => updateDoc(doc(db, 'rice_log', 'rb1'), { prints: arrayUnion({ at: '2026-11-02T16:31:00.000Z', by: 'Probe Cook', copies: 1, ok: true }), stickerCount: 2 }));
+await deny('rice_log: junk status', () => updateDoc(doc(db, 'rice_log', 'rb2'), { status: 'eaten' }));
+await allow('rice_log: tossed at 4h', () => updateDoc(doc(db, 'rice_log', 'rb2'), { status: 'tossed', tossedAt: '2026-11-02T19:05:00.000Z', tossedBy: 'Probe Cook', tossReason: 'past_4h' }));
+await deny('rice_log: delete a batch', () => deleteDoc(doc(db, 'rice_log', 'rb2')));
 
 // ── Summary ───────────────────────────────────────────────────────────
 console.log(`\n${pass} passed, ${fail} failed`);

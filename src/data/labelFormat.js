@@ -197,6 +197,19 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
             showAllergens: false,
             footerText: 'DDMAUSTL.COM',
         },
+        // 2026-11-02 (Andrew): FRIED RICE RICE cooling stickers. Standard
+        // hour-clock prep label with the health-department wording: the
+        // prep stamp reads COOKED (when cooking finished) and the use-by
+        // line reads TOSS (4-hour limit; the giant band is the toss time).
+        // The batch # + FRIDGE BY lines ride extraMetaLines (riceLog.js).
+        rice_batch: {
+            preppedLabelTextEn: 'COOKED',
+            preppedLabelTextEs: 'COCIDO',
+            useByLabelTextEn: 'TOSS',
+            useByLabelTextEs: 'TIRAR',
+            showIngredients: false,
+            showNotes: false,
+        },
     },
 });
 
@@ -262,6 +275,12 @@ const KIND_FIELD_SPECS = {
     showUseBy:        boolAny,
     showTitle:        boolAny,
     footerText:       strMax(60),
+    // Per-kind wording for the prep stamp + use-by line (2026-11-02, rice
+    // cooling stickers: COOKED / TOSS).
+    preppedLabelTextEn: strMax(20),
+    preppedLabelTextEs: strMax(20),
+    useByLabelTextEn:   strMax(20),
+    useByLabelTextEs:   strMax(20),
     // Brand band (black bar, white text, top of label) — catering et al.
     showBrandBand:    boolAny,
     brandBandText:    strMax(24),

@@ -123,6 +123,7 @@ service cloud.firestore {
         'print_jobs',
         'rate_limits',
         'recipe_audits',
+        'rice_log',
         'security_logs',
         'sms_delivery_logs',
         'sms_inbound_events',
@@ -1063,6 +1064,42 @@ service cloud.firestore {
       allow update: if request.resource.data is map
                     && request.resource.data.staffName is string
                     && request.resource.data.staffName == resource.data.staffName;
+      allow delete: if false;
+    }
+
+    // ── /rice_log — fried-rice rice cooling log (2026-11-02) ───────────
+    // Health-department record: one doc per rice batch (cooked time,
+    // fridge-by + toss deadlines, who cooked it, what happened to it,
+    // every sticker printed). Written by RiceLogPanel (src/data/riceLog.js).
+    //   • create: a fresh 'cooling' batch with its identity fields
+    //   • update: identity (store, day, batch #, cooked time, deadlines,
+    //     cook) is FROZEN; an open batch may record its outcome; a FINISHED
+    //     batch can only gain late sticker-print entries — an outcome
+    //     can't be rewritten after the fact
+    //   • delete: never (mistakes are voided and stay on the log)
+    match /rice_log/{batchId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.location in ['webster', 'maryland']
+                    && request.resource.data.cookDay is string
+                    && request.resource.data.batchNo is int
+                    && request.resource.data.cookedAt is string
+                    && request.resource.data.fridgeByAt is string
+                    && request.resource.data.tossByAt is string
+                    && request.resource.data.cookedBy is string
+                    && request.resource.data.status == 'cooling';
+      allow update: if request.resource.data is map
+                    && request.resource.data.status in ['cooling', 'fridge', 'used', 'tossed', 'void']
+                    && (
+                      (resource.data.status == 'cooling'
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                          'status', 'prints', 'stickerCount', 'notes',
+                          'usedAt', 'usedBy',
+                          'fridgedAt', 'fridgedBy', 'fridgeTempF',
+                          'tossedAt', 'tossedBy', 'tossReason',
+                          'voidedAt', 'voidedBy']))
+                      || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['prints', 'stickerCount'])
+                    );
       allow delete: if false;
     }
 

@@ -72,6 +72,7 @@ const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 const BuildEditorModal = lazy(() => import('./BuildEditorModal'));
 const ShelfLifeMatrix = lazy(() => import('./ShelfLifeMatrix'));
 const PrintCenter = lazy(() => import('./PrintCenter'));
+const RiceLogPanel = lazy(() => import('./RiceLogPanel'));
 
 // MM/DD/YY for the Today's Date quick sticker — ONE format for both
 // languages and for both the button text and the printed title, so
@@ -82,6 +83,7 @@ const CHIP_LABELS = {
     proteins: ['🥩 Proteins', '🥩 Proteínas'],
     vegetables: ['🥬 Veggies', '🥬 Verduras'],
     riceNoodles: ['🍜 Noodles', '🍜 Fideos'],
+    friedRiceRice: ['🍚 Fried Rice Rice', '🍚 Arroz Frito'],
     sauces: ['🥢 Sauces', '🥢 Salsas'],
     stocks: ['🍲 Broths', '🍲 Caldos'],
     madeAhead: ['🥟 Made Ahead', '🥟 Pre-Hechos'],
@@ -548,6 +550,8 @@ export default function DateStickerPrinter({
     const [shelfMatrixOpen, setShelfMatrixOpen] = useState(false);
     // Expiring-soon panel (2026-07-26 feature #7) — open to all staff.
     const [expiringOpen, setExpiringOpen] = useState(false);
+    // 🍚 Fried-rice rice cooling log (2026-11-02) — open to all staff.
+    const [riceLogOpen, setRiceLogOpen] = useState(false);
 
     // Handler: take a component (from the build), synthesize a
     // recipe-shaped object, and hand to PrintLabelModal in editable
@@ -560,6 +564,9 @@ export default function DateStickerPrinter({
     openBuildRef.current = openBuild;
     const handlePrintComponent = useCallback((component, menuItem) => {
         if (component.kind === 'note') return;
+        // Rice batches are logged, not just stickered — the Rice Log prints
+        // the batch sticker itself (COOKED / FRIDGE BY / TOSS).
+        if (component.kind === 'rice_batch') { setRiceLogOpen(true); return; }
         const allergenStr = component.allergens || menuItem?.allergens || '';
         const allergens = parseAllergenString(allergenStr);
         // Pull shelf-life from open build (custom items + overrides
@@ -670,6 +677,12 @@ export default function DateStickerPrinter({
                         onClick={() => setExpiringOpen(true)}
                         className="flex-shrink-0 px-3 py-2 rounded-xl bg-amber-100 border border-amber-300 text-amber-800 text-xs font-black active:scale-95">
                         📅 {tx('Expiring', 'Por caducar')}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setRiceLogOpen(true)}
+                        className="flex-shrink-0 px-3 py-2 rounded-xl bg-sky-100 border border-sky-300 text-sky-900 text-xs font-black active:scale-95">
+                        🍚 {tx('Rice log', 'Arroz')}
                     </button>
                 </div>
 
@@ -1088,6 +1101,17 @@ export default function DateStickerPrinter({
                     language={language}
                     onClose={() => setExpiringOpen(false)}
                 />
+            )}
+
+            {riceLogOpen && (
+                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                    <RiceLogPanel
+                        location={printLoc}
+                        staffName={staffName}
+                        language={language}
+                        onClose={() => setRiceLogOpen(false)}
+                    />
+                </Suspense>
             )}
 
             {/* New custom item modal — admin-only. Opens with an
@@ -1696,6 +1720,7 @@ const SECTION_KIND_CHOICES = [
     // format + search visibility (CUSTOMER_FACING_KINDS gates both).
     ['catering', '🎉 Catering (customer-facing)'],
     ['bottles', '🍾 Bottles (customer-facing)'],
+    ['rice_batch', '🍚 Rice batch (opens the rice log)'],
 ];
 function CategoryEditor({ sections, stickerLists, staffName, isEs, tx }) {
     const [draft, setDraft] = useState(() => sections.map(s => ({ ...s })));
@@ -2037,6 +2062,7 @@ const KIND_TO_CATEGORY = Object.freeze({
     status:   'Other',
     catering: 'Other',
     bottles:  'Other',
+    rice_batch: 'Prep',
 });
 
 // Stable tone lookup for the search-results grid (identity-stable so the
