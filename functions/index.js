@@ -5765,27 +5765,51 @@ exports.onCriticalError = onDocumentCreated(
 // repository_dispatch so the agent runs in SECONDS instead of waiting on the
 // flaky cron. Ignores the agent's OWN posts (would loop) + debounces a burst
 // of messages into one wake (45s window). No-ops if GH_DISPATCH_TOKEN unset.
+// senderName is NOT proof of who wrote a message (open chat, no auth), so a wake
+// only ever starts an agent that can't ship; the daily cap limits what forged
+// messages can spend. The manual "Run workflow" button is not capped.
 exports.wakeAgentOnChatCommand = onDocumentCreated(
     { document: "chats/debug_agent/messages/{id}", region: "us-central1", secrets: [GH_DISPATCH_TOKEN] },
     async (event) => {
         const snap = event.data;
         if (!snap) return;
         const data = snap.data() || {};
-        // Only humans issue commands; never wake on the agent's own replies.
-        if (!data.senderName || data.senderName === "Debug Agent") return;
+        // Only Andrew's thread wakes it; never wake on the agent's own replies.
+        if (data.senderName !== "Andrew Shih") return;
         // Debounce: collapse a rapid burst of messages into a single wake.
         const debounceRef = db.doc("system/debug_agent_wake_debounce");
+        const MAX_WAKES_PER_DAY = 8;
+        const day = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
         let fire = false;
+        let capNotice = false;
         try {
             await db.runTransaction(async (txn) => {
                 const cur = await txn.get(debounceRef);
-                const last = cur.exists ? (cur.data() || {}).lastMs || 0 : 0;
+                const d = cur.exists ? (cur.data() || {}) : {};
                 const nowMs = Date.now();
-                fire = nowMs - last > 45 * 1000;
-                if (fire) txn.set(debounceRef, { lastMs: nowMs }, { merge: true });
+                fire = false;
+                capNotice = false;
+                if (nowMs - (d.lastMs || 0) <= 45 * 1000) return;
+                const count = d.day === day ? d.count || 0 : 0;
+                if (count >= MAX_WAKES_PER_DAY) {
+                    capNotice = d.capNoticeDay !== day;
+                    if (capNotice) txn.set(debounceRef, { capNoticeDay: day }, { merge: true });
+                    return;
+                }
+                fire = true;
+                txn.set(debounceRef, { lastMs: nowMs, day, count: count + 1 }, { merge: true });
             });
-        } catch (e) { fire = true; /* on a txn hiccup, prefer to wake */ }
-        if (!fire) { logger.info("wakeAgentOnChatCommand: debounced (recent wake)"); return; }
+        } catch (e) { fire = false; logger.warn("wakeAgentOnChatCommand: txn failed, not waking", e?.message || e); }
+        if (capNotice) {
+            const text = `⚠️ I've hit today's limit of ${MAX_WAKES_PER_DAY} chat-started runs, so I won't reply to messages here until tomorrow. To run me now: GitHub app → Actions → "DD Mau debug agent" → Run workflow.`;
+            const chatRef = db.doc("chats/debug_agent");
+            await chatRef.collection("messages").add({ senderName: "Debug Agent", type: "text", text, createdAt: FieldValue.serverTimestamp() });
+            await chatRef.set({
+                lastMessage: { text: text.slice(0, 120), sender: "Debug Agent", ts: FieldValue.serverTimestamp(), type: "text" },
+                lastActivityAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        if (!fire) { logger.info("wakeAgentOnChatCommand: debounced or over the daily cap"); return; }
         await wakeDebugAgent("chat-command", {
             reason: "owner chat command",
             from: data.senderName,

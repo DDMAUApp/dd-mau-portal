@@ -13,27 +13,30 @@
 // `read`  prints the recent thread messages (newest last) so the agent can see
 //         Andrew's replies/instructions and act on them on its next run.
 //
-// Uses the repo-root service account (present on Andrew's Mac, same as every
-// other scripts/*.mjs admin tool). No new Cloud Function needed.
+// Uses the app's public web config and the same client SDK + security rules as
+// the phones, NOT the service account: the agent reads a chat anyone can write
+// to, so it must not hold a credential that bypasses the rules.
 
-import admin from "firebase-admin";
-import { readFileSync } from "fs";
+import { initializeApp } from "firebase/app";
+import {
+    getFirestore, doc, getDoc, setDoc, addDoc, getDocs, collection,
+    query, orderBy, limit as limitTo, serverTimestamp,
+} from "firebase/firestore";
 
 const CHAT_ID = "debug_agent";
 const AGENT_NAME = "Debug Agent";
 const OWNER = "Andrew Shih";
 
-const saPath = new URL("../../firebase-service-account.json", import.meta.url);
-const sa = JSON.parse(readFileSync(saPath));
-admin.initializeApp({ credential: admin.credential.cert(sa) });
-const db = admin.firestore();
-const FV = admin.firestore.FieldValue;
+const db = getFirestore(initializeApp({
+    apiKey: "AIzaSyDTJccmQHzvbgwW_9_1aDDkAgK0B4PJfkQ",
+    projectId: "dd-mau-staff-app",
+}));
 
 async function ensureChat() {
-    const ref = db.doc(`chats/${CHAT_ID}`);
-    const snap = await ref.get();
-    if (!snap.exists) {
-        await ref.set({
+    const ref = doc(db, "chats", CHAT_ID);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+        await setDoc(ref, {
             type: "group",
             name: "🐛 Debug Agent",
             emoji: "🐛",
@@ -42,8 +45,8 @@ async function ensureChat() {
             createdBy: AGENT_NAME,
             createdByTier: "admin",
             editTier: "admin",
-            createdAt: FV.serverTimestamp(),
-            lastActivityAt: FV.serverTimestamp(),
+            createdAt: serverTimestamp(),
+            lastActivityAt: serverTimestamp(),
         }, { merge: true });
     }
     return ref;
@@ -53,18 +56,18 @@ async function post(text, urgent) {
     const body = String(text || "").trim().slice(0, 4000);
     if (!body) { console.error("post: empty message"); process.exit(1); }
     const ref = await ensureChat();
-    await ref.collection("messages").add({
+    await addDoc(collection(ref, "messages"), {
         senderName: AGENT_NAME,
         type: "text",
         text: body,
-        createdAt: FV.serverTimestamp(),
+        createdAt: serverTimestamp(),
     });
-    await ref.set({
-        lastMessage: { text: body.slice(0, 120), sender: AGENT_NAME, ts: FV.serverTimestamp(), type: "text" },
-        lastActivityAt: FV.serverTimestamp(),
+    await setDoc(ref, {
+        lastMessage: { text: body.slice(0, 120), sender: AGENT_NAME, ts: serverTimestamp(), type: "text" },
+        lastActivityAt: serverTimestamp(),
     }, { merge: true });
     // Push Andrew via the existing notifications → dispatchNotification path.
-    await db.collection("notifications").add({
+    await addDoc(collection(db, "notifications"), {
         forStaff: OWNER,
         type: "chat_message",
         chatId: CHAT_ID,
@@ -74,15 +77,14 @@ async function post(text, urgent) {
         link: "/chat",
         read: false,
         forceDeliver: !!urgent,
-        createdAt: FV.serverTimestamp(),
+        createdAt: serverTimestamp(),
     });
     console.log(`posted + pushed to ${OWNER}${urgent ? " (urgent)" : ""}`);
 }
 
 async function read(limit) {
-    const ref = db.doc(`chats/${CHAT_ID}`);
-    const snap = await ref.collection("messages")
-        .orderBy("createdAt", "desc").limit(limit || 30).get();
+    const messages = collection(db, "chats", CHAT_ID, "messages");
+    const snap = await getDocs(query(messages, orderBy("createdAt", "desc"), limitTo(limit || 30)));
     const msgs = snap.docs.map((d) => d.data()).reverse();
     if (!msgs.length) { console.log("(no messages yet — thread is empty)"); return; }
     for (const m of msgs) {
@@ -98,8 +100,8 @@ async function read(limit) {
 // One-shot: once it posts, the newest message is the agent's, so the next run
 // won't double-post.
 async function ensureReply(text) {
-    const ref = db.doc(`chats/${CHAT_ID}`);
-    const snap = await ref.collection("messages").orderBy("createdAt", "desc").limit(1).get();
+    const messages = collection(db, "chats", CHAT_ID, "messages");
+    const snap = await getDocs(query(messages, orderBy("createdAt", "desc"), limitTo(1)));
     const last = snap.docs[0] && snap.docs[0].data();
     if (last && last.senderName === AGENT_NAME) {
         console.log("ensure-reply: agent already replied — no fallback needed");

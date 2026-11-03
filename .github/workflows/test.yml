@@ -16,18 +16,23 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}   # the debug agent's PR job starts this on autofix/* branches
+
+# This runs code from unmerged branches, so it never gets write access or secrets.
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10   # unmerged code must not be able to hold a job slot for hours
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '20'   # no npm cache: the debug agent could poison it (see debug-agent.yml)
 
       - name: Install dependencies
         run: npm ci

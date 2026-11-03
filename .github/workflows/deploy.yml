@@ -11,7 +11,10 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  # Shared with Ship Live. true would cancel a ship partway, after its version
+  # push but before the phone update or the web deploy.
+  cancel-in-progress: false
+  queue: max   # the default replaces a waiting run, which would drop a queued ship
 
 jobs:
   build-and-deploy:
@@ -25,8 +28,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '20'   # no npm cache: the debug agent could poison it (see debug-agent.yml)
 
       - name: Install dependencies
         run: npm ci

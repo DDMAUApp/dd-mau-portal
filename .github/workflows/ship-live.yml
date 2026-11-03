@@ -7,21 +7,28 @@ name: Ship Live (web + phones)
 # same deploy in GitHub's cloud, so the result is identical to shipping locally:
 #   • WEB  (app.ddmaustl.com via GitHub Pages — also the Pi menu TVs)
 #   • PHONES (iOS + Android via Capgo OTA)
-#   • (optional) Cloud Functions, only when a fix changed functions/
+#   • (optional) Cloud Functions, only when a fix changed functions/ or functions-media/
 #
-# HOW TO RUN IT FROM YOUR PHONE:
+# HOW IT RUNS (both need Andrew's GitHub login, which is the point):
+#   • Merge an autofix/* PR in the GitHub app. Once the web deploy (deploy.yml)
+#     succeeds, this ships to phones too, plus functions if the PR changed them.
 #   • GitHub mobile app → this repo → Actions → "Ship Live" → Run workflow.
-#   • Or post "ship it" in the 🐛 Debug Agent chat (the agent merges the
-#     reviewed PR + fires this via repository_dispatch). See scripts/qa/debug-agent.md.
+#
+# Typing "ship it" in the 🐛 Debug Agent chat does NOT work any more (2026-11-03):
+# that chat has no real identity behind it. Never add a repository_dispatch
+# trigger back here, because that's how a chat message could reach production.
 #
 # ONE-TIME SECRETS (Settings → Secrets and variables → Actions) — Andrew adds
 # these himself; they are never printed:
-#   • CAPGO_TOKEN   (required for the phone OTA half; without it web still ships)
+#   • CAPGO_TOKEN   (required: without it deploy.sh stops right after its push, so
+#                    this run never reaches the phone update or the web deploy)
 #   • FIREBASE_TOKEN (optional — only needed to deploy Cloud Functions from CI;
 #                     get via `firebase login:ci` on the Mac)
 #
-# It is MANUAL-trigger only — it never fires on a normal push, so deploys stay
-# deliberate. The debug agent never reaches this without an explicit "ship it".
+# An ordinary push (like a Mac `npm run deploy`) stops at the gate below. A push whose
+# head commit is the merge of an autofix/* PR counts as approving it, however it was
+# merged, so a Mac `git merge` + push ships too. The debug agent can't reach this: its
+# token can't merge, and a GITHUB_TOKEN push never starts deploy.yml, which wakes this.
 
 on:
   workflow_dispatch:
@@ -30,21 +37,67 @@ on:
         description: 'Also deploy Cloud Functions (only if the fix changed functions/)'
         type: boolean
         default: false
-  repository_dispatch:
-    types: [ship-live]   # fired by the debug agent on an explicit "ship it"
+  workflow_run:
+    workflows: ["Deploy to GitHub Pages"]
+    types: [completed]
 
 permissions:
   contents: write   # version-bump commit + push to main
   pages: write      # GitHub Pages deploy
   id-token: write   # Pages deploy auth
 
-concurrency:
-  group: "pages"     # share the Pages lock with deploy.yml so they can't collide
-  cancel-in-progress: false
-
 jobs:
-  ship:
+  # Decides whether this run ships. A manual run always does. A finished web
+  # deploy only does when that exact commit is the merge of an autofix/* PR from
+  # this repo, so a Mac `npm run deploy` push (no PR) stops here.
+  gate:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ship: ${{ steps.check.outputs.ship }}
+      functions_target: ${{ steps.check.outputs.functions_target }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          MANUAL_FUNCTIONS: ${{ github.event.inputs.deploy_functions }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "ship=true" >> "$GITHUB_OUTPUT"
+            if [ "$MANUAL_FUNCTIONS" = "true" ]; then
+              echo "functions_target=functions" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          PR=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq "[.[] | select(.merged_at != null and .merge_commit_sha == \"$SHA\" and (.head.ref | startswith(\"autofix/\")) and .head.repo.full_name == \"$REPO\")][0].number // empty")
+          if [ -z "$PR" ]; then
+            echo "Not the merge of an autofix PR. Nothing to ship."
+            echo "ship=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Shipping merged PR #$PR"
+          # Fetched first, so an API error fails this run instead of reading as "no changes".
+          FILES=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+          TARGET=""
+          if printf '%s\n' "$FILES" | grep -q '^functions/'; then TARGET="functions:default"; fi
+          if printf '%s\n' "$FILES" | grep -q '^functions-media/'; then TARGET="${TARGET:+$TARGET,}functions:media"; fi
+          echo "functions_target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "ship=true" >> "$GITHUB_OUTPUT"
+
+  ship:
+    needs: gate
+    if: ${{ needs.gate.outputs.ship == 'true' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: "pages"     # share the Pages lock with deploy.yml so they can't collide
+      cancel-in-progress: false
+      queue: max         # the default replaces a waiting run, which would drop a queued ship
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -57,8 +110,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '20'   # no npm cache: the debug agent could poison it (see debug-agent.yml)
 
       - name: Git identity (for the version-bump commit)
         run: |
@@ -70,8 +122,10 @@ jobs:
 
       # deploy.sh: npm version patch → build → commit + push main → Capgo OTA →
       # health check. Identical to a local `npm run deploy`. SENTRY_* mirror
-      # deploy.yml so source maps still upload. CAPGO_TOKEN drives the OTA half;
-      # if it's unset deploy.sh ships web and skips OTA (graceful).
+      # deploy.yml so source maps still upload. CAPGO_TOKEN drives the OTA half.
+      # If someone pushes to main during the build, deploy.sh's push is rejected and
+      # it stops, so retry once on top of that push. A failure after a successful
+      # push leaves HEAD on origin/main, and that must not bump and release again.
       - name: Version bump + build + push (web) + OTA (phones)
         env:
           CAPGO_TOKEN: ${{ secrets.CAPGO_TOKEN }}
@@ -79,7 +133,14 @@ jobs:
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
-        run: npm run deploy
+        run: |
+          npm run deploy || {
+            git fetch origin main
+            if git merge-base --is-ancestor HEAD origin/main; then exit 1; fi
+            git reset --hard origin/main
+            npm ci
+            npm run deploy
+          }
 
       # The push above won't re-trigger deploy.yml (GITHUB_TOKEN can't start
       # another workflow), so this run deploys the web bundle itself from the
@@ -103,19 +164,38 @@ jobs:
       #   • the CI token account lacks iam.serviceAccounts.actAs / "Service Account
       #     User" on the runtime SA that 2nd-gen functions require (or the deprecated
       #     --token auth is rejected).
-      # When it warns, deploy the function from the Mac (as ddmaustl@gmail.com):
-      #   npx firebase deploy --only functions
+      # When it fails, the chat is told, and it can be deployed from the Mac (as
+      # ddmaustl@gmail.com). Each codebase installs only when it's being deployed, and
+      # before the token is in the environment: functions-media runs a download script.
+      - name: Install Cloud Functions deps (optional)
+        id: functions_deps
+        if: ${{ needs.gate.outputs.functions_target != '' }}
+        continue-on-error: true
+        env:
+          TARGET: ${{ needs.gate.outputs.functions_target }}
+        run: |
+          case "$TARGET" in functions|*default*) ( cd functions && npm ci ) ;; esac
+          case "$TARGET" in functions|*media*) ( cd functions-media && npm ci ) ;; esac
+
       - name: Deploy Cloud Functions (optional)
-        if: ${{ github.event.inputs.deploy_functions == 'true' || github.event.client_payload.deploy_functions == true }}
+        id: functions
+        if: ${{ needs.gate.outputs.functions_target != '' }}
         continue-on-error: true   # a CF-deploy hiccup must not red-flag the whole ship
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          TARGET: ${{ needs.gate.outputs.functions_target }}
         run: |
           if [ -z "${FIREBASE_TOKEN:-}" ]; then
-            echo "::warning::No FIREBASE_TOKEN secret — skipping Cloud Functions deploy (web + phones still shipped)."
-            exit 0
+            echo "::warning::No FIREBASE_TOKEN secret, so Cloud Functions did NOT deploy (web + phones ARE live)."
+            exit 1
           fi
-          ( cd functions && npm ci )
-          npx firebase-tools@latest deploy --only functions \
+          npx firebase-tools@latest deploy --only "$TARGET" \
             --project dd-mau-staff-app --token "$FIREBASE_TOKEN" --non-interactive \
-            || { echo "::warning::Cloud Functions did NOT deploy — web + phones ARE live. Deploy it from the Mac: npx firebase deploy --only functions"; exit 1; }
+            || { echo "::warning::Cloud Functions did NOT deploy (web + phones ARE live). From the Mac: npx firebase deploy --only $TARGET"; exit 1; }
+
+      - name: Tell the chat if the server code didn't deploy
+        if: ${{ steps.functions_deps.outcome == 'failure' || steps.functions.outcome == 'failure' }}
+        env:
+          TARGET: ${{ needs.gate.outputs.functions_target }}
+        run: |
+          node scripts/qa/agent-comms.mjs post "⚠️ Web and phones are live, but the server code did NOT deploy, so the fix is only partly live. From the Mac: npx firebase deploy --only $TARGET" --urgent || true

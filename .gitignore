@@ -9,6 +9,8 @@ dist-snapshot/
 .sentryclirc
 toast-menu-snapshot.json
 firebase-service-account.json
+agent-out/
+agent-input/
 serviceAccountKey.json
 gmail-oauth-client.json
 backups/

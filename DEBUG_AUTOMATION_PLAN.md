@@ -86,7 +86,7 @@ Everything lands in the **existing prod Firestore** (catch-all rule = no rules d
 2. **Triages** with the existing `aiDebugReport.js` dossier (breadcrumbs, stack, before/after) — already PII-scrubbed.
 3. **Reproduces** where possible against the test account / read-only probes.
 4. **Acts** per the autonomy level you pick (see Decisions):
-   - **Auto-PR:** writes the fix on a branch, runs `npm run build` + 363 vitest, opens a PR. You just merge. Never auto-merges to prod.
+   - **Auto-PR:** writes the fix on a branch, runs `npm run build` + 363 vitest, opens a PR. Merging it in GitHub ships it to web + phones (`ship-live.yml`). Never auto-merges to prod.
    - **Propose-first:** diagnoses + drafts the patch, pushes you a notification with the dossier + proposed diff; applies only on your 👍.
 5. **Marks** the `error_logs` row `resolved:true` with a link to the PR, so it doesn't re-trigger.
 
@@ -250,7 +250,7 @@ Everything lands in the **existing prod Firestore** (catch-all rule = no rules d
 - **Read-only / dry-run by default.** Synthetic writes only as the flagged test account on self-owned far-future data, or behind `dryRun`.
 - **No new PII.** Audit `before/after` runs through `redactObject`; the existing DROP_KEYS already nukes pin/ssn/wages/payroll. PINs continue to log to the separate `pin_audits` collection, never `/audit`.
 - **IP capture (advanced) is the only sensitive add** — only via a callable CF, only on sensitive changes, masked to /16 in any UI (redact.js already does this).
-- **Owner-gated** dashboards (ids 40/41). The cloud agent runs under your own GitHub creds and only opens PRs (no direct prod write, no force-push, no merge).
+- **Owner-gated** dashboards (ids 40/41). The cloud agent has a read-only GitHub token, and a separate no-AI job opens its PRs (no direct prod write, no push, no merge). Its chat is untrusted input (2026-11-03; see the top of `.github/workflows/debug-agent.yml`).
 - **Firestore:** new collections (`deploys`, `health_checks`, `synthetic_runs`, `scraper_heartbeat`) are covered by the catch-all rule; when Phase-2 Auth lands, add explicit append-only rules (read: owners, create: server, update/delete: false).
 
 ---
