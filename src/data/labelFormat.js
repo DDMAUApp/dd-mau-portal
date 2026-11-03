@@ -206,7 +206,9 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
             preppedLabelTextEn: 'COOKED',
             preppedLabelTextEs: 'COCIDO',
             useByLabelTextEn: 'TOSS',
-            useByLabelTextEs: 'TIRAR',
+            // 'TIRA' not 'TIRAR': 'TIRAR: 11/02/26 12:15p' is 22 chars and
+            // wraps on the 40 mm roll (21 cols) for any 10-12 o'clock toss.
+            useByLabelTextEs: 'TIRA',
             showIngredients: false,
             showNotes: false,
         },

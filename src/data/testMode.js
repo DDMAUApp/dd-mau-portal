@@ -26,6 +26,8 @@ const FLAG_KEY = 'ddmau:testMode';
 const BACKUP_KEY = 'ddmau:testMode:lsBackup';
 const SESSION_ALIVE_KEY = 'ddmau:sessionAlive';
 const STAFF_NAME_KEY = 'ddmau:staffName';
+const TAB_KEY = 'ddmau:testModeTab';
+const PAYROLL_UNLOCK_KEY = 'ddmau:payrollUnlocked';
 
 // Device-local stores that would carry test-mode state into the next real
 // session if the backup couldn't be written (localStorage full). Pages
@@ -63,34 +65,141 @@ function restoreBackup(ls) {
     return false;
 }
 
-function readFlag() {
-    const ls = safeLocal();
-    if (!ls) return null;
-    let flag = null;
-    try { flag = JSON.parse(ls.getItem(FLAG_KEY) || 'null'); } catch { flag = null; }
-    if (!flag) return null;
-    if (typeof flag.name !== 'string' || !flag.name.trim()) {
-        try { restoreBackup(ls); } catch { /* ignore */ }
-        return null;
-    }
-    // Cold launch (app was closed) never resumes test mode: restore the
-    // device and boot the normal app on the lock screen. sessionStorage
-    // survives reloads, not app closes — same signal App.jsx uses to lock.
-    const ss = safeSession();
-    if (!ss || !ss.getItem(SESSION_ALIVE_KEY)) {
-        try { restoreBackup(ls); } catch { /* ignore */ }
-        return null;
-    }
-    const id = Number(flag.id);
-    return Object.freeze({
-        name: flag.name,
-        id: Number.isFinite(id) ? id : null,
-        at: Number(flag.at) || Date.now(),
-    });
+const newTabId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+// One browsing context only (no second tab can exist): the native app's
+// single WebView, and an iOS home-screen web app (its storage is its own).
+const isSingleContextApp = () => {
+    try {
+        if (typeof window === 'undefined') return false;
+        if (window.Capacitor?.isNativePlatform?.() === true) return true;
+        return window.navigator?.standalone === true;
+    } catch { return false; }
+};
+// This tab's own test-session leftovers, without touching localStorage
+// (someone else already restored the device): keep only "app is open".
+function clearThisTabSession(ss) {
+    if (!ss) return;
+    try {
+        const alive = ss.getItem(SESSION_ALIVE_KEY);
+        ss.clear();
+        if (alive) ss.setItem(SESSION_ALIVE_KEY, alive);
+    } catch { /* ignore */ }
+}
+// The test tab refreshes flag.beat every BEAT_MS. A flag whose beat is older
+// than BEAT_STALE_MS has no live test tab behind it (background tabs throttle
+// timers to ~1/min, hence the margin).
+const BEAT_MS = 5000;
+const BEAT_STALE_MS = 90 * 1000;
+const beatIsFresh = (flag) => Number(flag?.beat) > 0 && Date.now() - Number(flag.beat) < BEAT_STALE_MS;
+
+function clearFlag(ls) {
+    try { restoreBackup(ls); } catch { /* ignore */ }
+    try { ls.removeItem(FLAG_KEY); ls.removeItem(BACKUP_KEY); } catch { /* ignore */ }
 }
 
+// Returns { mode, otherTab }:
+//   mode     — the frozen test-mode identity for THIS page, or null
+//   otherTab — a LIVE test session is running in another tab/window of this
+//              browser (desktop web shares localStorage): main.jsx shows a
+//              blocker instead of running a real session next to it.
+function readFlag() {
+    const none = { mode: null, otherTab: false };
+    const ls = safeLocal();
+    if (!ls) return none;
+    let flag = null;
+    try { flag = JSON.parse(ls.getItem(FLAG_KEY) || 'null'); } catch { flag = null; }
+    if (flag && (typeof flag.name !== 'string' || !flag.name.trim())) {
+        clearFlag(ls);
+        flag = null;
+    }
+    const ss = safeSession();
+    const alive = !!ss?.getItem(SESSION_ALIVE_KEY);
+    let tab = ss?.getItem(TAB_KEY) || null;
+    if (!flag) {
+        // This tab WAS a test tab but its session was ended elsewhere (or
+        // the flag went stale): drop its test-session sessionStorage (e.g. a
+        // payroll unlock set against the test copy) before the real app boots.
+        if (tab) clearThisTabSession(ss);
+        return none;
+    }
+    if (alive && !flag.tab) {
+        // A flag written by v1.0.499 (before tab keying) in this very tab:
+        // adopt it and stay in test mode — returning null here booted the
+        // REAL app logged in as the tester.
+        tab = newTabId();
+        flag.tab = tab;
+        flag.beat = Date.now();
+        try { ls.setItem(FLAG_KEY, JSON.stringify(flag)); ss.setItem(TAB_KEY, tab); } catch { /* ignore */ }
+    }
+    if (alive && flag.tab === tab) {
+        const id = Number(flag.id);
+        return {
+            mode: Object.freeze({ name: flag.name, id: Number.isFinite(id) ? id : null, at: Number(flag.at) || Date.now() }),
+            otherTab: false,
+        };
+    }
+    // Not this tab's test session. A former test tab drops its leftovers.
+    if (tab) clearThisTabSession(ss);
+    // A live session elsewhere → block this tab. A single-context app (native
+    // WebView, iOS home-screen app) can't have another tab, so its flag is
+    // always stale (closed mid-test) — a cold launch never resumes test mode.
+    if (!isSingleContextApp() && beatIsFresh(flag)) return { mode: null, otherTab: true };
+    clearFlag(ls);
+    return none;
+}
+
+const _boot = readFlag();
 // The page-lifetime switch. null = normal app.
-export const TEST_MODE = readFlag();
+export const TEST_MODE = _boot.mode;
+// Another tab of this browser is in test mode right now (see main.jsx).
+export const TEST_MODE_IN_OTHER_TAB = _boot.otherTab;
+
+// Called by main.jsx in the test tab: keep the flag's heartbeat fresh, and
+// if the flag disappears or changes owner (another tab ended it, or it went
+// stale and a new tab cleaned it up), leave test mode at once.
+export function startTestModeHeartbeat() {
+    if (!TEST_MODE || typeof window === 'undefined') return () => {};
+    const ls = safeLocal();
+    const ss = safeSession();
+    const myTab = ss?.getItem(TAB_KEY);
+    let leaving = false;
+    // Still ours? If the flag is gone or owned by another tab, the device
+    // was ALREADY restored by whoever ended it — leave without restoring
+    // again (a second restore would wipe drafts the first one put back).
+    const stillOwned = () => {
+        if (leaving) return false;
+        let flag = null;
+        try { flag = JSON.parse(ls.getItem(FLAG_KEY) || 'null'); } catch { flag = null; }
+        if (flag && flag.tab === myTab) return flag;
+        leaving = true;
+        clearThisTabSession(ss);
+        _reload();
+        return false;
+    };
+    const beat = () => {
+        const flag = stillOwned();
+        if (!flag) return;
+        try {
+            flag.beat = Date.now();
+            ls.setItem(FLAG_KEY, JSON.stringify(flag));
+        } catch { /* ignore */ }
+    };
+    beat();
+    const id = setInterval(beat, BEAT_MS);
+    // Storage events only CHECK ownership — never write (two tabs sharing a
+    // tab id, e.g. Chrome "Duplicate tab", would otherwise ping-pong writes).
+    const onStorage = (e) => { if (e.key === FLAG_KEY || e.key === null) stillOwned(); };
+    window.addEventListener('storage', onStorage);
+    return () => { clearInterval(id); window.removeEventListener('storage', onStorage); };
+}
+
+// Blocker button in a non-test tab: end the other tab's test session (its
+// heartbeat sees the flag gone and exits) and reload this one normally.
+export function endTestModeElsewhere() {
+    const ls = safeLocal();
+    if (ls) clearFlag(ls);
+    _reload();
+}
 
 export function isTestModeStaff(staff) {
     return staff?.testMode === true;
@@ -104,16 +213,29 @@ export function __setTestModeReloadForTests(fn) { _reload = fn; }
 export function enterTestMode(staff) {
     const ls = safeLocal();
     if (!ls || !staff?.name) return false;
-    const backup = {};
-    for (let i = 0; i < ls.length; i++) {
-        const k = ls.key(i);
-        if (k && !k.startsWith(FLAG_KEY) && k !== STAFF_NAME_KEY) backup[k] = ls.getItem(k);
+    // A backup that already exists belongs to a test session that never
+    // finished — it holds the CLEAN device state; never overwrite it with
+    // the test-polluted one.
+    if (!(ls.getItem(BACKUP_KEY) && ls.getItem(FLAG_KEY))) {
+        const backup = {};
+        for (let i = 0; i < ls.length; i++) {
+            const k = ls.key(i);
+            if (k && !k.startsWith(FLAG_KEY) && k !== STAFF_NAME_KEY) backup[k] = ls.getItem(k);
+        }
+        try { ls.setItem(BACKUP_KEY, JSON.stringify(backup)); } catch { /* full — exit falls back to the unsafe-key sweep */ }
     }
-    try { ls.setItem(BACKUP_KEY, JSON.stringify(backup)); } catch { /* full — exit falls back to the unsafe-key sweep */ }
-    ls.setItem(FLAG_KEY, JSON.stringify({ name: staff.name, id: staff.id ?? null, at: Date.now() }));
-    ls.setItem(STAFF_NAME_KEY, staff.name);
+    const tab = newTabId();
+    ls.setItem(FLAG_KEY, JSON.stringify({ name: staff.name, id: staff.id ?? null, at: Date.now(), tab, beat: Date.now() }));
+    // The test identity is NOT written to the shared ddmau:staffName — App
+    // reads TEST_MODE.name — so another tab never picks it up.
+    ls.removeItem(STAFF_NAME_KEY);
     const ss = safeSession();
-    try { ss?.setItem(SESSION_ALIVE_KEY, '1'); } catch { /* ignore */ }
+    try {
+        ss?.setItem(SESSION_ALIVE_KEY, '1');
+        ss?.setItem(TAB_KEY, tab);
+        // A real owner's payroll unlock must not carry into the test session.
+        ss?.removeItem(PAYROLL_UNLOCK_KEY);
+    } catch { /* ignore */ }
     _reload();
     return true;
 }
@@ -122,9 +244,24 @@ export function enterTestMode(staff) {
 // the normal app (lock screen).
 export function exitTestMode() {
     const ls = safeLocal();
-    if (ls) {
+    // Restore only while the flag is still there: if it's already gone,
+    // someone else restored the device and a second pass would sweep the
+    // drafts it just put back.
+    if (ls && ls.getItem(FLAG_KEY)) {
         try { restoreBackup(ls); } catch { /* ignore */ }
         try { ls.removeItem(FLAG_KEY); ls.removeItem(BACKUP_KEY); } catch { /* ignore */ }
+    }
+    // Everything this tab stored for the test session goes too (payroll
+    // unlock set against the test copy, reload stashes, guards) — only the
+    // "app is open" marker survives, so the reload lands on the lock screen
+    // instead of being treated as a cold launch.
+    const ss = safeSession();
+    if (ss) {
+        try {
+            const alive = ss.getItem(SESSION_ALIVE_KEY);
+            ss.clear();
+            if (alive) ss.setItem(SESSION_ALIVE_KEY, alive);
+        } catch { /* ignore */ }
     }
     _reload();
 }

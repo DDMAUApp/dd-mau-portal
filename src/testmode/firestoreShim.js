@@ -66,8 +66,42 @@ async function cachedDocs(q) {
     return fs.getDocsFromCache(q);
 }
 
+// update() on a missing doc is rejected by the SERVER with not-found, and
+// many callers rely on that to fall back to setDoc({merge}) and create the
+// doc. Offline the SDK would accept it and silently drop it from the local
+// view, so test mode checks the cache first and rejects the same way.
+const refKey = (ref) => ref?.path || ref?.id;
+async function existsLocally(ref) {
+    try { return (await fs.getDocFromCache(ref)).exists(); } catch { return false; }
+}
+function notFound(ref) {
+    const e = new Error(`No document to update: ${refKey(ref)}`);
+    e.name = 'FirebaseError';
+    e.code = 'not-found';
+    return e;
+}
+// For a batch / transaction: every update() must target a doc that exists
+// at that point (in cache, or set earlier in the same batch) — else the
+// whole commit fails, as on the server.
+async function checkUpdates(ops) {
+    const known = new Map();
+    for (const [kind, ref] of ops) {
+        const k = refKey(ref);
+        if (kind === 'set') known.set(k, true);
+        else if (kind === 'delete') known.set(k, false);
+        else {
+            if (!known.has(k)) known.set(k, await existsLocally(ref));
+            if (!known.get(k)) throw notFound(ref);
+        }
+    }
+}
+
 const tSetDoc = (ref, data, options) => local(() => (options === undefined ? fs.setDoc(ref, data) : fs.setDoc(ref, data, options)));
-const tUpdateDoc = (ref, ...args) => local(() => fs.updateDoc(ref, ...args));
+const tUpdateDoc = (ref, ...args) => _gate.then(async () => {
+    if (!(await existsLocally(ref))) throw notFound(ref);
+    const p = fs.updateDoc(ref, ...args);
+    if (p && typeof p.catch === 'function') p.catch(noop);
+});
 const tDeleteDoc = (ref) => local(() => fs.deleteDoc(ref));
 const tAddDoc = (collectionRef, data) => {
     const ref = fs.doc(collectionRef);
@@ -76,11 +110,16 @@ const tAddDoc = (collectionRef, data) => {
 
 function tWriteBatch(firestore) {
     const b = fs.writeBatch(firestore);
+    const ops = [];
     const wrapper = {
-        set: (...a) => { b.set(...a); return wrapper; },
-        update: (...a) => { b.update(...a); return wrapper; },
-        delete: (...a) => { b.delete(...a); return wrapper; },
-        commit: () => local(() => b.commit()),
+        set: (...a) => { ops.push(['set', a[0]]); b.set(...a); return wrapper; },
+        update: (...a) => { ops.push(['update', a[0]]); b.update(...a); return wrapper; },
+        delete: (...a) => { ops.push(['delete', a[0]]); b.delete(...a); return wrapper; },
+        commit: () => _gate.then(async () => {
+            await checkUpdates(ops);
+            const p = b.commit();
+            if (p && typeof p.catch === 'function') p.catch(noop);
+        }),
     };
     return wrapper;
 }
@@ -88,13 +127,15 @@ function tWriteBatch(firestore) {
 async function tRunTransaction(firestore, updateFunction) {
     await _gate;
     const b = fs.writeBatch(firestore);
+    const ops = [];
     const tx = {
         get: (ref) => cachedDoc(ref),
-        set: (...a) => { b.set(...a); return tx; },
-        update: (...a) => { b.update(...a); return tx; },
-        delete: (...a) => { b.delete(...a); return tx; },
+        set: (...a) => { ops.push(['set', a[0]]); b.set(...a); return tx; },
+        update: (...a) => { ops.push(['update', a[0]]); b.update(...a); return tx; },
+        delete: (...a) => { ops.push(['delete', a[0]]); b.delete(...a); return tx; },
     };
     const result = await updateFunction(tx);
+    await checkUpdates(ops);
     b.commit().catch(noop);
     return result;
 }

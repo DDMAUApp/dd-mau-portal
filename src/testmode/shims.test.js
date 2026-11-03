@@ -45,6 +45,7 @@ vi.mock('@firebase/storage', () => ({
     getBlob: vi.fn(async () => new Blob(['x'])),
     getMetadata: vi.fn(async () => ({ real: true })),
     updateMetadata: vi.fn(async () => ({ real: true })),
+    listAll: vi.fn(async () => ({ items: ['real'], prefixes: [] })),
 }));
 vi.mock('@firebase/functions', () => ({
     httpsCallable: vi.fn(() => vi.fn(async () => ({ data: 'real' }))),
@@ -56,8 +57,9 @@ async function loadShims({ testMode }) {
     localStorage.clear();
     sessionStorage.clear();
     if (testMode) {
-        localStorage.setItem('ddmau:testMode', JSON.stringify({ name: 'Bryan Test', id: 77 }));
+        localStorage.setItem('ddmau:testMode', JSON.stringify({ name: 'Bryan Test', id: 77, tab: 't1' }));
         sessionStorage.setItem('ddmau:sessionAlive', '1');
+        sessionStorage.setItem('ddmau:testModeTab', 't1');
     }
     const real = await import('@firebase/firestore');
     Object.values(real).forEach((f) => f?.mockClear?.());
@@ -105,17 +107,29 @@ describe('test mode — firestore', () => {
     it('update / delete / add / batch all resolve immediately after the gate', async () => {
         const { real, fsShim } = await loadShims({ testMode: true });
         fsShim.__openTestModeGate();
-        await fsShim.updateDoc({ id: 'a' }, { x: 2 });
+        await fsShim.updateDoc({ id: 'cached' }, { x: 2 });
         await fsShim.deleteDoc({ id: 'a' });
         const ref = await fsShim.addDoc({ path: 'col' }, { y: 1 });
         expect(ref.id).toBe('auto-id');
         const b = fsShim.writeBatch({});
-        b.set({ id: 'b' }, { z: 1 }).update({ id: 'c' }, { z: 2 });
+        b.set({ id: 'b' }, { z: 1 }).update({ id: 'b' }, { z: 2 }).update({ id: 'cached' }, { z: 3 });
         await b.commit();
         expect(real.updateDoc).toHaveBeenCalled();
         expect(real.deleteDoc).toHaveBeenCalled();
         expect(real.setDoc).toHaveBeenCalled();
         expect(real.addDoc).not.toHaveBeenCalled();
+    });
+
+    it('update on a doc that doesn\'t exist rejects not-found, like the server (callers fall back to setDoc merge)', async () => {
+        const { real, fsShim } = await loadShims({ testMode: true });
+        fsShim.__openTestModeGate();
+        await expect(fsShim.updateDoc({ id: 'never-copied' }, { x: 1 })).rejects.toMatchObject({ code: 'not-found' });
+        expect(real.updateDoc).not.toHaveBeenCalled();
+        const b = fsShim.writeBatch({});
+        b.set({ id: 'n1' }, { a: 1 }).update({ id: 'missing' }, { a: 2 });
+        await expect(b.commit()).rejects.toMatchObject({ code: 'not-found' });
+        expect(real.writeBatch.mock.results.at(-1).value.commit).not.toHaveBeenCalled();
+        await expect(fsShim.runTransaction({}, async (tx) => { tx.update({ id: 'missing' }, { a: 1 }); })).rejects.toMatchObject({ code: 'not-found' });
     });
 
     it('transactions run locally on the cache (the SDK refuses them offline)', async () => {
@@ -175,6 +189,17 @@ describe('test mode — storage + functions', () => {
         expect(await stShim.getDownloadURL({ fullPath: 'real/old.jpg' })).toBe('https://real/url');
     });
 
+    it('private documents (hire paperwork, applications, health) never open', async () => {
+        const { stShim, realSt } = await loadShims({ testMode: true });
+        for (const p of ['onboarding/h1/w4/w4.pdf', 'applications/a1/resume.pdf', 'health/55/hepA.jpg']) {
+            await expect(stShim.getDownloadURL({ fullPath: p })).rejects.toMatchObject({ code: 'storage/unauthorized' });
+            await expect(stShim.getBytes({ fullPath: p })).rejects.toMatchObject({ code: 'storage/unauthorized' });
+            await expect(stShim.getBlob({ fullPath: p })).rejects.toMatchObject({ code: 'storage/unauthorized' });
+        }
+        expect((await stShim.listAll({ fullPath: 'onboarding/h1' })).items).toEqual([]);
+        expect(realSt.getDownloadURL).not.toHaveBeenCalledWith({ fullPath: 'onboarding/h1/w4/w4.pdf' });
+    });
+
     it('resumable uploads report 100% and complete', async () => {
         const { stShim, realSt } = await loadShims({ testMode: true });
         const task = stShim.uploadBytesResumable({ fullPath: 'v.mp4', name: 'v.mp4' }, new Blob(['v']));
@@ -191,5 +216,7 @@ describe('test mode — storage + functions', () => {
         await expect(fnShim.httpsCallable({}, 'validateOnboardingInvite')({})).rejects.toMatchObject({ code: 'functions/test-mode' });
         expect(realFn.httpsCallable).not.toHaveBeenCalled();
         expect((await fnShim.httpsCallable({}, 'aiSearch')({ q: 'pho' })).data).toBe('real');
+        // Menu import uploads stay on the device — the server can't read them.
+        await expect(fnShim.httpsCallable({}, 'aiExtractMenu')({})).rejects.toMatchObject({ code: 'functions/test-mode' });
     });
 });

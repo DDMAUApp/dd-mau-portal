@@ -39,6 +39,7 @@
 
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
+import { TEST_MODE } from './testMode';
 
 // In-flight requests are deduped so two simultaneous taps on the
 // same message + lang only hit the API once. Keyed by
@@ -200,10 +201,14 @@ export function translateMessage({ chatId, messageId, text, targetLang }) {
     }
     if (inflight.has(key)) return inflight.get(key);
 
+    // Test mode: text-only — given {chatId, messageId} the function caches
+    // the translation back onto the real message doc (a production write),
+    // and test-mode messages don't exist server-side anyway.
+    if (TEST_MODE && !text) return Promise.reject(new Error('Test mode: translation needs the message text'));
     const call = httpsCallable(functions, 'translateMessage');
     const payload = { targetLang: lang };
-    if (chatId) payload.chatId = chatId;
-    if (messageId) payload.messageId = messageId;
+    if (chatId && !TEST_MODE) payload.chatId = chatId;
+    if (messageId && !TEST_MODE) payload.messageId = messageId;
     if (text) payload.text = text;
 
     const promise = (async () => {

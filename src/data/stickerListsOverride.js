@@ -291,6 +291,7 @@ export function getStampedDefaults(sectionKey) {
 // ({key, kind, titleEn, titleEs}). Absent → the hardcoded STICKER_SECTIONS.
 // Built-in sections that a bad save dropped are re-appended, so the
 // Proteins list can never disappear; only CUSTOM sections are deletable.
+export const LOCKED_KIND_KEYS = Object.freeze(new Set(['friedRiceRice']));
 const VALID_SECTION_KINDS = [
     'base', 'topping', 'protein', 'sauce', 'broth', 'side', 'garnish',
     'note', 'drink', 'other', 'chemical', 'status', 'catering', 'bottles',
@@ -308,7 +309,12 @@ export function resolveSections(data) {
         const builtin = STICKER_SECTIONS.find(b => b.key === key);
         out.push({
             key,
-            kind: VALID_SECTION_KINDS.includes(s.kind) ? s.kind : (builtin?.kind || 'other'),
+            // Built-ins whose behavior hangs on their kind keep it no matter
+            // what a save wrote (an older app build that doesn't know
+            // 'rice_batch' saves it as 'other' — the rice sticker would then
+            // skip the rice log and print a plain day-based use-by).
+            kind: (builtin && LOCKED_KIND_KEYS.has(key)) ? builtin.kind
+                : (VALID_SECTION_KINDS.includes(s.kind) ? s.kind : (builtin?.kind || 'other')),
             titleEn: String(s.titleEn || builtin?.titleEn || key).slice(0, 60),
             titleEs: String(s.titleEs || s.titleEn || builtin?.titleEs || key).slice(0, 60),
             defaults: builtin?.defaults || [],

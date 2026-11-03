@@ -838,7 +838,9 @@ export default function App() {
         } catch {}
     }, [onboardingMode.mode]);
     // Lazy-init from localStorage so the user stays on the same screen across reloads.
-    const [staffName, setStaffName] = useState(() => SS.get("staffName"));
+    // Test mode: the identity comes from the test-mode flag (this tab only),
+    // never from the shared ddmau:staffName.
+    const [staffName, setStaffName] = useState(() => (TEST_MODE ? TEST_MODE.name : SS.get("staffName")));
     const [staffLocation, setStaffLocation] = useState(() => SS.get("staffLocation", "webster"));
     const [activeLocation, setActiveLocation] = useState(() => SS.get("activeLocation", "webster"));
     const [language, setLanguage] = useState(() => SS.get("language", "en"));
@@ -874,7 +876,7 @@ export default function App() {
     }, []);
     // Persist session-level state on every change. Logout (setStaffName(null))
     // also clears the stored value via SS.set's null branch.
-    useEffect(() => { SS.set("staffName", staffName); }, [staffName]);
+    useEffect(() => { if (!TEST_MODE) SS.set("staffName", staffName); }, [staffName]);
     // Test mode guards (src/data/testMode.js):
     //  • In test mode, being logged out (logout, idle relock, a lock screen
     //    on boot) ends test mode — restore the device, reload to the real app.

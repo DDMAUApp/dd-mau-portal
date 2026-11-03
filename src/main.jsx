@@ -1,6 +1,6 @@
 // testMode FIRST: it decides (and on a cold launch undoes) test mode before
 // anything reads localStorage or opens Firestore.
-import { TEST_MODE, exitTestMode } from './data/testMode';
+import { TEST_MODE, TEST_MODE_IN_OTHER_TAB, exitTestMode, startTestModeHeartbeat, endTestModeElsewhere } from './data/testMode';
 import { prepareTestMode } from './data/testModePrefetch';
 import { runReloadStashes } from './data/reloadStash';
 import React, { Component } from 'react';
@@ -358,9 +358,34 @@ if (TEST_MODE) {
         </div>
     );
     prepareTestMode()
-        .then((stats) => console.info('[testMode] data copied', stats))
-        .catch((e) => console.warn('[testMode] prepare failed:', e))
-        .finally(() => { renderApp(); mountTestModeBanner(); });
+        .then((stats) => {
+            console.info('[testMode] data copied', stats);
+            renderApp();
+            mountTestModeBanner();
+            startTestModeHeartbeat();
+        })
+        .catch((e) => {
+            // Couldn't go offline or scrub credentials: never run the app in
+            // a half-prepared test mode. Put the device back and reload to the
+            // normal lock screen (nothing was written — the app never rendered).
+            console.warn('[testMode] prepare failed — leaving test mode:', e);
+            try { window.alert('Test mode could not start. Returning to the login screen.'); } catch { /* ignore */ }
+            exitTestMode();
+        });
+} else if (TEST_MODE_IN_OTHER_TAB) {
+    // Desktop web: another tab of this browser is in test mode. Tabs share
+    // localStorage, so a real session here would mix with the test one.
+    root.render(
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, fontFamily: '-apple-system, system-ui, sans-serif', background: '#fffbeb', color: '#78350f', padding: 24, textAlign: 'center' }}>
+            <div style={{ fontSize: 48 }}>🧪</div>
+            <div style={{ fontSize: 20, fontWeight: 900 }}>Test mode is open in another tab</div>
+            <div style={{ fontSize: 14, maxWidth: 340 }}>Exit test mode in that tab (or close it), then tap Check again. If you just closed test mode, tap End test mode.</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => window.location.reload()} style={{ padding: '10px 16px', borderRadius: 10, border: '2px solid #92400e', background: '#fff', fontWeight: 800 }}>Check again</button>
+                <button type="button" onClick={() => endTestModeElsewhere()} style={{ padding: '10px 16px', borderRadius: 10, border: '2px solid #92400e', background: '#f59e0b', fontWeight: 800 }}>End test mode</button>
+            </div>
+        </div>
+    );
 } else {
     renderApp();
 }

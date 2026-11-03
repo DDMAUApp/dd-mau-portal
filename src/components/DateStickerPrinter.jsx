@@ -54,6 +54,7 @@ import {
     getStampedDefaults,
     STICKER_SECTIONS,
     CUSTOMER_FACING_KINDS,
+    LOCKED_KIND_KEYS,
     mergeEditDraft,
     settledEditIds,
 } from '../data/stickerListsOverride';
@@ -1793,6 +1794,8 @@ function CategoryEditor({ sections, stickerLists, staffName, isEs, tx }) {
                                 placeholder={tx('Title (Spanish)', 'Título (Español)')}
                                 className="flex-1 min-w-[9rem] px-2 py-1.5 text-xs border border-dd-line rounded bg-white" />
                             <select value={s.kind}
+                                disabled={LOCKED_KIND_KEYS.has(s.key)}
+                                title={LOCKED_KIND_KEYS.has(s.key) ? tx('This category always opens the rice log — its type can\'t change.', 'Esta categoría siempre abre el registro de arroz — su tipo no cambia.') : undefined}
                                 onChange={(e) => {
                                     const nextKind = e.target.value;
                                     // Leaving a customer-facing kind flips the

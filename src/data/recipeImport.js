@@ -22,6 +22,7 @@
 // are deleted from Storage as soon as the job settles.
 
 import { db, storage } from '../firebase';
+import { TEST_MODE } from './testMode';
 import {
     collection, doc, onSnapshot, serverTimestamp,
     setDoc as _fsSetDoc, deleteDoc as _fsDeleteDoc,
@@ -56,6 +57,8 @@ const JPEG_Q = 0.85;
 
 // ── Job transport ────────────────────────────────────────────────────
 export function runRecipeImportJob(payload) {
+    // Test mode: see extractHealthDoc — the server never sees the job.
+    if (TEST_MODE) return Promise.reject(new Error('Not available in test mode — AI reading runs on the server, and nothing is sent in test mode.'));
     const ref = doc(collection(db, JOBS));
     return new Promise((resolve, reject) => {
         let settled = false;

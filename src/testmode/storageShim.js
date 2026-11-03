@@ -93,24 +93,40 @@ const tDeleteObject = async (ref) => {
     const hit = _files.get(ref.fullPath);
     if (hit) { try { URL.revokeObjectURL(hit.url); } catch { /* ignore */ } _files.delete(ref.fullPath); }
 };
+// Hire paperwork (W-4 / I-9 / direct deposit), applications and health
+// documents never open in test mode — the tester has owner-level UI access.
+const PRIVATE_PREFIX_RE = /^(onboarding|applications|health)\//;
+function privateRefused(ref) {
+    const e = new Error('Test mode — private documents are not available.');
+    e.code = 'storage/unauthorized';
+    e.path = ref?.fullPath;
+    return Promise.reject(e);
+}
+const isPrivate = (ref) => PRIVATE_PREFIX_RE.test(String(ref?.fullPath || ''));
+
 const tGetDownloadURL = (ref) => {
     const hit = _files.get(ref.fullPath);
-    return hit ? Promise.resolve(hit.url) : st.getDownloadURL(ref);
+    if (hit) return Promise.resolve(hit.url);
+    return isPrivate(ref) ? privateRefused(ref) : st.getDownloadURL(ref);
 };
 const tGetBytes = (ref, maxDownloadSizeBytes) => {
     const hit = _files.get(ref.fullPath);
-    return hit ? hit.blob.arrayBuffer() : st.getBytes(ref, maxDownloadSizeBytes);
+    if (hit) return hit.blob.arrayBuffer();
+    return isPrivate(ref) ? privateRefused(ref) : st.getBytes(ref, maxDownloadSizeBytes);
 };
 const tGetBlob = (ref, maxDownloadSizeBytes) => {
     const hit = _files.get(ref.fullPath);
-    return hit ? Promise.resolve(hit.blob) : st.getBlob(ref, maxDownloadSizeBytes);
+    if (hit) return Promise.resolve(hit.blob);
+    return isPrivate(ref) ? privateRefused(ref) : st.getBlob(ref, maxDownloadSizeBytes);
 };
 const tGetMetadata = (ref) => {
     const hit = _files.get(ref.fullPath);
-    return hit
-        ? Promise.resolve({ fullPath: ref.fullPath, name: ref.name, size: hit.blob.size, contentType: hit.contentType })
-        : st.getMetadata(ref);
+    if (hit) return Promise.resolve({ fullPath: ref.fullPath, name: ref.name, size: hit.blob.size, contentType: hit.contentType });
+    return isPrivate(ref) ? privateRefused(ref) : st.getMetadata(ref);
 };
+const tListAll = (ref) => (isPrivate(ref) || /^(onboarding|applications|health)$/.test(String(ref?.fullPath || ''))
+    ? Promise.resolve({ items: [], prefixes: [] })
+    : st.listAll(ref));
 const tUpdateMetadata = async (ref, metadata) => ({ fullPath: ref.fullPath, name: ref.name, ...metadata });
 
 export const uploadBytes = T ? tUploadBytes : st.uploadBytes;
@@ -122,3 +138,4 @@ export const getBytes = T ? tGetBytes : st.getBytes;
 export const getBlob = T ? tGetBlob : st.getBlob;
 export const getMetadata = T ? tGetMetadata : st.getMetadata;
 export const updateMetadata = T ? tUpdateMetadata : st.updateMetadata;
+export const listAll = T ? tListAll : st.listAll;

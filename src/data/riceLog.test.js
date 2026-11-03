@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
     RICE_FRIDGE_BY_HOURS, RICE_TOSS_HOURS, RICE_BATCH_KIND, RICE_STATUS,
     riceDeadlines, nextBatchNo, riceBatchState, buildRiceBatchDoc,
-    riceStickerLines, riceOutcomeText, buildRiceLogHtml, riceDayStr,
+    riceStickerLines, riceOutcomeText, buildRiceLogHtml, riceDayStr, duplicateBatchNumbers,
 } from './riceLog';
 import { DEFAULT_LABEL_FORMAT, mergeWithDefaults, clampLabelFormat } from './labelFormat';
 import { STICKER_SECTIONS, resolveSections } from './stickerListsOverride';
@@ -52,6 +52,12 @@ describe('rice clock', () => {
         expect(riceBatchState({ ...row, status: RICE_STATUS.USED }, new Date(2026, 10, 2, 20, 0))).toBe('used');
     });
 
+    it('flags a batch number two devices both used, ignoring voided batches', () => {
+        expect([...duplicateBatchNumbers([{ batchNo: 1 }, { batchNo: 2 }, { batchNo: 2 }])]).toEqual([2]);
+        expect([...duplicateBatchNumbers([{ batchNo: 3 }, { batchNo: 3, status: 'void' }])]).toEqual([]);
+        expect([...duplicateBatchNumbers(null)]).toEqual([]);
+    });
+
     it('batch numbers count past voided ones and never repeat', () => {
         expect(nextBatchNo([])).toBe(1);
         expect(nextBatchNo(null)).toBe(1);
@@ -94,7 +100,7 @@ describe('rice batch sticker', () => {
         expect(p.prepDateLabel).toBe('COCIDO');
         expect(p.metaLines[0]).toBe('LOTE #3');
         expect(p.metaLines[1]).toBe('REFRIGERAR 12:15p');
-        expect(p.metaLines[2]).toMatch(/^TIRAR: /);
+        expect(p.metaLines[2]).toMatch(/^TIRA: /);
     });
 
     it('follows the 24-hour time setting', () => {
@@ -103,10 +109,19 @@ describe('rice batch sticker', () => {
         expect(p.useByBig).toBe('14:15');
     });
 
-    it('fits the 40 mm roll (21 columns) both stores use', () => {
+    it('fits the 40 mm roll (21 columns) both stores use — even the longest (12:xx) toss time', () => {
         for (const language of ['en', 'es']) {
-            const p = ricePayload({ language, paperWidthMm: 40 });
-            for (const line of p.metaLines.slice(0, 3)) expect(line.length).toBeLessThanOrEqual(21);
+            for (const [h, m] of [[10, 15], [8, 45], [6, 5], [23, 59]]) {
+                const row = buildRiceBatchDoc({ cookedAt: new Date(2026, 10, 2, h, m), location: 'webster', cookedBy: 'L', batchNo: 12 });
+                const p = buildLabelPayload({
+                    itemName: 'Fried Rice Rice', itemNameEs: 'Arroz para Arroz Frito',
+                    prepDate: new Date(row.cookedAt), shelfLifeHours: RICE_TOSS_HOURS, preppedBy: 'L', language,
+                    extraMetaLines: riceStickerLines(row),
+                    format: resolveLabelFormatForKind(mergeWithDefaults(DEFAULT_LABEL_FORMAT), RICE_BATCH_KIND),
+                    paperWidthMm: 40,
+                });
+                for (const line of p.metaLines.slice(0, 3)) expect(line.length, `${language} ${h}:${m} "${line}"`).toBeLessThanOrEqual(21);
+            }
         }
     });
 
@@ -144,6 +159,10 @@ describe('fried rice rice sticker section', () => {
         expect(appended.find((s) => s.key === 'friedRiceRice')?.kind).toBe(RICE_BATCH_KIND);
         const kept = resolveSections({ sectionsOverride: [{ key: 'friedRiceRice', kind: 'rice_batch', titleEn: 'Rice!' }] });
         expect(kept[0].kind).toBe(RICE_BATCH_KIND);
+        // An older app build that doesn't know 'rice_batch' saves it as 'other'.
+        const oldSave = resolveSections({ sectionsOverride: [{ key: 'friedRiceRice', kind: 'other', titleEn: 'Rice!' }] });
+        expect(oldSave[0].kind).toBe(RICE_BATCH_KIND);
+        expect(oldSave[0].titleEn).toBe('Rice!');
     });
 });
 
@@ -164,6 +183,17 @@ describe('inspector log', () => {
         expect(html).toContain('&lt;b&gt;x&lt;/b&gt;');
         expect(html).not.toContain('<b>x</b>');
         expect(html).toContain('class="void"');
+    });
+
+    it('marks a batch number used twice on the inspector log', () => {
+        const html = buildRiceLogHtml({ rows: [riceRow(), riceRow({ id: 'r2' })], cookDay: '2026-11-02', locationLabel: 'Webster Groves' });
+        expect(html.match(/number used twice/g)).toHaveLength(2);
+    });
+
+    it('a batch closed out the next day shows the date, not a bare time', () => {
+        const t = riceOutcomeText(riceRow({ status: RICE_STATUS.TOSSED, tossedAt: new Date(2026, 10, 3, 9, 5).toISOString(), tossedBy: 'Maria', tossReason: 'past_4h' }));
+        expect(t).toContain('11/3 9:05 AM (logged late)');
+        expect(t).toContain('4-hour limit');
     });
 
     it('says when a batch was tossed at the 4-hour limit', () => {

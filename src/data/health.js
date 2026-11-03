@@ -23,6 +23,7 @@
 //   { docs: [ { key, title, titleEs, body, bodyEs, version, required } ] }
 // Seeded with DEFAULT_HEALTH_DOCS on first manager visit if missing.
 import { db } from '../firebase';
+import { TEST_MODE } from './testMode';
 import {
     doc, collection, onSnapshot, serverTimestamp,
     getDoc as _fsGetDoc,
@@ -279,6 +280,9 @@ const HEALTH_IMPORT_JOBS = 'health_import_jobs';
 const JOB_TIMEOUT_MS = 120_000; // last-resort ceiling; the CF finishes in seconds
 
 export function extractHealthDoc(imageUrls) {
+    // Test mode: the job doc never reaches the server, so the Cloud Function
+    // would never answer — fail now instead of spinning to the timeout.
+    if (TEST_MODE) return Promise.reject(new Error('Not available in test mode — AI reading runs on the server, and nothing is sent in test mode.'));
     const ref = doc(collection(db, HEALTH_IMPORT_JOBS));
     return new Promise((resolve, reject) => {
         let settled = false;

@@ -20,7 +20,7 @@
 import { db } from '../firebase';
 import {
     collection, query, where, onSnapshot, doc,
-    setDoc as _fsSetDoc, updateDoc as _fsUpdateDoc, arrayUnion, serverTimestamp,
+    setDoc as _fsSetDoc, updateDoc as _fsUpdateDoc, arrayUnion, increment, serverTimestamp,
 } from 'firebase/firestore';
 import { watchdogWrite } from './firestoreRevive';
 import { printPrepLabel } from './labelPrinting';
@@ -57,6 +57,17 @@ export function riceDeadlines(cookedAt) {
         fridgeByAt: new Date(t + RICE_FRIDGE_BY_HOURS * HOUR),
         tossByAt: new Date(t + RICE_TOSS_HOURS * HOUR),
     };
+}
+
+// Batch numbers used by more than one live (non-void) batch that day — two
+// devices that started a batch at the same moment can both pick a number.
+export function duplicateBatchNumbers(rows) {
+    const seen = new Map();
+    for (const r of rows || []) {
+        if (!r || r.status === RICE_STATUS.VOID) continue;
+        seen.set(r.batchNo, (seen.get(r.batchNo) || 0) + 1);
+    }
+    return new Set([...seen].filter(([, n]) => n > 1).map(([no]) => no));
 }
 
 // Next batch number for the day: one past the highest already logged.
@@ -164,7 +175,8 @@ export async function printRiceSticker({ row, location, staffName, language, cop
     };
     updateDoc(doc(db, RICE_LOG_COLLECTION, row.id), {
         prints: arrayUnion(entry),
-        ...(res.ok ? { stickerCount: (Number(row.stickerCount) || 0) + copies } : {}),
+        // increment(): two devices reprinting the same batch both count.
+        ...(res.ok ? { stickerCount: increment(copies) } : {}),
     }).catch((e) => console.warn('rice_log print entry failed:', e));
     return res;
 }
@@ -238,18 +250,31 @@ export function fmtRiceTime(iso) {
     return `${h}:${String(d.getMinutes()).padStart(2, '0')} ${ampm}`;
 }
 
+// An outcome time; when it was recorded on a later day than the batch was
+// cooked (a batch closed out the next morning), the date leads so the log
+// never reads as if it were tossed before it was cooked.
+function fmtOutcomeTime(iso, cookDay, isEs) {
+    const t = fmtRiceTime(iso);
+    if (!iso || !t) return t;
+    const d = new Date(iso);
+    if (riceDayStr(d) === cookDay) return t;
+    const date = `${d.getMonth() + 1}/${d.getDate()}`;
+    return isEs ? `${date} ${t} (registrado tarde)` : `${date} ${t} (logged late)`;
+}
+
 // What happened to the batch, in plain words, for the log's last column.
 export function riceOutcomeText(row, isEs = false) {
     const tx = (en, es) => (isEs ? es : en);
+    const when = (iso) => fmtOutcomeTime(iso, row.cookDay, isEs);
     switch (row.status) {
         case RICE_STATUS.USED:
-            return `${tx('Used for fried rice', 'Usado para arroz frito')} ${fmtRiceTime(row.usedAt)} — ${row.usedBy || ''}`;
+            return `${tx('Used for fried rice', 'Usado para arroz frito')} ${when(row.usedAt)} — ${row.usedBy || ''}`;
         case RICE_STATUS.FRIDGE:
-            return `${tx('Into fridge', 'Al refrigerador')} ${fmtRiceTime(row.fridgedAt)}`
+            return `${tx('Into fridge', 'Al refrigerador')} ${when(row.fridgedAt)}`
                 + (row.fridgeTempF != null ? ` @ ${row.fridgeTempF}°F` : '')
                 + ` — ${row.fridgedBy || ''}`;
         case RICE_STATUS.TOSSED:
-            return `${tx('Tossed', 'Tirado')} ${fmtRiceTime(row.tossedAt)} — ${row.tossedBy || ''}`
+            return `${tx('Tossed', 'Tirado')} ${when(row.tossedAt)} — ${row.tossedBy || ''}`
                 + (row.tossReason === 'past_4h' ? tx(' (4-hour limit)', ' (límite de 4 horas)') : '');
         case RICE_STATUS.VOID:
             return `${tx('Voided (printed by mistake)', 'Anulado (impreso por error)')} — ${row.voidedBy || ''}`;
@@ -260,9 +285,10 @@ export function riceOutcomeText(row, isEs = false) {
 
 export function buildRiceLogHtml({ rows, cookDay, locationLabel, isEs = false }) {
     const tx = (en, es) => (isEs ? es : en);
+    const dups = duplicateBatchNumbers(rows);
     const body = (rows || []).map((r) => `
         <tr class="${r.status === RICE_STATUS.VOID ? 'void' : ''}">
-            <td>#${esc(r.batchNo)}</td>
+            <td>#${esc(r.batchNo)}${dups.has(r.batchNo) && r.status !== RICE_STATUS.VOID ? esc(tx(' (number used twice)', ' (número repetido)')) : ''}</td>
             <td>${esc(fmtRiceTime(r.cookedAt))}</td>
             <td>${esc(r.cookedBy)}</td>
             <td>${esc(fmtRiceTime(r.fridgeByAt))}</td>

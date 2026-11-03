@@ -14,7 +14,7 @@ import { toast } from '../toast';
 import { printViaNative } from '../capacitor-bridge';
 import {
     RICE_FRIDGE_BY_HOURS, RICE_TOSS_HOURS, RICE_STATUS,
-    riceDayStr, riceDeadlines, nextBatchNo, riceBatchState,
+    riceDayStr, riceDeadlines, nextBatchNo, riceBatchState, duplicateBatchNumbers,
     subscribeRiceLog, startRiceBatch, printRiceSticker,
     markRiceUsed, markRiceFridge, markRiceTossed, markRiceVoid,
     fmtRiceTime, riceOutcomeText, buildRiceLogHtml,
@@ -55,15 +55,32 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
     const [rows, setRows] = useState(null);
     const [loadError, setLoadError] = useState(false);
     // Today's rows stay subscribed even while viewing a past day, so the
-    // next batch number is always right.
+    // next batch number is always right. Starting a batch waits a few
+    // seconds for them; after that (slow / wedged connection, first batch of
+    // the day) the cook can still log — a missing health-log entry is worse
+    // than a repeated number, which is flagged on screen and on the log.
     const [todayRows, setTodayRows] = useState(null);
+    const [todayError, setTodayError] = useState(false);
+    const [todayWaitOver, setTodayWaitOver] = useState(false);
 
     useEffect(() => {
         setRows(null);
         setLoadError(false);
         return subscribeRiceLog(loc, viewDay, (r) => { setRows(r); setLoadError(false); }, () => { setRows([]); setLoadError(true); });
     }, [loc, viewDay]);
-    useEffect(() => subscribeRiceLog(loc, todayS, setTodayRows, () => setTodayRows([])), [loc, todayS]);
+    useEffect(() => {
+        setTodayRows(null);
+        setTodayError(false);
+        return subscribeRiceLog(loc, todayS, (r) => { setTodayRows(r); setTodayError(false); }, () => setTodayError(true));
+    }, [loc, todayS]);
+    useEffect(() => {
+        setTodayWaitOver(false);
+        const t = setTimeout(() => setTodayWaitOver(true), 5000);
+        return () => clearTimeout(t);
+    }, [loc, todayS]);
+    const todayLoaded = Array.isArray(todayRows) && !todayError;
+    const todayReady = todayLoaded || todayError || todayWaitOver;
+    const numberUnsure = todayReady && !todayLoaded;
 
     // ── New batch form ────────────────────────────────────────────────
     const [cookedTime, setCookedTime] = useState(() => toInputTime(new Date()));
@@ -83,7 +100,7 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
     const cookedInFuture = !!cookedAt && cookedAt.getTime() > now.getTime() + 60000;
     const deadlines = cookedAt ? riceDeadlines(cookedAt) : null;
     const alreadyPastToss = !!deadlines && deadlines.tossByAt.getTime() <= now.getTime();
-    const batchNo = nextBatchNo(todayRows);
+    const batchNo = todayReady ? nextBatchNo(todayRows || []) : null;
 
     const printError = (res) => {
         const msg = PRINT_ERRORS[res?.error];
@@ -91,7 +108,7 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
     };
 
     const handleStart = async () => {
-        if (starting || !cookedAt || cookedInFuture || alreadyPastToss) return;
+        if (starting || !todayReady || !cookedAt || cookedInFuture || alreadyPastToss) return;
         setStarting(true);
         try {
             const { res, logFailed } = await startRiceBatch({
@@ -113,35 +130,50 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
     };
 
     // ── Row actions ───────────────────────────────────────────────────
-    const [busyId, setBusyId] = useState(null);
+    // Busy is PER BATCH: one batch's write waiting on a weak connection must
+    // never freeze every other batch's buttons (the toss of an expired
+    // batch has to stay one tap away).
+    const [busyIds, setBusyIds] = useState(() => new Set());
+    const setBusy = (id, on) => setBusyIds((prev) => {
+        const next = new Set(prev);
+        if (on) next.add(id); else next.delete(id);
+        return next;
+    });
     const [fridgeFor, setFridgeFor] = useState(null);   // row id whose temp box is open
     const [fridgeTemp, setFridgeTemp] = useState('');
 
-    const run = async (row, fn, okMsg) => {
-        if (busyId) return false;
-        setBusyId(row.id);
-        try {
-            await fn();
-            if (okMsg) toast(okMsg, { kind: 'success', duration: 2000 });
-            return true;
-        } catch (e) {
+    // Outcome writes are queued locally the moment they're issued (the row
+    // updates right away); the server ack can take minutes offline, so the
+    // UI never waits for it. A rejection (rules, bad data) rolls the local
+    // change back and toasts.
+    const run = (row, fn, okMsg, onQueued) => {
+        if (busyIds.has(row.id)) return;
+        let p;
+        try { p = fn(); } catch (e) {
             console.warn('rice_log update failed:', e);
             toast(tx('Could not save — try again.', 'No se pudo guardar — intenta de nuevo.'), { kind: 'error' });
-            return false;
-        } finally {
-            setBusyId(null);
+            return;
         }
+        setBusy(row.id, true);
+        if (okMsg) toast(okMsg, { kind: 'success', duration: 2000 });
+        onQueued?.();
+        Promise.resolve(p)
+            .catch((e) => {
+                console.warn('rice_log update failed:', e);
+                toast(tx(`Batch #${row.batchNo} did not save — try again.`, `El lote #${row.batchNo} no se guardó — intenta de nuevo.`), { kind: 'error', duration: 6000 });
+            })
+            .finally(() => setBusy(row.id, false));
     };
 
     const reprint = async (row) => {
-        if (busyId) return;
-        setBusyId(row.id);
+        if (busyIds.has(row.id)) return;
+        setBusy(row.id, true);
         try {
             const res = await printRiceSticker({ row, location: loc, staffName, language, copies: 1 });
             if (res.ok) toast(tx('🏷 Sticker reprinted', '🏷 Etiqueta reimpresa'), { kind: 'success', duration: 2000 });
             else if (res.error !== 'cancelled') toast(printError(res), { kind: 'error', duration: 6000 });
         } finally {
-            setBusyId(null);
+            setBusy(row.id, false);
         }
     };
 
@@ -158,8 +190,8 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
             ));
             if (!ok) return;
         }
-        run(row, () => markRiceFridge(row, staffName, t), tx('❄ Logged into the fridge', '❄ Registrado al refrigerador'))
-            .then((ok) => { if (ok) { setFridgeFor(null); setFridgeTemp(''); } });
+        run(row, () => markRiceFridge(row, staffName, t), tx('❄ Logged into the fridge', '❄ Registrado al refrigerador'),
+            () => { setFridgeFor(null); setFridgeTemp(''); });
     };
 
     const voidBatch = (row) => {
@@ -184,6 +216,9 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
     };
 
     const openCount = (todayRows || []).filter((r) => r.status === RICE_STATUS.COOLING).length;
+    // Two devices numbering at the same moment can both pick the same
+    // number — flag it on screen and on the inspector log.
+    const dupNumbers = duplicateBatchNumbers(rows);
     const overdueCount = (todayRows || []).filter((r) => riceBatchState(r, now) === 'tossNow').length;
 
     return (
@@ -206,8 +241,17 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
                         {/* New batch */}
                         <div className="rounded-xl border-2 border-sky-200 bg-sky-50 p-3">
                             <div className="text-sm font-black text-sky-950 mb-2">
-                                {tx('Rice done cooking', 'Arroz terminado')} — {tx('batch', 'lote')} #{batchNo}
+                                {tx('Rice done cooking', 'Arroz terminado')} — {tx('batch', 'lote')} #{batchNo ?? '…'}
                             </div>
+                            {!todayReady && (
+                                <p className="text-[12px] text-sky-900 mb-2">{tx("Loading today's batches…", 'Cargando los lotes de hoy…')}</p>
+                            )}
+                            {numberUnsure && (
+                                <p className="text-[12px] font-bold text-amber-800 mb-2">
+                                    {tx("Couldn't load today's batches yet — the batch number may repeat. You can still log the batch.",
+                                        'Aún no se cargan los lotes de hoy — el número del lote podría repetirse. Igual puedes registrarlo.')}
+                                </p>
+                            )}
                             <div className="flex items-center gap-2 mb-2">
                                 <label className="text-xs font-bold text-dd-text-2 flex-shrink-0" htmlFor="rice-cooked-time">
                                     {tx('Finished at', 'Terminó a las')}
@@ -251,7 +295,7 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
                             <button
                                 type="button"
                                 onClick={handleStart}
-                                disabled={starting || !cookedAt || cookedInFuture || alreadyPastToss}
+                                disabled={starting || !todayReady || !cookedAt || cookedInFuture || alreadyPastToss}
                                 className="w-full py-3 rounded-xl bg-sky-600 text-white text-sm font-black shadow-sm active:scale-[0.99] disabled:opacity-40">
                                 {starting ? tx('Printing…', 'Imprimiendo…') : `🏷 ${tx('Print sticker + log batch', 'Imprimir etiqueta + registrar lote')}`}
                             </button>
@@ -304,8 +348,9 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
                                         now={now}
                                         tx={tx}
                                         isEs={isEs}
-                                        busy={busyId === r.id}
+                                        busy={busyIds.has(r.id)}
                                         canAct={viewingToday}
+                                        duplicate={dupNumbers.has(r.batchNo) && r.status !== RICE_STATUS.VOID}
                                         fridgeOpen={fridgeFor === r.id}
                                         fridgeTemp={fridgeTemp}
                                         setFridgeTemp={setFridgeTemp}
@@ -333,7 +378,7 @@ export default function RiceLogPanel({ location = 'webster', staffName, language
 }
 
 function BatchRow({
-    row, now, tx, isEs, busy, canAct,
+    row, now, tx, isEs, busy, canAct, duplicate,
     fridgeOpen, fridgeTemp, setFridgeTemp, onOpenFridge, onCancelFridge, onConfirmFridge,
     onUsed, onTossed, onReprint, onVoid,
 }) {
@@ -357,6 +402,11 @@ function BatchRow({
                     <div className={`text-sm font-black text-dd-text ${row.status === RICE_STATUS.VOID ? 'line-through' : ''}`}>
                         #{row.batchNo} · {tx('Cooked', 'Cocido')} {fmtRiceTime(row.cookedAt)}
                         <span className="font-normal text-dd-text-2"> · {row.cookedBy}</span>
+                        {duplicate && (
+                            <span className="ml-1.5 align-middle inline-block px-1.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-black">
+                                {tx('same # as another batch', 'mismo # que otro lote')}
+                            </span>
+                        )}
                     </div>
                     <div className="text-[11px] text-dd-text-2">
                         ❄ {fmtRiceTime(row.fridgeByAt)} · 🗑 {fmtRiceTime(row.tossByAt)}
@@ -404,6 +454,22 @@ function BatchRow({
                         className={`flex-1 inline-flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-black active:scale-95 disabled:opacity-40 ${state === 'tossNow' ? 'bg-red-600 text-white' : 'bg-red-50 border border-red-200 text-red-700'}`}>
                         <Trash2 size={13} /> {tx('Tossed', 'Tirado')}
                     </button>
+                </div>
+            )}
+            {open && !canAct && (
+                <div className="mt-2">
+                    <p className="text-[11px] font-bold text-amber-800 mb-1.5">
+                        {tx('Left open — record what happened to it.', 'Quedó abierto — registra qué pasó.')}
+                    </p>
+                    <div className="flex gap-1.5">
+                        {/* No "printed by mistake" on a past day: a batch left
+                            out overnight is a real time-control miss, and the
+                            log must show it tossed, not voided. */}
+                        <button type="button" onClick={onTossed} disabled={busy}
+                            className="flex-1 inline-flex items-center justify-center gap-1 py-1.5 rounded-lg bg-red-600 text-white text-xs font-black active:scale-95 disabled:opacity-40">
+                            <Trash2 size={13} /> {tx('Tossed', 'Tirado')}
+                        </button>
+                    </div>
                 </div>
             )}
             {open && canAct && fridgeOpen && (

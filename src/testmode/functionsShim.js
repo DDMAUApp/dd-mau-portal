@@ -10,7 +10,9 @@ export * from '@firebase/functions';
 const T = !!TEST_MODE;
 
 export const TEST_MODE_ALLOWED_CALLABLES = Object.freeze(new Set([
-    'aiSearch', 'translateMessage', 'aiFixText', 'aiGeneratePromo', 'aiExtractMenu', 'parseReceipt',
+    // Return an answer and change no app data. translateMessage is sent
+    // text-only in test mode (translation.js) so the server writes nothing.
+    'aiSearch', 'translateMessage', 'aiFixText', 'aiGeneratePromo', 'parseReceipt',
 ]));
 
 function refused() {

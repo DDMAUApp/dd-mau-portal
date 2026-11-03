@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue, lazy, Suspense, memo } from 'react';
 import { db, storage } from '../firebase';
+import { TEST_MODE } from '../data/testMode';
 import {
     doc, onSnapshot, query, collection, orderBy, limit, where, serverTimestamp,
     deleteField, arrayUnion, runTransaction as _fsRunTransaction, increment, FieldPath,
@@ -2497,7 +2498,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // other's local writes back as if they were remote
                 // updates and stomp the other side's input.
                 const unsubChecklist = onSnapshot(doc(db, "ops", "checklists2_" + checklistLoc), { includeMetadataChanges: true }, async (docSnap) => {
-                    if (docSnap.metadata.hasPendingWrites) return;
+                    // Test mode never acks a write, so every snapshot after the
+                    // first tap is "pending" — skipping them blanked the list.
+                    if (docSnap.metadata.hasPendingWrites && !TEST_MODE) return;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         const todayKey = getTodayKey();
@@ -2878,7 +2881,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // 2026-07-22 (audit B2): skip the local-echo snapshot — the
                     // mutators already updated state optimistically, and the echo
                     // could clobber a rapid follow-up tap with the older map.
-                    if (docSnap.metadata.hasPendingWrites) return;
+                    if (docSnap.metadata.hasPendingWrites && !TEST_MODE) return;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         if (data.overrides) setSplitOverrides(data.overrides);

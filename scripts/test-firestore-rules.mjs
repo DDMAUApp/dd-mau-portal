@@ -24,7 +24,7 @@ import {
     FieldPath,
     getFirestore, connectFirestoreEmulator, doc, collection,
     setDoc, addDoc, updateDoc, deleteDoc, getDoc, serverTimestamp, Timestamp,
-    arrayUnion, getDocs, query, where,
+    arrayUnion, increment, getDocs, query, where,
 } from 'firebase/firestore';
 
 const PROJECT = 'dd-mau-staff-app';
@@ -303,6 +303,14 @@ await allow('rice_log: late print entry on finished batch', () => updateDoc(doc(
 await deny('rice_log: junk status', () => updateDoc(doc(db, 'rice_log', 'rb2'), { status: 'eaten' }));
 await allow('rice_log: tossed at 4h', () => updateDoc(doc(db, 'rice_log', 'rb2'), { status: 'tossed', tossedAt: '2026-11-02T19:05:00.000Z', tossedBy: 'Probe Cook', tossReason: 'past_4h' }));
 await deny('rice_log: delete a batch', () => deleteDoc(doc(db, 'rice_log', 'rb2')));
+// History can only grow (2026-11-03 review).
+await deny('rice_log: wipe print history (finished batch)', () => updateDoc(doc(db, 'rice_log', 'rb1'), { prints: [], stickerCount: 0 }));
+await allow('rice_log: stale absolute count from an older build still saves its print entry', () => updateDoc(doc(db, 'rice_log', 'rb1'), { prints: arrayUnion({ at: '2026-11-02T16:50:00.000Z', by: 'Old Build', copies: 1, ok: true }), stickerCount: 1 }));
+await deny('rice_log: replace a print entry', () => updateDoc(doc(db, 'rice_log', 'rb1'), { prints: [{ at: 'x', by: 'forged', copies: 1, ok: true }, { at: 'y', by: 'forged', copies: 1, ok: true }] }));
+await allow('rice_log: increment sticker count + append entry', () => updateDoc(doc(db, 'rice_log', 'rb1'), { prints: arrayUnion({ at: '2026-11-02T16:45:00.000Z', by: 'Probe Cook', copies: 2, ok: true }), stickerCount: increment(2) }));
+await setDoc(doc(db, 'rice_log', 'rb3'), riceBatch({ batchNo: 3, prints: [{ at: 'a', by: 'p', copies: 1, ok: false }] }));
+await deny('rice_log: wipe print history (open batch)', () => updateDoc(doc(db, 'rice_log', 'rb3'), { prints: [] }));
+await allow('rice_log: open batch outcome keeps history', () => updateDoc(doc(db, 'rice_log', 'rb3'), { status: 'used', usedAt: '2026-11-02T17:00:00.000Z', usedBy: 'Probe Cook' }));
 
 // ── Summary ───────────────────────────────────────────────────────────
 console.log(`\n${pass} passed, ${fail} failed`);

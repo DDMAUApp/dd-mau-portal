@@ -4,18 +4,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 
 const snapCbs = [];
+const errCbs = [];
 const setDocMock = vi.fn(async () => {});
 const updateDocMock = vi.fn(async () => {});
 vi.mock('../firebase', () => ({ db: {}, storage: {} }));
 vi.mock('firebase/firestore', () => ({
     doc: vi.fn((...a) => ({ id: a.length === 1 ? 'newBatch' : a[a.length - 1] })),
     collection: vi.fn(() => ({ path: 'rice_log' })),
-    onSnapshot: vi.fn((q, cb) => { snapCbs.push(cb); return () => {}; }),
+    onSnapshot: vi.fn((q, cb, err) => { snapCbs.push(cb); errCbs.push(err); return () => {}; }),
     query: vi.fn((...a) => a),
     where: vi.fn((...a) => a),
     setDoc: (...a) => setDocMock(...a),
     updateDoc: (...a) => updateDocMock(...a),
     arrayUnion: vi.fn((x) => ({ arrayUnion: x })),
+    increment: vi.fn((n) => ({ increment: n })),
     serverTimestamp: vi.fn(() => 'SERVER_TS'),
 }));
 vi.mock('../data/firestoreRevive', () => ({ watchdogWrite: (p) => p }));
@@ -35,6 +37,7 @@ const feed = (rows) => act(async () => {
 
 beforeEach(() => {
     snapCbs.length = 0;
+    errCbs.length = 0;
     setDocMock.mockClear();
     updateDocMock.mockClear();
     printPrepLabelMock.mockClear();
@@ -105,6 +108,67 @@ describe('RiceLogPanel', () => {
         fireEvent.change(screen.getByLabelText('Finished at'), { target: { value: '08:00' } });
         expect(screen.getByText(/already past the 4-hour limit/)).toBeInTheDocument();
         expect(screen.getByText(/Print sticker \+ log batch/).closest('button')).toBeDisabled();
+    });
+
+    it('waits for today\'s batches before it will number and print a new one', async () => {
+        render(<RiceLogPanel location="webster" staffName="Laura Hurtado" language="en" onClose={() => {}} />);
+        expect(screen.getByText(/batch #…/i)).toBeInTheDocument();
+        expect(screen.getByText(/Print sticker \+ log batch/).closest('button')).toBeDisabled();
+        await feed([]);
+        expect(screen.getByText(/Print sticker \+ log batch/).closest('button')).not.toBeDisabled();
+    });
+
+    it('a failed load of today\'s batches still lets the cook log the batch, with a repeat-number warning', async () => {
+        render(<RiceLogPanel location="webster" staffName="Laura Hurtado" language="en" onClose={() => {}} />);
+        await act(async () => { errCbs[1](new Error('offline')); });
+        expect(screen.getByText(/batch number may repeat/)).toBeInTheDocument();
+        expect(screen.getByText(/Print sticker \+ log batch/).closest('button')).not.toBeDisabled();
+    });
+
+    it('a slow first load stops blocking after a few seconds (first batch of the day on weak Wi-Fi)', async () => {
+        vi.useRealTimers();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+        vi.setSystemTime(NOW);
+        render(<RiceLogPanel location="webster" staffName="Laura Hurtado" language="en" onClose={() => {}} />);
+        expect(screen.getByText(/Print sticker \+ log batch/).closest('button')).toBeDisabled();
+        expect(screen.getByText(/Loading today's batches/)).toBeInTheDocument();
+        await act(async () => { vi.advanceTimersByTime(50); });     // let React run the mount effects
+        await act(async () => { vi.advanceTimersByTime(5100); });
+        expect(screen.getByText(/Print sticker \+ log batch/).closest('button')).not.toBeDisabled();
+        expect(screen.getByText(/batch number may repeat/)).toBeInTheDocument();
+    });
+
+    it('a write still waiting on one batch never blocks another batch', async () => {
+        updateDocMock.mockImplementationOnce(() => new Promise(() => {}));   // offline: never acked
+        render(<RiceLogPanel location="webster" staffName="Laura Hurtado" language="en" onClose={() => {}} />);
+        await feed([
+            { id: 'a', batchNo: 1, cookDay: '2026-11-02', location: 'webster', status: 'cooling', cookedBy: 'R', cookedAt: iso(8, 30), fridgeByAt: iso(10, 30), tossByAt: iso(12, 30), prints: [] },
+            { id: 'b', batchNo: 2, cookDay: '2026-11-02', location: 'webster', status: 'cooling', cookedBy: 'R', cookedAt: iso(11, 30), fridgeByAt: iso(13, 30), tossByAt: iso(15, 30), prints: [] },
+        ]);
+        await act(async () => { fireEvent.click(screen.getByText('Used')); });          // batch #2 — hangs
+        const tossed = screen.getAllByText('Tossed');
+        await act(async () => { fireEvent.click(tossed[tossed.length - 1]); });          // batch #1 — must still go
+        expect(updateDocMock).toHaveBeenCalledTimes(2);
+        expect(updateDocMock.mock.calls[1][1]).toMatchObject({ status: 'tossed', tossReason: 'past_4h' });
+    });
+
+    it('a batch left open on an earlier day can still be closed out', async () => {
+        render(<RiceLogPanel location="webster" staffName="Laura Hurtado" language="en" onClose={() => {}} />);
+        await feed([]);
+        const before = snapCbs.length;
+        await act(async () => { fireEvent.change(screen.getByDisplayValue('2026-11-02'), { target: { value: '2026-11-01' } }); });
+        const dayCb = snapCbs[before];
+        const y = (h, m) => new Date(2026, 10, 1, h, m).toISOString();
+        await act(async () => {
+            dayCb({ forEach: (fn) => [{ id: 'old', batchNo: 7, cookDay: '2026-11-01', location: 'webster', status: 'cooling', cookedBy: 'R', cookedAt: y(18, 30), fridgeByAt: y(20, 30), tossByAt: y(22, 30), prints: [] }]
+                .forEach((r) => fn({ id: r.id, data: () => r })) });
+        });
+        expect(screen.getByText(/Left open/)).toBeInTheDocument();
+        expect(screen.queryByText('Used')).toBe(null);
+        // A batch left out overnight can't be voided as a misprint.
+        expect(screen.queryByText(/printed by mistake/i)).toBe(null);
+        await act(async () => { fireEvent.click(screen.getByText('Tossed')); });
+        expect(updateDocMock.mock.calls.at(-1)[1]).toMatchObject({ status: 'tossed', tossReason: 'past_4h', tossedBy: 'Laura Hurtado' });
     });
 
     it('renders in Spanish', async () => {

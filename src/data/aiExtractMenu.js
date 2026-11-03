@@ -20,6 +20,7 @@
 //   }
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { TEST_MODE } from './testMode';
 
 let _callable = null;
 function getCallable() {
@@ -33,6 +34,8 @@ function getCallable() {
 // Throws on Cloud Function errors so callers can toast the failure
 // and keep the upload in place for retry.
 export async function extractMenuFromImages({ imageUrls }) {
+    // Test mode keeps uploads on the device (blob: URLs) — the server can't see them.
+    if (TEST_MODE) throw new Error('Not available in test mode — AI reading runs on the server, and nothing is sent in test mode.');
     const urls = (imageUrls || []).filter(u => typeof u === 'string' && /^https:\/\//.test(u));
     if (urls.length === 0) {
         throw new Error('no image URLs');

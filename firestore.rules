@@ -1090,6 +1090,13 @@ service cloud.firestore {
                     && request.resource.data.status == 'cooling';
       allow update: if request.resource.data is map
                     && request.resource.data.status in ['cooling', 'fridge', 'used', 'tossed', 'void']
+                    // Sticker history only grows: every earlier print entry
+                    // must still be there. (stickerCount is NOT checked: older
+                    // builds write an absolute count from a possibly-stale row,
+                    // and rejecting that would drop the print entry riding in
+                    // the same update. The inspector log counts from prints.)
+                    && request.resource.data.get('prints', []) is list
+                    && request.resource.data.get('prints', []).hasAll(resource.data.get('prints', []))
                     && (
                       (resource.data.status == 'cooling'
                         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
