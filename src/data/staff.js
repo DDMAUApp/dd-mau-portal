@@ -1,9 +1,27 @@
+import { TEST_MODE } from './testMode';
+
 // Admin identity is anchored to staff IDs, NOT names. Renaming a staff member
 // to "Andrew Shih" in the admin panel does NOT grant admin access. The IDs
 // below are the canonical owners.
 //   40 = Andrew Shih
 //   41 = Julie Shih
 export const ADMIN_IDS = [40, 41];
+
+// Test mode (src/data/testMode.js): the test user is an owner on THIS
+// device for this page only — nothing they do can save, so owner access is
+// harmless and lets them try every screen. Never set in the normal app.
+if (TEST_MODE && Number.isFinite(TEST_MODE.id) && !ADMIN_IDS.includes(TEST_MODE.id)) {
+  ADMIN_IDS.push(TEST_MODE.id);
+}
+
+// True when `pin` is an owner's (Andrew / Julie) PIN. Used to re-confirm
+// sensitive admin actions like putting someone into test mode. Owner ids
+// only — never a test-mode id.
+export function isOwnerPin(pin, staffList) {
+  const p = String(pin ?? '').trim();
+  if (!/^\d{4}$/.test(p) || !Array.isArray(staffList)) return false;
+  return staffList.some(s => [40, 41].includes(Number(s?.id)) && String(s?.pin ?? '').trim() === p);
+}
 
 // Legacy name-list — kept for back-compat with any code that imports it,
 // but new code should use isAdmin(name, staffList) which checks IDs.

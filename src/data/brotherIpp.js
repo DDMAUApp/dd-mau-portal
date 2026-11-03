@@ -19,6 +19,7 @@
 // untouched.
 
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { TEST_MODE } from './testMode';
 
 export const BROTHER_DPI = 300;
 export const BROTHER_PORT = 631;
@@ -478,6 +479,7 @@ export async function warmBrotherDirect(ip) {
 // ── Top-level: render + send one label (copies = repeat the job; the
 // QL-820NWB does NOT support the IPP `copies` attribute, so we loop). ──
 export async function printBrotherDirect({ ip, lines, footer, footerScale, footerBold, frame = false, copies = 1, rightShift, jobName, shouldAbort }) {
+    if (TEST_MODE) return { ok: true, status: 200, testMode: true };
     if (!ip) return { ok: false, error: 'no_brother_ip' };
     if (!Capacitor.isNativePlatform()) return { ok: false, error: 'web_unsupported' };
     const { rgba, width, height } = renderLabelCanvas(lines, { footer, footerScale, footerBold, frame, rightShift });

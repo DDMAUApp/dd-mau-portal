@@ -31,6 +31,7 @@
 // only logs — it can never break a page.
 
 import { disableNetwork, enableNetwork, doc, getDocFromServer, getDocFromCache } from 'firebase/firestore';
+import { TEST_MODE } from './testMode';
 import { runReloadStashes } from './reloadStash';
 import { db } from '../firebase';
 import { logError } from './logger';
@@ -117,6 +118,7 @@ async function _probeLocalQueue() {
 }
 
 export async function escalateReload(reason = 'write-stuck', ctx = {}) {
+    if (TEST_MODE) return false;
     const loopable = reason === 'write-stuck-after-revive';
     try {
         const last = Number(sessionStorage.getItem(RELOAD_GUARD_KEY)) || 0;
@@ -304,6 +306,8 @@ export function subscribeInFlightWrites(cb) {
  * guarded; safe to call speculatively. Resolves true if a cycle ran.
  */
 export async function reviveFirestore(reason = 'manual') {
+    // Test mode is offline ON PURPOSE for the whole page — never redial.
+    if (TEST_MODE) return false;
     const now = Date.now();
     if (_reviving) return false;
     if (now - _lastReviveAt < REVIVE_COOLDOWN_MS) return false;
@@ -651,6 +655,7 @@ export function resilientSnapshot(label, attach) {
 
 export function installFirestoreRevive() {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    if (TEST_MODE) return;
     let hiddenAt = null;
 
     const onHide = () => { if (hiddenAt == null) hiddenAt = Date.now(); };

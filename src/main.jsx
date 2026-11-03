@@ -1,3 +1,7 @@
+// testMode FIRST: it decides (and on a cold launch undoes) test mode before
+// anything reads localStorage or opens Firestore.
+import { TEST_MODE, exitTestMode } from './data/testMode';
+import { prepareTestMode } from './data/testModePrefetch';
 import { runReloadStashes } from './data/reloadStash';
 import React, { Component } from 'react';
 import ReactDOM from 'react-dom/client';
@@ -317,12 +321,49 @@ import('./messaging')
 // success toast was fired. Mounting it at the root fixes the entire
 // toast pipeline in one shot.
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
+const renderApp = () => root.render(
     <RootErrorBoundary>
         <App />
         <AppToast />
     </RootErrorBoundary>
 );
+
+// ── Test mode boot (src/data/testMode.js) ─────────────────────────────
+// Copy the live data into the memory cache and cut the network BEFORE the
+// app renders, so nothing the app does can reach the server. The banner is
+// plain DOM outside React so no screen can cover or unmount it.
+function mountTestModeBanner() {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.setAttribute('aria-label', 'Test mode — nothing saves. Tap to exit.');
+    el.textContent = '🧪 TEST MODE — nothing saves · Exit';
+    el.style.cssText = [
+        'position:fixed', 'left:50%', 'transform:translateX(-50%)',
+        'top:calc(env(safe-area-inset-top, 0px) + 4px)', 'z-index:2147483000',
+        'background:#f59e0b', 'color:#111827', 'font:800 12px/1 -apple-system,system-ui,sans-serif',
+        'padding:6px 12px', 'border-radius:999px', 'border:2px solid #92400e',
+        'box-shadow:0 2px 8px rgba(0,0,0,.3)', 'white-space:nowrap',
+    ].join(';');
+    el.addEventListener('click', () => {
+        if (window.confirm('Leave test mode? Everything you changed will be erased.')) exitTestMode();
+    });
+    document.body.appendChild(el);
+}
+if (TEST_MODE) {
+    root.render(
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, fontFamily: '-apple-system, system-ui, sans-serif', background: '#fffbeb', color: '#78350f', padding: 24, textAlign: 'center' }}>
+            <div style={{ fontSize: 48 }}>🧪</div>
+            <div style={{ fontSize: 20, fontWeight: 900 }}>Loading test mode…</div>
+            <div style={{ fontSize: 14, maxWidth: 320 }}>Copying the latest data for {TEST_MODE.name}. Nothing you do in test mode is saved.</div>
+        </div>
+    );
+    prepareTestMode()
+        .then((stats) => console.info('[testMode] data copied', stats))
+        .catch((e) => console.warn('[testMode] prepare failed:', e))
+        .finally(() => { renderApp(); mountTestModeBanner(); });
+} else {
+    renderApp();
+}
 
 // ── Hide the native splash the instant the first frame paints ────────
 // 2026-06-13 — Andrew: "the ios app on the ipad loads so slow." The

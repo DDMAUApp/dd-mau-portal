@@ -1,5 +1,6 @@
+import { TEST_MODE } from './data/testMode';
 import { initializeApp } from 'firebase/app';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, persistentSingleTabManager, getPersistentCacheIndexManager, enablePersistentCacheIndexAutoCreation } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, persistentSingleTabManager, getPersistentCacheIndexManager, enablePersistentCacheIndexAutoCreation, memoryLocalCache, memoryLruGarbageCollector, CACHE_SIZE_UNLIMITED } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
 
@@ -96,7 +97,13 @@ const app = initializeApp(firebaseConfig);
 // preserved on both. (A hard crash still self-heals — see main.jsx.)
 let _localCache;
 try {
-    if (typeof indexedDB !== 'undefined' && indexedDB) {
+    if (TEST_MODE) {
+        // Test mode: MEMORY cache only, never IndexedDB. Test edits live in
+        // this page's memory and die with it — they can't be persisted and
+        // flushed by a later normal session. Unlimited LRU keeps the copied
+        // data snapshot in cache for offline queries (see testModePrefetch).
+        _localCache = memoryLocalCache({ garbageCollector: memoryLruGarbageCollector({ cacheSizeBytes: CACHE_SIZE_UNLIMITED }) });
+    } else if (typeof indexedDB !== 'undefined' && indexedDB) {
         const _isNative = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
         const _tabManager = _isNative
             ? persistentSingleTabManager({ forceOwnership: true })

@@ -79,6 +79,18 @@ const APP_VERSION = `${pkgVersion || `${today.getFullYear()}.${String(today.getM
 const APP_BUILT_AT = today.toISOString()
 
 export default defineConfig({
+  // Test mode (src/data/testMode.js): every app import of these three
+  // Firebase modules goes through a shim that is a pure pass-through in the
+  // normal app and keeps writes / uploads / server calls on the device in
+  // test mode. Exact-match patterns: the shims themselves import the
+  // underlying @firebase/* packages, which these never touch.
+  resolve: {
+    alias: [
+      { find: /^firebase\/firestore$/, replacement: resolve('src/testmode/firestoreShim.js') },
+      { find: /^firebase\/storage$/, replacement: resolve('src/testmode/storageShim.js') },
+      { find: /^firebase\/functions$/, replacement: resolve('src/testmode/functionsShim.js') },
+    ],
+  },
   define: {
     __APP_VERSION__: JSON.stringify(APP_VERSION),
     __APP_BUILT_AT__: JSON.stringify(APP_BUILT_AT),

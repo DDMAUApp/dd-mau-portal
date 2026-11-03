@@ -3,7 +3,8 @@ import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
-import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney, HIDEABLE_PAGES } from './data/staff';
+import { isAdmin, isAdminId, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney, HIDEABLE_PAGES } from './data/staff';
+import { TEST_MODE, isTestModeStaff, enterTestMode, exitTestMode } from './data/testMode';
 import { noteStaffSnapshot, nextStaffRev } from './data/staffDoc';
 import { toast } from './toast';
 import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate, isSharedDevice, isSharedDeviceModeEnabled } from './messaging';
@@ -874,6 +875,21 @@ export default function App() {
     // Persist session-level state on every change. Logout (setStaffName(null))
     // also clears the stored value via SS.set's null branch.
     useEffect(() => { SS.set("staffName", staffName); }, [staffName]);
+    // Test mode guards (src/data/testMode.js):
+    //  • In test mode, being logged out (logout, idle relock, a lock screen
+    //    on boot) ends test mode — restore the device, reload to the real app.
+    //  • In the normal app, a signed-in staffer whose record has test mode
+    //    ON (restored session, or an admin just flipped the switch) is moved
+    //    into test mode immediately.
+    useEffect(() => {
+        if (TEST_MODE) {
+            if (!staffName || staffName !== TEST_MODE.name) exitTestMode();
+            return;
+        }
+        if (!staffName) return;
+        const me = staffList.find(s => s.name === staffName);
+        if (isTestModeStaff(me) && !isAdminId(me?.id)) enterTestMode(me);
+    }, [staffName, staffList]);
     useEffect(() => { SS.set("staffLocation", staffLocation); }, [staffLocation]);
     useEffect(() => { SS.set("activeLocation", activeLocation); }, [activeLocation]);
     useEffect(() => { SS.set("language", language); }, [language]);
@@ -1895,8 +1911,14 @@ export default function App() {
     }, [warmLocation, sharedModeGen]);
 
     const handleSelectStaff = (name) => {
-        setStaffName(name);
         const staff = staffList.find(s => s.name === name);
+        // Test-mode staff never get a real session: back up the device and
+        // reload into test mode before anything stamps or saves.
+        if (!TEST_MODE && isTestModeStaff(staff) && !isAdminId(staff?.id)) {
+            enterTestMode(staff);
+            return;
+        }
+        setStaffName(name);
         const loc = staff?.location || "webster";
         setStaffLocation(loc);
         setActiveLocation(loc === "both" ? "webster" : loc);

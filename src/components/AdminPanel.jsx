@@ -47,6 +47,7 @@ import LaborHistoryPanel from './LaborHistoryPanel';
 import { downloadFile, openExternalUrl } from '../capacitor-bridge';
 import ImportStaffModal from './ImportStaffModal';
 import ModalPortal from './ModalPortal';
+import AdminPinPrompt from './AdminPinPrompt';
 import OffsiteClockSection from './OffsiteClockSection';
 import StaffTodosAdmin from './StaffTodosAdmin';
 import TaskPlanner from './TaskPlanner';
@@ -1242,6 +1243,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // UNLESS they actually have a shift this week (safety net so
             // a real assignment can't be invisible).
             const [editHideFromSchedule, setEditHideFromSchedule] = useState(false);
+            // 🧪 Test mode (src/data/testMode.js). Turning it ON needs an
+            // owner PIN (AdminPinPrompt) so nobody gets switched by accident.
+            const [editTestMode, setEditTestMode] = useState(false);
+            const [testModePinOpen, setTestModePinOpen] = useState(false);
             const [editScheduleSide, setEditScheduleSide] = useState("foh");
             const [editTargetHours, setEditTargetHours] = useState(0);
             // 2026-05-16 — staff birthday MM-DD. Drives the auto-derived
@@ -1828,6 +1833,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // module in. Stable across staff names like "José" / "Jose".
             const normalizeStr = (s) => String(s || '')
                 .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+            const testModeStaff = staffList.filter(s => s?.testMode === true);
             const filteredStaff = (() => {
                 let out = staffList;
                 if (staffFilter !== "all") out = out.filter(s => s.location === staffFilter || s.location === "both");
@@ -2103,6 +2109,8 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 setEditShiftLead(false);
                 setEditIsMinor(false);
                 setEditHideFromSchedule(false);
+                setEditTestMode(false);
+                setTestModePinOpen(false);
                 setEditScheduleSide("foh");
                 setEditTargetHours(0);
                 setEditBirthday("");
@@ -2139,7 +2147,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
                         ? editBirthday
                         : (editBirthday === '' ? '' : (s.birthday || ''));
-                    return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, healthAccess: editHealthAccess, canViewClockedIn: editCanViewClockedIn, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
+                    return { ...s, name: finalName, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, canCountMoney: editCanCountMoney, healthAccess: editHealthAccess, canViewClockedIn: editCanViewClockedIn, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages, testMode: editTestMode && !ADMIN_IDS.includes(s.id) };
                 }));
                 // runRosterMutation already toasted on bad PIN / duplicate
                 // name / write error. Bail before fanning out a rename.
@@ -2901,6 +2909,24 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             <span className="section-chevron text-xl" aria-hidden="true">›</span>
                         </button>
 
+                        {/* 🧪 Who's in test mode — always visible, even collapsed,
+                            so nobody is left in test mode by accident. */}
+                        {testModeStaff.length > 0 && (
+                            <div role="status" className="mt-2 rounded-xl border-2 border-amber-400 bg-amber-50 px-3 py-2.5">
+                                <p className="text-sm font-black text-amber-900">
+                                    🧪 {language === "es"
+                                        ? `En modo de prueba (${testModeStaff.length})`
+                                        : `In test mode (${testModeStaff.length})`}
+                                </p>
+                                <p className="text-sm font-bold text-amber-950 mt-0.5">{testModeStaff.map(s => s.name).join(", ")}</p>
+                                <p className="text-[11px] text-amber-800 mt-1 leading-snug">
+                                    {language === "es"
+                                        ? "Tienen acceso total, pero nada de lo que hacen se guarda. Edita a la persona y apaga Modo de prueba para regresarla a la normalidad."
+                                        : "They have full access, but nothing they do saves. Edit the person and turn Test mode off to put them back to normal."}
+                                </p>
+                            </div>
+                        )}
+
                         {staffExpanded && (
                             <div className="mt-2">
                                 {/* Empty-list nudge — surfaces the Import button
@@ -3241,6 +3267,42 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editHideFromSchedule ? "translate-x-7" : "translate-x-1"}`} />
                                                         </button>
                                                     </div>
+                                                    {/* 🧪 Test mode (2026-11-03, Andrew). Logs in with full
+                                                        owner access but NOTHING saves. Owners can't be put
+                                                        in test mode (they'd have no real login left to
+                                                        turn it back off). ON requires an owner PIN. */}
+                                                    {!ADMIN_IDS.includes(editingId) && (
+                                                        <div className={`flex items-center justify-between rounded-lg p-3 ${editTestMode ? "bg-amber-50 border border-amber-300" : "bg-gray-50"}`}>
+                                                            <div className="pr-3">
+                                                                <p className="text-sm font-bold text-gray-700">🧪 {language === "es" ? "Modo de prueba" : "Test mode"}</p>
+                                                                <p className="text-xs text-gray-500">
+                                                                    {language === "es"
+                                                                        ? "Entra con acceso total de dueño, pero nada de lo que haga se guarda ni se publica"
+                                                                        : "Logs in with full owner access, but nothing they do saves or publishes"}
+                                                                </p>
+                                                            </div>
+                                                            <button
+                                                                onClick={() => { if (editTestMode) setEditTestMode(false); else setTestModePinOpen(true); }}
+                                                                aria-label={language === "es" ? "Modo de prueba" : "Test mode"}
+                                                                aria-pressed={editTestMode}
+                                                                className={`flex-shrink-0 w-14 h-8 rounded-full transition-colors duration-200 relative ${editTestMode ? "bg-amber-500" : "bg-gray-300"}`}>
+                                                                <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editTestMode ? "translate-x-7" : "translate-x-1"}`} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                    {testModePinOpen && (
+                                                        <AdminPinPrompt
+                                                            title={language === "es" ? "Activar modo de prueba" : "Turn on test mode"}
+                                                            message={language === "es"
+                                                                ? `${editName || "Esta persona"} entrará con acceso total, pero nada de lo que haga se guardará. Ingresa un PIN de dueño para confirmar, luego toca Guardar.`
+                                                                : `${editName || "This person"} will log in with full access, but nothing they do will save. Enter an owner PIN to confirm, then tap Save.`}
+                                                            confirmLabel={language === "es" ? "Activar" : "Turn on"}
+                                                            staffList={staffList}
+                                                            language={language}
+                                                            onConfirm={() => { setEditTestMode(true); setTestModePinOpen(false); }}
+                                                            onCancel={() => setTestModePinOpen(false)}
+                                                        />
+                                                    )}
                                                     <div className="bg-gray-50 rounded-lg p-3">
                                                         <p className="text-sm font-bold text-gray-700 mb-1">{language === "es" ? "Horario" : "Schedule Side"}</p>
                                                         <p className="text-xs text-gray-500 mb-2">{language === "es" ? "En cuál horario aparece esta persona" : "Which schedule this person appears on"}</p>
@@ -3423,7 +3485,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             ) : (
                                                 <div className="p-3 flex items-center justify-between">
                                                     <div>
-                                                        <p className="font-bold text-gray-800">{person.name}</p>
+                                                        <p className="font-bold text-gray-800">
+                                                            {person.name}
+                                                            {person.testMode === true && (
+                                                                <span className="ml-1.5 align-middle inline-block px-1.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-black">🧪 {language === "es" ? "Prueba" : "Test"}</span>
+                                                            )}
+                                                        </p>
                                                         {/* 2026-06-02 — PIN masked on cards. Inline span +
                                                             Eye toggle replaces the old `PIN: 1234` plain
                                                             text. See visiblePinIds state + togglePinVisibility
@@ -3456,7 +3523,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditCanCountMoney(canCountMoney(person)); setEditHealthAccess(canManageHealth(person)); setEditCanViewClockedIn(canViewClockedIn(person)); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditName(person.name); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditCanCountMoney(canCountMoney(person)); setEditHealthAccess(canManageHealth(person)); setEditCanViewClockedIn(canViewClockedIn(person)); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); setEditTestMode(person.testMode === true); setTestModePinOpen(false); }}
                                                             className="glass-button-apple px-3 py-1.5 text-xs">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>

@@ -32,6 +32,7 @@
 import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { TEST_MODE } from './testMode';
 
 // Native app? Then we can use CapacitorHttp (the OS network stack) instead
 // of WebView fetch(). That matters twice over (Andrew 2026-07-13, "taking a
@@ -507,6 +508,7 @@ export function payloadToBridgeFormat(payload, { copies = 1 } = {}) {
 //                                                 the fallback (e.g. payload was
 //                                                 malformed — would fail there too)
 export async function tryPrintViaBridge({ payload, copies = 1, freeText = null } = {}) {
+    if (TEST_MODE) return { ok: true, testMode: true };
     const config = await getPrintBridgeConfig();
     if (!config) {
         return { ok: false, fallback: true, reason: 'bridge_disabled' };

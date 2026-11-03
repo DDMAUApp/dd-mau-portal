@@ -48,6 +48,7 @@
 // touching the existing config. Mirrors how ops/inventory_{loc} works.
 
 import { db } from '../firebase';
+import { TEST_MODE, testModePrintSkipped } from './testMode';
 // 2026-06-06 — Native HTTP for direct printer access. On iOS/Android we POST
 // to the Epson ePOS endpoint via CapacitorHttp (OS network stack) instead of
 // the WebView's fetch. That sidesteps the HTTPS→HTTP mixed-content block AND
@@ -2479,6 +2480,7 @@ export async function printRecipeIngredients({
     location, slot = DEFAULT_PRINTER_SLOT,
     title, lines = [], multiplier = 1, byName, copies = 1,
 }) {
+    if (TEST_MODE) return testModePrintSkipped();
     try {
         const printer = await getPrinterConfigFast(location, slot);
         if (!printer) return { ok: false, error: 'no_printer_configured' };
@@ -2576,6 +2578,7 @@ function serializePrint(fn) {
 // admins can see what was printed without full content (privacy +
 // log volume).
 export function printFreeText(args) {
+    if (TEST_MODE) return Promise.resolve(testModePrintSkipped());
     return serializePrint(() => _printFreeTextImpl(args));
 }
 async function _printFreeTextImpl({
@@ -2751,6 +2754,7 @@ async function _printFreeTextImpl({
 const PROBE_FAIL_TTL_MS = 10_000;
 const _probeFailedAt = new Map();   // 'ip:port' → Date.now() of last failed preflight
 export async function sendToPrinter(printer, eposXml, meta = {}) {
+    if (TEST_MODE) return { ok: true, status: 200, testMode: true };
     // Capture the start time so the print job log records latency.
     // Useful when diagnosing "is the printer slow today?" — Pi bridges
     // on busy Wi-Fi can stretch from ~150ms to several seconds.
@@ -3056,6 +3060,7 @@ export function subscribePrintJobs(cb, max = 50) {
 // so the UI can toast cleanly.
 // Serialized per device — see serializePrint above.
 export function printPrepLabel(args) {
+    if (TEST_MODE) return Promise.resolve(testModePrintSkipped());
     return serializePrint(() => _printPrepLabelImpl(args));
 }
 async function _printPrepLabelImpl({
@@ -3328,6 +3333,7 @@ function locationLabel(loc) {
 // Simple fixed-content label so admin can verify a freshly-
 // configured printer works before staff start hitting Print.
 export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName }) {
+    if (TEST_MODE) return testModePrintSkipped();
     try {
         // Fast variants are live mirrors, so even a test print right
         // after the admin saves a new IP sees the fresh config.
