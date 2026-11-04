@@ -11,6 +11,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+    isManagerOrAbove,
+    isShiftLeadOrAbove,
     isAdmin,
     ADMIN_IDS,
     canEditSchedule,
@@ -219,5 +221,25 @@ describe('isOnScheduleAt', () => {
         // appear at their location.
         expect(isOnScheduleAt({ location: 'webster' }, 'webster')).toBe(true);
         expect(isOnScheduleAt({ location: 'webster' }, 'maryland')).toBe(false);
+    });
+});
+
+describe('rice log role checks (2026-11-03)', () => {
+    it('shift lead or above: flag, role title, manager, owner', () => {
+        expect(isShiftLeadOrAbove({ id: 1, role: 'Line Cook', shiftLead: true })).toBe(true);
+        expect(isShiftLeadOrAbove({ id: 1, role: 'Shift Lead' })).toBe(true);
+        expect(isShiftLeadOrAbove({ id: 1, role: 'Manager' })).toBe(true);
+        expect(isShiftLeadOrAbove({ id: 1, role: 'Asst Kitchen Manager' })).toBe(true);
+        expect(isShiftLeadOrAbove({ id: 1, role: 'Owner' })).toBe(true);
+        expect(isShiftLeadOrAbove({ id: 40 })).toBe(true);
+        expect(isShiftLeadOrAbove({ id: 1, role: 'Line Cook' })).toBe(false);
+        expect(isShiftLeadOrAbove(null)).toBe(false);
+    });
+    it('manager or above leaves shift leads out', () => {
+        expect(isManagerOrAbove({ id: 1, role: 'Manager' })).toBe(true);
+        expect(isManagerOrAbove({ id: 1, role: 'Owner' })).toBe(true);
+        expect(isManagerOrAbove({ id: 41 })).toBe(true);
+        expect(isManagerOrAbove({ id: 1, role: 'Line Cook', shiftLead: true })).toBe(false);
+        expect(isManagerOrAbove(null)).toBe(false);
     });
 });

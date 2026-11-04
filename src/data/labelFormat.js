@@ -197,11 +197,13 @@ export const DEFAULT_LABEL_FORMAT = Object.freeze({
             showAllergens: false,
             footerText: 'DDMAUSTL.COM',
         },
-        // 2026-11-02 (Andrew): FRIED RICE RICE cooling stickers. Standard
+        // 2026-11-02 (Andrew): FRIED RICE RICE stickers on builds up to
+        // v1.0.500. Newer builds print from riceSticker.js and never read
+        // this, so a format edit can't remove their lines. Standard
         // hour-clock prep label with the health-department wording: the
         // prep stamp reads COOKED (when cooking finished) and the use-by
         // line reads TOSS (4-hour limit; the giant band is the toss time).
-        // The batch # + FRIDGE BY lines ride extraMetaLines (riceLog.js).
+        // The batch # + FRIDGE BY lines ride extraMetaLines.
         rice_batch: {
             preppedLabelTextEn: 'COOKED',
             preppedLabelTextEs: 'COCIDO',

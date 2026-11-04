@@ -24,7 +24,7 @@ import {
     FieldPath,
     getFirestore, connectFirestoreEmulator, doc, collection,
     setDoc, addDoc, updateDoc, deleteDoc, getDoc, serverTimestamp, Timestamp,
-    arrayUnion, increment, getDocs, query, where,
+    arrayUnion, increment, getDocs, query, where, deleteField,
 } from 'firebase/firestore';
 
 const PROJECT = 'dd-mau-staff-app';
@@ -311,6 +311,166 @@ await allow('rice_log: increment sticker count + append entry', () => updateDoc(
 await setDoc(doc(db, 'rice_log', 'rb3'), riceBatch({ batchNo: 3, prints: [{ at: 'a', by: 'p', copies: 1, ok: false }] }));
 await deny('rice_log: wipe print history (open batch)', () => updateDoc(doc(db, 'rice_log', 'rb3'), { prints: [] }));
 await allow('rice_log: open batch outcome keeps history', () => updateDoc(doc(db, 'rice_log', 'rb3'), { status: 'used', usedAt: '2026-11-02T17:00:00.000Z', usedBy: 'Probe Cook' }));
+
+// ── 16b. Rice log v2 (2026-11-03): routes, edits[], soft delete ──────
+// Payload shapes match src/data/riceLog.js buildRiceBatchDoc + the row writes.
+const riceV2 = (over = {}) => riceBatch({
+    schemaVersion: 2, route: 'time_control',
+    madeAt: '2026-11-02T15:00:00.000Z', wokByAt: '2026-11-02T18:45:00.000Z',
+    timeSource: 'now', minutesLate: 0, startTempF: 198, startAttempts: [198], startSetBy: 'rolled',
+    pans: 1, createdMs: 1793000000000,
+    ...over,
+});
+const riceFridge = (over = {}) => riceV2({
+    route: 'cooling', wokByAt: null,
+    seventyByAt: '2026-11-02T17:00:00.000Z', fortyOneByAt: '2026-11-02T21:00:00.000Z', useByDay: '2026-11-03',
+    ...over,
+});
+const riceRef = (id) => doc(db, 'rice_log', id);
+const riceEdit = (field, oldValue, newValue, at = '2026-11-02T16:00:00.000Z') => ({ field, old: oldValue, new: newValue, by: 'Probe Lead', at });
+
+// Create
+await allow('rice_log v2: For Today batch', () => setDoc(riceRef('v1'), riceV2()));
+await allow('rice_log v2: For the Fridge batch', () => setDoc(riceRef('v2'), riceFridge({ batchNo: 2 })));
+await allow('rice_log v2: born tossed, reading stayed low', () => setDoc(riceRef('v3'), riceV2({ batchNo: 3, status: 'tossed', tossedAt: '2026-11-02T15:00:00.000Z', tossedBy: 'Probe Cook', tossReason: 'below_135', startAttempts: [128, 130], startTempF: 130 })));
+await allow('rice_log v2: born tossed, unmarked over 10 minutes', () => setDoc(riceRef('v4'), riceV2({ batchNo: 4, status: 'tossed', tossedAt: '2026-11-02T15:00:00.000Z', tossedBy: 'Probe Cook', tossReason: 'no_sticker', timeUnknown: true, startAttempts: [], startTempF: null })));
+await deny('rice_log v2: born tossed for any other reason', () => setDoc(riceRef('vx1'), riceV2({ status: 'tossed', tossReason: 'leftover' })));
+await deny('rice_log v2: born used', () => setDoc(riceRef('vx2'), riceV2({ status: 'used' })));
+await deny('rice_log v2: wrong schemaVersion', () => setDoc(riceRef('vx3'), riceV2({ schemaVersion: 3 })));
+await deny('rice_log v2: junk route', () => setDoc(riceRef('vx4'), riceV2({ route: 'counter' })));
+await deny('rice_log v2: route with no schemaVersion', () => { const { schemaVersion, ...rest } = riceV2(); return setDoc(riceRef('vx5'), rest); });
+await deny('rice_log v2: forged createdAt', () => setDoc(riceRef('vx6'), riceV2({ createdAt: Timestamp.fromDate(new Date('2026-11-02T15:00:00Z')) })));
+await deny('rice_log v2: made time disagrees with cookedAt', () => setDoc(riceRef('vx7'), riceV2({ madeAt: '2026-11-02T15:30:00.000Z' })));
+await deny('rice_log v2: For Today with no wok-by', () => setDoc(riceRef('vx8'), riceV2({ wokByAt: null })));
+await deny('rice_log v2: For the Fridge with no 41F deadline', () => setDoc(riceRef('vx9'), riceFridge({ fortyOneByAt: null })));
+await deny('rice_log v2: born already deleted', () => setDoc(riceRef('vx10'), riceV2({ deletedAt: 'x', deletedBy: 'x', deleteReason: 'x' })));
+await deny('rice_log v2: born with edits', () => setDoc(riceRef('vx11'), riceV2({ edits: [riceEdit('pans', 1, 2)] })));
+await allow('rice_log v2: open-batch query', () => getDocs(query(collection(db, 'rice_log'), where('location', '==', 'webster'), where('status', 'in', ['cooling', 'fridge']))));
+
+// Identity stays frozen, even with an edits[] entry riding along.
+await deny('rice_log v2: route is immutable', () => updateDoc(riceRef('v1'), { route: 'cooling' }));
+await deny('rice_log v2: route is immutable with an edit', () => updateDoc(riceRef('v1'), { route: 'cooling', edits: arrayUnion(riceEdit('route', 'time_control', 'cooling')) }));
+await deny('rice_log v2: made time is immutable with an edit', () => updateDoc(riceRef('v1'), { madeAt: '2026-11-02T14:00:00.000Z', cookedAt: '2026-11-02T14:00:00.000Z', edits: arrayUnion(riceEdit('madeAt', 'a', 'b')) }));
+await deny('rice_log v2: deadline is immutable with an edit', () => updateDoc(riceRef('v1'), { tossByAt: '2026-11-02T23:00:00.000Z', edits: arrayUnion(riceEdit('tossByAt', 'a', 'b')) }));
+await deny('rice_log v2: cook is immutable with an edit', () => updateDoc(riceRef('v1'), { cookedBy: 'Someone Else', edits: arrayUnion(riceEdit('cookedBy', 'a', 'b')) }));
+await deny('rice_log v2: start attempts are immutable with an edit', () => updateDoc(riceRef('v1'), { startAttempts: [199], edits: arrayUnion(riceEdit('startAttempts', [198], [199])) }));
+await deny('rice_log v2: schemaVersion is immutable', () => updateDoc(riceRef('v1'), { schemaVersion: 1 }));
+await deny('rice_log v2: reading can\'t change without an edit entry', () => updateDoc(riceRef('v1'), { startTempF: 150 }));
+await deny('rice_log v2: pans can\'t change without an edit entry', () => updateDoc(riceRef('v1'), { pans: 3 }));
+
+// Edits
+await allow('rice_log v2: edit reading on an open batch', () => updateDoc(riceRef('v1'), { startTempF: 199, edits: arrayUnion(riceEdit('startTempF', 198, 199)) }));
+await allow('rice_log v2: edit pans and note together', () => updateDoc(riceRef('v1'), { pans: 2, notes: 'two pans', edits: arrayUnion(riceEdit('pans', 1, 2, '2026-11-02T16:01:00.000Z'), riceEdit('notes', '', 'two pans', '2026-11-02T16:01:00.000Z')) }));
+await deny('rice_log v2: edits can\'t be wiped', () => updateDoc(riceRef('v1'), { edits: [] }));
+await deny('rice_log v2: an edit entry can\'t be replaced', () => updateDoc(riceRef('v1'), { edits: [riceEdit('startTempF', 1, 2), riceEdit('pans', 1, 2), riceEdit('notes', '', 'x')] }));
+await deny('rice_log v2: a correction that shrinks edits', () => updateDoc(riceRef('v1'), { startTempF: 180, edits: [riceEdit('startTempF', 180, 180)] }));
+
+// For Today never goes in the fridge, whoever asks.
+await deny('rice_log v2: For Today can\'t go in the fridge', () => updateDoc(riceRef('v1'), { status: 'fridge', fridgedAt: '2026-11-02T16:30:00.000Z', fridgedBy: 'Probe Cook' }));
+await deny('rice_log v2: For Today can\'t be corrected into the fridge', () => updateDoc(riceRef('v1'), { status: 'fridge', edits: arrayUnion(riceEdit('status', 'cooling', 'fridge', '2026-11-02T16:02:00.000Z')) }));
+
+// Closing
+await allow('rice_log v2: closed as "don\'t know"', () => updateDoc(riceRef('v1'), { status: 'unknown', unknownAt: '2026-11-02T20:00:00.000Z', unknownBy: 'Probe Cook', closeAnswer: 'unknown' }));
+await deny('rice_log v2: a closed batch can\'t change without an edit entry', () => updateDoc(riceRef('v1'), { status: 'tossed', tossedAt: '2026-11-02T20:01:00.000Z', tossedBy: 'Probe Cook', tossReason: 'past_4h' }));
+await allow('rice_log v2: a closed batch corrected with an edit entry', () => updateDoc(riceRef('v1'), { status: 'tossed', tossedAt: '2026-11-02T20:02:00.000Z', tossedBy: 'Probe Lead', tossReason: 'past_4h', edits: arrayUnion(riceEdit('status', 'unknown', 'tossed', '2026-11-02T20:02:00.000Z')) }));
+await deny('rice_log v2: nothing goes back to open', () => updateDoc(riceRef('v1'), { status: 'cooling', edits: arrayUnion(riceEdit('status', 'tossed', 'cooling', '2026-11-02T20:03:00.000Z')) }));
+await allow('rice_log v2: late sticker entry on a closed batch', () => updateDoc(riceRef('v1'), { prints: arrayUnion({ at: '2026-11-02T20:04:00.000Z', by: 'Probe Cook', copies: 1, ok: true }), stickerCount: increment(1) }));
+
+// Fridge batch: into the fridge, readings, used or tossed.
+await allow('rice_log v2: reading while it cools', () => updateDoc(riceRef('v2'), { readings: arrayUnion({ tempF: 90, at: '2026-11-02T16:00:00.000Z', enteredAt: '2026-11-02T16:00:05.000Z', by: 'Probe Cook', kind: 'fridge' }) }));
+await allow('rice_log v2: Fridge batch into the fridge with a reading', () => updateDoc(riceRef('v2'), { status: 'fridge', fridgedAt: '2026-11-02T16:50:00.000Z', fridgedBy: 'Probe Cook', fridgeTempF: 68, readings: arrayUnion({ tempF: 68, at: '2026-11-02T16:50:00.000Z', enteredAt: '2026-11-02T16:50:05.000Z', by: 'Probe Cook', kind: 'fridge' }) }));
+await deny('rice_log v2: readings can\'t be wiped', () => updateDoc(riceRef('v2'), { readings: [] }));
+await deny('rice_log v2: into-fridge time can\'t change without an edit', () => updateDoc(riceRef('v2'), { fridgedAt: '2026-11-02T15:30:00.000Z' }));
+await allow('rice_log v2: morning reading', () => updateDoc(riceRef('v2'), { readings: arrayUnion({ tempF: 38, at: '2026-11-03T13:00:00.000Z', enteredAt: '2026-11-03T13:00:05.000Z', by: 'Probe Opener', kind: 'morning' }) }));
+await allow('rice_log v2: Fridge batch marked used', () => updateDoc(riceRef('v2'), { status: 'used', usedAt: '2026-11-03T15:00:00.000Z', usedBy: 'Probe Cook' }));
+await deny('rice_log v2: a used Fridge batch can\'t go back in the fridge', () => updateDoc(riceRef('v2'), { status: 'fridge', edits: arrayUnion(riceEdit('status', 'used', 'fridge')) }));
+await allow('rice_log v2: late reading on a closed batch', () => updateDoc(riceRef('v2'), { readings: arrayUnion({ tempF: 39, at: '2026-11-03T13:30:00.000Z', enteredAt: '2026-11-03T16:00:00.000Z', by: 'Probe Opener', kind: 'fridge' }) }));
+await setDoc(riceRef('v5'), riceFridge({ batchNo: 5 }));
+await updateDoc(riceRef('v5'), { status: 'fridge', fridgedAt: '2026-11-02T16:50:00.000Z', fridgedBy: 'Probe Cook' });
+await allow('rice_log v2: morning reading above 41F logs the toss', () => updateDoc(riceRef('v5'), { status: 'tossed', tossedAt: '2026-11-03T13:01:00.000Z', tossedBy: 'Probe Opener', tossReason: 'morning_above_41', readings: arrayUnion({ tempF: 44, at: '2026-11-03T13:00:00.000Z', enteredAt: '2026-11-03T13:01:00.000Z', by: 'Probe Opener', kind: 'morning' }) }));
+
+// Soft delete
+await setDoc(riceRef('v6'), riceV2({ batchNo: 6 }));
+await deny('rice_log v2: hard delete stays blocked', () => deleteDoc(riceRef('v6')));
+await deny('rice_log v2: soft delete needs a who', () => updateDoc(riceRef('v6'), { deletedAt: '2026-11-02T15:05:00.000Z', deleteReason: 'Printed by mistake' }));
+await deny('rice_log v2: soft delete can\'t change anything else', () => updateDoc(riceRef('v6'), { deletedAt: '2026-11-02T15:05:00.000Z', deletedBy: 'Probe Cook', deleteReason: 'x', status: 'used' }));
+await allow('rice_log v2: soft delete', () => updateDoc(riceRef('v6'), { deletedAt: '2026-11-02T15:05:00.000Z', deletedBy: 'Probe Cook', deleteReason: 'Printed by mistake' }));
+await deny('rice_log v2: a soft delete can\'t be rewritten', () => updateDoc(riceRef('v6'), { deletedBy: 'Someone Else' }));
+await deny('rice_log v2: a soft delete can\'t be undone', () => updateDoc(riceRef('v6'), { deletedAt: deleteField(), deletedBy: deleteField(), deleteReason: deleteField() }));
+await deny('rice_log v2: a soft delete can\'t be undone through an edit', () => updateDoc(riceRef('v6'), { deletedAt: deleteField(), edits: arrayUnion(riceEdit('deletedAt', 'a', null)) }));
+await allow('rice_log v2: a queued sticker entry still lands on a deleted ticket', () => updateDoc(riceRef('v6'), { prints: arrayUnion({ at: '2026-11-02T15:06:00.000Z', by: 'Probe Cook', copies: 1, ok: true }) }));
+await deny('rice_log v2: hard delete blocked on a soft-deleted ticket', () => deleteDoc(riceRef('v6')));
+await allow('rice_log v2: an old row can be soft-deleted', () => updateDoc(riceRef('rb3'), { deletedAt: '2026-11-02T18:00:00.000Z', deletedBy: 'Probe Lead', deleteReason: 'Test ticket' }));
+
+// Builds up to v1.0.500 acting on new rows keep working.
+await setDoc(riceRef('v7'), riceV2({ batchNo: 7 }));
+await allow('rice_log old build: print entry on a v2 row', () => updateDoc(riceRef('v7'), { prints: arrayUnion({ at: '2026-11-02T15:01:00.000Z', by: 'Old Build', copies: 1, ok: true }), stickerCount: 1 }));
+await allow('rice_log old build: closes a v2 row as used', () => updateDoc(riceRef('v7'), { status: 'used', usedAt: '2026-11-02T16:00:00.000Z', usedBy: 'Old Build' }));
+await setDoc(riceRef('v8'), riceV2({ batchNo: 8 }));
+await allow('rice_log old build: voids a v2 row', () => updateDoc(riceRef('v8'), { status: 'void', voidedAt: '2026-11-02T15:05:00.000Z', voidedBy: 'Old Build' }));
+await setDoc(riceRef('v9'), riceV2({ batchNo: 9 }));
+await allow('rice_log old build: tosses a v2 row', () => updateDoc(riceRef('v9'), { status: 'tossed', tossedAt: '2026-11-02T19:05:00.000Z', tossedBy: 'Old Build', tossReason: 'chose_to_toss' }));
+// An old row's 'fridge' stays final, and new status words reach old rows too.
+// A reading below 135F: its own write-once doc, invisible to old builds' lists.
+const riceLow = (over = {}) => ({
+    recordType: 'low_reading', schemaVersion: 2, location: 'webster', readingDay: '2026-11-02',
+    tempF: 128, at: '2026-11-02T15:00:00.000Z', by: 'Probe Cook', setBy: 'rolled', createdAt: serverTimestamp(),
+    ...over,
+});
+await allow('rice_log low reading: logged', () => setDoc(riceRef('l1'), riceLow()));
+await allow('rice_log low reading: listed by store and day', () => getDocs(query(collection(db, 'rice_log'), where('location', '==', 'webster'), where('readingDay', '==', '2026-11-02'))));
+await deny('rice_log low reading: bad store', () => setDoc(riceRef('lx1'), riceLow({ location: 'both' })));
+await deny('rice_log low reading: no temperature', () => setDoc(riceRef('lx2'), riceLow({ tempF: null })));
+await deny('rice_log low reading: forged createdAt', () => setDoc(riceRef('lx3'), riceLow({ createdAt: Timestamp.fromDate(new Date('2026-11-02T15:00:00Z')) })));
+await deny('rice_log low reading: can\'t pose as a batch', () => setDoc(riceRef('lx4'), riceLow({ status: 'cooling' })));
+await deny('rice_log low reading: can\'t land on a day\'s batch list', () => setDoc(riceRef('lx5'), riceLow({ cookDay: '2026-11-02' })));
+await deny('rice_log low reading: can\'t take a batch number', () => setDoc(riceRef('lx6'), riceLow({ batchNo: 1 })));
+await deny('rice_log low reading: never changes', () => updateDoc(riceRef('l1'), { tempF: 142 }));
+await deny('rice_log low reading: can\'t be turned into a batch', () => updateDoc(riceRef('l1'), { status: 'used', edits: arrayUnion(riceEdit('status', 'x', 'used')) }));
+await deny('rice_log low reading: can\'t be soft-deleted', () => updateDoc(riceRef('l1'), { deletedAt: 'x', deletedBy: 'x', deleteReason: 'x' }));
+await deny('rice_log low reading: can\'t be deleted', () => deleteDoc(riceRef('l1')));
+
+// A batch linking back to its low readings; the link is frozen like the rest.
+await allow('rice_log v2: batch with low readings linked', () => setDoc(riceRef('v10'), riceV2({ batchNo: 10, startAttempts: [128, 142], startTempF: 142, lowReadingIds: ['l1'] })));
+await deny('rice_log v2: low-reading link is frozen', () => updateDoc(riceRef('v10'), { lowReadingIds: [] }));
+await deny('rice_log v2: low-reading link is frozen with an edit', () => updateDoc(riceRef('v10'), { lowReadingIds: [], edits: arrayUnion(riceEdit('lowReadingIds', ['l1'], [])) }));
+
+// "It came out": the cook's word goes in the print history, which only grows.
+await allow('rice_log v2: sticker confirmed by the cook', () => updateDoc(riceRef('v10'), { prints: arrayUnion({ at: '2026-11-02T15:02:00.000Z', by: 'Probe Cook', copies: 1, ok: true, seen: true }), stickerCount: increment(1) }));
+
+// edits[] is strictly append-only: order kept, nothing collapsed.
+const e1 = riceEdit('pans', 1, 2, '2026-11-02T16:10:00.000Z');
+const e2 = riceEdit('notes', '', 'x', '2026-11-02T16:11:00.000Z');
+const e3 = riceEdit('notes', 'x', 'y', '2026-11-02T16:12:00.000Z');
+await setDoc(riceRef('v11'), riceV2({ batchNo: 11 }));
+await allow('rice_log v2: first edit', () => updateDoc(riceRef('v11'), { pans: 2, edits: arrayUnion(e1) }));
+await allow('rice_log v2: second edit appends', () => updateDoc(riceRef('v11'), { notes: 'x', edits: arrayUnion(e2) }));
+await deny('rice_log v2: edits can\'t be reordered, even while growing', () => updateDoc(riceRef('v11'), { notes: 'y', edits: [e2, e1, e3] }));
+await deny('rice_log v2: edits can\'t be reordered', () => updateDoc(riceRef('v11'), { edits: [e2, e1] }));
+await deny('rice_log v2: an edit can\'t be dropped while adding two', () => updateDoc(riceRef('v11'), { notes: 'y', edits: [e2, e3, e3] }));
+await allow('rice_log v2: third edit appends', () => updateDoc(riceRef('v11'), { notes: 'y', edits: arrayUnion(e3) }));
+await setDoc(riceRef('v12'), riceV2({ batchNo: 12 }));
+await updateDoc(riceRef('v12'), { pans: 2, edits: [e1, e1] });
+await deny('rice_log v2: duplicate entries can\'t be collapsed', () => updateDoc(riceRef('v12'), { notes: 'x', edits: [e1, e2, e3] }));
+
+// Voiding is the old builds' misprint on an open batch, never a correction.
+await setDoc(riceRef('v13'), riceV2({ batchNo: 13, status: 'tossed', tossedAt: '2026-11-02T15:00:00.000Z', tossedBy: 'Probe Cook', tossReason: 'below_135', startAttempts: [128, 130], startTempF: 130 }));
+await deny('rice_log v2: a tossed batch can\'t be voided through a correction', () => updateDoc(riceRef('v13'), { status: 'void', edits: arrayUnion(riceEdit('status', 'tossed', 'void')) }));
+await setDoc(riceRef('v14'), riceV2({ batchNo: 14 }));
+await deny('rice_log v2: an open batch can\'t be voided through a correction', () => updateDoc(riceRef('v14'), { status: 'void', edits: arrayUnion(riceEdit('status', 'cooling', 'void')) }));
+await allow('rice_log old build: an open batch can still be voided', () => updateDoc(riceRef('v14'), { status: 'void', voidedAt: '2026-11-02T15:05:00.000Z', voidedBy: 'Old Build' }));
+await allow('rice_log v2: a voided row\'s note can still be corrected', () => updateDoc(riceRef('v14'), { notes: 'x', edits: arrayUnion(riceEdit('notes', '', 'x')) }));
+
+// Corrections write these fields.
+await setDoc(riceRef('v15'), riceV2({ batchNo: 15 }));
+await allow('rice_log v2: "saw it gone" through a correction', () => updateDoc(riceRef('v15'), { status: 'used', usedAt: '2026-11-02T20:00:00.000Z', usedBy: 'Probe Lead', closedLate: true, closeAnswer: 'saw_gone', edits: arrayUnion(riceEdit('status', 'cooling', 'saw_gone')) }));
+await allow('rice_log v2: tossed past its 70F time', () => setDoc(riceRef('v16'), riceFridge({ batchNo: 16 })).then(() => updateDoc(riceRef('v16'), { status: 'tossed', tossedAt: '2026-11-02T18:00:00.000Z', tossedBy: 'Probe Cook', tossReason: 'past_70f' })));
+
+await setDoc(riceRef('o1'), riceBatch({ batchNo: 20 }));
+await allow('rice_log old row: still allowed in the fridge', () => updateDoc(riceRef('o1'), { status: 'fridge', fridgedAt: '2026-11-02T16:30:00.000Z', fridgedBy: 'Old Build', fridgeTempF: 68 }));
+await deny('rice_log old row: fridge stays final', () => updateDoc(riceRef('o1'), { status: 'used', usedAt: '2026-11-02T16:40:00.000Z', usedBy: 'Probe Cook' }));
+await setDoc(riceRef('o2'), riceBatch({ batchNo: 21 }));
+await allow('rice_log old row: closed as "don\'t know"', () => updateDoc(riceRef('o2'), { status: 'unknown', unknownAt: '2026-11-02T20:00:00.000Z', unknownBy: 'Probe Cook', closeAnswer: 'unknown' }));
 
 // ── Summary ───────────────────────────────────────────────────────────
 console.log(`\n${pass} passed, ${fail} failed`);

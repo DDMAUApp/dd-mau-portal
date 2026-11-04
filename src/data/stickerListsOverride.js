@@ -94,17 +94,17 @@ export const STICKER_SECTIONS = Object.freeze([
     },
     {
         // 2026-11-02 (Andrew): FRIED RICE RICE — the health department
-        // wants every batch of room-temp-cooled rice logged. Tapping this
-        // sticker opens the Rice Log (RiceLogPanel) instead of the generic
-        // print modal: it logs the batch to /rice_log and prints a COOKED /
-        // FRIDGE BY / TOSS sticker. Routed by KIND, so a renamed row or
-        // reordered section still opens the log.
+        // wants every batch of this rice logged. Tapping this sticker opens
+        // the rice screen (RiceLogPanel) instead of the generic print modal:
+        // it logs the batch to /rice_log and prints a For Today or For the
+        // Fridge sticker. Routed by KIND, so a renamed row or reordered
+        // section still opens it.
         key: 'friedRiceRice',
         kind: 'rice_batch',
         titleEn: '🍚 Fried Rice Rice',
         titleEs: '🍚 Arroz para Arroz Frito',
         defaults: [
-            { nameEn: 'Fried Rice Rice', nameEs: 'Arroz para Arroz Frito', descEn: 'Batch log + cooling sticker', descEs: 'Registro de lote + etiqueta de enfriamiento' },
+            { nameEn: 'Fried Rice Rice', nameEs: 'Arroz para Arroz Frito', descEn: 'Batch log + sticker', descEs: 'Registro de lote + etiqueta' },
         ],
     },
     {

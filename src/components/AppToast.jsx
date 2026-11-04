@@ -26,10 +26,10 @@ export default function AppToast() {
     if (list.length === 0) return null;
     return (
         <div
-            // Higher z-index than the bottom nav (z-30) and the modal overlays
-            // (z-50) so toasts always sit on top, including over the screen-blur
-            // and PIN prompts.
-            className="fixed top-3 left-1/2 -translate-x-1/2 sm:left-auto sm:right-3 sm:translate-x-0 z-[60] flex flex-col gap-2 max-w-[92vw] sm:max-w-sm w-full sm:w-auto pointer-events-none"
+            // Higher z-index than the bottom nav (z-30) and every modal overlay
+            // (the highest is z-[90]) so toasts always sit on top, including over
+            // the screen-blur, the rice screen and PIN prompts.
+            className="fixed top-3 left-1/2 -translate-x-1/2 sm:left-auto sm:right-3 sm:translate-x-0 z-[100] flex flex-col gap-2 max-w-[92vw] sm:max-w-sm w-full sm:w-auto pointer-events-none"
             role="region"
             aria-label="Notifications"
         >

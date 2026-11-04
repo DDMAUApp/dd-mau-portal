@@ -1067,45 +1067,148 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // ── /rice_log — fried-rice rice cooling log (2026-11-02) ───────────
-    // Health-department record: one doc per rice batch (cooked time,
-    // fridge-by + toss deadlines, who cooked it, what happened to it,
-    // every sticker printed). Written by RiceLogPanel (src/data/riceLog.js).
-    //   • create: a fresh 'cooling' batch with its identity fields
-    //   • update: identity (store, day, batch #, cooked time, deadlines,
-    //     cook) is FROZEN; an open batch may record its outcome; a FINISHED
-    //     batch can only gain late sticker-print entries — an outcome
-    //     can't be rewritten after the fact
-    //   • delete: never (mistakes are voided and stay on the log)
+    // ── /rice_log — Fried Rice Rice batches (2026-11-02, rebuilt 2026-11-03) ──
+    // Health-department record: one doc per rice batch (who made it, when,
+    // the reading, its deadlines, how it ended, every sticker printed).
+    // Written by src/data/riceLog.js. schemaVersion 2 rows carry a route:
+    // 'time_control' (For Today) or 'cooling' (For the Fridge). Rows with no
+    // schemaVersion came from builds up to v1.0.500; those builds keep working.
+    //   • create: a fresh open batch. A v2 row may also be born tossed when it
+    //     never got a sticker (below_135, no_sticker), and its createdAt must
+    //     be the real server clock.
+    //   • update: identity (store, day, batch #, made time, route, deadlines,
+    //     cook, the start reading's attempts) is FROZEN, because no list below
+    //     names those fields. Print history, readings and edits[] only grow.
+    //     An open batch may record how it ended. A finished batch's ending or
+    //     reading can change only when an edits[] entry comes with the change.
+    //   • soft delete: deletedAt/deletedBy/deleteReason, set once, never
+    //     changed or removed. The document stays.
+    //   • a reading below 135F (recordType 'low_reading') is its own doc,
+    //     written once and never changed. It has no cookDay or status, so
+    //     builds up to v1.0.500 never list it.
+    //   • delete: never.
+    // These rules can't tell who is writing (the app has no sign-in), so
+    // "shift lead or above" and the 10-minute windows are enforced only by
+    // the app.
+    function riceNewOldBuildOk(d) {
+      return !('schemaVersion' in d)
+        && !('route' in d)
+        && d.status == 'cooling';
+    }
+    function riceNewV2Ok(d) {
+      return d.get('schemaVersion', 0) == 2
+        && d.route in ['time_control', 'cooling']
+        && d.createdAt == request.time
+        && d.madeAt is string
+        && d.madeAt == d.cookedAt
+        && d.startAttempts is list
+        && d.timeSource in ['now', 'picked']
+        && d.minutesLate is int
+        && !('deletedAt' in d)
+        && !('edits' in d)
+        && !('readings' in d)
+        && (d.route == 'time_control'
+          ? d.wokByAt is string
+          : (d.seventyByAt is string && d.fortyOneByAt is string && d.useByDay is string))
+        && (d.status == 'cooling'
+          || (d.status == 'tossed' && d.get('tossReason', '') in ['below_135', 'no_sticker']));
+    }
+    function riceLowReadingOk(d) {
+      return d.get('recordType', '') == 'low_reading'
+        && d.location in ['webster', 'maryland']
+        && d.readingDay is string
+        && d.tempF is number
+        && d.at is string
+        && d.by is string
+        && d.createdAt == request.time
+        && !('status' in d)
+        && !('cookDay' in d)
+        && !('batchNo' in d);
+    }
+    function riceListGrew(field) {
+      return request.resource.data.get(field, []) is list
+        && request.resource.data.get(field, []).hasAll(resource.data.get(field, []));
+    }
+    // Strictly at the end: the entries already there keep their order and
+    // stay whole. The size check comes first because a [0:0] slice is an error.
+    function riceEditsAppended() {
+      let before = resource.data.get('edits', []);
+      let after = request.resource.data.get('edits', []);
+      return after.size() > before.size()
+        && (before.size() == 0 || after[0:before.size()] == before);
+    }
     match /rice_log/{batchId} {
       allow read: if true;
       allow create: if request.resource.data is map
-                    && request.resource.data.location in ['webster', 'maryland']
-                    && request.resource.data.cookDay is string
-                    && request.resource.data.batchNo is int
-                    && request.resource.data.cookedAt is string
-                    && request.resource.data.fridgeByAt is string
-                    && request.resource.data.tossByAt is string
-                    && request.resource.data.cookedBy is string
-                    && request.resource.data.status == 'cooling';
+                    && (riceLowReadingOk(request.resource.data)
+                      || (request.resource.data.location in ['webster', 'maryland']
+                        && request.resource.data.cookDay is string
+                        && request.resource.data.batchNo is int
+                        && request.resource.data.cookedAt is string
+                        && request.resource.data.fridgeByAt is string
+                        && request.resource.data.tossByAt is string
+                        && request.resource.data.cookedBy is string
+                        && (riceNewOldBuildOk(request.resource.data)
+                          || riceNewV2Ok(request.resource.data))));
       allow update: if request.resource.data is map
-                    && request.resource.data.status in ['cooling', 'fridge', 'used', 'tossed', 'void']
-                    // Sticker history only grows: every earlier print entry
-                    // must still be there. (stickerCount is NOT checked: older
-                    // builds write an absolute count from a possibly-stale row,
-                    // and rejecting that would drop the print entry riding in
-                    // the same update. The inspector log counts from prints.)
-                    && request.resource.data.get('prints', []) is list
-                    && request.resource.data.get('prints', []).hasAll(resource.data.get('prints', []))
+                    && resource.data.get('recordType', '') != 'low_reading'
+                    && request.resource.data.status in ['cooling', 'fridge', 'used', 'tossed', 'void', 'unknown']
+                    // Histories only grow: every earlier entry must still be
+                    // there. (stickerCount is NOT checked: older builds write
+                    // an absolute count from a possibly-stale row, and
+                    // rejecting that would drop the print entry riding in the
+                    // same update. The log counts from prints.)
+                    && riceListGrew('prints')
+                    && riceListGrew('edits')
+                    && riceListGrew('readings')
+                    // No status goes back to open. Only an open batch goes in
+                    // the fridge, and For Today rice never does.
+                    && (request.resource.data.status != 'cooling' || resource.data.status == 'cooling')
+                    && (request.resource.data.status != 'fridge'
+                      || (resource.data.status in ['cooling', 'fridge']
+                        && resource.data.get('route', '') != 'time_control'))
                     && (
+                      // An open batch records how it ended.
                       (resource.data.status == 'cooling'
                         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                          'status', 'prints', 'stickerCount', 'notes',
+                          'status', 'prints', 'stickerCount', 'notes', 'readings',
                           'usedAt', 'usedBy',
                           'fridgedAt', 'fridgedBy', 'fridgeTempF',
                           'tossedAt', 'tossedBy', 'tossReason',
+                          'unknownAt', 'unknownBy', 'closedLate', 'closeAnswer',
                           'voidedAt', 'voidedBy']))
-                      || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['prints', 'stickerCount'])
+                      // A Fridge batch in the walk-in is still open. An old
+                      // row's 'fridge' stays final.
+                      || (resource.data.status == 'fridge'
+                        && resource.data.get('route', '') == 'cooling'
+                        && request.resource.data.status in ['fridge', 'used', 'tossed', 'unknown']
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                          'status', 'prints', 'stickerCount', 'readings',
+                          'usedAt', 'usedBy',
+                          'tossedAt', 'tossedBy', 'tossReason',
+                          'unknownAt', 'unknownBy', 'closeAnswer']))
+                      // Any row may gain stickers and readings (an offline one
+                      // can arrive after another device closed the batch).
+                      || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['prints', 'stickerCount', 'readings'])
+                      // A correction: only with an edits[] entry riding along,
+                      // added after the ones already there, which stay exactly
+                      // as they were. Voiding is the old builds' misprint on an
+                      // open batch (above), never a correction, or it would be a
+                      // way around the soft-delete record.
+                      || (riceEditsAppended()
+                        && (request.resource.data.status != 'void' || resource.data.status == 'void')
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                          'edits', 'startTempF', 'pans', 'notes', 'status',
+                          'usedAt', 'usedBy',
+                          'fridgedAt', 'fridgedBy', 'fridgeTempF',
+                          'tossedAt', 'tossedBy', 'tossReason',
+                          'unknownAt', 'unknownBy', 'closedLate', 'closeAnswer']))
+                      // Printed by mistake: soft delete, once.
+                      || (!('deletedAt' in resource.data)
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedAt', 'deletedBy', 'deleteReason'])
+                        && request.resource.data.deletedAt is string
+                        && request.resource.data.deletedBy is string
+                        && request.resource.data.deleteReason is string)
                     );
       allow delete: if false;
     }

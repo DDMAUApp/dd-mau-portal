@@ -69,6 +69,7 @@ const LaborDashboard = lazy(() => import('./components/LaborDashboard').then(m =
 const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard').then(m => ({ default: memo(m.default) })));
 const MoneyCount = lazy(() => import('./components/MoneyCount').then(m => ({ default: memo(m.default) })));
 const HealthDepartment = lazy(() => import('./components/HealthDepartment').then(m => ({ default: memo(m.default) })));
+const RiceLogTab = lazy(() => import('./components/RiceLogTab').then(m => ({ default: memo(m.default) })));
 // 2026-06-01 — Needs Board. Admin/manager-only board for one-off
 // supply requests that don't belong in inventory (brooms, pans,
 // stickers, etc.). Each entry has urgency + timestamp + staff name.
@@ -2618,6 +2619,8 @@ export default function App() {
             if (activeTab === 'eighty6' && canSeePage(currentStaffRecord, 'eighty6')) return <PageErrorBoundary tabName="86 Board" language={language}><Eighty6Dashboard language={language} storeLocation={effectiveLocation} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} /></PageErrorBoundary>;
             if (activeTab === 'moneycount' && canMoney) return <PageErrorBoundary tabName="Money Count" language={language}><MoneyCount language={language} storeLocation={effectiveLocation} staffName={staffName} staffList={staffList} staffId={currentStaffRecord?.id} /></PageErrorBoundary>;
             if (activeTab === 'healthdept') return <PageErrorBoundary tabName="Health Department" language={language}><HealthDepartment language={language} staffName={staffName} staffList={staffList} /></PageErrorBoundary>;
+            // Rice Log (2026-11-03) — all staff. Any store device can pull up any day.
+            if (activeTab === 'ricelog') return <PageErrorBoundary tabName="Rice Log" language={language}><RiceLogTab language={language} staffName={staffName} staffList={staffList} location={effectiveLocation} /></PageErrorBoundary>;
             // 2026-06-01 — Needs Board. Admin + manager only. Same pool that
             // sees Operations + AdminPanel — staff cannot reach this tab.
             if (activeTab === 'needs' && (staffIsAdmin || isManager)) return <PageErrorBoundary tabName="Needs Board" language={language}><NeedsBoard language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;

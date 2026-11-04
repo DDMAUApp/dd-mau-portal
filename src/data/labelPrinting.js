@@ -72,6 +72,7 @@ import { getLabelFormat, getLabelFormatFast } from './labelFormat';
 // still work. See src/data/printBridge.js + /pi5-print-bridge/.
 import { tryPrintViaBridge, payloadToBridgeFormat } from './printBridge';
 import { printBrotherDirect, warmBrotherDirect } from './brotherIpp';
+import { riceStickerBrotherLines } from './riceSticker';
 
 // ── Public types ──────────────────────────────────────────────
 // PrinterConfig shape — see header. Defaults applied at print time
@@ -2535,6 +2536,146 @@ export async function printRecipeIngredients({
     } catch (e) {
         console.warn('printRecipeIngredients failed:', e);
         return { ok: false, error: e?.message || 'print_failed' };
+    }
+}
+
+// ── Fried Rice Rice batch stickers (2026-11-03) ─────────────────────
+// Rows come from riceSticker.js, not the Label Format. Follows the
+// printRecipeIngredients path, with two differences that matter here:
+//   • a left margin. Many rice lines are exactly 21 columns, so the store's
+//     saved offset is capped to what the 40 mm roll has spare (about 3.5 mm)
+//     or those lines would wrap.
+//   • a timeout stays a timeout. A timed-out job often DID print, so the
+//     screen has to say "check whether a sticker came out", not "check the
+//     paper". Nothing here ever re-sends a job.
+const RICE_40MM_SLACK_DOTS = 28;
+export function riceStickerLeftDots(printer) {
+    const dots = Math.max(0, Math.min(160, Math.round((Number(printer?.leftOffsetMm) || 0) * 8)));
+    return paperColumns(printer?.paperWidthMm) <= 21 ? Math.min(dots, RICE_40MM_SLACK_DOTS) : dots;
+}
+
+function renderRiceStickerBody(rows, leftDots) {
+    const out = [];
+    const lm = eposLeftMarginCmd(leftDots);
+    if (lm) out.push(lm);
+    // Every row is already padded to its full width, so centering each one
+    // keeps the block square on any roll wider than 40 mm.
+    out.push(`<text align="center"/>`);
+    for (const r of rows) {
+        out.push(`<text reverse="${r.reverse ? 'true' : 'false'}"/><text em="${r.bold ? 'true' : 'false'}"/>`);
+        out.push(`<text width="${r.width}" height="${r.height}"/>`);
+        out.push(`<text>${escapeXml(r.text)}&#10;</text>`);
+    }
+    out.push(`<text reverse="false"/><text em="false"/><text width="1" height="1"/>`);
+    out.push(`<feed line="1"/>`);
+    out.push(`<cut type="feed"/>`);
+    return out.join('');
+}
+
+export function renderRiceStickerXml(rows, { copies = 1, leftDots = 0 } = {}) {
+    const body = renderRiceStickerBody(rows, leftDots);
+    return wrapSoapEnvelope(Array.from({ length: copies }, () => body).join(''));
+}
+
+// iOS reports a job POST that ran out of time as its own native message, not
+// as 'printer timeout'. Same meaning to the cook, so it gets the same code.
+export function printErrorCode(e) {
+    const msg = String(e?.message || e || '');
+    if (e?.name === 'AbortError' || /time[d\s-]*out/i.test(msg)) return 'printer timeout';
+    return msg || 'print_failed';
+}
+
+export async function printRiceLabel({
+    location, slot = DEFAULT_PRINTER_SLOT, rows = [], copies = 1, byName, title = 'Fried Rice Rice',
+}) {
+    if (TEST_MODE) return testModePrintSkipped();
+    try {
+        if (!rows.length) return { ok: false, error: 'empty_text' };
+        const printer = await getPrinterConfigFast(location, slot);
+        if (!printer) return { ok: false, error: 'no_printer_configured' };
+        if (printer.enabled === false) return { ok: false, error: 'printer_disabled' };
+        const type = printer.type || DEFAULT_PRINTER_TYPE;
+        const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
+        const audit = (printerOk, transport) => recordAudit({
+            action: 'print.rice_sticker',
+            actorName: byName || 'unknown',
+            targetType: 'rice_batch',
+            targetId: String(title).slice(0, 80),
+            details: { location, slot, copies: c, printerOk, transport },
+        });
+
+        // A store set up with a Brother and no Epson prints there: direct IPP
+        // with the same rows, labeled, never padded. Each copy is its own job
+        // and is sent once.
+        if ((type === PRINTER_TYPES.BROTHER_QL || !printer.ip) && printer.brotherIp) {
+            return await serializePrint(async () => {
+                const startedAt = Date.now();
+                const r = await printBrotherDirect({
+                    ip: printer.brotherIp,
+                    lines: riceStickerBrotherLines(rows),
+                    // '' (not undefined) or the canvas prints its 'DD Mau' default.
+                    footer: '',
+                    copies: c,
+                    rightShift: printer.brotherRightShift,
+                    jobName: String(title).slice(0, 40),
+                });
+                const res = r.ok ? { ok: true, status: r.status || 200, via: 'brother_ipp' } : { ok: false, status: r.status || 0, error: r.error, detail: r.message };
+                logBrotherDirectAttempt({
+                    printer,
+                    meta: { kind: 'label', source: 'ricelog', title: String(title).slice(0, 80), byName, copies: c, location, slot },
+                    res, durationMs: Date.now() - startedAt,
+                });
+                audit(res.ok, 'brother_ipp_direct');
+                if (res.ok) return { ok: true };
+                return {
+                    ok: false,
+                    error: res.error === 'printer timeout' ? 'printer timeout' : (res.error || 'printer_rejected'),
+                    // Each copy is its own job, so a later copy failing means
+                    // the earlier ones came out.
+                    ...(r.copyFailed > 1 ? { copyFailed: r.copyFailed } : {}),
+                };
+            });
+        }
+        // Legacy Brother slot with no IP: free-text path, which serializes
+        // itself (wrapping it here would deadlock the chain).
+        if (type === PRINTER_TYPES.BROTHER_QL) {
+            return await printFreeText({
+                location, slot,
+                text: riceStickerBrotherLines(rows).map((l) => l.text).join('\n'),
+                size: 'small', bold: false, align: 'center',
+                copies: c, byName,
+            });
+        }
+        if (!printer.ip) return { ok: false, error: 'no_printer_configured' };
+
+        return await serializePrint(async () => {
+            const xml = renderRiceStickerXml(rows, { copies: c, leftDots: riceStickerLeftDots(printer) });
+            let res;
+            try {
+                res = await sendToPrinter(printer, xml, {
+                    kind: 'label', source: 'ricelog', title: String(title).slice(0, 80), byName, copies: c,
+                });
+            } catch (e) {
+                // In the app the probe has already passed by the time the job
+                // POST can throw, so the job may have reached the printer ('The
+                // network connection was lost.'). postIpp reads the Brother the
+                // same way. A reply from the printer is still a real answer.
+                if (Capacitor.isNativePlatform() && !/^printer responded/.test(String(e?.message))) {
+                    audit(false, 'epson_epos');
+                    return { ok: false, error: 'printer timeout' };
+                }
+                throw e;
+            }
+            audit(res.ok, 'epson_epos');
+            if (res.ok) return { ok: true };
+            // The printer can report its own timeout in a 200 reply. Nobody knows
+            // whether that job printed, so the cook is told to check, not to
+            // look at the paper. This path only: sendToPrinter stays as it is.
+            return { ok: false, error: /\bcode\s*=\s*"[^"]*time\s*out[^"]*"/i.test(res.responseXml || '') ? 'printer timeout' : 'printer_rejected' };
+        });
+    } catch (e) {
+        console.warn('printRiceLabel failed:', e);
+        return { ok: false, error: printErrorCode(e) };
     }
 }
 

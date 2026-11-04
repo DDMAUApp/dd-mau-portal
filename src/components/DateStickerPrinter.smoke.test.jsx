@@ -83,7 +83,7 @@ describe('DateStickerPrinter smoke', () => {
         expect(screen.getByText('RECEIVED')).toBeInTheDocument();
     });
 
-    it('a tap on the 🍚 Fried Rice Rice sticker opens the rice log', async () => {
+    it('a tap on the 🍚 Fried Rice Rice sticker opens the rice screen', async () => {
         render(
             <DateStickerPrinter
                 language="en"
@@ -95,7 +95,25 @@ describe('DateStickerPrinter smoke', () => {
         await act(async () => {
             screen.getByText('Fried Rice Rice').closest('button').click();
         });
-        expect(await screen.findByText('Fried Rice Rice Log')).toBeInTheDocument();
+        expect(await screen.findByRole('spinbutton', { name: /Rice temperature/ })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^For Today/ })).toBeInTheDocument();
+    });
+
+    it('the page\'s Rice log button opens the log, on the same screen as the tab', async () => {
+        render(
+            <DateStickerPrinter
+                language="en"
+                staffName="Andrew Shih"
+                storeLocation="webster"
+                staffList={[{ id: 1, name: 'Andrew Shih', role: 'Owner' }]}
+            />,
+        );
+        await act(async () => {
+            screen.getByText(/Rice log/).closest('button').click();
+        });
+        expect(await screen.findByTestId('rice-connection')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Webster Groves' })).toBeInTheDocument();
+        expect(screen.queryByRole('spinbutton')).toBe(null);
     });
 
     it('renders on "both" location (admin) without crashing', () => {

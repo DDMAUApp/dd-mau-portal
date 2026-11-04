@@ -215,6 +215,20 @@ export function canCountMoney(staff) {
   return isAdminId(staff.id) || isManagerRoleTitle(staff.role) || staff.shiftLead === true;
 }
 
+// Rice Log corrections (2026-11-03): deleting or editing a ticket after its
+// first 10 minutes takes a shift lead, manager or owner. Firestore rules can't
+// check who someone is, so this app-side check is the whole gate.
+export function isShiftLeadOrAbove(staff) {
+  if (!staff) return false;
+  const role = (staff.role || "").trim().toLowerCase();
+  return isAdminId(staff.id) || isManagerRoleTitle(staff.role) || role === 'owner' || role === 'shift lead' || staff.shiftLead === true;
+}
+
+export function isManagerOrAbove(staff) {
+  if (!staff) return false;
+  return isAdminId(staff.id) || isManagerRoleTitle(staff.role) || (staff.role || "").trim().toLowerCase() === 'owner';
+}
+
 // Health Department MANAGE access (Andrew 2026-07-12). Every staff
 // member can open the Health Department tab and complete their OWN
 // records; this gates the roster view (all staff's shot dates + signed

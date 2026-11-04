@@ -172,7 +172,7 @@ export async function patchStaffRecordByName(name, patch) {
 // Pick a PIN for a new/restored record: keep `preferred` if it's a
 // valid 4-digit PIN nobody on the list holds, else generate a random
 // unused one.
-function assignPin(list, preferred) {
+export function assignPin(list, preferred) {
     const used = new Set(list.map(s => String(s?.pin ?? '').trim()));
     const pref = String(preferred ?? '').trim();
     if (/^\d{4}$/.test(pref) && !used.has(pref)) return { pin: pref, changed: false };

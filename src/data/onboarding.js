@@ -684,3 +684,12 @@ export function hireProgressCounts(hire) {
     });
     return counts;
 }
+
+// A new hire's starting PIN: the last 4 digits of their phone (Andrew
+// 2026-11-03). Null when there's no real phone number to take them from, so
+// the caller falls back to a random PIN. Uniqueness is NOT checked here: PINs
+// log people in, so appendStaffRecord checks the live roster.
+export function pinFromPhone(phone) {
+    const digits = String(phone ?? '').replace(/\D/g, '');
+    return digits.length >= 7 ? digits.slice(-4) : null;
+}

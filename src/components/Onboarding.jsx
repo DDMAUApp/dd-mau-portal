@@ -49,6 +49,7 @@ import {
     docsForHire, isHireMinor, deriveHireStatus, hireProgressCounts,
     docDeadlineState, effectiveDocDescription, effectiveDaysFromHire,
     partitionTemplateFiles,
+    pinFromPhone,
 } from '../data/onboarding';
 import {
     POSITIONS, LOCATIONS, DESIRED_HOURS,
@@ -791,10 +792,12 @@ function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templ
     const offerLetterInFlow = docs.some(d => d.id === 'offer_letter');
 
     // ── Add this hire to the STAFF roster (Andrew 2026-07-11) ─────────
-    // One tap creates their staff record (next id, random unused PIN,
-    // position-template defaults, phone carried over) so the admin can
-    // finish permissions + set a real PIN on the Staff page. Race-safe:
-    // appendStaffRecord transacts against the live roster and bumps rev.
+    // One tap creates their staff record (next id, PIN = last 4 of their
+    // phone, position-template defaults, phone carried over) so the admin
+    // can finish permissions on the Staff page. PINs log people in, so they
+    // must be unique: if someone already holds those 4 digits, or there's no
+    // usable phone, appendStaffRecord assigns a random unused PIN instead.
+    // Race-safe: it transacts against the live roster and bumps rev.
     const [addingStaff, setAddingStaff] = useState(false);
 
     // Does a staff record for this hire ACTUALLY still exist on the live
@@ -826,8 +829,10 @@ function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templ
             const template = getPositionTemplate(role) || {};
             const location = hire.location || 'webster';
             const phoneE164 = normalizeToE164(hire.phone);
+            const phonePin = pinFromPhone(phoneE164 || hire.phone);
             const res = await appendStaffRecord({
                 name,
+                preferredPin: phonePin,
                 record: {
                     ...template,
                     role,
@@ -858,10 +863,23 @@ function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templ
                 });
             } catch {}
             onWriteAudit('hire_added_to_staff', { hireId: hire.id, hireName: name, staffId: res.id });
-            toast(tx(
-                `${name} added to Staff — temporary PIN: ${res.pin}. Set their permissions + PIN in Admin → Staff.`,
-                `${name} agregado al personal — PIN temporal: ${res.pin}. Ajusta permisos y PIN en Admin → Personal.`,
-            ), { kind: 'success', duration: 12000 });
+            toast(
+                phonePin && !res.pinChanged
+                    ? tx(
+                        `${name} added to Staff — PIN: ${res.pin} (last 4 of their phone). Set their permissions in Admin → Staff.`,
+                        `${name} agregado al personal — PIN: ${res.pin} (últimos 4 de su teléfono). Ajusta permisos en Admin → Personal.`,
+                    )
+                    : phonePin
+                        ? tx(
+                            `${name} added to Staff — someone else already has those phone digits as a PIN, so their PIN is ${res.pin}. Set their permissions in Admin → Staff.`,
+                            `${name} agregado al personal — otra persona ya usa esos dígitos del teléfono como PIN, así que su PIN es ${res.pin}. Ajusta permisos en Admin → Personal.`,
+                        )
+                        : tx(
+                            `${name} added to Staff — no usable phone on file, so their temporary PIN is ${res.pin}. Set their permissions + PIN in Admin → Staff.`,
+                            `${name} agregado al personal — no hay un teléfono válido, así que su PIN temporal es ${res.pin}. Ajusta permisos y PIN en Admin → Personal.`,
+                        ),
+                { kind: 'success', duration: 12000 },
+            );
             // Health Dept backfill (2026-08-11): if the Hep A card was already
             // APPROVED before this hire had a staff record, the approval-time
             // sync had no id to write to — do it now that one exists.

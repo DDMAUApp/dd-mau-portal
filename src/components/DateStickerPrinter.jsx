@@ -551,8 +551,9 @@ export default function DateStickerPrinter({
     const [shelfMatrixOpen, setShelfMatrixOpen] = useState(false);
     // Expiring-soon panel (2026-07-26 feature #7) — open to all staff.
     const [expiringOpen, setExpiringOpen] = useState(false);
-    // 🍚 Fried-rice rice cooling log (2026-11-02) — open to all staff.
-    const [riceLogOpen, setRiceLogOpen] = useState(false);
+    // 🍚 Fried Rice Rice screen (2026-11-02) — open to all staff. Which view
+    // it opens on: 'start' from the sticker, 'log' from the Rice log button.
+    const [riceView, setRiceView] = useState(null);
 
     // Handler: take a component (from the build), synthesize a
     // recipe-shaped object, and hand to PrintLabelModal in editable
@@ -565,9 +566,9 @@ export default function DateStickerPrinter({
     openBuildRef.current = openBuild;
     const handlePrintComponent = useCallback((component, menuItem) => {
         if (component.kind === 'note') return;
-        // Rice batches are logged, not just stickered — the Rice Log prints
-        // the batch sticker itself (COOKED / FRIDGE BY / TOSS).
-        if (component.kind === 'rice_batch') { setRiceLogOpen(true); return; }
+        // Rice batches are logged, not just stickered — the rice screen
+        // prints the batch sticker itself (For Today or For the Fridge).
+        if (component.kind === 'rice_batch') { setRiceView('start'); return; }
         const allergenStr = component.allergens || menuItem?.allergens || '';
         const allergens = parseAllergenString(allergenStr);
         // Pull shelf-life from open build (custom items + overrides
@@ -681,7 +682,7 @@ export default function DateStickerPrinter({
                     </button>
                     <button
                         type="button"
-                        onClick={() => setRiceLogOpen(true)}
+                        onClick={() => setRiceView('log')}
                         className="flex-shrink-0 px-3 py-2 rounded-xl bg-sky-100 border border-sky-300 text-sky-900 text-xs font-black active:scale-95">
                         🍚 {tx('Rice log', 'Arroz')}
                     </button>
@@ -1104,13 +1105,15 @@ export default function DateStickerPrinter({
                 />
             )}
 
-            {riceLogOpen && (
+            {riceView && (
                 <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
                     <RiceLogPanel
                         location={printLoc}
                         staffName={staffName}
+                        staffList={staffList}
                         language={language}
-                        onClose={() => setRiceLogOpen(false)}
+                        initialView={riceView}
+                        onClose={() => setRiceView(null)}
                     />
                 </Suspense>
             )}

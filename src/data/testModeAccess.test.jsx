@@ -101,6 +101,8 @@ describe('boot order', () => {
         expect(calls.indexOf('localWrite:config/staff')).toBeGreaterThan(offline);
         expect(calls.indexOf('GATE')).toBeGreaterThan(offline);
         expect(calls).toContain('read:shifts');
+        // Rice log rows come along whole, new fields included.
+        expect(calls).toContain('read:rice_log');
         expect(calls).toContain('get:config/recipes');
         const bryan = calls.patched.list.find((s) => s.name === 'Bryan Test');
         expect(bryan).toMatchObject({ canViewOnboarding: true, opsAccess: true, canEditScheduleFOH: true, hiddenPages: [] });
@@ -162,6 +164,7 @@ describe('printing', () => {
         expect(await lp.printFreeText({ location: 'webster', lines: ['x'] })).toMatchObject({ ok: true, testMode: true });
         expect(await lp.testPrint({ location: 'webster' })).toMatchObject({ ok: true, testMode: true });
         expect(await lp.printRecipeIngredients({ location: 'webster', title: 'x' })).toMatchObject({ ok: true, testMode: true });
+        expect(await lp.printRiceLabel({ location: 'webster', rows: [{ text: 'x', width: 1, height: 1 }] })).toMatchObject({ ok: true, testMode: true });
         expect(await lp.sendToPrinter({ ip: '10.0.0.9' }, '<xml/>')).toMatchObject({ ok: true, testMode: true });
         const { printBrotherDirect } = await import('./brotherIpp');
         expect(await printBrotherDirect({ ip: '10.0.0.8', lines: [] })).toMatchObject({ ok: true, testMode: true });
