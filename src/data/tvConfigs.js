@@ -29,6 +29,8 @@
 //   imageUrls:        string[]?         // Firebase Storage URLs, one per page
 //   imageRotateSeconds: number?         // if multiple pages, rotate every N sec
 //   imageHitZones:    HitZone[]?        // SOLD OUT overlay regions; see below
+//   imageBackground:  { kind: 'black'|'color'|'fall'|'snow'|'sky', color?, motion? }?
+//                                       // around the picture; absent = black. See tvBackgrounds.js
 //
 //   // 2026-05-20 — Andrew Wave 1 of "match the SaaS leaders". Auto-
 //   // switch the displayed menu by time of day. Every "real" digital
@@ -448,9 +450,38 @@ function stableJson(v) {
     if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`;
     return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(',')}}`;
 }
+//
+// imageUrls and imageLayers are one thing, index-aligned, so they can't merge
+// field by field (2026-11-04, webster-photos v62: an editor opened on v60 saved
+// over v61, re-baked its old picture 1 and silently replaced Potstickers; the
+// merge kept the server's layers and took the editor's URLs). When this editor
+// and someone else BOTH changed the pictures, there's no safe merge: refuse,
+// inside the transaction, before anything commits. When only someone else did,
+// the whole pair comes from the server.
+const PICTURE_FIELDS = ['imageUrls', 'imageLayers'];
+// For comparing only. Missing, null and [] all mean "no pictures", and a recipe
+// list padded with trailing nulls means the same as a shorter one; the editor
+// sends [] for docs that never had imageLayers, which isn't a change.
+function pictureJson(doc, k) {
+    const list = Array.isArray(doc?.[k]) ? [...doc[k]] : [];
+    if (k === 'imageLayers') while (list.length && list[list.length - 1] == null) list.pop();
+    return stableJson(list);
+}
+const picturesDiffer = (a, b, keys = PICTURE_FIELDS) => keys.some(k => pictureJson(a, k) !== pictureJson(b, k));
+
 export function mergeTvLiveSave(payload, base, prev) {
     const next = { ...(payload || {}) };
     const kept = [];
+    const hasBoth = !!base && typeof base === 'object' && !!prev && typeof prev === 'object';
+    const carried = PICTURE_FIELDS.filter(k => k in next);
+    const editorChanged = hasBoth && picturesDiffer(next, base, carried);
+    const serverChanged = hasBoth && picturesDiffer(prev, base);
+    // next == prev is the same save arriving twice, not a conflict.
+    if (editorChanged && serverChanged && picturesDiffer(next, prev, carried)) {
+        const e = new Error('This screen changed since you opened it. Close and reopen it, then redo your change.');
+        e.code = 'tv/stale-editor';
+        throw e;
+    }
     if (prev && typeof prev === 'object') {
         for (const k of Object.keys(prev)) {
             if (META_KEYS.has(k)) continue;
@@ -460,6 +491,16 @@ export function mergeTvLiveSave(payload, base, prev) {
                 && stableJson(prev[k]) !== stableJson(base[k])) {
                 next[k] = prev[k];
                 kept.push(k);
+            }
+        }
+    }
+    if (serverChanged && !editorChanged) {
+        for (const k of PICTURE_FIELDS) {
+            if (k in prev) {
+                if (stableJson(next[k]) !== stableJson(prev[k]) && !kept.includes(k)) kept.push(k);
+                next[k] = prev[k];
+            } else {
+                delete next[k];     // never hand Firestore an undefined
             }
         }
     }
@@ -771,6 +812,11 @@ export async function rollbackTvConfig({ tvId, versionId, byName }) {
         delete restore.supersededBy;
         delete restore.reason;
         delete restore.rolledBackTo;
+        // Rollback only: the merge below keeps any key the version lacks, and a
+        // version saved while the TV was on black has no imageBackground. Without
+        // this the pictures would revert and the background wouldn't. Live saves
+        // still rely on omission meaning "keep".
+        if (!('imageBackground' in restore)) restore.imageBackground = null;
         // 2026-09-28: no deleteField() in a non-merge set (Firestore rejects
         // it — rollback always failed); the full set drops the draft fields.
         const live = rootSnap.exists() ? stripDraftLayer(rootSnap.data()) : null;

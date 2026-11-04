@@ -7,6 +7,8 @@
 
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { TV_TRANSITIONS } from '../data/tvTransitions';
+import { TV_BACKGROUNDS, DEFAULT_BG_COLOR, bgSupportsMotion, normalizeImageBackground, imageBackgroundForSave } from '../data/tvBackgrounds';
+import TvBackgroundLayer from './TvBackgroundLayer';
 import { asPreviewUrl } from '../data/tvHeartbeatGate';
 import { MENU_DATA as LEGACY_MENU_DATA } from '../data/menu';
 import { useMenuConfigLegacy } from '../data/menuConfig';
@@ -422,6 +424,12 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     // for edge cases (uploaded an already-cropped image, want
     // edge-to-edge guarantee, etc.).
     const [imageFit, setImageFit] = useState(initial?.imageFit === 'cover' ? 'cover' : 'contain');
+    // What shows around the picture (tv_config.imageBackground). The three parts
+    // are separate so flipping between kinds doesn't lose the color or the motion
+    // choice; imageBackgroundForSave assembles and cleans them.
+    const [bgKind, setBgKind] = useState(() => normalizeImageBackground(initial?.imageBackground).kind);
+    const [bgColor, setBgColor] = useState(() => normalizeImageBackground(initial?.imageBackground).color || DEFAULT_BG_COLOR);
+    const [bgMotion, setBgMotion] = useState(() => normalizeImageBackground(initial?.imageBackground).motion === true);
     const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
     // Per-picture edit recipes (crop / adjust / text / starburst), index-aligned
     // with imageUrls. Each entry is { originalUrl, crop, adjust, texts[], bursts[] } | null.
@@ -746,7 +754,19 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.dayparts = null;
                 payload.split = null;
             }
+            // Only image-mode TVs have one; other modes clear it. Left out of the
+            // payload when there's nothing to change (see imageBackgroundForSave).
+            const bgField = imageBackgroundForSave(
+                mode === MODES.IMAGE ? { kind: bgKind, color: bgColor, motion: bgMotion } : null,
+                initial?.imageBackground,
+            );
+            if (bgField !== undefined) payload.imageBackground = bgField;
             if (asDraft) {
+                // A draft replaces the whole earlier draft and has no merge, so it
+                // always states the choice. Otherwise picking Black in a second
+                // draft couldn't undo a background picked in the first.
+                const pickedBg = normalizeImageBackground(mode === MODES.IMAGE ? { kind: bgKind, color: bgColor, motion: bgMotion } : null);
+                payload.imageBackground = pickedBg.kind === 'black' ? null : pickedBg;
                 await saveTvConfigDraft({ tvId: finalId, payload, byName });
                 toast(tx('✓ Draft saved — click Publish on the card to push live', '✓ Borrador guardado — toca Publicar para enviar en vivo'), { kind: 'success' });
             } else {
@@ -761,7 +781,9 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             onClose();
         } catch (e) {
             console.warn('saveTvConfig failed:', e);
-            toast(tx('Save failed: ', 'Error al guardar: ') + (e?.message || ''), { kind: 'error' });
+            toast(e?.code === 'tv/stale-editor'
+                ? tx('This screen changed since you opened it. Close and reopen it, then redo your change.', 'Esta pantalla cambió desde que la abriste. Ciérrala y ábrela de nuevo, y repite tu cambio.')
+                : tx('Save failed: ', 'Error al guardar: ') + (e?.message || ''), { kind: 'error' });
         } finally {
             setSaving(false);
         }
@@ -1304,6 +1326,46 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                         </div>
                                     </>
                                 )}
+
+                                {/* Background around the picture. Shown for a single picture too. */}
+                                <div className="pt-1.5">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-1">
+                                        {tx('Background', 'Fondo')}
+                                    </span>
+                                    <div className="grid grid-cols-5 gap-1.5">
+                                        {TV_BACKGROUNDS.map(opt => (
+                                            <button key={opt.id} type="button"
+                                                onClick={() => setBgKind(opt.id)}
+                                                aria-pressed={bgKind === opt.id}
+                                                className={`rounded-lg overflow-hidden border-2 bg-white text-left transition ${
+                                                    bgKind === opt.id ? 'border-sky-600 ring-1 ring-sky-600' : 'border-sky-200 hover:border-sky-400'
+                                                }`}>
+                                                <span className="relative block w-full h-10 overflow-hidden bg-stone-900">
+                                                    <TvBackgroundLayer kind={opt.id} color={bgColor} />
+                                                </span>
+                                                <span className="block px-1 py-0.5 text-[10px] font-bold text-sky-900 leading-tight truncate">
+                                                    {tx(opt.en, opt.es)}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {bgKind === 'color' && (
+                                        <label className="mt-1.5 flex items-center gap-2 text-[11px] font-bold text-sky-900">
+                                            <input type="color" value={bgColor}
+                                                onChange={(e) => setBgColor(e.target.value)}
+                                                className="w-10 h-8 p-0 rounded border border-sky-300 bg-white cursor-pointer" />
+                                            {tx('Pick a color', 'Elige un color')}
+                                        </label>
+                                    )}
+                                    {bgSupportsMotion(bgKind) && (
+                                        <label className="mt-1.5 flex items-center gap-2 text-[11px] font-bold text-sky-900 cursor-pointer">
+                                            <input type="checkbox" checked={bgMotion}
+                                                onChange={(e) => setBgMotion(e.target.checked)}
+                                                className="w-4 h-4" />
+                                            {tx('Gentle motion', 'Movimiento suave')}
+                                        </label>
+                                    )}
+                                </div>
 
                                 {/* Hit zone editor entry — only available after at least one image is uploaded */}
                                 {imageUrls.length > 0 && (

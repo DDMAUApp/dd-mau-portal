@@ -44,13 +44,48 @@ export function resolveTransition(mode, changeN = 0) {
 
 const EASE = 'cubic-bezier(0.4,0,0.2,1)';
 
+// Modes that fade the outgoing slide out, and what else each one animates on it.
+// push/flip move it out of view at full opacity, wipe/circle cover it, and cut
+// has no transition, so none of them need holding.
+const HOLD_PROPS = {
+    fade: [],
+    'ken-burns': [],
+    'slide-left': ['transform'],
+    'slide-right': ['transform'],
+    'slide-up': ['transform'],
+    'slide-down': ['transform'],
+    zoom: ['transform'],
+    'zoom-out': ['transform'],
+    blur: ['filter'],
+};
+
+// How long the outgoing slide takes to clear once the new one is fully in. It
+// only shows where the old picture sticks out past the new one (mixed shapes);
+// a hard snap there reads as a pop.
+const CLEAR_MS = 300;
+
 // Inline style for one slide. `ms` = transition duration.
-export function tvSlideStyle(mode, role, ms) {
+// holdPrev: for TVs with a background that isn't black. Fading both slides at
+// once dips to 0.5 new + 0.25 old + 0.25 whatever's behind them mid-transition,
+// which black hid and bright art doesn't. The outgoing slide stays opaque and
+// still until the new one is fully in, then clears. Its resting values are the
+// same as today (so the next time it comes round it still slides/zooms in); only
+// the timing changes. Black TVs don't pass it and get today's styles exactly.
+export function tvSlideStyle(mode, role, ms, { holdPrev = false } = {}) {
     const cur = role === 'current';
     const prev = role === 'prev';
     const t = Math.max(100, Math.min(3000, Number(ms) || 700));
     const z = cur ? 2 : prev ? 1 : 0;
     const base = { zIndex: z };
+    const clearAfterReveal = `opacity ${CLEAR_MS}ms ease ${t}ms`;
+    if (holdPrev && prev) {
+        const moved = HOLD_PROPS[mode];
+        if (moved !== undefined) {
+            const style = tvSlideStyle(mode, role, ms);
+            const parked = moved.map(p => `${p} 0s linear ${t + CLEAR_MS}ms`);
+            return { ...style, transition: [clearAfterReveal, ...parked].join(', ') };
+        }
+    }
     switch (mode) {
         // ── originals (unchanged look: prev + idle behave the same) ──
         case 'cut':
@@ -85,13 +120,14 @@ export function tvSlideStyle(mode, role, ms) {
             return { ...base, opacity: cur ? 1 : 0, filter: cur ? 'blur(0px)' : 'blur(24px)', transition: `opacity ${t}ms ease, filter ${t}ms ease` };
         case 'wipe':
             // New slide is revealed right→left OVER the old one, which stays
-            // put underneath until it's covered.
+            // put underneath until it's covered, then clears: left at opacity 1
+            // it filled the bands around a narrower new picture all dwell long.
             if (cur) return { ...base, opacity: 1, clipPath: 'inset(0 0 0 0)', transition: `clip-path ${t}ms ${EASE}` };
-            if (prev) return { ...base, opacity: 1, clipPath: 'inset(0 0 0 0)', transition: 'none' };
+            if (prev) return { ...base, opacity: 0, clipPath: 'inset(0 0 0 0)', transition: clearAfterReveal };
             return { ...base, opacity: 0, clipPath: 'inset(0 0 0 100%)', transition: 'none' };
         case 'circle':
             if (cur) return { ...base, opacity: 1, clipPath: 'circle(75% at 50% 50%)', transition: `clip-path ${t}ms ${EASE}` };
-            if (prev) return { ...base, opacity: 1, clipPath: 'circle(75% at 50% 50%)', transition: 'none' };
+            if (prev) return { ...base, opacity: 0, clipPath: 'circle(75% at 50% 50%)', transition: clearAfterReveal };
             return { ...base, opacity: 0, clipPath: 'circle(0% at 50% 50%)', transition: 'none' };
         case 'flip': {
             // Card flip: the old slide turns away to edge-on in the first

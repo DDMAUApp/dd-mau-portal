@@ -32,7 +32,7 @@ vi.mock('firebase/firestore', () => {
     };
 });
 
-import { mergeTvLiveSave, saveTvConfig, publishTvConfigDraft, rollbackTvConfig } from './tvConfigs';
+import { mergeTvLiveSave, saveTvConfig, publishTvConfigDraft, rollbackTvConfig, copyTvConfigToLocation } from './tvConfigs';
 
 const LIVE = {
     tvId: 'webster-photos', label: 'Webster Photos', location: 'webster', mode: 'image',
@@ -108,5 +108,110 @@ describe('saveTvConfig / publish / rollback writes', () => {
         expect(root.imageFit).toBe('contain');
         expect(root.contrastBoost).toBe(1.08);
         expect(root.version).toBeUndefined();
+    });
+});
+
+// webster-photos 2026-11-04: an editor opened on v60 overwrote the picture
+// uploaded in v61. Values below are the shape of the real v60/v61/v62.
+describe('pictures stay together (imageUrls + imageLayers)', () => {
+    const recipe = { originalUrl: 'p2.png', crop: null, adjust: {}, texts: [], bursts: [] };
+    const v60 = { ...LIVE, imageUrls: ['fall-edit.jpg'], imageLayers: [recipe] };
+    const v61 = { ...LIVE, imageUrls: ['potstickers.png'], imageLayers: [] };
+    const form = (over) => editorPayload({ imageUrls: ['fall-edit.jpg'], imageLayers: [recipe], ...over });
+
+    it('a stale editor that re-baked a picture is refused instead of replacing the newer one', () => {
+        expect(() => mergeTvLiveSave(form({ imageUrls: ['fall-edit-2.jpg'] }), v60, v61))
+            .toThrow(expect.objectContaining({ code: 'tv/stale-editor' }));
+    });
+    it('the refusal writes nothing to the live doc', async () => {
+        h.docs.set('tv_configs/webster-photos', { ...v61, publishedVersion: 61 });
+        await expect(saveTvConfig({ tvId: 'webster-photos', payload: form({ imageUrls: ['fall-edit-2.jpg'] }), byName: 'Andrew', base: v60 }))
+            .rejects.toMatchObject({ code: 'tv/stale-editor' });
+        const root = h.docs.get('tv_configs/webster-photos');
+        expect(root.imageUrls).toEqual(['potstickers.png']);
+        expect(root.publishedVersion).toBe(61);
+    });
+    it('an editor opened on the current version edits pictures normally', () => {
+        const { next, kept } = mergeTvLiveSave(editorPayload({ imageUrls: ['potstickers-2.jpg'], imageLayers: [recipe] }), v61, v61);
+        expect(next.imageUrls).toEqual(['potstickers-2.jpg']);
+        expect(next.imageLayers).toEqual([recipe]);
+        expect(kept).toEqual([]);
+    });
+    it('a stale editor that only changed the fit still saves, and keeps the newer pictures', () => {
+        const { next, kept } = mergeTvLiveSave(form({ imageFit: 'contain' }), v60, v61);
+        expect(next.imageFit).toBe('contain');
+        expect(next.imageUrls).toEqual(['potstickers.png']);
+        expect(next.imageLayers).toEqual([]);
+        expect(kept.sort()).toEqual(['imageLayers', 'imageUrls']);
+    });
+    it("never leaves a recipe from another picture next to this editor's list", () => {
+        const base = { ...LIVE, imageUrls: ['a.jpg'], imageLayers: [{ originalUrl: 'a' }] };
+        const server = { ...LIVE, imageUrls: ['c.jpg', 'd.jpg'], imageLayers: [{ originalUrl: 'c' }, null] };
+        expect(() => mergeTvLiveSave(editorPayload({ imageUrls: ['a2.jpg'], imageLayers: [{ originalUrl: 'a' }] }), base, server))
+            .toThrow(expect.objectContaining({ code: 'tv/stale-editor' }));
+    });
+    it('a doc that never had imageLayers does not read as a picture change', () => {
+        const base = { ...LIVE, imageUrls: ['a.jpg'] };                         // no imageLayers key
+        const server = { ...LIVE, imageUrls: ['a.jpg', 'b.jpg'] };
+        const { next, kept } = mergeTvLiveSave(editorPayload({ imageUrls: ['a.jpg'], imageLayers: [], imageFit: 'contain' }), base, server);
+        expect(next.imageFit).toBe('contain');
+        expect(next.imageUrls).toEqual(['a.jpg', 'b.jpg']);
+        expect('imageLayers' in next && next.imageLayers === undefined).toBe(false);
+        expect(kept).toEqual(['imageUrls']);
+    });
+    it('the same save landing twice is not a conflict', () => {
+        const same = form({ imageUrls: ['x.jpg'], imageLayers: [] });
+        const server = { ...LIVE, imageUrls: ['x.jpg'], imageLayers: [] };
+        expect(mergeTvLiveSave(same, v60, server).next.imageUrls).toEqual(['x.jpg']);
+    });
+    it('publish, rollback and copies have no opened base, so they are never refused', () => {
+        expect(() => mergeTvLiveSave(form({ imageUrls: ['z.jpg'] }), null, v61)).not.toThrow();
+    });
+});
+
+describe('imageBackground through every save path', () => {
+    const fall = { kind: 'fall', motion: true };
+    it('live save writes it', async () => {
+        h.docs.set('tv_configs/webster-photos', { ...LIVE });
+        await saveTvConfig({ tvId: 'webster-photos', payload: editorPayload({ imageBackground: fall }), byName: 'A', base: LIVE });
+        expect(h.docs.get('tv_configs/webster-photos').imageBackground).toEqual(fall);
+    });
+    it('a save that omits it (untouched picker) keeps the one on the server', async () => {
+        h.docs.set('tv_configs/webster-photos', { ...LIVE, imageBackground: fall });
+        await saveTvConfig({ tvId: 'webster-photos', payload: editorPayload({ imageFit: 'contain' }), byName: 'A', base: LIVE });
+        expect(h.docs.get('tv_configs/webster-photos').imageBackground).toEqual(fall);
+    });
+    it('explicit null clears it', async () => {
+        h.docs.set('tv_configs/webster-photos', { ...LIVE, imageBackground: fall });
+        const base = { ...LIVE, imageBackground: fall };
+        await saveTvConfig({ tvId: 'webster-photos', payload: editorPayload({ imageBackground: null }), byName: 'A', base });
+        expect(h.docs.get('tv_configs/webster-photos').imageBackground).toBeNull();
+    });
+    it('a draft carries it and publish promotes it', async () => {
+        h.docs.set('tv_configs/webster', { ...LIVE, tvId: 'webster', draftSnapshot: editorPayload({ imageBackground: fall }), draftSavedAt: 1 });
+        await publishTvConfigDraft({ tvId: 'webster', byName: 'A' });
+        expect(h.docs.get('tv_configs/webster').imageBackground).toEqual(fall);
+    });
+    it('rollback restores it', async () => {
+        h.docs.set('tv_configs/webster', { ...LIVE, tvId: 'webster', imageBackground: { kind: 'sky' } });
+        h.docs.set('tv_configs/webster/versions/v40', { ...editorPayload({ imageBackground: fall }), version: 40, reason: 'live_save' });
+        await rollbackTvConfig({ tvId: 'webster', versionId: 'v40', byName: 'A' });
+        expect(h.docs.get('tv_configs/webster').imageBackground).toEqual(fall);
+    });
+    it('rollback to a version from before a background was picked goes back to black', async () => {
+        h.docs.set('tv_configs/webster', { ...LIVE, tvId: 'webster', imageBackground: { kind: 'snow', motion: false } });
+        h.docs.set('tv_configs/webster/versions/v40', { ...editorPayload({ imageFit: 'contain' }), version: 40, reason: 'live_save' });
+        await rollbackTvConfig({ tvId: 'webster', versionId: 'v40', byName: 'A' });
+        const root = h.docs.get('tv_configs/webster');
+        expect(root.imageBackground).toBeNull();
+        expect(root.imageFit).toBe('contain');
+    });
+    it('a live save with no key still keeps it (the rollback rule stays in rollback)', () => {
+        const server = { ...LIVE, imageBackground: fall };
+        expect(mergeTvLiveSave(editorPayload({}), LIVE, server).next.imageBackground).toEqual(fall);
+    });
+    it('copy to the other location keeps it', async () => {
+        const res = await copyTvConfigToLocation({ source: { ...LIVE, imageBackground: fall }, targetLocation: 'maryland', existingIds: [], byName: 'A' });
+        expect(h.docs.get(`tv_configs/${res.tvId}`).imageBackground).toEqual(fall);
     });
 });

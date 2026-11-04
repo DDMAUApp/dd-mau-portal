@@ -34,6 +34,8 @@ import { db } from '../firebase';
 import { isTvImpersonationBlocked } from '../data/tvHeartbeatGate';
 import { tvConfigIsStale, mayReloadForStale } from '../data/tvStaleConfig';
 import { resolveTransition, tvSlideStyle } from '../data/tvTransitions';
+import { normalizeImageBackground } from '../data/tvBackgrounds';
+import TvBackgroundLayer from './TvBackgroundLayer';
 import { MENU_DATA } from '../data/menu';
 import { useMenuConfigLegacy } from '../data/menuConfig';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
@@ -512,6 +514,8 @@ function MenuDisplayInner({ tvId = 'webster' }) {
     // matches the historical behavior before this knob existed).
     const imageShuffle = (activeDaypart?.imageShuffle ?? effectiveConfig?.imageShuffle) === true;
     const imageFit = (activeDaypart?.imageFit || effectiveConfig?.imageFit) === 'cover' ? 'cover' : 'contain';
+    // What shows around the picture. Top-level only: dayparts inherit it.
+    const imageBackground = normalizeImageBackground(effectiveConfig?.imageBackground);
     const includeCategories = Array.isArray(effectiveConfig?.includeCategories) && effectiveConfig.includeCategories.length > 0
         ? new Set(effectiveConfig.includeCategories) : null;
     const spotlightCategory = effectiveConfig?.spotlightCategory || null;
@@ -736,6 +740,7 @@ function MenuDisplayInner({ tvId = 'webster' }) {
                     imageTransitionMs={imageTransitionMs}
                     imageShuffle={imageShuffle}
                     imageFit={imageFit}
+                    imageBackground={imageBackground}
                     imageHitZones={imageHitZones}
                     sixed={sixed}
                     now={now}
@@ -825,7 +830,7 @@ export default function MenuDisplay(props) {
 //   container). Overlays are positioned absolute inside the
 //   container at fractional coordinates — they always land on
 //   the right pixels regardless of TV size.
-function ImageModeLayout({
+export function ImageModeLayout({
     imageUrls, imageRotateSeconds, imageHitZones = [],
     sixed, now, label, daypartLabel,
     embedded = false,           // when used inside SplitModeLayout, drop fixed positioning
@@ -838,10 +843,13 @@ function ImageModeLayout({
     imageTransitionMs = 700,
     imageShuffle = false,
     imageFit = 'contain',
+    imageBackground = null,     // normalized { kind, color?, motion? }; null = plain, as split mode uses it
 }) {
     const [idx, setIdx] = useState(0);
     // Track natural dims per page so we can size each container to
     // its image's aspect ratio. Updated on each img's onLoad.
+    // By URL, not list position: removing or reordering a picture (or a daypart
+    // switch) must not leave the next picture in the old one's box.
     const [naturalDims, setNaturalDims] = useState({});
     // Parent rect — used to compute EXACT image-fit dimensions so
     // overlay coords (stored as fractions of the natural image)
@@ -897,7 +905,12 @@ function ImageModeLayout({
         // photo while shuffle is on would leave a stale `order`
         // pointing at indices that no longer exist.
         const base = safeUrls.map((_, i) => i);
-        if (!imageShuffle) { setOrder(base); return; }
+        if (!imageShuffle) {
+            setOrder(base);
+            // A shorter list can leave idx past the end, which shows no slide.
+            setIdx(prev => (prev >= base.length ? 0 : prev));
+            return;
+        }
         for (let i = base.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [base[i], base[j]] = [base[j], base[i]];
@@ -958,6 +971,7 @@ function ImageModeLayout({
     }
     const prevUrlIdx = slideHistRef.current.prev;
     const effTransition = resolveTransition(imageTransition, slideHistRef.current.n);
+    const isBlackBg = (imageBackground?.kind || 'black') === 'black';
     const nextPos = (idx + 1) % Math.max(1, safeUrls.length);
     const nextUrl = safeUrls.length > 1 ? safeUrls[realIdx(nextPos)] : null;
     useEffect(() => {
@@ -1015,6 +1029,9 @@ function ImageModeLayout({
 
     return (
         <div ref={wrapperRef} className={containerCls}>
+            {/* First child with z-index 0, so every slide paints above it.
+                The slides themselves are transparent wherever there's no picture. */}
+            <TvBackgroundLayer kind={imageBackground?.kind} color={imageBackground?.color} motion={imageBackground?.motion === true} />
             {/* Keyframes for the during-dwell animations. Defined
                 inline so we don't have to edit a global stylesheet
                 or invent a Tailwind plugin for two animations.
@@ -1057,7 +1074,7 @@ function ImageModeLayout({
                 stored as fractions of the natural image land on the
                 right pixels. No letterbox between container and image. */}
             {safeUrls.map((url, i) => {
-                const dims = naturalDims[i];
+                const dims = naturalDims[url];
                 const aspect = dims ? (dims.w / dims.h) : null;
                 // Compute the largest letterbox-fit box inside parentBox
                 // that preserves the image's natural aspect ratio.
@@ -1101,7 +1118,7 @@ function ImageModeLayout({
                     alignItems: 'center',
                     justifyContent: 'center',
                     pointerEvents: isCurrent ? 'auto' : 'none',
-                    ...tvSlideStyle(effTransition, isCurrent ? 'current' : (i === prevUrlIdx ? 'prev' : 'idle'), ms),
+                    ...tvSlideStyle(effTransition, isCurrent ? 'current' : (i === prevUrlIdx ? 'prev' : 'idle'), ms, { holdPrev: !isBlackBg }),
                 };
                 // Per-image animation class for ken-burns / zoom-during-dwell.
                 // Driven by a keyframe animation defined inline below the
@@ -1144,19 +1161,19 @@ function ImageModeLayout({
                                     preload="auto"
                                     onLoadedMetadata={(e) => {
                                         const v = e.currentTarget;
-                                        setNaturalDims(prev => prev[i]
+                                        setNaturalDims(prev => prev[url]
                                             ? prev
-                                            : { ...prev, [i]: { w: v.videoWidth || 1920, h: v.videoHeight || 1080 } });
+                                            : { ...prev, [url]: { w: v.videoWidth || 1920, h: v.videoHeight || 1080 } });
                                     }}
                                     className={`block w-full h-full ${imageFit === 'cover' ? 'object-cover' : 'object-contain'}`}
-                                    style={{ background: '#000' }} />
+                                    style={{ background: isBlackBg ? '#000' : 'transparent' }} />
                             ) : (
                                 <img src={url} alt=""
                                     onLoad={(e) => {
                                         const img = e.currentTarget;
-                                        setNaturalDims(prev => prev[i]
+                                        setNaturalDims(prev => prev[url]
                                             ? prev
-                                            : { ...prev, [i]: { w: img.naturalWidth, h: img.naturalHeight } });
+                                            : { ...prev, [url]: { w: img.naturalWidth, h: img.naturalHeight } });
                                     }}
                                     className={`block w-full h-full ${imageFit === 'cover' ? 'object-cover' : 'object-contain'}`}
                                     draggable={false} />
