@@ -67,7 +67,9 @@ import {
     Settings as SettingsIcon,
     ChevronRight,
     Wallet,
+    ShieldCheck,
 } from 'lucide-react';
+import { canSeeFoodSafety } from '../data/foodSafetyVisibility';
 // 2026-05-20 — Print Center tile on the home screen. Andrew: "lets
 // make a printer button on the home screen and also has all the
 // same features." Lazy so the chunk only downloads when a staffer
@@ -363,6 +365,7 @@ export default function MobileHome({
         ...(canMoney  ? [{ tab: 'moneycount', Icon: Wallet, en: 'Money Count', es: 'Conteo de Dinero', primary: true }] : []),
         { tab: 'healthdept', Icon: HeartPulse, en: 'Health Dept', es: 'Depto. de Salud' },
         { tab: 'ricelog', Icon: Soup, en: 'Rice Log', es: 'Registro de Arroz' },
+        ...(canSeeFoodSafety(isAdmin) ? [{ tab: 'foodsafety', Icon: ShieldCheck, en: 'Food Safety', es: 'Seguridad Alimentaria' }] : []),
         ...(isManager ? [{ tab: 'tardies', Icon: Clock,     en: 'Tardies', es: 'Tardanzas' }] : []),
         ...(isManager ? [{ tab: 'handoff', Icon: Handshake, en: 'Handoff', es: 'Entrega' }] : []),
         ...(isAdmin   ? [{ tab: 'labor',   Icon: BarChart3, en: 'Labor',   es: 'Mano Obra' }] : []),

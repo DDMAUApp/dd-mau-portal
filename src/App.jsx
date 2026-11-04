@@ -15,6 +15,7 @@ import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
 import { installFirestoreRevive, resilientSnapshot, isInputBusy, PENDING_REPORT_KEY } from './data/firestoreRevive';
+import { canSeeFoodSafety } from './data/foodSafetyVisibility';
 import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
 import { parseChatDeepLink, setPendingChatOpen } from './data/chatDeepLink';
@@ -70,6 +71,7 @@ const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard').then
 const MoneyCount = lazy(() => import('./components/MoneyCount').then(m => ({ default: memo(m.default) })));
 const HealthDepartment = lazy(() => import('./components/HealthDepartment').then(m => ({ default: memo(m.default) })));
 const RiceLogTab = lazy(() => import('./components/RiceLogTab').then(m => ({ default: memo(m.default) })));
+const FoodSafetyPage = lazy(() => import('./components/FoodSafetyPage').then(m => ({ default: memo(m.default) })));
 // 2026-06-01 — Needs Board. Admin/manager-only board for one-off
 // supply requests that don't belong in inventory (brooms, pans,
 // stickers, etc.). Each entry has urgency + timestamp + staff name.
@@ -2619,6 +2621,8 @@ export default function App() {
             if (activeTab === 'eighty6' && canSeePage(currentStaffRecord, 'eighty6')) return <PageErrorBoundary tabName="86 Board" language={language}><Eighty6Dashboard language={language} storeLocation={effectiveLocation} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} /></PageErrorBoundary>;
             if (activeTab === 'moneycount' && canMoney) return <PageErrorBoundary tabName="Money Count" language={language}><MoneyCount language={language} storeLocation={effectiveLocation} staffName={staffName} staffList={staffList} staffId={currentStaffRecord?.id} /></PageErrorBoundary>;
             if (activeTab === 'healthdept') return <PageErrorBoundary tabName="Health Department" language={language}><HealthDepartment language={language} staffName={staffName} staffList={staffList} /></PageErrorBoundary>;
+            // Food Safety (2026-11-04): all staff once the owner has read the rules, admins until then.
+            if (activeTab === 'foodsafety' && canSeeFoodSafety(staffIsAdmin)) return <PageErrorBoundary tabName="Food Safety" language={language}><FoodSafetyPage language={language} onOpenTraining={canSeePage(currentStaffRecord, 'training') ? () => setActiveTab('training') : undefined} /></PageErrorBoundary>;
             // Rice Log (2026-11-03) — all staff. Any store device can pull up any day.
             if (activeTab === 'ricelog') return <PageErrorBoundary tabName="Rice Log" language={language}><RiceLogTab language={language} staffName={staffName} staffList={staffList} location={effectiveLocation} /></PageErrorBoundary>;
             // 2026-06-01 — Needs Board. Admin + manager only. Same pool that

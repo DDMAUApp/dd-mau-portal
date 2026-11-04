@@ -39,6 +39,7 @@
 // Edit button is now the only sanctioned text-edit path.
 
 import { MANAGER_PROGRAM_MODULES } from './trainingManagerProgram';
+import { FOOD_SAFETY_MODULES } from './trainingFoodSafety';
 
 export const MODULES = [
     {
@@ -4347,6 +4348,7 @@ export const MODULES = [
 // 🎖️ Manager Training track (Manager Leadership Program sections) — kept in
 // their own file; see trainingManagerProgram.js.
 MODULES.push(...MANAGER_PROGRAM_MODULES);
+MODULES.push(...FOOD_SAFETY_MODULES);
 
 // Legacy export — keeps any imports of the old name working until the
 // renderer migration in the next commit.

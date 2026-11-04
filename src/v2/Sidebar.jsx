@@ -40,7 +40,9 @@ import {
     Mail,
     ShoppingCart,
     Wallet,
+    ShieldCheck,
 } from 'lucide-react';
+import { FOOD_SAFETY_OPEN_TO_ALL } from '../data/foodSafetyVisibility';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
 
@@ -98,6 +100,7 @@ const NAV_GROUPS = [
             { tab: 'menu',    Icon: UtensilsCrossed,  en: 'Menu',     es: 'Menú' },
             { tab: 'eighty6', Icon: Ban,              en: '86 Board', es: 'Tablero 86' },
             { tab: 'ricelog', Icon: Soup,             en: 'Rice Log', es: 'Registro de Arroz' },
+            { tab: 'foodsafety', Icon: ShieldCheck,   en: 'Food Safety', es: 'Seguridad Alimentaria', requires: FOOD_SAFETY_OPEN_TO_ALL ? undefined : 'admin' },
             { tab: 'moneycount', Icon: Wallet,        en: 'Money Count', es: 'Conteo de Dinero', requires: 'money' },
             // 2026-06-01 — Needs Board. Admin + manager only board for
             // one-off supply requests outside the inventory system

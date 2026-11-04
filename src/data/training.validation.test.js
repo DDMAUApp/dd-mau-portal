@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { MODULES } from './training';
 
 const TIERS = ['all', 'lead', 'admin'];
-const TRACKS = ['new-hire', 'stations', 'menu', 'service-safety', 'manager-ops', 'manager-program'];
+const TRACKS = ['new-hire', 'stations', 'menu', 'service-safety', 'food-safety', 'manager-ops', 'manager-program'];
 const EXISTING_CODES = new Set(MODULES.map(m => m.code));
 
 describe('training catalog — module structure', () => {

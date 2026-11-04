@@ -222,12 +222,13 @@ function LessonBody({ content }) {
 }
 
 // Module track display order + label
-const TRACK_ORDER = ["new-hire", "stations", "menu", "service-safety", "manager-ops", "manager-program"];
+const TRACK_ORDER = ["new-hire", "stations", "menu", "service-safety", "food-safety", "manager-ops", "manager-program"];
 const TRACK_LABELS = {
     "new-hire": { en: "New Hire Track", es: "Capacitación de Nuevo Empleado" },
     "stations": { en: "Stations", es: "Estaciones" },
     "menu": { en: "Menu Mastery", es: "Dominio del Menú" },
     "service-safety": { en: "Service & Safety", es: "Servicio y Seguridad" },
+    "food-safety": { en: "Food Safety", es: "Seguridad Alimentaria" },
     "manager-ops": { en: "Manager Ops", es: "Operaciones de Gerente" },
     "manager-program": { en: "Manager Training", es: "Capacitación de Gerentes" },
 };
@@ -236,6 +237,7 @@ const TRACK_ICONS = {
     "stations": "🛠️",
     "menu": "📖",
     "service-safety": "🛡️",
+    "food-safety": "🧼",
     "manager-ops": "👔",
     "manager-program": "🎖️",
 };
