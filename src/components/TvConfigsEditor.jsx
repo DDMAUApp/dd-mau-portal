@@ -519,16 +519,10 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             }
         }
         setUploading(true);
-        // Behavior change (Andrew 2026-05-23 audit follow-up): picking
-        // multiple files at once APPENDS to the existing imageUrls
-        // array. Previously the single-file path REPLACED the whole
-        // set, which made it impossible to build a multi-photo
-        // slideshow without uploading them as a single multi-page
-        // PDF. The "Replace" semantic still exists via Clear All +
-        // re-pick. PDFs (multi-page menus) still replace because
-        // dropping a new PDF on top of an existing one almost
-        // always means "swap to the new menu".
-        const hasPdf = files.some(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+        // Everything picked here APPENDS, PDFs included. The button says
+        // "+ Add more", but PDFs used to replace the whole list without a word
+        // (Andrew 2026-11-04: added a second PDF to the photo TV, the first
+        // vanished). To swap a menu: Clear all or ×, then add.
         try {
             let cropped = 0, resized = 0, lowRes = 0;
             const newUrls = [];
@@ -542,14 +536,8 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 if (meta?.wasResized) resized++;
                 if (meta?.isLowResolution) lowRes++;
             }
-            // PDF uploads still replace; image batches append.
-            if (hasPdf) {
-                setImageUrls(newUrls);
-                setImageLayers([]);                                   // new menu set — drop old per-picture edits
-            } else {
-                setImageUrls(prev => [...prev, ...newUrls]);
-                setImageLayers(prev => [...prev, ...newUrls.map(() => null)]);   // keep index-aligned
-            }
+            setImageUrls(prev => [...prev, ...newUrls]);
+            setImageLayers(prev => [...prev, ...newUrls.map(() => null)]);   // keep index-aligned
             // Aggregate toast — one line summarizing the whole batch
             // rather than a flood of per-file toasts.
             if (files.length > 1) {
@@ -1161,8 +1149,8 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                 </div>
                                 <p className="text-[10px] text-sky-700/80 leading-snug">
                                     {tx(
-                                        'Pick multiple images at once to build a slideshow — they\'ll appear in upload order. PDFs are converted to one image per page and REPLACE the existing set (use Clear All first if mixing PDF + images).',
-                                        'Selecciona varias imágenes a la vez para crear un carrusel — aparecen en orden de subida. Los PDF se convierten a una imagen por página y REEMPLAZAN el conjunto existente.',
+                                        'Pick multiple images at once to build a slideshow — they\'ll appear in upload order. PDFs become one image per page and are added too. To swap a menu, remove the old pages first.',
+                                        'Selecciona varias imágenes a la vez para crear un carrusel — aparecen en orden de subida. Los PDF se convierten en una imagen por página y también se agregan. Para cambiar un menú, quita primero las páginas anteriores.',
                                     )}
                                 </p>
                                 {imageUrls.length > 0 && (
