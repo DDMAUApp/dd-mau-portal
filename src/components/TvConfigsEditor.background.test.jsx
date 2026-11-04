@@ -39,19 +39,25 @@ describe('TV editor background picker', () => {
     it('picking snow saves it, static unless motion is checked', async () => {
         open();
         fireEvent.click(screen.getByRole('button', { name: 'Snow' }));
-        expect(screen.getByLabelText('Gentle motion')).not.toBeChecked();
+        expect(screen.getByRole('button', { name: 'Still' })).toHaveAttribute('aria-pressed', 'true');
         expect((await savedPayload()).imageBackground).toEqual({ kind: 'snow', motion: false });
     });
-    it('Gentle motion saves motion:true', async () => {
+    it('Slow saves motion:true', async () => {
         open();
         fireEvent.click(screen.getByRole('button', { name: 'Fall leaves' }));
-        fireEvent.click(screen.getByLabelText('Gentle motion'));
+        fireEvent.click(screen.getByRole('button', { name: 'Slow' }));
         expect((await savedPayload()).imageBackground).toEqual({ kind: 'fall', motion: true });
+    });
+    it.each(['Medium', 'Fast'])('%s saves its speed', async (label) => {
+        open({});
+        fireEvent.click(screen.getByRole('button', { name: 'Fall leaves' }));
+        fireEvent.click(screen.getByRole('button', { name: label }));
+        expect((await savedPayload()).imageBackground).toEqual({ kind: 'fall', motion: true, speed: label.toLowerCase() });
     });
     it('color kind shows the input and saves the color; art kinds without motion hide the checkbox', async () => {
         open();
         fireEvent.click(screen.getByRole('button', { name: 'Blue sky' }));
-        expect(screen.queryByLabelText('Gentle motion')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Slow' })).toBeNull();
         fireEvent.click(screen.getByRole('button', { name: 'Color' }));
         fireEvent.change(screen.getByLabelText('Pick a color'), { target: { value: '#336699' } });
         expect((await savedPayload()).imageBackground).toEqual({ kind: 'color', color: '#336699' });
@@ -59,7 +65,7 @@ describe('TV editor background picker', () => {
     it('opens on the saved background and an unchanged save sends the same value', async () => {
         open({ imageBackground: { kind: 'fall', motion: true } });
         expect(screen.getByRole('button', { name: 'Fall leaves' })).toHaveAttribute('aria-pressed', 'true');
-        expect(screen.getByLabelText('Gentle motion')).toBeChecked();
+        expect(screen.getByRole('button', { name: 'Slow' })).toHaveAttribute('aria-pressed', 'true');
         expect((await savedPayload()).imageBackground).toEqual({ kind: 'fall', motion: true });
     });
     it('going back to Black clears the field', async () => {

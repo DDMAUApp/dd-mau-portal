@@ -40,6 +40,14 @@ describe('TvBackgroundLayer', () => {
         }
         expect(container.innerHTML).not.toMatch(/filter|blur/);
     });
+    it('faster speeds fall faster, with the same number of pieces', () => {
+        const durs = (speed) => [...render(<TvBackgroundLayer kind="snow" motion speed={speed} />).container.querySelectorAll('[data-tv-bg-mover]')].map(el => parseFloat(el.style.animationDuration));
+        const [slow, medium, fast] = [durs(undefined), durs('medium'), durs('fast')];
+        expect(medium.length).toBe(slow.length);
+        expect(fast.length).toBe(slow.length);
+        expect(Math.max(...medium)).toBeLessThan(Math.min(...slow));
+        expect(Math.max(...fast)).toBeLessThan(Math.min(...medium) + 1);
+    });
     it('motion on sky does nothing', () => {
         expect(render(<TvBackgroundLayer kind="sky" motion />).container.querySelector('[data-tv-bg-mover]')).toBeNull();
     });

@@ -18,6 +18,14 @@ export const TV_BACKGROUNDS = [
     { id: 'snow',  en: 'Snow',        es: 'Nieve',       motion: true },
     { id: 'sky',   en: 'Blue sky',    es: 'Cielo azul',  motion: false },
 ];
+// How fast the leaves or snow fall. Slow is what motion:true has always meant, so
+// its saved shape stays { motion: true } with no speed field.
+export const TV_BG_SPEEDS = [
+    { id: 'off', en: 'Still', es: 'Quieto' },
+    { id: 'slow', en: 'Slow', es: 'Lento' },
+    { id: 'medium', en: 'Medium', es: 'Medio' },
+    { id: 'fast', en: 'Fast', es: 'Rápido' },
+];
 const BY_ID = new Map(TV_BACKGROUNDS.map(b => [b.id, b]));
 const HEX = /^#[0-9a-f]{6}$/i;
 
@@ -38,10 +46,14 @@ export function normalizeImageBackground(raw) {
             ? { kind: 'color', color: raw.color.toLowerCase() }
             : black;
     }
-    return def.motion ? { kind: def.id, motion: raw.motion === true } : { kind: def.id };
+    if (!def.motion) return { kind: def.id };
+    if (raw.motion !== true) return { kind: def.id, motion: false };
+    return raw.speed === 'medium' || raw.speed === 'fast'
+        ? { kind: def.id, motion: true, speed: raw.speed }
+        : { kind: def.id, motion: true };
 }
 
-const same = (a, b) => a.kind === b.kind && a.color === b.color && !!a.motion === !!b.motion;
+const same = (a, b) => a.kind === b.kind && a.color === b.color && !!a.motion === !!b.motion && a.speed === b.speed;
 
 // What the editor's save payload should carry. `picked` is the editor's choice
 // (null when the TV isn't in image mode), `original` is the raw field as the

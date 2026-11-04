@@ -158,12 +158,14 @@ const MOTION_CSS = `
 @media (prefers-reduced-motion: reduce) { .tv-bg-mover { display: none; } }
 `;
 
-function Movers({ kind }) {
+const SPEED_FACTOR = { medium: 0.5, fast: 0.25 };   // medium 27–45 s, fast 14–23 s
+
+function Movers({ kind, speed }) {
     const n = MOTION_COUNTS[kind] || 0;
     const items = [];
     for (let i = 0; i < n; i++) {
         const k = (i * 7) % 5;                      // 0..4, repeatable variety
-        const dur = 55 + k * 9;                     // 55–91 s top to bottom
+        const dur = (55 + k * 9) * (SPEED_FACTOR[speed] || 1);   // slow 55–91 s top to bottom
         const size = kind === 'fall' ? 3 + k * 0.7 : 0.8 + k * 0.5;   // vmin
         items.push(
             <div key={i} className="tv-bg-mover" data-tv-bg-mover="" style={{
@@ -196,7 +198,7 @@ function Movers({ kind }) {
 
 // Takes primitives (not the config object) so memo holds across the 30-second
 // clock re-renders of the page around it.
-function TvBackgroundLayer({ kind, color, motion = false }) {
+function TvBackgroundLayer({ kind, color, motion = false, speed }) {
     if (kind !== 'color' && !BACKDROP[kind]) return null;   // black / unknown: nothing
     const style = kind === 'color' ? { backgroundColor: color } : BACKDROP[kind];
     return (
@@ -204,7 +206,7 @@ function TvBackgroundLayer({ kind, color, motion = false }) {
             style={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none', contain: 'strict', ...style }}>
             {kind === 'fall' && <FallArt />}
             {kind === 'snow' && <SnowArt />}
-            {motion && (kind === 'fall' || kind === 'snow') && <Movers kind={kind} />}
+            {motion && (kind === 'fall' || kind === 'snow') && <Movers kind={kind} speed={speed} />}
         </div>
     );
 }

@@ -15,6 +15,12 @@ describe('normalizeImageBackground', () => {
     it('keeps a good color, lowercased, and drops motion from it', () => {
         expect(norm({ kind: 'color', color: '#AABBCC', motion: true })).toEqual({ kind: 'color', color: '#aabbcc' });
     });
+    it('keeps medium and fast, and ignores any other speed or a speed without motion', () => {
+        expect(norm({ kind: 'snow', motion: true, speed: 'fast' })).toEqual({ kind: 'snow', motion: true, speed: 'fast' });
+        expect(norm({ kind: 'fall', motion: true, speed: 'medium' })).toEqual({ kind: 'fall', motion: true, speed: 'medium' });
+        expect(norm({ kind: 'fall', motion: true, speed: 'warp' })).toEqual({ kind: 'fall', motion: true });
+        expect(norm({ kind: 'fall', motion: false, speed: 'fast' })).toEqual({ kind: 'fall', motion: false });
+    });
     it('motion is off unless exactly true, and only fall and snow have it', () => {
         expect(norm({ kind: 'fall' })).toEqual({ kind: 'fall', motion: false });
         expect(norm({ kind: 'fall', motion: 'yes' })).toEqual({ kind: 'fall', motion: false });

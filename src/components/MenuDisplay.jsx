@@ -1035,7 +1035,7 @@ export function ImageModeLayout({
         <div ref={wrapperRef} className={containerCls}>
             {/* First child with z-index 0, so every slide paints above it.
                 The slides themselves are transparent wherever there's no picture. */}
-            <TvBackgroundLayer kind={imageBackground?.kind} color={imageBackground?.color} motion={imageBackground?.motion === true} />
+            <TvBackgroundLayer kind={imageBackground?.kind} color={imageBackground?.color} motion={imageBackground?.motion === true} speed={imageBackground?.speed} />
             {/* Keyframes for the during-dwell animations. Defined
                 inline so we don't have to edit a global stylesheet
                 or invent a Tailwind plugin for two animations.

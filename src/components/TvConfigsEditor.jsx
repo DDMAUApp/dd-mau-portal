@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { TV_TRANSITIONS } from '../data/tvTransitions';
-import { TV_BACKGROUNDS, DEFAULT_BG_COLOR, bgSupportsMotion, normalizeImageBackground, imageBackgroundForSave } from '../data/tvBackgrounds';
+import { TV_BACKGROUNDS, TV_BG_SPEEDS, DEFAULT_BG_COLOR, bgSupportsMotion, normalizeImageBackground, imageBackgroundForSave } from '../data/tvBackgrounds';
 import TvBackgroundLayer from './TvBackgroundLayer';
 import { asPreviewUrl } from '../data/tvHeartbeatGate';
 import { MENU_DATA as LEGACY_MENU_DATA } from '../data/menu';
@@ -430,6 +430,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     const [bgKind, setBgKind] = useState(() => normalizeImageBackground(initial?.imageBackground).kind);
     const [bgColor, setBgColor] = useState(() => normalizeImageBackground(initial?.imageBackground).color || DEFAULT_BG_COLOR);
     const [bgMotion, setBgMotion] = useState(() => normalizeImageBackground(initial?.imageBackground).motion === true);
+    const [bgSpeed, setBgSpeed] = useState(() => normalizeImageBackground(initial?.imageBackground).speed);
     const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
     // Per-picture edit recipes (crop / adjust / text / starburst), index-aligned
     // with imageUrls. Each entry is { originalUrl, crop, adjust, texts[], bursts[] } | null.
@@ -757,7 +758,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             // Only image-mode TVs have one; other modes clear it. Left out of the
             // payload when there's nothing to change (see imageBackgroundForSave).
             const bgField = imageBackgroundForSave(
-                mode === MODES.IMAGE ? { kind: bgKind, color: bgColor, motion: bgMotion } : null,
+                mode === MODES.IMAGE ? { kind: bgKind, color: bgColor, motion: bgMotion, speed: bgSpeed } : null,
                 initial?.imageBackground,
             );
             if (bgField !== undefined) payload.imageBackground = bgField;
@@ -765,7 +766,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 // A draft replaces the whole earlier draft and has no merge, so it
                 // always states the choice. Otherwise picking Black in a second
                 // draft couldn't undo a background picked in the first.
-                const pickedBg = normalizeImageBackground(mode === MODES.IMAGE ? { kind: bgKind, color: bgColor, motion: bgMotion } : null);
+                const pickedBg = normalizeImageBackground(mode === MODES.IMAGE ? { kind: bgKind, color: bgColor, motion: bgMotion, speed: bgSpeed } : null);
                 payload.imageBackground = pickedBg.kind === 'black' ? null : pickedBg;
                 await saveTvConfigDraft({ tvId: finalId, payload, byName });
                 toast(tx('✓ Draft saved — click Publish on the card to push live', '✓ Borrador guardado — toca Publicar para enviar en vivo'), { kind: 'success' });
@@ -1358,12 +1359,21 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                         </label>
                                     )}
                                     {bgSupportsMotion(bgKind) && (
-                                        <label className="mt-1.5 flex items-center gap-2 text-[11px] font-bold text-sky-900 cursor-pointer">
-                                            <input type="checkbox" checked={bgMotion}
-                                                onChange={(e) => setBgMotion(e.target.checked)}
-                                                className="w-4 h-4" />
-                                            {tx('Gentle motion', 'Movimiento suave')}
-                                        </label>
+                                        <div className="mt-1.5">
+                                            <div className="text-[11px] font-bold text-sky-900 mb-1">{tx('Motion', 'Movimiento')}</div>
+                                            <div className="grid grid-cols-4 gap-1" role="group" aria-label={tx('Motion', 'Movimiento')}>
+                                                {TV_BG_SPEEDS.map(sp => {
+                                                    const on = (bgMotion ? (bgSpeed || 'slow') : 'off') === sp.id;
+                                                    return (
+                                                        <button key={sp.id} type="button" aria-pressed={on}
+                                                            onClick={() => { setBgMotion(sp.id !== 'off'); setBgSpeed(sp.id === 'medium' || sp.id === 'fast' ? sp.id : undefined); }}
+                                                            className={`px-1 py-1.5 rounded text-[11px] font-bold border ${on ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-sky-800 border-sky-300'}`}>
+                                                            {tx(sp.en, sp.es)}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
                                     )}
                                 </div>
 
