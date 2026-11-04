@@ -414,7 +414,11 @@ function MenuDisplayInner({ tvId = 'webster' }) {
     useEffect(() => {
         if (!tvConfig) return; // config not loaded yet — never baseline on nothing
         const ts = tvConfig.reloadRequestedAt;
-        const ms = Math.floor(ts?.toMillis?.() ?? (ts?.seconds ? ts.seconds * 1000 : 0)) || 0;
+        // Whole seconds on BOTH sides (2026-11-04 reload loop, Andrew pressed
+        // Reload TV and it flashed white forever): a stamp from the cache came
+        // back as seconds * 1000 with the fraction gone, while the live one kept
+        // its milliseconds, so live always looked newer: reload, repeat.
+        const ms = (ts?.toMillis ? Math.floor(ts.toMillis() / 1000) : Math.floor(ts?.seconds || 0)) * 1000;
         if (reloadSeenRef.current === undefined) { reloadSeenRef.current = ms; return; }
         if (ms > reloadSeenRef.current) {
             reloadSeenRef.current = ms;
