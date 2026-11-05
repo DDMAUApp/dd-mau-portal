@@ -18,6 +18,7 @@ import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
 import { installFirestoreRevive, resilientSnapshot, isInputBusy } from './data/firestoreRevive';
 import { canSeeFoodSafety } from './data/foodSafetyVisibility';
+import { canSeeDocuments } from './data/staffDocuments';
 import { flushParkedReports, logDeviceSeenOncePerDay } from './data/reportFlush';
 import { noteTab, pageAgeMs, setReportWho } from './data/reportContext';
 import { effectiveStaffRecord, listWithEffectiveRecord, readLastKnownAccess, saveLastKnownAccess } from './data/lastKnownAccess';
@@ -78,6 +79,7 @@ const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard').then
 const MoneyCount = lazy(() => import('./components/MoneyCount').then(m => ({ default: memo(m.default) })));
 const HealthDepartment = lazy(() => import('./components/HealthDepartment').then(m => ({ default: memo(m.default) })));
 const RiceLogTab = lazy(() => import('./components/RiceLogTab').then(m => ({ default: memo(m.default) })));
+const DocumentsPage = lazy(() => import('./components/DocumentsPage').then(m => ({ default: memo(m.default) })));
 const FoodSafetyPage = lazy(() => import('./components/FoodSafetyPage').then(m => ({ default: memo(m.default) })));
 // 2026-06-01 — Needs Board. Admin/manager-only board for one-off
 // supply requests that don't belong in inventory (brooms, pans,
@@ -2741,6 +2743,7 @@ export default function App() {
             if (activeTab === 'healthdept') return <PageErrorBoundary tabName="Health Department" language={language}><HealthDepartment language={language} staffName={staffName} staffList={staffList} /></PageErrorBoundary>;
             // Food Safety (2026-11-04): all staff once the owner has read the rules, admins until then.
             if (activeTab === 'foodsafety' && canSeeFoodSafety(staffIsAdmin)) return <PageErrorBoundary tabName="Food Safety" language={language}><FoodSafetyPage language={language} onOpenTraining={canSeePage(currentStaffRecord, 'training') ? () => setActiveTab('training') : undefined} /></PageErrorBoundary>;
+            if (activeTab === 'documents' && canSeeDocuments(staffIsAdmin)) return <PageErrorBoundary tabName="Documents" language={language}><DocumentsPage key={String(currentStaffRecord?.id)} language={language} staffRecord={currentStaffRecord} staffList={staffList} isAdmin={staffIsAdmin} /></PageErrorBoundary>;
             // Rice Log (2026-11-03) — all staff. Any store device can pull up any day.
             if (activeTab === 'ricelog') return <PageErrorBoundary tabName="Rice Log" language={language}><RiceLogTab language={language} staffName={staffName} staffList={staffList} location={effectiveLocation} /></PageErrorBoundary>;
             // 2026-06-01 — Needs Board. Admin + manager only. Same pool that

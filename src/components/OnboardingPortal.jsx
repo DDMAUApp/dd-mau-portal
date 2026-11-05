@@ -811,7 +811,7 @@ function CompletedExitCard({ isEs, hireName, signedAt, typedSignature }) {
 }
 
 // ── DocCard ───────────────────────────────────────────────────────────────
-function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, onSetStatus }) {
+export function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, onSetStatus, hideExistingFiles = false }) {
     const tx = (en, es) => (isEs ? es : en);
     const state = (hire.checklist && hire.checklist[doc.id]) || {};
     const status = state.status || DOC_STATUS.NEEDED;
@@ -1067,12 +1067,14 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, 
                             isEs={isEs}
                             isLocked={isLocked}
                             currentLabel={(hire.checklist?.[doc.id]?.idType) || ''}
+                            hideExistingFiles={hideExistingFiles}
                             onUploaded={(idType) => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString(), idType })}
                             onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)}
                         />
                     ) : (
                         <FileUpload
                             doc={doc}
+                            hideExistingFiles={hideExistingFiles}
                             hireId={hireId}
                             isEs={isEs}
                             isLocked={isLocked}
@@ -1233,7 +1235,7 @@ function UploadedFilesList({ hireId, docId, refreshKey, isEs }) {
 }
 
 // ── FileUpload ────────────────────────────────────────────────────────────
-function FileUpload({ doc, hireId, isEs, isLocked, onUploaded, onStart }) {
+function FileUpload({ doc, hireId, isEs, isLocked, onUploaded, onStart, hideExistingFiles = false }) {
     const tx = (en, es) => (isEs ? es : en);
     const inputRef = useRef(null);
     const [uploading, setUploading] = useState(false);
@@ -1277,7 +1279,7 @@ function FileUpload({ doc, hireId, isEs, isLocked, onUploaded, onStart }) {
 
     return (
         <div className="space-y-2">
-            <UploadedFilesList hireId={hireId} docId={doc.id} refreshKey={refreshKey} isEs={isEs} />
+            {!hideExistingFiles && <UploadedFilesList hireId={hireId} docId={doc.id} refreshKey={refreshKey} isEs={isEs} />}
             {!isLocked && (
                 <>
                     <input ref={inputRef} type="file"
@@ -1313,7 +1315,7 @@ function FileUpload({ doc, hireId, isEs, isLocked, onUploaded, onStart }) {
 // passport, etc.) and uploads a photo. Two of these slots cover the
 // I-9 "List A" or "List B + C" requirement without forcing a hardcoded
 // type per slot.
-function IdDocUpload({ doc, hireId, isEs, isLocked, currentLabel, onUploaded, onStart }) {
+function IdDocUpload({ doc, hireId, isEs, isLocked, currentLabel, onUploaded, onStart, hideExistingFiles = false }) {
     const tx = (en, es) => (isEs ? es : en);
     const [idType, setIdType] = useState(currentLabel || '');
     const [otherText, setOtherText] = useState('');
@@ -1358,7 +1360,7 @@ function IdDocUpload({ doc, hireId, isEs, isLocked, currentLabel, onUploaded, on
 
     return (
         <div className="space-y-2">
-            <UploadedFilesList hireId={hireId} docId={doc.id} refreshKey={refreshKey} isEs={isEs} />
+            {!hideExistingFiles && <UploadedFilesList hireId={hireId} docId={doc.id} refreshKey={refreshKey} isEs={isEs} />}
             {!isLocked && (
                 <>
                     <label className="block">

@@ -25,7 +25,7 @@ import {
 import { watchdogWrite } from '../data/firestoreRevive';
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
-import { ref as sref, uploadBytes, getDownloadURL, getBytes, listAll, deleteObject } from 'firebase/storage';
+import { ref as sref, uploadBytes, getDownloadURL, getBytes } from 'firebase/storage';
 import { LOCATION_INFO, pickSigStampBox } from '../data/onboarding';
 import { displayFieldLabel } from '../data/pdfFieldLabels';
 
@@ -570,23 +570,6 @@ export default function OnboardingFillablePdf({
             const ts = Date.now();
             const path = `onboarding/${hireId}/${docDef.id}/filled_${ts}.pdf`;
             await uploadBytes(sref(storage, path), new Blob([finalBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
-
-            // Keep only the NEWEST submission — a re-fill/re-sign REPLACES the prior
-            // one instead of piling up (Andrew 2026-06-30: "it's basically an update,
-            // not a new copy"). This component only handles single-PDF 'template' docs,
-            // so every file in this doc's folder is a prior version of the same doc —
-            // safe to prune all but the one we just wrote. Best-effort; never blocks.
-            try {
-                const folder = sref(storage, `onboarding/${hireId}/${docDef.id}`);
-                const listing = await listAll(folder);
-                await Promise.all(
-                    listing.items
-                        .filter(it => it.fullPath !== path)
-                        .map(it => deleteObject(it).catch(() => {}))
-                );
-            } catch (pruneErr) {
-                console.warn('prune old submissions skipped:', pruneErr?.message || pruneErr);
-            }
 
             // Tamper-evidence record + per-doc hash (best-effort, never blocks).
             try {

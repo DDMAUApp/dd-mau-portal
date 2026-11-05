@@ -38,9 +38,10 @@ const deleteDoc = (...a) => watchdogWrite(_fsDeleteDoc(...a));
 const getDoc = (...a) => watchdogRead(_fsGetDoc(...a));
 import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
 import { appendStaffRecord } from '../data/staffDoc';
+import { classifyDocFiles, docsWaitingReview, PASSWORD_SETUP_MS, olderVersionLabel } from '../data/staffDocuments';
 import { getPositionTemplate } from '../data/positionTemplates';
 import { normalizeToE164 } from '../data/sms';
-import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata, deleteObject } from 'firebase/storage';
+import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata } from 'firebase/storage';
 import { downloadFile, printViaNative, publicAppBase } from '../capacitor-bridge';
 import {
     ONBOARDING_DOCS, DOC_STATUS, DOC_STATUS_META,
@@ -48,7 +49,6 @@ import {
     INVITE_TTL_DAYS, makeInviteToken,
     docsForHire, isHireMinor, deriveHireStatus, hireProgressCounts,
     docDeadlineState, effectiveDocDescription, effectiveDaysFromHire,
-    partitionTemplateFiles,
     pinFromPhone,
 } from '../data/onboarding';
 import {
@@ -59,6 +59,7 @@ import {
     APPLICATION_STATUS_META, computeMatchScore, labelFor,
 } from '../data/applyForm';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
+const DocumentFileViewer = reactLazy(() => import('./DocumentFileViewer'));
 import { toast } from '../toast';
 import ModalPortal from './ModalPortal';
 const OnboardingTemplateEditor = reactLazy(() => import('./OnboardingTemplateEditor'));
@@ -239,6 +240,11 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
         () => hires.filter(h => h.status === HIRE_STATUS.ARCHIVED),
         [hires],
     );
+    // Staff who updated a document from their Documents tab, wherever their hire sits.
+    const updatedByStaff = useMemo(
+        () => hires.filter(h => docsWaitingReview(h).length > 0 && (h.status === HIRE_STATUS.COMPLETE || h.status === HIRE_STATUS.ARCHIVED)),
+        [hires],
+    );
     const visibleList = view === 'archive' ? archivedHires
         : view === 'complete' ? completeHires
         : activeHires;
@@ -350,6 +356,21 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     </button>
                 </div>
             </header>
+
+            {updatedByStaff.length > 0 && (
+                <div className="p-3 rounded-xl bg-purple-50 border border-purple-200">
+                    <p className="text-sm font-bold text-purple-900 mb-1">{tx('Documents updated by staff, waiting for review', 'Documentos actualizados por el personal, en espera de revisión')}</p>
+                    <div className="flex flex-wrap gap-2">
+                        {updatedByStaff.map(h => (
+                            <button key={h.id}
+                                onClick={() => { setView(h.status === HIRE_STATUS.ARCHIVED ? 'archive' : 'complete'); setSelectedId(h.id); }}
+                                className="px-3 py-2 rounded-lg bg-white border border-purple-300 text-xs font-bold text-purple-900">
+                                {h.personal?.legalName || h.name} ({docsWaitingReview(h).length})
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="flex gap-1 bg-dd-bg p-1 rounded-xl w-fit flex-wrap">
                 {[
@@ -556,7 +577,11 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                                 // Clear the hire's portal password so they create
                                 // a fresh one the next time they open their link.
                                 try {
-                                    await updateDoc(doc(db, 'onboarding_hires', selected.id), { portalAuth: null });
+                                    // The Documents tab only lets someone make a password with a manager's say-so.
+                                    await updateDoc(doc(db, 'onboarding_hires', selected.id), {
+                                        portalAuth: null,
+                                        documentsPasswordSetUntil: new Date(Date.now() + PASSWORD_SETUP_MS).toISOString(),
+                                    });
                                     writeAudit('onboarding_password_reset', { hireId: selected.id, hireName: selected.name });
                                     toast(tx(
                                         'Password reset — they\'ll set a new one next time they open their link.',
@@ -933,6 +958,12 @@ function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templ
                 })
             );
             const allItems = subFolderFiles.flat();
+            // Older versions are named as such so they can't be mistaken for the current one.
+            const olderNames = new Set();
+            folderList.prefixes.forEach((pref, i) => {
+                classifyDocFiles(subFolderFiles[i].map(x => x.item.name), { replacedBefore: hire.checklist?.[pref.name]?.replacedBefore })
+                    .filter(v => v.older).forEach(v => olderNames.add(`${pref.name}/${v.name}`));
+            });
             for (const { docId, item } of allItems) {
                 try {
                     // getBytes() (SDK XHR path) instead of getDownloadURL+fetch
@@ -944,7 +975,8 @@ function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templ
                     // "every doc is in separate folders… make it all just
                     // the file"). The doc id becomes a filename prefix so
                     // files stay identifiable and can't collide.
-                    zip.file(`${docId}_${item.name}`, new Blob([buf]));
+                    const olderTag = olderNames.has(`${docId}/${item.name}`) ? 'OLDER_VERSION_' : '';
+                    zip.file(`${olderTag}${docId}_${item.name}`, new Blob([buf]));
                 } catch (e) { console.warn('skip file', item.fullPath, e); }
             }
             const blob = await zip.generateAsync({ type: 'blob' });
@@ -1387,6 +1419,9 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
     const meta = DOC_STATUS_META[status];
     const [files, setFiles] = useState(null);   // [{name, url, size, contentType}]
     const [loadingFiles, setLoadingFiles] = useState(false);
+    // A live resubmit changes which file is current, so an open list has to reload.
+    const submittedStamp = hire.checklist?.[docDef.id]?.submittedAt;
+    useEffect(() => { setFiles(null); }, [submittedStamp]);
     const [internalExpanded, setInternalExpanded] = useState(false);
     // Per-hire override editor — pencil button on the description
     // line opens this. Admin can edit BOTH the description text and
@@ -1468,34 +1503,17 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
         return !!chosen && (chosen.fields || []).some(f => f.filledBy === 'employer');
     }, [templates, docDef.id, docDef.kind]);
 
+    const [viewingOlder, setViewingOlder] = useState(null);
+
     const loadFiles = async () => {
         if (files !== null) return;
         setLoadingFiles(true);
         try {
             const folderRef = sref(storage, `onboarding/${hire.id}/${docDef.id}`);
             const list = await listAll(folderRef);
-            let items = list.items.slice();
-            // Single-PDF 'template' docs (W-4, I-9, MO W-4, direct deposit): a
-            // re-fill is an UPDATE, not a new copy — show only the newest and prune
-            // older duplicates so the admin doesn't see 4 of the same W-4 (Andrew
-            // 2026-06-30). File/ID docs can legitimately hold multiple distinct
-            // uploads (e.g. ID front + back), so those are left untouched.
-            //
-            // Kind-aware since the employer-section flow: the hire's filled_
-            // submission and the admin's complete_ (employer-completed) PDF
-            // are different documents and BOTH survive — the old keep-one-
-            // overall prune deleted the hire's signed original the first time
-            // Files was opened after an I-9 Section 2 completion. See
-            // partitionTemplateFiles for the full rationale.
-            if (docDef.kind === 'template' && items.length > 1) {
-                const { keep, prune } = partitionTemplateFiles(items.map(it => it.name));
-                const byName = new Map(items.map(it => [it.name, it]));
-                for (const staleName of prune) {
-                    const stale = byName.get(staleName);
-                    if (stale) deleteObject(stale).catch(() => {});
-                }
-                items = keep.map(n => byName.get(n)).filter(Boolean);
-            }
+            const items = list.items.slice();
+            // Every version stays. Older ones are marked and open with the watermark.
+            const versions = new Map(classifyDocFiles(items.map(it => it.name), { replacedBefore: hire.checklist?.[docDef.id]?.replacedBefore }).map(v => [v.name, v]));
             const enriched = await Promise.all(items.map(async (it) => {
                 const url = await getDownloadURL(it);
                 let m = null;
@@ -1506,9 +1524,11 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
                     url,
                     size: m?.size,
                     contentType: m?.contentType,
+                    older: !!versions.get(it.name)?.older,
+                    replacedAt: versions.get(it.name)?.replacedAt || 0,
                 };
             }));
-            setFiles(enriched);
+            setFiles(enriched.sort((a, b) => Number(a.older) - Number(b.older)));
         } catch (e) { console.warn('load files failed', e); setFiles([]); }
         finally { setLoadingFiles(false); }
     };
@@ -1850,6 +1870,18 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
                     />
                 </ReactSuspense>
             )}
+            {expanded && docDef.kind === 'form' && (hire.formHistory?.[docDef.id] || []).length > 0 && (
+                <div className="mt-2 pl-9 space-y-1">
+                    {hire.formHistory[docDef.id].slice().reverse().map((row) => (
+                        <div key={row.replacedAt} className="rounded border-2 border-red-300 bg-red-50 p-1.5">
+                            <div className="text-[10px] font-black text-red-700">{olderVersionLabel(Date.parse(row.replacedAt), isEs)}</div>
+                            {Object.entries(row.values || {}).filter(([, v]) => v && typeof v !== 'object').map(([k, v]) => (
+                                <div key={k} className="text-[11px] text-dd-text-2">{k}: {String(v)}</div>
+                            ))}
+                        </div>
+                    ))}
+                </div>
+            )}
             {expanded && docDef.kind !== 'form' && (
                 <div className="mt-2 pl-9 space-y-1">
                     {loadingFiles ? (
@@ -1858,6 +1890,7 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
                         <div key={f.fullPath} className="flex items-center gap-2 bg-dd-bg rounded p-1.5">
                             <span className="text-base">📎</span>
                             <div className="flex-1 min-w-0">
+                                {f.older && <div className="text-[10px] font-black text-red-700">{olderVersionLabel(f.replacedAt, isEs)}</div>}
                                 <div className="text-[11px] font-semibold text-dd-text truncate">{f.name}</div>
                                 <div className="text-[9px] text-dd-text-2">
                                     {/* Template docs can hold TWO versions side by side —
@@ -1876,18 +1909,28 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
                                 </div>
                             </div>
                             <a href={f.url} target="_blank" rel="noopener noreferrer"
-                                onClick={() => onWriteAudit('doc_viewed', { hireId: hire.id, docId: docDef.id, file: f.name })}
+                                onClick={(e) => {
+                                    onWriteAudit('doc_viewed', { hireId: hire.id, docId: docDef.id, file: f.name });
+                                    if (f.older) { e.preventDefault(); setViewingOlder(f); }
+                                }}
                                 className="text-[10px] px-2 py-1 rounded bg-blue-100 text-blue-700 font-bold hover:bg-blue-200">
                                 {tx('View', 'Ver')}
                             </a>
-                            <a href={f.url} download={f.name} target="_blank" rel="noopener noreferrer"
-                                onClick={() => onWriteAudit('doc_downloaded', { hireId: hire.id, docId: docDef.id, file: f.name })}
-                                className="text-[10px] px-2 py-1 rounded bg-dd-green text-white font-bold">
-                                ↓
-                            </a>
+                            {!f.older && (
+                                <a href={f.url} download={f.name} target="_blank" rel="noopener noreferrer"
+                                    onClick={() => onWriteAudit('doc_downloaded', { hireId: hire.id, docId: docDef.id, file: f.name })}
+                                    className="text-[10px] px-2 py-1 rounded bg-dd-green text-white font-bold">
+                                    ↓
+                                </a>
+                            )}
                         </div>
                     )) : (
                         <p className="text-[11px] text-dd-text-2 italic">{tx('No files uploaded yet.', 'Sin archivos aún.')}</p>
+                    )}
+                    {viewingOlder && (
+                        <ReactSuspense fallback={null}>
+                            <DocumentFileViewer hireId={hire.id} path={viewingOlder.fullPath} title={tx(docDef.en, docDef.es)} older replacedAt={viewingOlder.replacedAt} isEs={isEs} onClose={() => setViewingOlder(null)} />
+                        </ReactSuspense>
                     )}
                 </div>
             )}

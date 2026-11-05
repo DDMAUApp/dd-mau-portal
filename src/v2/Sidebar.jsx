@@ -43,6 +43,8 @@ import {
     ShieldCheck,
 } from 'lucide-react';
 import { FOOD_SAFETY_OPEN_TO_ALL } from '../data/foodSafetyVisibility';
+import { DOCUMENTS_OPEN_TO_ALL } from '../data/staffDocuments';
+import { isSharedDeviceModeEnabled } from '../messaging';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
 
@@ -101,6 +103,7 @@ const NAV_GROUPS = [
             { tab: 'eighty6', Icon: Ban,              en: '86 Board', es: 'Tablero 86' },
             { tab: 'ricelog', Icon: Soup,             en: 'Rice Log', es: 'Registro de Arroz' },
             { tab: 'foodsafety', Icon: ShieldCheck,   en: 'Food Safety', es: 'Seguridad Alimentaria', requires: FOOD_SAFETY_OPEN_TO_ALL ? undefined : 'admin' },
+            { tab: 'documents', Icon: FileText,       en: 'Documents', es: 'Documentos', requires: 'documents' },
             { tab: 'moneycount', Icon: Wallet,        en: 'Money Count', es: 'Conteo de Dinero', requires: 'money' },
             // 2026-06-01 — Needs Board. Admin + manager only board for
             // one-off supply requests outside the inventory system
@@ -175,6 +178,7 @@ export default function Sidebar({
     const accessOk = (req) => {
         if (!req) return true;
         if (req === 'admin') return isAdmin;
+        if (req === 'documents') return (DOCUMENTS_OPEN_TO_ALL || isAdmin) && !isSharedDeviceModeEnabled();
         if (req === 'manager') return isManager;
         if (req === 'money') return canMoney;
         if (req === 'opsAccess') return hasOpsAccess;
