@@ -222,3 +222,76 @@ describe('the daily device row', () => {
         expect(d.entries.at(-1).id).toBe(`rr_${m.MAX_DROPPED_KEPT + 2}`);
     });
 });
+
+describe('after-reload message and place:restored (Release B)', () => {
+    const on = () => localStorage.setItem('ddmau:relFlags', JSON.stringify({ flags: { placeRestore: true } }));
+    const place = { tab: 'operations', subTab: 'inventory', body: 'tab', msSinceBoot: 900 };
+    const messages = (m) => {
+        const seen = [];
+        m.toastMod.subscribeToasts((list) => list.forEach((t) => { if (!seen.includes(t.message)) seen.push(t.message); }));
+        return seen;
+    };
+
+    it('text: flag-off wording is byte-for-byte Release A', async () => {
+        const m = await fresh();
+        expect(m.reloadToastText('en')).toBe('The app restarted to fix a stuck connection. Check your last changes before entering them again.');
+        expect(m.reloadToastText('es')).toBe('La app se reinició para arreglar la conexión. Revisa tus últimos cambios antes de volver a ingresarlos.');
+        expect(m.reloadToastText('en', { restored: true })).toBe("The app restarted to fix a stuck connection. You're back where you were. Check your last changes before entering them again.");
+        expect(m.reloadToastText('es', { restored: true })).toBe('La app se reinició para arreglar la conexión. Estás donde estabas. Revisa tus últimos cambios antes de volver a ingresarlos.');
+    });
+
+    it('flag off: no row and no line, whatever place is passed', async () => {
+        const m = await fresh();
+        const seen = messages(m);
+        m.parkReport({ reason: 'write-stuck-after-revive', at: Date.now(), activeTab: 'operations' });
+        await m.flushParkedReports({ language: 'en', place });
+        expect(landed.filter((r) => r.row.feature === 'place:restored')).toHaveLength(0);
+        expect(seen).toHaveLength(1);
+        expect(seen[0]).toBe(m.reloadToastText('en'));
+    });
+
+    it('flag on, tab area still connecting: no line, row says not restored', async () => {
+        on();
+        const m = await fresh();
+        const seen = messages(m);
+        m.parkReport({ reason: 'probe-3min', at: Date.now(), activeTab: 'operations' });
+        await m.flushParkedReports({ language: 'en', place: { ...place, body: 'connecting' } });
+        expect(seen[0]).not.toContain('back where');
+        expect(landed.find((r) => r.row.feature === 'place:restored').row.meta).toMatchObject({ restored: false, landedHome: false });
+    });
+
+    it('flag on, restored: one row joined on reloadId, and it says so', async () => {
+        on();
+        const m = await fresh();
+        const seen = messages(m);
+        const id = m.parkReport({ reason: 'write-stuck-after-revive', at: Date.now(), activeTab: 'operations' });
+        await m.flushParkedReports({ language: 'en', place });
+        expect(seen[0]).toContain("You're back where you were.");
+        const rows = landed.filter((r) => r.row.feature === 'place:restored');
+        expect(rows).toHaveLength(1);
+        expect(rows[0].row.meta).toMatchObject({ reloadId: id, tab: 'operations', subTab: 'inventory', restored: true, landedHome: false, msSinceBoot: 900 });
+        // The reload's own row still goes under its own feature.
+        expect(landed.filter((r) => r.row.feature === 'firestoreRevive:reload-after')).toHaveLength(1);
+        // A later boot neither repeats the row nor brings the message back.
+        await m.flushParkedReports({ language: 'en', place });
+        expect(landed.filter((r) => r.row.feature === 'place:restored')).toHaveLength(1);
+    });
+
+    it('flag on, on Home after being elsewhere: recorded as landed on Home, not restored', async () => {
+        on();
+        const m = await fresh();
+        m.parkReport({ reason: 'probe-3min', at: Date.now(), activeTab: 'operations' });
+        await m.flushParkedReports({ language: 'en', place: { tab: 'home', subTab: null, body: 'home', msSinceBoot: 5 } });
+        const row = landed.find((r) => r.row.feature === 'place:restored');
+        expect(row.row.meta).toMatchObject({ restored: false, landedHome: true });
+    });
+
+    it('a place row never counts as a reload that needs telling', async () => {
+        on();
+        const m = await fresh();
+        m.parkReport({ feature: 'inventory:add', reason: 'add-deadline', notified: true, at: Date.now() });
+        await m.flushParkedReports({ language: 'en', place });
+        expect(landed.filter((r) => r.row.feature === 'place:restored')).toHaveLength(0);
+        expect(landed.filter((r) => r.row.feature === 'inventory:add')).toHaveLength(1);
+    });
+});

@@ -26,6 +26,18 @@ describe('reloadStash round trip', () => {
 });
 
 describe('planStashRehydrate', () => {
+    it('refuses a stash from a different person, and only when asked to check', () => {
+        const stash = { loc: 'webster', staffName: 'Laura', counts: { a: 3 } };
+        expect(planStashRehydrate(stash, { loc: 'webster', staffName: 'Yulissa' })).toBe(null);
+        expect(planStashRehydrate(stash, { loc: 'webster', staffName: 'Laura' })).not.toBe(null);
+        // Flag off passes no name: today's behavior.
+        expect(planStashRehydrate(stash, { loc: 'webster' })).not.toBe(null);
+        // A stash from an older bundle has no name, so it isn't a different person.
+        expect(planStashRehydrate({ loc: 'webster', counts: {} }, { loc: 'webster', staffName: 'Laura' })).not.toBe(null);
+    });
+    it('the age limit stays at 5 minutes', () => {
+        expect(STASH_MAX_AGE_MS).toBe(5 * 60 * 1000);
+    });
     const stash = { loc: 'webster', counts: { eggs: 3, milk: 0 }, countMeta: { eggs: { by: 'A' } }, pendingCounts: { eggs: { expected: 3, ts: 1, mode: 'inc' } }, subTab: 'inventory' };
     it('rebuilds counts/meta and turns pending ids into abs holds flagged saving', () => {
         const plan = planStashRehydrate(stash, { loc: 'webster', now: 1000 });
