@@ -27,8 +27,10 @@
 // dynamic import resolves synchronously after the first call since
 // the chunk is already loaded.
 import { DEVICE_ID_KEY, getOrCreateDeviceId } from "./data/deviceId";
-import { doc, setDoc, runTransaction } from "firebase/firestore";
-import { nextStaffRev } from "./data/staffDoc";
+import { doc, setDoc, runTransaction, onSnapshot } from "firebase/firestore";
+import { nextStaffRev, latestStaffData } from "./data/staffDoc";
+import { getReliabilityFlag } from "./data/reliabilityFlags";
+import { planTokenBinding, notePushOutcome, SKIP_NO_CHANGE_FLAG } from "./data/noChangeSaves";
 import app, { db } from "./firebase";
 import { Capacitor } from "@capacitor/core";
 
@@ -194,7 +196,7 @@ function registerForNativePush(plugin, timeoutMs = 15000) {
 // Copy the PUBLIC key (starts with B...) and paste it below.
 export const VAPID_KEY = "BH2Mtj6Dgfw2X_Mu7e9OzOTVOqx_l6KjgDgc6v98Cq_4ngWZnz3NPYP81mw88_zEY_4tOnKBW2XTScLOrFfNpoQ";
 
-const MAX_TOKENS_PER_STAFF = 5;
+export { planTokenBinding };
 // Moved to data/deviceId.js so reports can use it too. Same key, same IDs.
 
 // Stable per-browser identifier. Generated once on first FCM registration
@@ -218,6 +220,166 @@ function notifyPushBound(staffName) {
     } catch { /* non-browser env */ }
 }
 
+
+// ── Binding a token to a person ──────────────────────────────────────────────
+// Reads the live doc and changes only fcmTokens. Never React state: at startup
+// that's the seed list, and writing it back reset real PINs (2026-05-09).
+// setOutcome tells the caller where the body got to: 'wrote' | 'already-bound' |
+// 'skipped' (doc missing or person not on the roster). A transaction can succeed
+// without saving anything, so callers must not treat that as bound (2026-08-25).
+async function runTokenTransaction({ staffName, token, deviceId, platform, tokenKind, tag }, setOutcome, isStale) {
+    await runTransaction(db, async (tx) => {
+        setOutcome('skipped'); // reset: retries re-run the body
+        if (isStale?.()) return; // that person signed out or switched while this waited
+        const ref = doc(db, "config", "staff");
+        const snap = await tx.get(ref);
+        if (!snap.exists()) {
+            console.warn(`${tag} config/staff doc missing, skipping write`);
+            return;
+        }
+        const liveList = (snap.data() || {}).list || [];
+        const plan = planTokenBinding(liveList, staffName, token, deviceId, platform, tokenKind, Date.now());
+        if (!plan.found) {
+            console.warn(`${tag} ${staffName} not found in live staff list, skipping write`);
+            return;
+        }
+        // Nothing to write: no pointless snapshot fan-out to every listener. A
+        // swept entry on someone else's record still counts as something to write.
+        if (plan.alreadyBound) {
+            setOutcome('already-bound');
+            return;
+        }
+        if (plan.sweepCount > 0) {
+            console.log(`${tag} swept ${plan.sweepCount} cross-staff token entries for device ${deviceId.slice(0, 8)}…`);
+        }
+        tx.set(ref, { list: plan.nextList, rev: nextStaffRev(snap.data()) });
+        setOutcome('wrote');
+    });
+}
+
+// How long a boot check waits to hear the server before using the cached roster.
+const ROSTER_CONFIRM_WAIT_MS = 3000;
+// Our own token writes this page may not be in the latest snapshot yet: sign out
+// and back in quickly and the roster still shows the entry just removed. So after
+// any of them, every bind on this page runs the transaction.
+let _tokensTouchedThisPage = false;
+// A later bind or removal replaces an earlier bind's pending server check.
+let _bindEpoch = 0;
+// Listeners still open from a boot check. A sign-out closes them, since offline they
+// would otherwise stay open for the life of the page.
+const _openChecks = new Set();
+function closeOpenChecks() { [..._openChecks].forEach((release) => release()); }
+
+// True when the transaction can be skipped. Only for the boot path with the flag
+// on. Any doubt returns false, and the transaction decides as it always did.
+//
+// Its own listener because App's has no includeMetadataChanges: when the roster
+// hasn't changed since last session, the SDK never fires again after the cached
+// event, so a server answer can't be seen there. It shares App's target, so it
+// costs no extra reads, and a listener doesn't hold the write line.
+//
+// On the cached fallback the listener stays until the server answers. A skip the
+// server disagrees with runs the transaction then, so a stale cache can only delay
+// a binding, not lose it. The usual case is a token pruned while the app was closed.
+function checkAlreadyBound(args, epoch) {
+    const { staffName, token, deviceId, platform, tokenKind, tag } = args;
+    const isBound = (data) => planTokenBinding((data || {}).list, staffName, token, deviceId, platform, tokenKind, Date.now()).alreadyBound;
+    return new Promise((resolve) => {
+        let stop = null;
+        let serverData = null;
+        let heard = false;     // the server has answered, or the listener died
+        let cachedData = null;
+        let onHeard = null;    // set once a skip rests on the cached roster
+        let timer = null;
+        const release = () => { _openChecks.delete(release); try { stop?.(); } catch { /* already gone */ } stop = null; };
+        _openChecks.add(release);
+        const decide = () => {
+            clearTimeout(timer);
+            if (heard) {
+                release();
+                let bound = false;
+                try { bound = !!serverData && isBound(serverData); } catch { bound = false; }
+                if (bound) notePushOutcome('already-bound');
+                resolve(bound);
+                return;
+            }
+            let bound = false;
+            try { bound = isBound(cachedData || latestStaffData()); } catch { bound = false; }
+            if (!bound) { release(); resolve(false); return; }
+            notePushOutcome('already-bound:cache');
+            onHeard = verifyLater;
+            resolve(true);
+        };
+        const verifyLater = async () => {
+            release();
+            if (epoch !== _bindEpoch) return;
+            let bound = false;
+            try { bound = !!serverData && isBound(serverData); } catch { bound = false; }
+            if (bound) { notePushOutcome('cache-confirmed'); return; }
+            let outcome = 'skipped';
+            try {
+                await runTokenTransaction(args, (o) => { outcome = o; }, () => epoch !== _bindEpoch);
+                if (outcome === 'wrote') _tokensTouchedThisPage = true;
+                notePushOutcome(`late-rebind:${outcome}`);
+                if (outcome !== 'skipped') notifyPushBound(staffName);
+            } catch (e) {
+                notePushOutcome('late-rebind:error');
+                console.warn(`${tag} rebind after server check failed:`, e?.message);
+            }
+        };
+        const hear = (data) => {
+            serverData = data;
+            heard = true;
+            if (onHeard) onHeard();
+            else decide();
+        };
+        try {
+            stop = onSnapshot(doc(db, "config", "staff"), { includeMetadataChanges: true }, (snap) => {
+                if (heard) return;
+                const exists = snap.exists();
+                const m = snap.metadata;
+                if (m && !m.fromCache && !m.hasPendingWrites) hear(exists ? snap.data() : null);
+                else if (exists) cachedData = snap.data();
+            }, () => { if (!heard) hear(null); });
+            if (heard) { release(); return; }
+        } catch {
+            resolve(false);
+            return;
+        }
+        timer = setTimeout(decide, ROSTER_CONFIRM_WAIT_MS);
+    });
+}
+
+async function bindTokenToStaff(args, setOutcome, bootCheck) {
+    const epoch = ++_bindEpoch;
+    const counting = bootCheck === true && getReliabilityFlag(SKIP_NO_CHANGE_FLAG);
+    if (counting && !_tokensTouchedThisPage) {
+        let bound = false;
+        try { bound = await checkAlreadyBound(args, epoch); } catch { bound = false; }
+        // The check can wait up to 3 seconds. If someone signed out or switched
+        // meanwhile, this bind is stale, and running it would take the token from
+        // the person now on this device.
+        if (epoch !== _bindEpoch) {
+            setOutcome('skipped');
+            return;
+        }
+        if (bound) {
+            setOutcome('already-bound');
+            return;
+        }
+    }
+    let last = 'skipped';
+    try {
+        await runTokenTransaction(args, (o) => { last = o; setOutcome(o); });
+        if (counting) notePushOutcome(`tx:${last}`);
+    } catch (e) {
+        if (counting) notePushOutcome('tx:error');
+        throw e;
+    } finally {
+        // On a failed commit too: it may still have landed.
+        if (last === 'wrote') _tokensTouchedThisPage = true;
+    }
+}
 
 let messagingInstance = null;
 // Module-level flag for one-shot legacy SW cleanup (see enableFcmPush).
@@ -258,7 +420,7 @@ let _swCleanedUp = false;
 //   and split tokens by platform tag before sending. Once those land,
 //   Step 2 of this plan enables the runTransaction below to actually
 //   write the token. Until then, capture+log only.
-async function enableNativePush(staffName, staffList, setStaffList) {
+async function enableNativePush(staffName, staffList, setStaffList, opts = {}) {
     console.log('[push][native] step 1: loadNativePushPlugin');
     const plugin = await loadNativePushPlugin();
     console.log('[push][native] step 1 result:', plugin ? 'plugin loaded' : 'NULL');
@@ -350,69 +512,8 @@ async function enableNativePush(staffName, staffList, setStaffList) {
         // those as bound (2026-08-25).
         let persistOutcome = 'skipped';
         try {
-            await runTransaction(db, async (tx) => {
-                persistOutcome = 'skipped'; // reset — retries re-run the body
-                const ref = doc(db, "config", "staff");
-                const snap = await tx.get(ref);
-                if (!snap.exists()) {
-                    console.warn("[push][native] config/staff doc missing, skipping write");
-                    return;
-                }
-                const liveList = (snap.data() || {}).list || [];
-                const meIdx = liveList.findIndex((s) => s.name === staffName);
-                if (meIdx === -1) {
-                    console.warn(`[push][native] ${staffName} not found in live staff list, skipping write`);
-                    return;
-                }
-                const me = liveList[meIdx];
-                const existing = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
-                // Dedup logic mirrors enableFcmPush — same deviceId or
-                // same token string collapses to the new entry below.
-                const seenTokens = new Set();
-                const dedup = [];
-                for (const t of existing) {
-                    if (!t || !t.token) continue;
-                    if (t.token === token) continue;
-                    if (t.deviceId && t.deviceId === deviceId) continue;
-                    if (seenTokens.has(t.token)) continue;
-                    seenTokens.add(t.token);
-                    dedup.push(t);
-                }
-                const nextTokens = [
-                    { token, lastSeen: Date.now(), deviceId, platform, tokenKind },
-                    ...dedup,
-                ].slice(0, MAX_TOKENS_PER_STAFF);
-
-                // Cross-staff sweep on deviceId — same as enableFcmPush.
-                let tokenDeviceSweepCount = 0;
-                const nextList = liveList.map((s, i) => {
-                    if (i === meIdx) return { ...s, fcmTokens: nextTokens };
-                    if (!Array.isArray(s.fcmTokens) || s.fcmTokens.length === 0) return s;
-                    const cleaned = s.fcmTokens.filter(t => {
-                        if (!t || !t.token) return false;
-                        if (t.deviceId && t.deviceId === deviceId) return false;
-                        if (t.token === token) return false;
-                        return true;
-                    });
-                    if (cleaned.length !== s.fcmTokens.length) {
-                        tokenDeviceSweepCount += (s.fcmTokens.length - cleaned.length);
-                        return { ...s, fcmTokens: cleaned };
-                    }
-                    return s;
-                });
-
-                const myOwnSame = existing.length === nextTokens.length &&
-                    existing.every((t, i) => t.token === nextTokens[i].token);
-                if (myOwnSame && tokenDeviceSweepCount === 0) {
-                    persistOutcome = 'already-bound';
-                    return;
-                }
-                if (tokenDeviceSweepCount > 0) {
-                    console.log(`[push][native] swept ${tokenDeviceSweepCount} cross-staff token entries for device ${deviceId.slice(0, 8)}…`);
-                }
-                tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
-                persistOutcome = 'wrote';
-            });
+            await bindTokenToStaff({ staffName, token, deviceId, platform, tokenKind, tag: '[push][native]' },
+                (o) => { persistOutcome = o; }, opts.bootCheck);
             // 2026-07-27: no post-commit setStaffList mirror here — App's
             // /config/staff onSnapshot delivers the committed write through
             // its shape-hash dedupe (fcmTokens excluded). UI that reads
@@ -477,9 +578,13 @@ async function getMessagingSafely() {
  *   call sites don't all need touching): the post-commit roster mirror was
  *   removed — App's /config/staff onSnapshot delivers the committed write
  *   through its shape-hash dedupe, and no UI reads fcmTokens off React state.
+ * @param {{bootCheck?: boolean}} [opts] — bootCheck: App's automatic call after a
+ *   boot. With flag skipNoChangeTx on, it may skip the transaction when the token
+ *   is already bound. A person tapping a button never passes it: they're asking
+ *   for the save, often because pushes stopped.
  * @returns {Promise<{ok: boolean, reason?: string, token?: string}>}
  */
-export async function enableFcmPush(staffName, staffList, setStaffList) {
+export async function enableFcmPush(staffName, staffList, setStaffList, opts = {}) {
     // Explicit shared-iPad mode (see setSharedDeviceMode): this device
     // must NEVER hold a push token — the counter iPad chiming with one
     // staffer's personal notifications is the whole problem. Checked
@@ -510,7 +615,7 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     if (isCapacitorNative()) {
         console.log('[push][native] === entering enableNativePush (Step 1 capture-only) ===');
         try {
-            const r = await enableNativePush(staffName, staffList, setStaffList);
+            const r = await enableNativePush(staffName, staffList, setStaffList, opts);
             console.log('[push][native] enableNativePush returned:', JSON.stringify(r));
             return r;
         } catch (e) {
@@ -628,112 +733,8 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
         let persistOutcome = 'skipped';
         let persistError = null;
         try {
-            await runTransaction(db, async (tx) => {
-                persistOutcome = 'skipped'; // reset — retries re-run the body
-                const ref = doc(db, "config", "staff");
-                const snap = await tx.get(ref);
-                if (!snap.exists()) {
-                    console.warn("FCM token: config/staff doc missing, skipping write");
-                    return;
-                }
-                const liveList = (snap.data() || {}).list || [];
-                const meIdx = liveList.findIndex((s) => s.name === staffName);
-                if (meIdx === -1) {
-                    console.warn(`FCM token: ${staffName} not found in live staff list, skipping write`);
-                    return;
-                }
-                const me = liveList[meIdx];
-                const existing = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
-                // Dedup with TWO axes:
-                //   1. By deviceId — only one entry per physical browser.
-                //      If an entry has the same deviceId as ours, we
-                //      replace it (this is the new token after FCM
-                //      rotation on the same device). This collapses
-                //      the "PWA + tab + private window all on the same
-                //      Mac" case to one entry.
-                //   2. By token string — legacy entries (no deviceId)
-                //      stay dedupable so we don't accumulate stale
-                //      duplicates of the same token.
-                // Legacy entries WITHOUT a deviceId AND without matching
-                // our current token are left alone (might belong to a
-                // different device whose deviceId we don't know yet).
-                // They'll get pruned by dispatchNotification when their
-                // tokens go stale, or replaced when that device next
-                // registers (it'll gain a deviceId then).
-                const seenTokens = new Set();
-                const dedup = [];
-                for (const t of existing) {
-                    if (!t || !t.token) continue;
-                    if (t.token === token) continue;        // current token re-added below
-                    if (t.deviceId && t.deviceId === deviceId) continue; // same device, replace
-                    if (seenTokens.has(t.token)) continue;  // duplicate token string
-                    seenTokens.add(t.token);
-                    dedup.push(t);
-                }
-                const nextTokens = [
-                    { token, lastSeen: Date.now(), deviceId },
-                    ...dedup,
-                ].slice(0, MAX_TOKENS_PER_STAFF);
-
-                // Sweep cross-staff contamination — remove the same
-                // deviceId (and the same token string) from every
-                // OTHER staff's fcmTokens. (2026-05-17 — Andrew
-                // reported Julie's phone getting pushes for messages
-                // she just sent, which only happens when her device's
-                // token is also registered to Andrew's record. Symptom
-                // class: someone signed in on the wrong phone briefly,
-                // both records hold the same device entry, dispatch
-                // pushes to both staff for every chat.)
-                //
-                // After this sweep + this commit, the next time each
-                // staff opens their own PWA, their record sweeps the
-                // foreign entries out of all other staff. Self-healing.
-                //
-                // tokenDeviceSweepCount is tracked so we know whether
-                // we actually mutated the list (avoids a no-op write
-                // that triggers a pointless snapshot fan-out to every
-                // other listener).
-                let tokenDeviceSweepCount = 0;
-                const nextList = liveList.map((s, i) => {
-                    if (i === meIdx) return { ...s, fcmTokens: nextTokens };
-                    if (!Array.isArray(s.fcmTokens) || s.fcmTokens.length === 0) return s;
-                    const cleaned = s.fcmTokens.filter(t => {
-                        if (!t || !t.token) return false;
-                        // Drop any entry whose device matches the device
-                        // we're now claiming for the current staff.
-                        if (t.deviceId && t.deviceId === deviceId) return false;
-                        // Drop entries whose token string equals our
-                        // new token (defensive — same physical browser
-                        // can register the same token under different
-                        // staff if the deviceId was generated post-
-                        // facto, e.g. after the localStorage clear).
-                        if (t.token === token) return false;
-                        return true;
-                    });
-                    if (cleaned.length !== s.fcmTokens.length) {
-                        tokenDeviceSweepCount += (s.fcmTokens.length - cleaned.length);
-                        return { ...s, fcmTokens: cleaned };
-                    }
-                    return s;
-                });
-
-                // No-op if nothing meaningful changed (avoids a
-                // pointless snapshot fan-out). The new check also
-                // accounts for the cross-staff sweep — even if my own
-                // tokens are unchanged, if we swept somebody else's
-                // contamination we still need to write.
-                const myOwnSame = existing.length === nextTokens.length &&
-                    existing.every((t, i) => t.token === nextTokens[i].token);
-                if (myOwnSame && tokenDeviceSweepCount === 0) {
-                    persistOutcome = 'already-bound';
-                    return;
-                }
-                if (tokenDeviceSweepCount > 0) {
-                    console.log(`[FCM] swept ${tokenDeviceSweepCount} cross-staff token entries for device ${deviceId.slice(0, 8)}…`);
-                }
-                tx.set(ref, { list: nextList, rev: nextStaffRev(snap.data()) });
-                persistOutcome = 'wrote';
-            });
+            await bindTokenToStaff({ staffName, token, deviceId, tag: '[FCM]' },
+                (o) => { persistOutcome = o; }, opts.bootCheck);
             // 2026-07-27: no post-commit setStaffList mirror here — App's
             // /config/staff onSnapshot delivers the committed write through
             // its shape-hash dedupe (fcmTokens excluded). UI that reads
@@ -992,6 +993,9 @@ export function isSharedDevice() {
 // per-staff disableFcmPush can't reach them all. Same transaction + rev
 // protocol as disableFcmPush.
 export async function purgeDeviceTokensAllStaff() {
+    _tokensTouchedThisPage = true;
+    _bindEpoch += 1;
+    closeOpenChecks();
     const deviceId = (() => {
         try { return localStorage.getItem(DEVICE_ID_KEY); } catch { return null; }
     })();
@@ -1027,6 +1031,9 @@ export async function purgeDeviceTokensAllStaff() {
 }
 
 export async function disableFcmPush(prevStaffName) {
+    _tokensTouchedThisPage = true;
+    _bindEpoch += 1;
+    closeOpenChecks();
     const deviceId = (() => {
         try { return localStorage.getItem(DEVICE_ID_KEY); }
         catch { return null; }

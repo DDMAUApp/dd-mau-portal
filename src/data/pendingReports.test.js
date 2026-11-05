@@ -200,6 +200,26 @@ describe('the daily device row', () => {
         expect(landed).toHaveLength(2);
     });
 
+    it('carries push counts on the existing row, and takes off only what landed', async () => {
+        const m = await fresh();
+        const saves = await import('./noChangeSaves.js');
+        saves.notePushOutcome('already-bound');
+        saves.notePushOutcome('already-bound');
+        setDocMock.mockImplementationOnce(async () => {
+            saves.notePushOutcome('already-bound'); // counted while the row was going out
+            throw new Error('nope');
+        });
+        await m.logDeviceSeenOncePerDay({ staffName: 'Laura', now: new Date('2026-11-03T20:00:00Z') });
+        expect(saves.readPushOutcomes()).toEqual({ 'already-bound': 3 });
+        setDocMock.mockImplementationOnce(async (ref, row) => {
+            landed.push({ row });
+            saves.notePushOutcome('tx:wrote');
+        });
+        await m.logDeviceSeenOncePerDay({ staffName: 'Laura', now: new Date('2026-11-03T20:00:00Z') });
+        expect(landed[0].row.pushOutcomes).toEqual({ 'already-bound': 3 });
+        expect(saves.readPushOutcomes()).toEqual({ 'tx:wrote': 1 });
+    });
+
     it('carries reports given up on, and clears them only once the row lands', async () => {
         const m = await fresh();
         m.noteReportDropped({ reportId: 'rr_1', reason: 'probe-stuck', cls: 'sdk-stuck', attempts: 3 }, 5);

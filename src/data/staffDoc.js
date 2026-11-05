@@ -44,8 +44,19 @@ import { watchdogWrite, watchdogTransaction } from './firestoreRevive';
 
 export const STAFF_DOC = { rev: undefined };
 
+// The raw doc, including fcmTokens, which React's staffList never sees change
+// because they're left out of its shape hash. May be cached and may be behind a
+// write this device just made, so it's a hint for skipping work, never a base to
+// write from.
+let _latestStaffData = null;
+
 export function noteStaffSnapshot(data) {
     STAFF_DOC.rev = (data && typeof data.rev === 'number') ? data.rev : null;
+    _latestStaffData = data || null;
+}
+
+export function latestStaffData() {
+    return _latestStaffData;
 }
 
 // Next revision value for a transactional write, given the doc data
