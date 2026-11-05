@@ -60,6 +60,7 @@ import AdminHub, { AdminToolHeader } from './AdminHub';
 // page. i want to know which staff has used the app?" Self-contained
 // read-only card; reads staffList in-place, no new Firestore writes.
 import StaffUsageAudit from './StaffUsageAudit';
+import TestActivityLog from './TestActivityLog';
 import TrainingAssignmentsPanel from './TrainingAssignmentsPanel';
 import TimecardDisputesPanel from './TimecardDisputesPanel';
 import HealthBulkEditor from './HealthBulkEditor';
@@ -2518,6 +2519,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 inventoryaudit:   { emoji: '🧮', tint: 'tint-teal',   label: hubTx('Count audit', 'Conteos') },
                 orderlog:         { emoji: '📞', tint: 'tint-sky',    label: hubTx('Order log', 'Pedidos') },
                 recipeaudit:      { emoji: '🔍', tint: 'tint-purple', label: hubTx('Recipe views', 'Recetas') },
+                testactivity:     { emoji: '🧪', tint: 'tint-purple', label: hubTx('Test login activity', 'Actividad de prueba') },
                 inventorylists:   { emoji: '🗒️', tint: 'tint-orange', label: hubTx('Inv. lists', 'Listas inv.') },
                 danger:           { emoji: '⚠️', tint: 'tint-red',    label: hubTx('Danger zone', 'Zona peligrosa') },
             };
@@ -2528,7 +2530,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // keep the exact same gates their sections had.
             const hubGroups = [
                 { id: 'g-staff',    emoji: '👥', title: hubTx('Staff', 'Personal'),
-                    tools: ['staff', 'usage', 'trainingassign', 'offsite', 'deleted'] },
+                    tools: ['staff', 'usage', 'testactivity', 'trainingassign', 'offsite', 'deleted'] },
                 { id: 'g-tasks',    emoji: '📋', title: hubTx('Tasks', 'Tareas'),
                     tools: ['taskplanner', 'todos', 'timecards', 'maintenance'] },
                 { id: 'g-money',    emoji: '💰', title: hubTx('Money', 'Dinero'),
@@ -2659,6 +2661,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         (fcmTokens, pwaInstalled, fcmTokens[].lastSeen)
                         — no new Firestore writes were added to surface
                         this audit. Collapsed by default. */}
+                    {show('testactivity') && <TestActivityLog language={language} />}
                     {show('usage') && <StaffUsageAudit
                         staffList={staffList}
                         language={language}

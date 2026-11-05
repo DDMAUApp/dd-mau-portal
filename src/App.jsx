@@ -5,6 +5,7 @@ import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, isAdminId, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney, HIDEABLE_PAGES } from './data/staff';
 import { TEST_MODE, isTestModeStaff, enterTestMode, exitTestMode } from './data/testMode';
+import { startTestActivityLog, recordTestPage } from './data/testActivity';
 import { noteStaffSnapshot, nextStaffRev } from './data/staffDoc';
 import { rosterGateOpen, signInStampedRecently, markSignInStamped, SKIP_NO_CHANGE_FLAG } from './data/noChangeSaves';
 import { getReliabilityFlag } from './data/reliabilityFlags';
@@ -858,6 +859,14 @@ export default function App() {
     const [activeLocation, setActiveLocation] = useState(() => SS.get("activeLocation", "webster"));
     const [language, setLanguage] = useState(() => SS.get("language", "en"));
     const [activeTab, setActiveTab] = useState(() => SS.get("activeTab", "home"));
+    // Test login only: the owner's record of which pages were opened (testActivity.js).
+    const testTabRef = useRef(activeTab);
+    testTabRef.current = activeTab;
+    useEffect(() => {
+        if (!TEST_MODE) return;
+        startTestActivityLog({ appVersion: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev', getTab: () => testTabRef.current });
+    }, []);
+    useEffect(() => { if (TEST_MODE) recordTestPage(activeTab); }, [activeTab]);
     const [staffList, setStaffList] = useState(DEFAULT_STAFF);
     // 2026-05-27 — Bug #3 from the audit dossier. `staffList` starts
     // as DEFAULT_STAFF (a hardcoded array of 71 names baked into
