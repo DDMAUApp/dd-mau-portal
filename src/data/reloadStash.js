@@ -65,9 +65,12 @@ export function takeReloadStash(key, { maxAgeMs = STASH_MAX_AGE_MS, now = Date.n
  * flagged 'saving' so the row keeps its amber dot until confirmed.
  * Returns null when the stash is for another store or unusable.
  */
-export function planStashRehydrate(stash, { loc, now = Date.now(), wiped = false } = {}) {
+export function planStashRehydrate(stash, { loc, now = Date.now(), wiped = false, staffName = null } = {}) {
     if (!stash || typeof stash !== 'object') return null;
     if (!loc || stash.loc !== loc) return null;
+    // Someone else signed in during the 5 minutes: not their held taps to show.
+    // A stash from before this field existed says nothing either way.
+    if (staffName && stash.staffName && stash.staffName !== staffName) return null;
     const counts = (stash.counts && typeof stash.counts === 'object') ? { ...stash.counts } : {};
     const countMeta = (stash.countMeta && typeof stash.countMeta === 'object') ? { ...stash.countMeta } : {};
     const pendingSrc = (stash.pendingCounts && typeof stash.pendingCounts === 'object') ? stash.pendingCounts : {};

@@ -56,10 +56,15 @@ import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
-import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel, isDuplicateInventoryName } from '../data/inventory';
+import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel, isDuplicateInventoryName, isDuplicateInCategory } from '../data/inventory';
 import { formatCountStampLines, contributionWrites } from '../data/inventoryStamp';
 import { reconcileCountsDetailed, RELEASE_TIMEOUT_MS } from '../data/inventoryReconcile';
 import { createTapCoalescer } from '../data/inventoryTapCoalescer';
+import { getReliabilityFlag } from '../data/reliabilityFlags';
+import { createPlaceSaver, readInventoryPlace, saveInventoryPlace } from '../data/placeMemory';
+import { sheetText, sheetView, snapshotCountsAsLive } from '../data/sheetGate';
+import { ADD_DEADLINE_MS, addFailedText, parkInventoryAddRow } from '../data/inventoryAddReport';
+import SheetLoadingPanel from './SheetLoadingPanel';
 import { registerReloadStash, peekReloadStash, peekReloadStashMeta, clearReloadStash, planStashRehydrate, resolveLostHolds } from '../data/reloadStash';
 import { InventoryLocationJumpBar, InventoryMoreMenu, locationGroupKey, locationTitle, UNASSIGNED_LOCATION, keepLocationFolds } from './InventoryLayoutParts';
 import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot, shouldApplyInventorySnapshot, isServerConfirmedSnapshot } from '../data/inventoryStability';
@@ -588,7 +593,39 @@ const LocationItemRow = memo(function LocationItemRow({
     );
 });
 
-export default function Operations({ language, staffList, staffName, storeLocation }) {
+export default function Operations({ language, staffList, staffName, storeLocation, onGoHome }) {
+            // ── Keep the place + sheet gate (Release B, flag placeRestore) ────
+            // Both declared FIRST, above every hook that reads them (TDZ rule, see
+            // the vendorCounts note below). savedPlace is read once per mount and
+            // seeds the useState calls below, so the right sub-tab paints first
+            // with no Tasks flash. Flag off: null, and every seed is today's default.
+            const savedPlaceRef = useRef(undefined);
+            if (savedPlaceRef.current === undefined) {
+                savedPlaceRef.current = (staffName && getReliabilityFlag('placeRestore'))
+                    ? readInventoryPlace(staffName, storeLocation)
+                    : null;
+            }
+            const savedPlace = savedPlaceRef.current;
+            // 'loading' until a snapshot lands, 'stash' after a reload stash paint,
+            // 'live' after a real snapshot. Tracked with the flag off too, so turning
+            // it on mid-session doesn't lock a sheet that's already loaded. Nothing
+            // reads it unless the flag is on.
+            const [sheetState, setSheetState] = useState('loading');
+            const sheetStateRef = useRef('loading');
+            const markSheetState = (next) => {
+                if (sheetStateRef.current === next) return;
+                sheetStateRef.current = next;
+                setSheetState(next);
+            };
+            const sheet = sheetView(sheetState, getReliabilityFlag('placeRestore'));
+            // Handlers' last line of defense behind the hidden and disabled controls.
+            const sheetBlocks = (needs) => {
+                const v = sheetView(sheetStateRef.current, getReliabilityFlag('placeRestore'));
+                if (v[needs]) return false;
+                const text = sheetText(language);
+                toast(v.showRows ? text.slow : text.loading, { kind: 'info' });
+                return true;
+            };
 
             // (Removed 2026-05-09) passwordEntered / password / handlePasswordSubmit
             // — leftover from the shared-password Operations gate. Replaced by the
@@ -816,7 +853,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [showCsvImport, setShowCsvImport] = useState(false);
             // (vendorCounts state moved up beside inventory/invCountMeta to avoid a
             // temporal-dead-zone crash in the delivery-cart useMemo — see note there.)
-            const [activeTab, setActiveTab] = useState("checklist");
+            const [activeTab, setActiveTab] = useState(() => savedPlace?.subTab || "checklist");
             // PERF (2026-07-14, Andrew: "tap the tasks tab, it doesn't load right
             // away — takes too long"). The Tasks (checklist) tab mounts a heavy
             // subtree — ~51 tasks each rendered as a large row, PLUS per-assignee
@@ -1051,10 +1088,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 catch { /* storage full or disabled */ }
             }, [invCompactView]);
             const [invShowAddForm, setInvShowAddForm] = useState(null);
-            const [invNewName, setInvNewName] = useState("");
+            const [invNewName, setInvNewName] = useState(() => savedPlace?.invNewName ?? "");
             // Which add box is saving right now ('cat:N' | 'loc:X' | 'form:N'), 2026-09-25.
             const [invAddingKey, setInvAddingKey] = useState(null);
-            const [invNewNameEs, setInvNewNameEs] = useState("");
+            // The add attempt under way, for mutateInventory to pick up (Release B).
+            const addAttemptRef = useRef(null);
+            const [invNewNameEs, setInvNewNameEs] = useState(() => savedPlace?.invNewNameEs ?? "");
             const [invNewSupplier, setInvNewSupplier] = useState("");
             const [invNewOrderDay, setInvNewOrderDay] = useState("Fri");
             const [customInventory, setCustomInventory] = useState(INVENTORY_CATEGORIES.map(c => ({...c, items: [...c.items]})));
@@ -1096,7 +1135,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // the "Recent changes" expander at the bottom of the inventory page.
             const [inventoryAudits, setInventoryAudits] = useState([]);
             const [showInventoryAudits, setShowInventoryAudits] = useState(false);
-            const [invSearch, setInvSearch] = useState("");
+            const [invSearch, setInvSearch] = useState(() => savedPlace?.invSearch ?? "");
             // 2026-05-29 perf: defer the search value used by the
             // expensive filter pass so typing stays buttery on the
             // 300+ item master list. The input itself reads invSearch
@@ -1110,7 +1149,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // alongside the local substring matcher; results are
             // UNIONed. OFF falls back to substring only.
             const [invAiOn, setInvAiOn] = useState(true);
-            const [writeInValues, setWriteInValues] = useState({});
+            const [writeInValues, setWriteInValues] = useState(() => savedPlace?.writeInValues ?? {});
             // Per-row write-in destination — { [catIdx]: { catIdx, location } }.
             // Defaults: targetCatIdx = the section the user is typing in,
             // location = '' (will prompt). Andrew 2026-05-22: "keep the
@@ -1118,7 +1157,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // but let it pick what category and location when writing it
             // in." Inline expansion below the write-in input lets the
             // user override both before pressing Add.
-            const [writeInDest, setWriteInDest] = useState({});
+            const [writeInDest, setWriteInDest] = useState(() => savedPlace?.writeInDest ?? {});
             // Andrew 2026-07-30: "in the operations page the inventory list by
             // location make it so under each section you can add items and
             // that stays on forever." The By-Location view had NO add control
@@ -1129,14 +1168,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // the section, so only a name (and optionally a category) is
             // needed. Adds go through mutateInventory ⇒ they land in the
             // permanent customInventory catalog, not just this count.
-            const [locWriteIn, setLocWriteIn] = useState({});      // { [location]: text }
-            const [locWriteInCat, setLocWriteInCat] = useState({}); // { [location]: catIdx }
+            const [locWriteIn, setLocWriteIn] = useState(() => savedPlace?.locWriteIn ?? {});      // { [location]: text }
+            const [locWriteInCat, setLocWriteInCat] = useState(() => savedPlace?.locWriteInCat ?? {}); // { [location]: catIdx }
             // 2026-05-31 - Andrew: "lets let the locations tab be the default
             // page to load instead of the master list. we will use that more."
             // Was "category" (master list grouped by category). Now defaults
             // to "location" (items grouped by walk-in / dry storage / etc.) -
             // matches how staff actually count during a shift.
-            const [invViewMode, setInvViewMode] = useState("location"); // "category" | "location" | "vendor" | "split" | "pricing"
+            const [invViewMode, setInvViewMode] = useState(() => savedPlace?.invViewMode || "location"); // "category" | "location" | "vendor" | "split" | "pricing"
             // 2026-06-20 (QA audit O7) — discard any in-progress edit/move when the
             // view mode or location changes. invEditingIdx is positional
             // {catIdx,itemIdx}; after a switch those indices point at a DIFFERENT
@@ -1167,15 +1206,77 @@ export default function Operations({ language, staffList, staffName, storeLocati
             useEffect(() => {
                 if (invViewMode === "pricing") setPricingEverOpened(true);
             }, [invViewMode]);
-            const [collapsedCats, setCollapsedCats] = useState({});
-            const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(false);
+            const [collapsedCats, setCollapsedCats] = useState(() => savedPlace?.collapsedCats ?? {});
+            const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(() => savedPlace?.invShowOnlyCounted ?? false);
             // Filter to ONLY items currently flagged low-stock
             // (count > 0 && count <= min). Mirrors the "Counted Only"
             // toggle pattern so the rest of the page filtering logic
             // composes naturally. Useful when admin is scanning
             // "what do I need to put on the order list this week?"
             // without scrolling through every other item.
-            const [invShowOnlyLow, setInvShowOnlyLow] = useState(false);
+            const [invShowOnlyLow, setInvShowOnlyLow] = useState(() => savedPlace?.invShowOnlyLow ?? false);
+            // ── Saving the place (Release B). Below every field it reads. At most
+            // every 500 ms, on pagehide and on leaving, and for scroll only once
+            // scrolling stops. Nothing here writes with the flag off.
+            const placeFieldsRef = useRef(null);
+            const placeScrollRef = useRef(savedPlace?.scrollY ?? 0);
+            const placeSaverRef = useRef(null);
+            if (!placeSaverRef.current) {
+                placeSaverRef.current = createPlaceSaver(() => {
+                    const f = placeFieldsRef.current;
+                    if (!f || !getReliabilityFlag('placeRestore')) return;
+                    saveInventoryPlace(f.staffName, f.store, { ...f.place, scrollY: placeScrollRef.current });
+                });
+            }
+            useEffect(() => {
+                if (!staffName || !getReliabilityFlag('placeRestore')) return;
+                placeFieldsRef.current = {
+                    staffName,
+                    store: storeLocation,
+                    place: {
+                        subTab: activeTab, invViewMode, invSearch, invShowOnlyCounted, invShowOnlyLow, collapsedCats,
+                        writeInValues, writeInDest, locWriteIn, locWriteInCat, invNewName, invNewNameEs,
+                    },
+                };
+                placeSaverRef.current.schedule();
+            }, [staffName, storeLocation, activeTab, invViewMode, invSearch, invShowOnlyCounted, invShowOnlyLow, collapsedCats,
+                writeInValues, writeInDest, locWriteIn, locWriteInCat, invNewName, invNewNameEs]);
+            // Leaving this store or page: what's waiting goes under the store it belongs to.
+            useEffect(() => () => { placeSaverRef.current.flush(); }, [storeLocation]);
+            // Scroll goes back once, after the first paint with items. Until then a
+            // scroll event says nothing about where the person was.
+            const placeScrollDoneRef = useRef(!(savedPlace?.subTab === 'inventory' && savedPlace?.scrollY > 0));
+            useEffect(() => {
+                if (!getReliabilityFlag('placeRestore')) return undefined;
+                let timer = null;
+                const note = () => {
+                    if (!placeScrollDoneRef.current) return;
+                    if (placeFieldsRef.current?.place?.subTab !== 'inventory') return;
+                    placeScrollRef.current = window.scrollY || 0;
+                    placeSaverRef.current.schedule();
+                };
+                const onScroll = () => {
+                    if (timer) clearTimeout(timer);
+                    timer = setTimeout(note, 200);
+                };
+                const onPageHide = () => { note(); placeSaverRef.current.flush(); };
+                window.addEventListener('scroll', onScroll, { passive: true });
+                window.addEventListener('pagehide', onPageHide);
+                return () => {
+                    if (timer) clearTimeout(timer);
+                    window.removeEventListener('scroll', onScroll);
+                    window.removeEventListener('pagehide', onPageHide);
+                };
+            }, []);
+            useEffect(() => {
+                if (placeScrollDoneRef.current) return undefined;
+                if (deferredActiveTab !== 'inventory' || sheetState === 'loading') return undefined;
+                if (!customInventory.some(c => c?.items?.length)) return undefined;
+                placeScrollDoneRef.current = true;
+                const y = placeScrollRef.current;
+                const id = requestAnimationFrame(() => { try { window.scrollTo(0, y); } catch { /* stays at the top */ } });
+                return () => cancelAnimationFrame(id);
+            }, [deferredActiveTab, sheetState, customInventory]);
             // ── By-person filter (2026-08-12, Andrew: "view lists by name so
             // i can only see the items andrew added and print that") ────────
             // Every count write already stamps countMeta[itemId] = { by, at,
@@ -1724,7 +1825,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Expand all categories when searching, collapse back when cleared.
             // 2026-09-23: keep the Location view's folded sections (`loc::` keys)
             // — clearing a search used to un-fold every location.
+            const keepRestoredFoldsRef = useRef(!!savedPlace);
             useEffect(() => {
+                // The mount run mustn't undo folds just restored (Release B).
+                if (keepRestoredFoldsRef.current) { keepRestoredFoldsRef.current = false; return; }
                 if (!invSearch) { setCollapsedCats(keepLocationFolds); }
             }, [invSearch]);
 
@@ -2653,6 +2757,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
+                // A new store's sheet hasn't been seen yet (Release B).
+                markSheetState('loading');
                 // Rehydrate from a reload stash (2026-09-09): a forced reload
                 // (revive watchdog, crash heal, deploy broadcast) parked the
                 // sheet — counts, meta, in-flight taps, sub-tab. Paint it back
@@ -2671,8 +2777,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // taps are gone for good: the planner drops those phantom
                         // values (the server's numbers paint instead) and reports
                         // them as lostIds → sticky "Save failed — tap again".
-                        const plan = planStashRehydrate(st, { loc: storeLocation, now: Date.now(), wiped: !!(stMeta && stMeta.reason === 'fs-heal-wiped') });
+                        const plan = planStashRehydrate(st, {
+                            loc: storeLocation,
+                            now: Date.now(),
+                            wiped: !!(stMeta && stMeta.reason === 'fs-heal-wiped'),
+                            staffName: getReliabilityFlag('placeRestore') ? staffName : null,
+                        });
                         if (plan) {
+                            markSheetState('stash');
                             // Seed the remote-clear marker FIRST: the doc's stored
                             // clearedAt would otherwise read as "advanced" vs null on
                             // the first snapshot and wipe the holds we just restored.
@@ -2784,8 +2896,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         });
                         if (shouldIgnoreInventorySnapshot({ incomingHasAny, localHasAny, recentlyCleared, remoteClearAdvanced, serverConfirmed })) {
                             console.warn('[inventory] ignored an empty/stale snapshot that would have wiped the active cart — keeping current counts.');
+                            // A server answer is real even when its empty counts are
+                            // ignored. Without this, a stash paint could sit blocked
+                            // with no catalog until some later change (Release B).
+                            if (!docSnap.metadata.fromCache && getReliabilityFlag('placeRestore')) {
+                                if (Array.isArray(data.customInventory)) {
+                                    lastOpsCatalogRef.current = { customInventory: data.customInventory, deletedMasterIds: data.deletedMasterIds || [] };
+                                    if (!isListOverride(activeListRef.current)) applyOpsCatalog(lastOpsCatalogRef.current);
+                                }
+                                markSheetState('live');
+                            }
                             return;
                         }
+                        markSheetState('live');
                         // Remember the clear marker we're about to honor so the
                         // same one never re-triggers.
                         if (incomingClearedAt) lastAppliedClearedAtRef.current = incomingClearedAt;
@@ -2866,6 +2989,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             // catalog bytes haven't changed (count-only snapshot).
                             applyOpsCatalog(lastOpsCatalogRef.current);
                         }
+                    } else if (snapshotCountsAsLive({ exists: false, fromCache: docSnap.metadata.fromCache })) {
+                        // The server says there's no document yet, so the sheet really is empty.
+                        markSheetState('live');
                     }
                 }, (err) => console.warn('inventory snapshot subscribe failed', err));
 
@@ -2929,7 +3055,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // stash and the SDK queue agree.
             useEffect(() => registerReloadStash('inventory', () => {
                 try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
+                // Zeros on a sheet that never loaded aren't a sheet. Stashing them
+                // would let the next boot treat them as counts (Release B).
+                if (sheetStateRef.current === 'loading' && getReliabilityFlag('placeRestore')) return null;
                 return {
+                    staffName,
                     loc: storeLocation,
                     counts: inventoryRef.current,
                     countMeta: invCountMetaRef.current,
@@ -2938,7 +3068,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     subTab: activeTab,
                     clearedAt: lastAppliedClearedAtRef.current,
                 };
-            }), [storeLocation, activeTab]);
+            }), [storeLocation, activeTab, staffName]);
             // Backgrounding / tab switch: hand any open tap window to the SDK
             // queue (IndexedDB) right away rather than holding it in memory.
             useEffect(() => {
@@ -4366,6 +4496,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const updateInventoryCount = async (itemId, newCount, delta = null) => {
+                if (sheetBlocks('canTap')) return;
                 // 2026-07-22 (audit M16): in 'both' admin mode there is no real
                 // inventory doc — writes went to phantom ops/inventory_both that
                 // NEITHER store reads, so the admin's counts silently vanished.
@@ -4739,6 +4870,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Same dotted-path pattern as updateInventoryCount so concurrent edits on
             // other items aren't clobbered.
             const updateVendorCount = async (vendor, vendorId, newCount) => {
+                if (sheetBlocks('canTap')) return;
                 // 'both' mode writes go to a phantom doc — see updateInventoryCount (M16).
                 if (storeLocation === 'both') {
                     toast(language === 'es'
@@ -4796,6 +4928,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const saveAndResetInventory = async () => {
+                if (sheetBlocks('canBulk')) return;
                 // Land any open tap window FIRST so its increment is queued ahead
                 // of the reset write (review 2026-09-09: an open window used to
                 // re-add the item after the reset).
@@ -4868,6 +5001,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Confirm-gated; persists counts:{} + vendorCounts:{} to the canonical
             // doc (updateDoc preserves customInventory + schema).
             const clearAllInventoryCounts = async () => {
+                if (sheetBlocks('canBulk')) return;
                 // Same ordering rule as saveAndResetInventory: open windows land
                 // before the clear, even if the confirm below is cancelled.
                 try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
@@ -5001,16 +5135,62 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // until the save really lands (2026-09-25). After 10s tell the
             // user it's the connection, not them.
             const withAddProgress = async (key, run) => {
+                // Release B: read here, so "off" takes effect on the next tap.
+                const guarded = getReliabilityFlag('placeRestore');
+                if (guarded) {
+                    if (sheetBlocks('canBulk')) return null;
+                    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                        toast(addFailedText(language), { kind: 'error' });
+                        parkInventoryAddRow({ outcome: 'offline', box: key });
+                        return null;
+                    }
+                }
                 setInvAddingKey(key);
                 const slow = setTimeout(() => {
                     toast(language === 'es'
                         ? 'Conexión lenta — todavía agregando…'
                         : 'Slow connection — still adding…', { kind: 'info', duration: 5000 });
                 }, 10000);
-                try { return await run(); }
-                finally { clearTimeout(slow); setInvAddingKey(null); }
+                let deadline = null;
+                try {
+                    if (!guarded) return await run();
+                    const attempt = { key, startedAt: Date.now(), deadlinePassed: false };
+                    addAttemptRef.current = attempt;
+                    const running = run();
+                    addAttemptRef.current = null;
+                    // Past the deadline the person gets their box back and may retry.
+                    // The first try can still land: mutateInventory mirrors it into the
+                    // catalog, and the check inside the transaction stops a second copy.
+                    const passed = new Promise((resolve) => {
+                        deadline = setTimeout(() => {
+                            attempt.deadlinePassed = true;
+                            toast(addFailedText(language), { kind: 'error' });
+                            parkInventoryAddRow({ outcome: 'deadline', ageMs: Date.now() - attempt.startedAt, box: key });
+                            resolve(null);
+                        }, ADD_DEADLINE_MS);
+                    });
+                    return await Promise.race([running, passed]);
+                } finally { clearTimeout(slow); clearTimeout(deadline); setInvAddingKey(null); }
             };
-            const mutateInventory = async (transformer) => {
+            // The audit row that dates a new item (Release B). No count changed, so
+            // there's no before and after. Panels show it as "New".
+            const addAuditRow = (item, who = staffName) => {
+                const now = new Date();
+                return {
+                    kind: 'add',
+                    itemId: item.id,
+                    itemName: item.name || item.id,
+                    delta: 0,
+                    byStaff: who,
+                    at: serverTimestamp(),
+                    atLocal: now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+                    dateKey: now.toISOString().slice(0, 10),
+                };
+            };
+            // opts.audit() runs after the transformer, so it sees this try's result.
+            const mutateInventory = async (transformer, opts = null) => {
+                const attempt = addAttemptRef.current;
+                const ageMs = () => (attempt ? Date.now() - attempt.startedAt : 0);
                 try {
                     const out = await watchdogTransaction(_fsRunTransaction(db, async (txn) => {
                         const snap = await txn.get(inventoryDocRef());
@@ -5023,14 +5203,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             customInventory: updated,
                             date: new Date().toISOString(),
                         }, { merge: true });
+                        // 'both' has no audit collection, and the rules would refuse the whole add.
+                        const auditRow = (opts?.audit && storeLocation !== 'both') ? opts.audit() : null;
+                        if (auditRow) txn.set(doc(collection(db, 'inventory_audits_' + storeLocation)), auditRow);
                         return { updated, tombstones: data.deletedMasterIds || [] };
                     }), undefined, { label: 'inv-add' });
                     const next = out.updated;
                     mirrorSavedCatalog(next, out.tombstones);
+                    if (attempt?.deadlinePassed) parkInventoryAddRow({ outcome: 'late-success', ageMs: ageMs(), box: attempt.key });
                     return next;
                 } catch (err) {
                     console.error("Error updating inventory:", err);
-                    toast(language === "es" ? "Error al guardar inventario" : "Inventory save failed", { kind: 'error' });
+                    if (attempt) parkInventoryAddRow({ outcome: attempt.deadlinePassed ? 'late-rejected' : 'rejected', ageMs: ageMs(), box: attempt.key });
+                    // After the deadline they've been told, and may have moved on.
+                    if (!attempt?.deadlinePassed) {
+                        toast(language === "es" ? "Error al guardar inventario" : "Inventory save failed", { kind: 'error' });
+                    }
                     return null;
                 }
             };
@@ -5179,7 +5367,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const translated = autoTranslateItem(input);
                 const targetName = customInventory[targetCatIdx]?.name;
                 if (invAddingKey) return;
+                // Release B: an earlier try may still land after its deadline, so a
+                // retry checks the live list inside the transaction.
+                const guarded = getReliabilityFlag('placeRestore');
+                let raceDupe = false;
+                let added = null;
                 const result = await withAddProgress(`cat:${sourceCatIdx}`, () => mutateInventory((live, data) => {
+                    added = null;
+                    raceDupe = guarded && isDuplicateInventoryName(live, { location, name: translated.name, nameEs: translated.nameEs });
+                    if (raceDupe) return live;
                     // Locate the category in the LIVE doc by NAME, not by index: the saved
                     // array can be shorter / a different order than the rendered (merged)
                     // list, so live[targetCatIdx] could hit the wrong category — or none
@@ -5198,8 +5394,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         vendor: "", supplier: "", orderDay: "", pack: "", price: null,
                         location,
                     };
+                    added = newItem;
                     return working.map((cat, i) => i === idx ? { ...cat, items: [...cat.items, newItem] } : cat);
-                }));
+                }, guarded ? { audit: () => (added ? addAuditRow(added) : null) } : null));
+                if (raceDupe) {
+                    toast(language === 'es'
+                        ? `"${input}" ya está en esta ubicación`
+                        : `"${input}" is already in this location`, { kind: 'error' });
+                    return;
+                }
                 if (!result) return;   // mutateInventory toasted; the typed text stays
                 setWriteInValues(prev => ({ ...prev, [sourceCatIdx]: "" }));
                 setWriteInDest(prev => ({ ...prev, [sourceCatIdx]: { catIdx: sourceCatIdx, location: '' } }));
@@ -5239,8 +5442,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // list is permanent, so the duplicate sticks. Re-check inside
                 // the transaction against the LIVE doc, where only one writer
                 // can win.
+                const guarded = getReliabilityFlag('placeRestore');
+                let added = null;
                 let raceDupe = false;
                 const result = await withAddProgress(`loc:${loc}`, () => mutateInventory((live, data) => {
+                    added = null;
                     raceDupe = isDuplicateInventoryName(live, {
                         location: loc, name: translated.name, nameEs: translated.nameEs,
                     });
@@ -5260,8 +5466,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         vendor: '', supplier: '', orderDay: '', pack: '', price: null,
                         location: loc,
                     };
+                    added = newItem;
                     return working.map((c, i) => i === idx ? { ...c, items: [...c.items, newItem] } : c);
-                }));
+                }, guarded ? { audit: () => (added ? addAuditRow(added) : null) } : null));
                 if (raceDupe) {
                     // Lost the race. Put their text back so the typing isn't
                     // thrown away, and say what actually happened rather than
@@ -5295,7 +5502,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 };
                 const targetName = customInventory[catIdx]?.name;
                 if (invAddingKey) return;
+                const guarded = getReliabilityFlag('placeRestore');
+                let raceDupe = false;
+                let added = null;
                 const result = await withAddProgress(`form:${catIdx}`, () => mutateInventory((live, data) => {
+                    added = null;
+                    // No location on this form, so the check is within the category.
+                    raceDupe = guarded && isDuplicateInCategory(live.find(c => c && c.name === targetName), captured);
+                    if (raceDupe) return live;
                     // Find the category in the LIVE doc by NAME (saved order/length can
                     // differ from the rendered list) so the add never lands on the wrong
                     // category or silently no-ops. Create it if the saved doc lacks it.
@@ -5312,8 +5526,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         vendor: captured.supplier, supplier: captured.supplier,
                         orderDay: captured.orderDay, pack: "", price: null, subcat: "",
                     };
+                    added = newItem;
                     return working.map((cat, i) => i === idx ? { ...cat, items: [...cat.items, newItem] } : cat);
-                }));
+                }, guarded ? { audit: () => (added ? addAuditRow(added) : null) } : null));
+                if (raceDupe) {
+                    toast(language === 'es'
+                        ? `"${captured.name}" ya está en esta categoría`
+                        : `"${captured.name}" is already in this category`, { kind: 'error' });
+                    return;
+                }
                 if (!result) return;   // form (and typing) stays open on failure
                 setInvNewName(""); setInvNewNameEs(""); setInvNewSupplier(""); setInvNewOrderDay("Fri"); setInvShowAddForm(null);
                 toast(language === 'es' ? `✓ ${captured.name} agregado` : `✓ ${captured.name} added`, { kind: 'success' });
@@ -8394,10 +8615,26 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 // ordering. newId is computed inside the txn against the live cat.
                                 const targetName = customInventory[newMasterCatIdx]?.name;
                                 let newId = null;
-                                const result = await mutateInventory((live, data) => {
+                                // Release B: same deadline and live check as the other boxes.
+                                // A duplicate here links to the item already there, which is
+                                // also what a retry needs when the first try landed late.
+                                const guarded = getReliabilityFlag('placeRestore');
+                                let added = null;
+                                const save = () => mutateInventory((live, data) => {
                                     let idx = live.findIndex(c => c && c.name === targetName);
                                     let working = live;
                                     if (idx === -1) { working = [...live, { name: targetName, items: [] }]; idx = working.length - 1; }
+                                    added = null;
+                                    if (guarded && isDuplicateInCategory(working[idx], { name: trimmed, nameEs: (newMasterNameEs || "").trim() })) {
+                                        const low = trimmed.toLowerCase();
+                                        const lowEs = (newMasterNameEs || "").trim().toLowerCase();
+                                        const same = working[idx].items.find(it => [it?.name, it?.nameEs].some(n => {
+                                            const v = String(n || '').trim().toLowerCase();
+                                            return v && (v === low || v === lowEs);
+                                        }));
+                                        newId = same?.id ?? null;
+                                        return live;
+                                    }
                                     newId = nextItemId(working, idx, data);
                                     const newItem = {
                                         id: newId,
@@ -8412,8 +8649,10 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         subcat: "",
                                         addedFromVendor: vendor === "sysco" ? "Sysco" : "US Foods",
                                     };
+                                    added = newItem;
                                     return working.map((c, i) => i === idx ? { ...c, items: [...c.items, newItem] } : c);
-                                });
+                                }, guarded ? { audit: () => (added ? addAuditRow(added) : null) } : null);
+                                const result = guarded ? await withAddProgress('master', save) : await save();
                                 if (!result || !newId) throw new Error("inventory save failed");
                                 await saveVendorMatch(vendor, vendorId, newId);
                                 closeEditor();
@@ -8502,7 +8741,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                             </div>
                                             <div className="flex gap-2">
                                                 <button onClick={handleCreateMasterItem}
-                                                    disabled={!newMasterName.trim() || newMasterSaving}
+                                                    disabled={!newMasterName.trim() || newMasterSaving || !sheet.canBulk}
                                                     className={`flex-1 py-2 rounded-lg text-xs font-bold text-white transition ${!newMasterName.trim() || newMasterSaving ? "bg-gray-300 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}>
                                                     {newMasterSaving ? "…" : (language === "es" ? "Crear y vincular" : "Create + link")}
                                                 </button>
@@ -8611,7 +8850,10 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                         );
                     })()}
 
-                    {deferredActiveTab === "inventory" && (
+                    {deferredActiveTab === "inventory" && !sheet.showRows && (
+                        <SheetLoadingPanel language={language} onGoHome={onGoHome} />
+                    )}
+                    {deferredActiveTab === "inventory" && sheet.showRows && (
                         <div className="space-y-3">
                             {/* ── Low-stock summary ──
                                 Surfaces items where count > 0 AND
@@ -8765,7 +9007,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 for today's order (then edit/add as needed).
                                 Replaces, not merges — see RecentOrdersBar
                                 comment block for the why. */}
-                            <RecentOrdersBar
+                            {sheet.canBulk && <RecentOrdersBar
                                 storeLocation={storeLocation}
                                 setInventory={setInventory}
                                 currentInventory={inventory}
@@ -8773,10 +9015,10 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                 currentVendorCounts={vendorCounts}
                                 language={language}
                                 onOpenHistory={openOrderHistory}
-                            />
+                            />}
                             {/* Page-level Order-history modal (z-[80], above the cart
                                 modal) so it can be opened while building a cart. */}
-                            {orderHistoryOpen && (
+                            {orderHistoryOpen && sheet.canBulk && (
                                 <RecentOrdersHistoryModal
                                     storeLocation={storeLocation}
                                     setInventory={setInventory}
@@ -8831,7 +9073,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         2026-06-09. */}
                                     {invViewMode !== "pricing" && (
                                         <>
-                                            <button disabled={inventorySaving}
+                                            <button disabled={inventorySaving || !sheet.canBulk}
                                                 onClick={() => {
                                                     const ok = window.confirm(language === "es"
                                                         ? "¿Ya REVISASTE? Guardar y reiniciar los conteos."
@@ -8842,7 +9084,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                 className="flex-1 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-mint-700 text-white border-mint-800 hover:bg-mint-800 active:scale-95 transition disabled:opacity-50">
                                                 💾 {inventorySaving ? (language === "es" ? "Guardando…" : "Saving…") : (language === "es" ? "Guardar" : "Save")}
                                             </button>
-                                            <button onClick={clearAllInventoryCounts}
+                                            <button onClick={clearAllInventoryCounts} disabled={!sheet.canBulk}
                                                 title={language === "es" ? "Limpiar todo el conteo" : "Clear all counts"}
                                                 className="flex-1 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-white text-red-700 border-red-200 hover:bg-red-50 active:scale-95 transition">
                                                 🗑 {language === "es" ? "Limpiar" : "Clear"}
@@ -9224,7 +9466,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                     Closes the cart modal on success (it's empty;
                                                     no reason to keep staring at it). */}
                                                 {rows.length > 0 && (
-                                                    <button onClick={async () => {
+                                                    <button disabled={!sheet.canBulk} onClick={async () => {
+                                                        if (sheetBlocks('canBulk')) return;
                                                         // Open tap windows land before any reset (review 2026-09-09).
                                                         try { tapCoalescerRef.current?.flushNow(); } catch { /* best-effort */ }
                                                         // Same save-first bias as the main Clear button
@@ -9929,7 +10172,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                 className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-mint-500" />
                                                             {expanded && (
                                                                 <button onClick={() => quickAddItem(catIdx)}
-                                                                    disabled={!(dest.location || '').trim() || invAddingKey === `cat:${catIdx}`}
+                                                                    disabled={!(dest.location || '').trim() || invAddingKey === `cat:${catIdx}` || !sheet.canBulk}
                                                                     title={!(dest.location || '').trim() ? (language === "es" ? "Elige una ubicación primero" : "Pick a location first") : ""}
                                                                     className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed">
                                                                     {invAddingKey === `cat:${catIdx}` ? (language === "es" ? "Agregando…" : "Adding…") : (language === "es" ? "Agregar" : "Add")}
@@ -9979,7 +10222,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                             placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
                                                     </div>
                                                     <div className="flex gap-2">
-                                                        <button onClick={() => addInvItem(catIdx)} disabled={invAddingKey === `form:${catIdx}`} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700 disabled:opacity-50">{invAddingKey === `form:${catIdx}` ? (language === "es" ? "Agregando…" : "Adding…") : (language === "es" ? "Agregar" : "Add")}</button>
+                                                        <button onClick={() => addInvItem(catIdx)} disabled={invAddingKey === `form:${catIdx}` || !sheet.canBulk} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700 disabled:opacity-50">{invAddingKey === `form:${catIdx}` ? (language === "es" ? "Agregando…" : "Adding…") : (language === "es" ? "Agregar" : "Add")}</button>
                                                         <button onClick={() => setInvShowAddForm(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                     </div>
                                                 </div>
@@ -10207,7 +10450,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                 className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-base sm:text-sm bg-white focus:outline-none focus:border-mint-500" />
                                                             {expanded && (
                                                                 <button onClick={() => quickAddItemAtLocation(loc, defaultCatIdx)}
-                                                                    disabled={invAddingKey === `loc:${loc}`}
+                                                                    disabled={invAddingKey === `loc:${loc}` || !sheet.canBulk}
                                                                     className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition disabled:opacity-50">
                                                                     {invAddingKey === `loc:${loc}` ? (language === 'es' ? 'Agregando…' : 'Adding…') : (language === 'es' ? 'Agregar' : 'Add')}
                                                                 </button>
@@ -10640,7 +10883,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                 {language === "es" ? "\u{00BF}Ya REVISASTE?" : "Did you LOOK?"}
                                             </p>
                                             <div className="flex gap-3">
-                                                <button onClick={saveAndResetInventory} disabled={inventorySaving}
+                                                <button onClick={saveAndResetInventory} disabled={inventorySaving || !sheet.canBulk}
                                                     className="flex-1 py-3 rounded-xl font-bold text-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition">
                                                     {inventorySaving ? (language === "es" ? "Guardando..." : "Saving...") : (language === "es" ? "\u{2705} S\u{00ED}" : "\u{2705} Yes")}
                                                 </button>
@@ -10651,7 +10894,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                             </div>
                                         </div>
                                     ) : (
-                                        <button onClick={() => setShowSaveConfirm(true)}
+                                        <button onClick={() => setShowSaveConfirm(true)} disabled={!sheet.canBulk}
                                             className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition">
                                             {language === "es" ? "\u{1F4BE} Guardar y Reiniciar Conteos" : "\u{1F4BE} Save & Reset Counts"}
                                         </button>
@@ -10708,7 +10951,9 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                     <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{whenStr}</td>
                                                                     <td className="px-2 py-1.5 text-gray-800 font-semibold">{a.itemName || a.itemId}</td>
                                                                     <td className={"px-2 py-1.5 text-right tabular-nums " + deltaCls}>
-                                                                        {a.previous} → {a.next} ({deltaSign}{a.delta})
+                                                                        {a.kind === 'add'
+                                                                            ? (language === 'es' ? 'Nuevo' : 'New')
+                                                                            : <>{a.previous} → {a.next} ({deltaSign}{a.delta})</>}
                                                                     </td>
                                                                     <td className="px-2 py-1.5 text-gray-700">{a.byStaff || '—'}</td>
                                                                 </tr>

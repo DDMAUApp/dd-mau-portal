@@ -6,6 +6,7 @@ import { t } from '../data/translations';
 import InstallAppButton from './InstallAppButton';
 import { isSharedDeviceModeEnabled, setSharedDeviceMode, purgeDeviceTokensAllStaff } from '../messaging';
 import useSecretHold from '../data/useSecretHold';
+import { getReliabilityFlag } from '../data/reliabilityFlags';
 import {
     isBiometricAvailable, getEnrolledStaff, wasBiometricDeclined,
     enableBiometric, tryBiometricLogin, markBiometricDeclined,
@@ -60,6 +61,8 @@ function writeLockUntil(ts) {
 // the apply URL on flyers, Indeed listings, window decals, etc. The
 // onApplyClick prop is intentionally unused — left in the signature so
 // older App.jsx paths still mount cleanly during the deploy transition.
+export const PIN_CONNECTING_HINT_MS = 20000;
+
 export default function HomePage({ onSelectStaff, language, staffList, staffListReady = true, onApplyClick }) {
     const [pin, setPin] = useState("");
     // ── Shared-iPad settings (2026-07-12, Andrew) ─────────────────────
@@ -110,6 +113,13 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
     const [enablePrompt, setEnablePrompt] = useState(null); // { name, pin } — "Enable Face ID?" after a PIN login
     const [bioBusy, setBioBusy] = useState(false);
     const isEs = language === "es";
+    // "Connecting…" never ends on a stuck line, so after a while say what to do.
+    const [connectingLong, setConnectingLong] = useState(false);
+    useEffect(() => {
+        if (staffListReady) { setConnectingLong(false); return undefined; }
+        const id = setTimeout(() => setConnectingLong(true), PIN_CONNECTING_HINT_MS);
+        return () => clearTimeout(id);
+    }, [staffListReady]);
 
     // Tick once a second while locked so the countdown updates.
     // MED-1, 2026-05-30: `now` was previously in the dep array, which
@@ -633,6 +643,11 @@ export default function HomePage({ onSelectStaff, language, staffList, staffList
                             <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
                             {isEs ? "Conectando…" : "Connecting…"}
                         </div>
+                    )}
+                    {connectingLong && !staffListReady && !isLocked && navigator.onLine !== false && getReliabilityFlag('placeRestore') && (
+                        <p data-testid="pin-connecting-hint" className="mb-3 text-xs font-semibold text-dd-text-2 text-center">
+                            {isEs ? "Si no cambia, cierra la app y ábrela de nuevo." : "If this stays, close the app and reopen it."}
+                        </p>
                     )}
                     {error && !isLocked && <p className="text-red-500 text-xs mb-2">{error}</p>}
                     {/* Apple-Liquid-Glass keypad. Each disc uses

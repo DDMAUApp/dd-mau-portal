@@ -53,7 +53,8 @@ function _mintId(at) {
 /** Parks a report and returns its ID. Never throws. */
 export function parkReport(report) {
     const reportId = report?.reportId || _mintId(report?.at);
-    const entry = { ...report, reportId, reloadId: reportId, parkedBoot: getBootSeq() };
+    // A row about an earlier reload keeps that reload's ID, so the two can be joined.
+    const entry = { ...report, reportId, reloadId: report?.reloadId || reportId, parkedBoot: getBootSeq() };
     try {
         _write([..._read(), entry]);
     } catch {

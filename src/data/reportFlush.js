@@ -14,8 +14,10 @@ import { db } from '../firebase';
 import { TEST_MODE } from './testMode';
 import { logError } from './logger';
 import { dismissToast, toast } from '../toast';
-import { clearDroppedReports, deliveredBootLabel, markReportNotified, noteReportDropped, noteReportSent, readDroppedReports, readParkedReports, removeParkedReport } from './pendingReports';
+import { clearDroppedReports, deliveredBootLabel, markReportNotified, noteReportDropped, noteReportSent, parkReport, readDroppedReports, readParkedReports, removeParkedReport } from './pendingReports';
 import { getOrCreateDeviceId } from './deviceId';
+import { getReliabilityFlag } from './reliabilityFlags';
+import { placeOutcome } from './placeMemory';
 
 // Only a reload that just happened gets a message. A report delivered days
 // later would describe something the person never connects to it.
@@ -25,30 +27,63 @@ export const MAX_SEND_ATTEMPTS = 3;
 const _sending = new Set();
 
 const RESTARTED = {
-    en: 'The app restarted to fix a stuck connection. Check your last changes before entering them again.',
-    es: 'La app se reinició para arreglar la conexión. Revisa tus últimos cambios antes de volver a ingresarlos.',
+    en: 'The app restarted to fix a stuck connection.',
+    es: 'La app se reinició para arreglar la conexión.',
+};
+const BACK_WHERE_YOU_WERE = {
+    en: "You're back where you were.",
+    es: 'Estás donde estabas.',
+};
+const CHECK_CHANGES = {
+    en: 'Check your last changes before entering them again.',
+    es: 'Revisa tus últimos cambios antes de volver a ingresarlos.',
 };
 
-export function reloadToastText(language) {
-    if (language === 'es') return RESTARTED.es;
-    if (language === 'en') return RESTARTED.en;
-    return `${RESTARTED.en} / ${RESTARTED.es}`;
+function _reloadLine(lang, restored) {
+    return [RESTARTED[lang], restored ? BACK_WHERE_YOU_WERE[lang] : null, CHECK_CHANGES[lang]].filter(Boolean).join(' ');
 }
 
-export async function flushParkedReports({ language } = {}) {
+export function reloadToastText(language, { restored = false } = {}) {
+    if (language === 'es') return _reloadLine('es', restored);
+    if (language === 'en') return _reloadLine('en', restored);
+    return `${_reloadLine('en', restored)} / ${_reloadLine('es', restored)}`;
+}
+
+// `place` is what the screen shows now: { tab, subTab, body, msSinceBoot }. The
+// "back where you were" line and the place:restored row need it and flag placeRestore.
+export async function flushParkedReports({ language, place = null } = {}) {
     if (TEST_MODE) return;
-    const list = readParkedReports();
+    let list = readParkedReports();
     const now = Date.now();
-    const toTell = list.find((r) => !r.notified && r.at && now - r.at < NOTIFY_WITHIN_MS);
+    const toTell = [...list].reverse().find((r) => !r.notified && r.at && now - r.at < NOTIFY_WITHIN_MS);
     if (toTell) {
         // Mark first: a hung write must not bring the message back on the next boot.
         list.filter((r) => !r.notified).forEach((r) => markReportNotified(r.reportId));
-        const id = toast(reloadToastText(language), {
+        const placeOn = !!place && getReliabilityFlag('placeRestore');
+        const outcome = placeOn ? placeOutcome({ reportTab: toTell.activeTab ?? null, tab: place.tab, body: place.body }) : null;
+        const id = toast(reloadToastText(language, { restored: !!outcome?.restored }), {
             kind: 'warn',
             duration: 0,
             actionLabel: 'OK',
             onAction: () => dismissToast(id),
         });
+        if (outcome) {
+            parkReport({
+                feature: 'place:restored',
+                severity: 'info',
+                reason: 'place-restored',
+                notified: true,
+                at: now,
+                reloadId: toTell.reloadId || toTell.reportId,
+                tab: place.tab ?? null,
+                subTab: place.subTab ?? null,
+                body: place.body ?? null,
+                restored: outcome.restored,
+                landedHome: outcome.landedHome,
+                msSinceBoot: place.msSinceBoot ?? null,
+            });
+            list = readParkedReports();
+        }
     }
     await Promise.all(list.map(async (rep) => {
         if (_sending.has(rep.reportId)) return;
@@ -62,11 +97,11 @@ export async function flushParkedReports({ language } = {}) {
         }
         _sending.add(rep.reportId);
         try {
-            const { notified: _n, attempts: _a, lastSentAt: _l, ...meta } = rep;
+            const { notified: _n, attempts: _a, lastSentAt: _l, feature: _f, severity: _s, ...meta } = rep;
             const landed = await logError({
-                error: new Error(`reload-after: ${rep.reason || '?'}`),
-                severity: 'warning',
-                feature: 'firestoreRevive:reload-after',
+                error: new Error(rep.feature || `reload-after: ${rep.reason || '?'}`),
+                severity: rep.severity || 'warning',
+                feature: rep.feature || 'firestoreRevive:reload-after',
                 meta: { ...meta, sendAttempt: attempts + 1, deliveredBoot: deliveredBootLabel(rep) },
                 parked: true,
                 docId: rep.reportId,

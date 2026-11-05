@@ -4980,10 +4980,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                                 <td className="px-2 py-1 text-gray-800 font-medium">{r.byStaff || '—'}</td>
                                                                 <td className="px-2 py-1 text-gray-700">{r.itemName || r.itemId || '—'}</td>
                                                                 <td className={`px-2 py-1 text-right font-black ${isAdd ? 'text-green-700' : isSub ? 'text-red-700' : 'text-gray-500'}`}>
-                                                                    {d > 0 ? `+${d}` : d}
+                                                                    {r.kind === 'add' ? (language === 'es' ? 'Nuevo' : 'New') : (d > 0 ? `+${d}` : d)}
                                                                 </td>
                                                                 <td className="px-2 py-1 text-right text-gray-600 whitespace-nowrap">
-                                                                    {r.previous ?? '?'} → <span className="font-bold text-gray-800">{r.next ?? '?'}</span>
+                                                                    {r.kind === 'add'
+                                                                        ? (language === 'es' ? 'Artículo agregado' : 'Item added')
+                                                                        : <>{r.previous ?? '?'} → <span className="font-bold text-gray-800">{r.next ?? '?'}</span></>}
                                                                 </td>
                                                                 {storeLocation === 'both' && (
                                                                     <td className="px-2 py-1 text-center">

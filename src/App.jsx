@@ -17,7 +17,11 @@ import { showLocalNotification } from './data/localNotification';
 import { installFirestoreRevive, resilientSnapshot, isInputBusy } from './data/firestoreRevive';
 import { canSeeFoodSafety } from './data/foodSafetyVisibility';
 import { flushParkedReports, logDeviceSeenOncePerDay } from './data/reportFlush';
-import { noteTab, setReportWho } from './data/reportContext';
+import { noteTab, pageAgeMs, setReportWho } from './data/reportContext';
+import { getReliabilityFlag } from './data/reliabilityFlags';
+import { effectiveStaffRecord, readLastKnownAccess, saveLastKnownAccess } from './data/lastKnownAccess';
+import { readInventoryPlace, readMainTab, saveMainTab } from './data/placeMemory';
+import ConnectingScreen from './components/ConnectingScreen';
 import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
 import { parseChatDeepLink, setPendingChatOpen } from './data/chatDeepLink';
@@ -492,6 +496,7 @@ let migrationRan = false;
 // Session persistence — pulls down/refreshing the page should keep the user
 // signed in on the same tab instead of bouncing them to the staff picker.
 // All saved keys live under "ddmau:*". Logout clears them.
+const PLACE_FLUSH_MAX_WAIT_MS = 4000;
 const SS = {
     get: (k, d = null) => { try { return localStorage.getItem("ddmau:" + k) ?? d; } catch { return d; } },
     set: (k, v) => { try { v == null ? localStorage.removeItem("ddmau:" + k) : localStorage.setItem("ddmau:" + k, v); } catch {} },
@@ -867,6 +872,9 @@ export default function App() {
     // The PIN screen still gets the instant cold-launch render
     // because it reads `staffList` directly, not `staffListReady`.
     const [staffListReady, setStaffListReady] = useState(false);
+    // Never Home, keep the place (Release B). Read on every render, not once at
+    // boot, so turning it off works without a reload. Test mode always reads off.
+    const placeOn = getReliabilityFlag('placeRestore');
     // Phone-browser download gate kill switch (2026-07-13, Andrew) —
     // config/app_flags.phoneWebGate. Currently false (gate PAUSED) while
     // the Play Store transfer makes the Android install link unreliable;
@@ -900,7 +908,31 @@ export default function App() {
     useEffect(() => { SS.set("staffLocation", staffLocation); }, [staffLocation]);
     useEffect(() => { SS.set("activeLocation", activeLocation); }, [activeLocation]);
     useEffect(() => { SS.set("language", language); }, [language]);
-    useEffect(() => { SS.set("activeTab", activeTab); noteTab(activeTab); }, [activeTab]);
+    useEffect(() => {
+        SS.set("activeTab", activeTab);
+        noteTab(activeTab);
+        // Only with a name: a relock sets the name to null and the tab to 'home'
+        // in one render, and that 'home' must not replace where the person was.
+        if (staffName && getReliabilityFlag('placeRestore')) saveMainTab(staffName, activeTab);
+    }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+    // The saved tab's 30 minutes run from when the person was last here, not from
+    // when they opened it, or a long stay on one page would come back as Home.
+    const placeNowRef = useRef({});
+    useEffect(() => {
+        const touch = () => {
+            const { staffName: name, activeTab: tab } = placeNowRef.current;
+            if (name && getReliabilityFlag('placeRestore')) saveMainTab(name, tab);
+        };
+        const onVisibility = () => { if (document.visibilityState === 'hidden') touch(); };
+        const id = setInterval(touch, 60 * 1000);
+        window.addEventListener('pagehide', touch);
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => {
+            clearInterval(id);
+            window.removeEventListener('pagehide', touch);
+            document.removeEventListener('visibilitychange', onVisibility);
+        };
+    }, []);
 
     // 2026-05-31 — Capacitor hardware back button bridge. The native
     // bridge in src/capacitor-bridge.js fires a DOM CustomEvent on
@@ -1602,10 +1634,23 @@ export default function App() {
         () => isAdmin(staffName, staffList),
         [staffName, staffList],
     );
+    // Until the roster answers, saved access stands in for the placeholder's
+    // (Release B), which fixes every gate and tile at this one point. The bounce
+    // effect below rechecks real access as soon as the roster lands.
     const currentStaffRecord = useMemo(
-        () => (staffList || []).find(s => s.name === staffName) || null,
-        [staffList, staffName],
+        () => effectiveStaffRecord({
+            staffList,
+            staffName,
+            staffListReady,
+            saved: placeOn && !staffListReady ? readLastKnownAccess(staffName) : null,
+        }),
+        [staffList, staffName, staffListReady, placeOn],
     );
+    useEffect(() => {
+        if (!placeOn || !staffName || !staffListReady) return;
+        const me = (staffList || []).find(s => s.name === staffName);
+        if (me) saveLastKnownAccess(me);
+    }, [placeOn, staffName, staffListReady, staffList]);
     // Reports name who was signed in when the app got stuck (labels only).
     useEffect(() => {
         setReportWho(staffName ? {
@@ -1636,11 +1681,45 @@ export default function App() {
     // error_logs once the SDK is rebuilt AND identity is set (the effect above
     // runs first), so the row says who kept reloading. It leaves the list only
     // when the write resolves, and a fixed ID keeps it to one row per reload.
+    //
+    // With placeRestore on, the message says whether the person is back where they
+    // were, so it waits for the tab area's first paint. The required-task check can
+    // hold that up on a stuck line, so the wait is capped and reports still go.
+    const renderedBodyRef = useRef(null);
+    const placeFlushWaitingRef = useRef(false);
+    const runPlaceFlush = () => {
+        if (!placeFlushWaitingRef.current) return;
+        placeFlushWaitingRef.current = false;
+        const now = placeNowRef.current;
+        flushParkedReports({
+            language: now.language,
+            place: {
+                tab: now.activeTab,
+                subTab: now.activeTab === 'operations' ? (readInventoryPlace(now.staffName, now.store)?.subTab ?? null) : null,
+                body: renderedBodyRef.current,
+                msSinceBoot: pageAgeMs(),
+            },
+        });
+    };
     useEffect(() => {
-        if (!staffName) return;
-        flushParkedReports({ language });
+        if (!staffName) {
+            renderedBodyRef.current = null;
+            placeFlushWaitingRef.current = false;
+            return undefined;
+        }
+        if (!getReliabilityFlag('placeRestore')) {
+            flushParkedReports({ language });
+            logDeviceSeenOncePerDay({ staffName });
+            return undefined;
+        }
         logDeviceSeenOncePerDay({ staffName });
+        placeFlushWaitingRef.current = true;
+        const id = setTimeout(runPlaceFlush, PLACE_FLUSH_MAX_WAIT_MS);
+        return () => clearTimeout(id);
     }, [staffName]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (placeFlushWaitingRef.current && renderedBodyRef.current) runPlaceFlush();
+    });
 
     // Recipes access — opt-OUT model. Default: every staff has access.
     // Admin can flip recipesAccess to FALSE to revoke a specific person.
@@ -1763,6 +1842,7 @@ export default function App() {
         : staffWorksBoth
             ? (activeLocation === 'maryland' ? 'maryland' : 'webster')
             : staffLocation;
+    placeNowRef.current = { staffName, activeTab, language, store: effectiveLocation };
 
     // ── Auto-start at the physical location (2026-07-15, Andrew: "whoever has
     // both locations available … start at the location it's at. the recipe tab
@@ -1928,6 +2008,8 @@ export default function App() {
             enterTestMode(staff);
             return;
         }
+        // Read before anything changes. A different person has their own record.
+        const savedTab = getReliabilityFlag('placeRestore') ? readMainTab(name) : null;
         setStaffName(name);
         const loc = staff?.location || "webster";
         setStaffLocation(loc);
@@ -1944,6 +2026,10 @@ export default function App() {
         pendingDeepLinkRef.current = null;
         if (parked) {
             setActiveTab(parked);
+            return;
+        }
+        if (savedTab) {
+            setActiveTab(savedTab);
             return;
         }
         // Per-staff Home view override: if admin set this person's homeView
@@ -2580,6 +2666,7 @@ export default function App() {
             // Reset the deny flag at the top of every render. If we hit
             // the fall-through, we'll set it again before returning.
             deniedTabRef.current = null;
+            renderedBodyRef.current = activeTab === 'home' ? 'home' : 'tab';
             if (activeTab === 'home') {
                 // Mobile gets a launcher (clean tile grid of every destination
                 // — staff open the app for a specific reason, not to browse a
@@ -2616,7 +2703,7 @@ export default function App() {
             // ship with via a CSS reset class that the tab itself defines.
             if (activeTab === 'chat') return <PageErrorBoundary tabName="Chat" language={language}><ChatCenter language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <PageErrorBoundary tabName="Training" language={language}><TrainingHub staffName={staffName} language={language} staffList={staffList} isManager={isManager} /></PageErrorBoundary>;
-            if (activeTab === 'operations' && hasOpsAccess) return <PageErrorBoundary tabName="Operations" language={language}><Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
+            if (activeTab === 'operations' && hasOpsAccess) return <PageErrorBoundary tabName="Operations" language={language}><Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} onGoHome={() => setActiveTab('home')} /></PageErrorBoundary>;
             if (activeTab === 'mytasks') return <PageErrorBoundary tabName="My Tasks" language={language}><MyTasksPanel language={language} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} isManager={isManager} /></PageErrorBoundary>;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <PageErrorBoundary tabName="Menu" language={language}><MenuReference language={language} /></PageErrorBoundary>;
             if (activeTab === 'datestickers') return <PageErrorBoundary tabName="Date Stickers" language={language}><DateStickerPrinter language={language} staffName={staffName} storeLocation={effectiveLocation} staffList={staffList} /></PageErrorBoundary>;
@@ -2659,6 +2746,13 @@ export default function App() {
             // stale, and a navigation in that window fired a false
             // "no access" toast (the render self-heals once real data
             // lands, so staying quiet is correct).
+            // Release B: while the roster hasn't answered, "no access" can't be told
+            // from "don't know yet". Falling through to Home here is the kick-out.
+            if (placeOn && !staffListReady && activeTab !== 'home') {
+                renderedBodyRef.current = 'connecting';
+                return <ConnectingScreen language={language} onGoHome={() => setActiveTab('home')} />;
+            }
+            renderedBodyRef.current = 'denied';
             if (staffListReady) deniedTabRef.current = activeTab;
             // 2026-07-27: this fall-through MUST pass the SAME props as the
             // primary home render above — it used to omit canMoney /

@@ -166,10 +166,11 @@ async function report(admin) {
     }
     const countRows = {};
     for (const loc of ['webster', 'maryland']) {
-        const c = await db.collection(`inventory_audits_${loc}`).where('at', '>=', new Date(since)).select('at').get().catch(() => null);
+        const c = await db.collection(`inventory_audits_${loc}`).where('at', '>=', new Date(since)).select('at', 'kind').get().catch(() => null);
         c?.forEach((d) => {
             const at = d.data().at?.toMillis?.();
             if (!at) return;
+            if (d.data().kind === 'add') return; // a new item, not a count
             const wk = weekOf(at);
             countRows[wk] ||= {};
             bump(countRows[wk], new Date(at).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/Chicago' }));

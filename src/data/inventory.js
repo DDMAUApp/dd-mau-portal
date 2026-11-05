@@ -426,6 +426,16 @@ export const INVENTORY_CATEGORIES = [
 // English can legitimately collide with a later Spanish spelling).
 const normName = (s) => String(s || '').trim().toLowerCase();
 
+// For an add with no location: the same name already in this category.
+export function isDuplicateInCategory(category, { name, nameEs }) {
+    const candidates = [normName(name), normName(nameEs)].filter(Boolean);
+    if (!candidates.length) return false;
+    return (category?.items || []).some((it) => {
+        const stored = [normName(it?.name), normName(it?.nameEs)].filter(Boolean);
+        return candidates.some(c => stored.includes(c));
+    });
+}
+
 export function isDuplicateInventoryName(categories, { location, name, nameEs }) {
     const loc = normName(location);
     const candidates = [normName(name), normName(nameEs)].filter(Boolean);
