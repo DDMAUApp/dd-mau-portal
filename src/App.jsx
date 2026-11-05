@@ -14,8 +14,10 @@ import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
-import { installFirestoreRevive, resilientSnapshot, isInputBusy, PENDING_REPORT_KEY } from './data/firestoreRevive';
+import { installFirestoreRevive, resilientSnapshot, isInputBusy } from './data/firestoreRevive';
 import { canSeeFoodSafety } from './data/foodSafetyVisibility';
+import { flushParkedReports, logDeviceSeenOncePerDay } from './data/reportFlush';
+import { noteTab, setReportWho } from './data/reportContext';
 import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
 import { parseChatDeepLink, setPendingChatOpen } from './data/chatDeepLink';
@@ -898,7 +900,7 @@ export default function App() {
     useEffect(() => { SS.set("staffLocation", staffLocation); }, [staffLocation]);
     useEffect(() => { SS.set("activeLocation", activeLocation); }, [activeLocation]);
     useEffect(() => { SS.set("language", language); }, [language]);
-    useEffect(() => { SS.set("activeTab", activeTab); }, [activeTab]);
+    useEffect(() => { SS.set("activeTab", activeTab); noteTab(activeTab); }, [activeTab]);
 
     // 2026-05-31 — Capacitor hardware back button bridge. The native
     // bridge in src/capacitor-bridge.js fires a DOM CustomEvent on
@@ -1604,6 +1606,14 @@ export default function App() {
         () => (staffList || []).find(s => s.name === staffName) || null,
         [staffList, staffName],
     );
+    // Reports name who was signed in when the app got stuck (labels only).
+    useEffect(() => {
+        setReportWho(staffName ? {
+            name: staffName,
+            role: currentStaffRecord?.role || null,
+            canViewClockedIn: currentStaffRecord?.canViewClockedIn === true,
+        } : null);
+    }, [staffName, currentStaffRecord]);
     // Mirror staff identity to the logger globals so every /error_logs,
     // /security_logs, and /bug_reports row carries who-was-it metadata.
     // Runs whenever the staff record changes (PIN unlock, admin rename,
@@ -1621,21 +1631,16 @@ export default function App() {
         } catch {}
     }, [staffName, currentStaffRecord]);
 
-    // Reload telemetry flush (2026-09-09): a forced reload parks its report in
-    // sessionStorage (the transport that caused it is suspect); land it in
-    // error_logs once the SDK is rebuilt AND identity is set (the effect
-    // above runs first), so the row says which person/store kept reloading.
-    // Exactly one row per reload.
+    // Reload reports (2026-09-09, list form 2026-11-03): a forced reload parks
+    // its report because the transport that caused it is suspect. It lands in
+    // error_logs once the SDK is rebuilt AND identity is set (the effect above
+    // runs first), so the row says who kept reloading. It leaves the list only
+    // when the write resolves, and a fixed ID keeps it to one row per reload.
     useEffect(() => {
         if (!staffName) return;
-        try {
-            const raw = sessionStorage.getItem(PENDING_REPORT_KEY);
-            if (!raw) return;
-            sessionStorage.removeItem(PENDING_REPORT_KEY);
-            const rep = JSON.parse(raw);
-            logError({ error: new Error(`reload-after: ${rep?.reason || '?'}`), severity: 'warning', feature: 'firestoreRevive:reload-after', meta: rep });
-        } catch { /* best-effort */ }
-    }, [staffName]);
+        flushParkedReports({ language });
+        logDeviceSeenOncePerDay({ staffName });
+    }, [staffName]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Recipes access — opt-OUT model. Default: every staff has access.
     // Admin can flip recipesAccess to FALSE to revoke a specific person.
@@ -2713,7 +2718,7 @@ export default function App() {
                     unless a write has been in flight ~1s, so a wedged
                     transport shows recovery-in-progress instead of a
                     dead button. */}
-                <SyncPill />
+                <SyncPill language={language} />
                 <AppShellV2
                     language={language}
                     staffName={staffName}

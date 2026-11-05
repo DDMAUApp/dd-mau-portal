@@ -26,6 +26,7 @@
 // initialized, fixing the TDZ. Web behaviour is identical - the
 // dynamic import resolves synchronously after the first call since
 // the chunk is already loaded.
+import { DEVICE_ID_KEY, getOrCreateDeviceId } from "./data/deviceId";
 import { doc, setDoc, runTransaction } from "firebase/firestore";
 import { nextStaffRev } from "./data/staffDoc";
 import app, { db } from "./firebase";
@@ -194,7 +195,7 @@ function registerForNativePush(plugin, timeoutMs = 15000) {
 export const VAPID_KEY = "BH2Mtj6Dgfw2X_Mu7e9OzOTVOqx_l6KjgDgc6v98Cq_4ngWZnz3NPYP81mw88_zEY_4tOnKBW2XTScLOrFfNpoQ";
 
 const MAX_TOKENS_PER_STAFF = 5;
-const DEVICE_ID_KEY = "ddmau:fcmDeviceId";
+// Moved to data/deviceId.js so reports can use it too. Same key, same IDs.
 
 // Stable per-browser identifier. Generated once on first FCM registration
 // and persisted to localStorage; used to deduplicate fcmTokens entries by
@@ -217,19 +218,6 @@ function notifyPushBound(staffName) {
     } catch { /* non-browser env */ }
 }
 
-function getOrCreateDeviceId() {
-    try {
-        let id = localStorage.getItem(DEVICE_ID_KEY);
-        if (id && id.length > 8) return id;
-        // crypto.randomUUID() is available everywhere we deploy to;
-        // Math.random fallback only kicks in on truly ancient browsers.
-        id = (typeof crypto !== "undefined" && crypto.randomUUID)
-            ? crypto.randomUUID()
-            : "dev_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-        localStorage.setItem(DEVICE_ID_KEY, id);
-        return id;
-    } catch { return "dev_" + Date.now().toString(36); }
-}
 
 let messagingInstance = null;
 // Module-level flag for one-shot legacy SW cleanup (see enableFcmPush).

@@ -32,9 +32,13 @@
 
 import { disableNetwork, enableNetwork, doc, getDocFromServer, getDocFromCache } from 'firebase/firestore';
 import { TEST_MODE } from './testMode';
-import { runReloadStashes } from './reloadStash';
+import { runReloadStashes, clearReloadStash } from './reloadStash';
 import { db } from '../firebase';
 import { logError } from './logger';
+import { parkReport, LEGACY_REPORT_KEY } from './pendingReports';
+import { getNetWatchTelemetry } from './netWatch';
+import { probeFirestoreDb, probePrivateDb } from './idbProbe';
+import { getReportContext, noteResume } from './reportContext';
 
 // Backgrounded longer than this ⇒ assume the socket died (iOS suspends
 // sockets after ~30s; 45s adds margin so quick app-switches skip the cycle).
@@ -63,10 +67,80 @@ export function __setReloadImplForTests(fn) { _reloadImpl = fn; }
 // Before the reload: let every page stash its in-memory state, then give the
 // SDK's serial queue up to this long to commit already-queued local writes to
 // IndexedDB (a cache read enqueued NOW resolves only after everything ahead of
-// it ran). A timeout means the persistence layer itself is the wedge — the
-// reload's actual premise — so we reload anyway.
+// it ran). A timeout means this queue never reached our read. That can be stuck
+// storage, or a healthy database with the line waiting behind a save still at the
+// server (reproduced in the harness), so the report's `cls` says which. We reload
+// anyway.
 export const DRAIN_CAP_MS = 5 * 1000;
-export const PENDING_REPORT_KEY = 'ddmau:pendingReloadReport';
+export const PENDING_REPORT_KEY = LEGACY_REPORT_KEY;
+// How long "Restarting the app…" shows before a forced reload.
+let _reloadNoticeMs = 3 * 1000;
+export function __setReloadNoticeMsForTests(ms) { _reloadNoticeMs = ms; }
+let _reloadNotice = false;
+const RELOAD_NOTICE_CLEAR_MS = 10 * 1000;
+function _setReloadNotice(on) {
+    if (_reloadNotice === on) return;
+    _reloadNotice = on;
+    _notifyWriteSubs();
+}
+
+/**
+ * Names what a stuck report looks like. It only labels in this release, and
+ * nothing decides anything from it:
+ *   crash         the SDK threw its fatal assertion
+ *   healthy       the queue answered, so nothing here is stuck
+ *   storage-hung  raw storage didn't answer either
+ *   held-line     storage is fine and a commit is still out at the server
+ *   sdk-stuck     storage is fine, nothing is out, and the queue still won't answer
+ */
+export function classifyStuck({ queueAnswered, rawPrivate, rawFs, commitInFlightMs, assertion } = {}) {
+    if (assertion) return 'crash';
+    if (queueAnswered) return 'healthy';
+    const bad = (r) => r === 'hang' || r === 'error';
+    if (bad(rawPrivate) || bad(rawFs)) return 'storage-hung';
+    if (commitInFlightMs != null) return 'held-line';
+    return 'sdk-stuck';
+}
+
+function _storageEstimate() {
+    try {
+        if (!navigator?.storage?.estimate) return Promise.resolve(null);
+        return Promise.race([
+            navigator.storage.estimate().then((e) => ({ usage: e.usage ?? null, quota: e.quota ?? null }), () => null),
+            new Promise((res) => setTimeout(() => res(null), 1000)),
+        ]);
+    } catch { return Promise.resolve(null); }
+}
+
+// Everything a report adds beyond the reason. Started alongside the queue check,
+// so it adds no waiting of its own: both raw checks cap at 2s and the estimate at 1s.
+async function _collectDiagnostics(raw) {
+    const [rawPrivate, rawFs, storage] = await raw;
+    return {
+        rawPrivate: rawPrivate?.r ?? null,
+        rawPrivateMs: rawPrivate?.ms ?? null,
+        rawFs: rawFs?.r ?? null,
+        rawFsMs: rawFs?.ms ?? null,
+        storage,
+        net: getNetWatchTelemetry(),
+        ...getReportContext(),
+        queueTimes: _queueTimes,
+        reviveWaitingMs: _reviving ? Date.now() - _lastReviveAt : null,
+        writeLabels: [..._inFlightLabels.values()].slice(0, 10),
+        bootCacheMs: _bootCacheMs,
+    };
+}
+
+// One set at a time across every stuck write: callers that overlap share its answer.
+let _rawChecksInFlight = null;
+function _startRawChecks() {
+    if (_rawChecksInFlight) return _rawChecksInFlight;
+    const set = Promise.all([probePrivateDb(), probeFirestoreDb(), _storageEstimate()]);
+    _rawChecksInFlight = set;
+    const clear = () => { if (_rawChecksInFlight === set) _rawChecksInFlight = null; };
+    set.then(clear, clear);
+    return set;
+}
 
 // ── Write-stuck reload: only when it can actually help (2026-09-23) ──────
 // Field telemetry after v1.0.472 (the Webster iPad, native iOS app):
@@ -98,10 +172,14 @@ function _setHardStuck(on) {
     _hardStuck = on;
     _notifyWriteSubs();
 }
+// Asked before any storage work, because a row the throttle would drop doesn't
+// need the checks that fill it.
+function _skipLogDue(why) {
+    return Date.now() - (_lastSkipLogAt[why] || 0) >= SKIP_LOG_EVERY_MS;
+}
 function _logReloadSkipped(why, meta) {
-    const now = Date.now();
-    if (now - (_lastSkipLogAt[why] || 0) < SKIP_LOG_EVERY_MS) return;
-    _lastSkipLogAt[why] = now;
+    if (!_skipLogDue(why)) return;
+    _lastSkipLogAt[why] = Date.now();
     try {
         logError({ error: new Error(`reload skipped: ${why}`), severity: 'warning', feature: 'firestoreRevive:reload-skipped', meta: { why, ...meta } });
     } catch { /* never block */ }
@@ -117,29 +195,74 @@ async function _probeLocalQueue() {
     } catch { return 'rejected'; }
 }
 
-export async function escalateReload(reason = 'write-stuck', ctx = {}) {
-    if (TEST_MODE) return false;
-    const loopable = reason === 'write-stuck-after-revive';
+// An attempt that has committed to reloading. The storage guard alone can't stop
+// overlapping calls: it's checked on entry, and a second call can sit in the
+// pre-probe while the first finishes, then double-reload, write a second report
+// and burn the loop cap. Kept as a time so it also covers broken sessionStorage
+// and can't block forever if a reload never happens.
+let _reloadCommittedAt = 0;
+function _reloadBlocked(now = Date.now()) {
+    if (now - _reloadCommittedAt < RELOAD_GUARD_MS) return true;
     try {
         const last = Number(sessionStorage.getItem(RELOAD_GUARD_KEY)) || 0;
-        if (Date.now() - last < RELOAD_GUARD_MS) return false;
+        if (now - last < RELOAD_GUARD_MS) return true;
     } catch { /* storage broken — still reload; worst case iOS re-suspends */ }
+    return false;
+}
+function _isOffline() {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+function _readSession(key) {
+    try { return sessionStorage.getItem(key); } catch { return null; }
+}
+function _restoreSession(key, prev) {
+    try {
+        if (prev == null) sessionStorage.removeItem(key);
+        else sessionStorage.setItem(key, prev);
+    } catch { /* ignore */ }
+}
+
+export async function escalateReload(reason = 'write-stuck', ctx = {}) {
+    if (TEST_MODE) return false;
+    const enteredAt = Date.now();
+    const loopable = reason === 'write-stuck-after-revive';
+    if (_reloadBlocked()) return false;
     let pre = null;
+    let preMs = null;
+    let raw = null;
     if (loopable) {
         const recent = _readStuckReloads(Date.now());
         if (recent.length >= WRITE_STUCK_MAX_RELOADS) {
             // Reloading already failed to cure this — stop looping.
             _setHardStuck(true);
-            _logReloadSkipped('loop-cap', { reason, recentReloads: recent.length, ...getWatchdogTelemetry(), ...ctx });
+            if (_skipLogDue('loop-cap')) {
+                const diag = await _collectDiagnostics(_startRawChecks());
+                // 'unchecked': this path never asks the queue, so it can't say
+                // whether the queue answered.
+                _logReloadSkipped('loop-cap', { reason, recentReloads: recent.length, cls: 'unchecked', ...getWatchdogTelemetry(), ...diag, ...ctx });
+            }
             return false;
         }
         const t0 = Date.now();
+        // A healthy queue only leads to a throttled row. If that row wouldn't be
+        // written and the queue turns out stuck, the checks start below instead.
+        if (_skipLogDue('queue-healthy')) raw = _startRawChecks();
         pre = await _probeLocalQueue();
+        preMs = Date.now() - t0;
         if (pre === 'ok') {
-            _logReloadSkipped('queue-healthy', { reason, probeMs: Date.now() - t0, ...getWatchdogTelemetry(), ...ctx });
+            if (raw) {
+                const diag = await _collectDiagnostics(raw);
+                _logReloadSkipped('queue-healthy', { reason, probeMs: preMs, cls: 'healthy', ...getWatchdogTelemetry(), ...diag, ...ctx });
+            }
             return false;
         }
+        // Up to 5 s passed. Another call may have committed, or the device gone offline.
+        if (_reloadBlocked() || _isOffline()) return false;
     }
+    // Commit. No await between the check above and this line.
+    _reloadCommittedAt = Date.now();
+    const prevGuard = _readSession(RELOAD_GUARD_KEY);
+    const prevReloads = _readSession(WRITE_STUCK_RELOADS_KEY);
     try { sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now())); } catch { /* ignore */ }
     if (loopable) {
         try {
@@ -147,7 +270,16 @@ export async function escalateReload(reason = 'write-stuck', ctx = {}) {
             sessionStorage.setItem(WRITE_STUCK_RELOADS_KEY, JSON.stringify([..._readStuckReloads(now), now]));
         } catch { /* ignore */ }
     }
-    const report = { reason, at: Date.now(), ...getWatchdogTelemetry(), ...ctx };
+    const noticeAt = Date.now();
+    _setReloadNotice(true);
+    if (!raw) raw = _startRawChecks();
+    const report = {
+        reason,
+        at: noticeAt,
+        detectedBy: loopable ? 'write-watchdog' : (reason === 'probe-stuck' ? 'probe-3min' : reason),
+        ...getWatchdogTelemetry(),
+        ...ctx,
+    };
     // Stash BEFORE the drain (pages flush their pending taps into the SDK
     // queue so the drain covers them) and AGAIN after it (taps made during
     // the up-to-5 s drain still reach the rehydrated sheet).
@@ -169,14 +301,41 @@ export async function escalateReload(reason = 'write-stuck', ctx = {}) {
     }
     report.drained = drained;
     report.drainMs = Date.now() - t0;
+    // After a timed-out pre-probe the drain is skipped, so its 0 ms says nothing.
+    // The wait that shows how long the queue stayed silent is the pre-probe's.
+    report.queueMs = pre === 'timeout' ? preMs : report.drainMs;
     if (pre) report.preProbe = pre;
+    if (preMs != null) report.probeMs = preMs;
+    const diag = await _collectDiagnostics(raw);
+    Object.assign(report, diag);
+    report.cls = classifyStuck({ queueAnswered: drained === true, rawPrivate: diag.rawPrivate, rawFs: diag.rawFs, commitInFlightMs: diag.net.oldestCommitMs });
+    // Give the notice its full time on screen, then catch taps made while it showed.
+    const noticeLeft = _reloadNoticeMs - (Date.now() - noticeAt);
+    if (noticeLeft > 0) await new Promise((res) => setTimeout(res, noticeLeft));
+    // The wait above is new, so what justified the reload may have ended during
+    // it. Stand down and leave no trace of this attempt: no notice, no stamps, and
+    // no stash for the sheet to rehydrate from on its next mount. Stamps from any
+    // earlier real reload are put back as they were, so the guard still stops loops.
+    const wentOffline = _isOffline();
+    if (wentOffline || _lastWriteSettleAt > enteredAt) {
+        _setReloadNotice(false);
+        try { (report.stashed || []).forEach(clearReloadStash); } catch { /* best-effort */ }
+        _restoreSession(RELOAD_GUARD_KEY, prevGuard);
+        if (loopable) _restoreSession(WRITE_STUCK_RELOADS_KEY, prevReloads);
+        _reloadCommittedAt = 0;
+        _logReloadSkipped('stood-down', { reason, standDown: wentOffline ? 'offline' : 'progress', cls: report.cls, ...getWatchdogTelemetry(), ...diag, ...ctx });
+        return false;
+    }
     try { runReloadStashes(reason); } catch { /* best-effort */ }
-    // The transport is suspect by definition, so the report is parked in
-    // sessionStorage and flushed through logError on the next boot (App.jsx,
-    // once identity is set) — exactly ONE error_logs row per reload.
-    try { sessionStorage.setItem(PENDING_REPORT_KEY, JSON.stringify(report)); } catch { /* ignore */ }
+    // The transport is suspect by definition, so the report is parked and
+    // flushed through logError on a later boot (App.jsx, once identity is set).
+    // Its fixed ID keeps it to ONE error_logs row per reload.
+    parkReport(report);
     console.warn(`[firestoreRevive] still stuck after revive (${reason}) — reloading app to rebuild the SDK`, report);
     _reloadImpl();
+    // A reload that somehow doesn't happen must not leave "Restarting…" up,
+    // since it outranks the hard-stuck message in the pill.
+    setTimeout(() => _setReloadNotice(false), RELOAD_NOTICE_CLEAR_MS);
     return true;
 }
 // Input-idle wait (same pattern as App.jsx's broadcast reload): never yank
@@ -249,6 +408,8 @@ const _inFlightStarts = new Map();
 // Tokens of in-flight PROGRESS writes (mutation-queue writes only) — the
 // probe gates key off these, never off transactions/unary reads.
 const _inFlightProgress = new Set();
+// What each in-flight write is, when the caller said (reports only).
+const _inFlightLabels = new Map();
 
 /**
  * Pure step decision: 'wait' (re-arm for delayMs) while some write settled
@@ -287,7 +448,7 @@ export function getWatchdogTelemetry() {
 }
 
 function _notifyWriteSubs() {
-    const snapshot = { inFlight: _inFlight, stuck: _stuck, hardStuck: _hardStuck };
+    const snapshot = { inFlight: _inFlight, stuck: _stuck, hardStuck: _hardStuck, reloadNotice: _reloadNotice };
     _writeSubs.forEach((cb) => { try { cb(snapshot); } catch { /* subscriber's problem */ } });
 }
 
@@ -297,7 +458,7 @@ function _notifyWriteSubs() {
  */
 export function subscribeInFlightWrites(cb) {
     _writeSubs.add(cb);
-    try { cb({ inFlight: _inFlight, stuck: _stuck, hardStuck: _hardStuck }); } catch { /* ignore */ }
+    try { cb({ inFlight: _inFlight, stuck: _stuck, hardStuck: _hardStuck, reloadNotice: _reloadNotice }); } catch { /* ignore */ }
     return () => _writeSubs.delete(cb);
 }
 
@@ -343,7 +504,7 @@ export async function reviveFirestore(reason = 'manual') {
  * promise unchanged (same value, same rejection), so call sites keep
  * their exact semantics:   await watchdogWrite(addDoc(...))
  */
-export function watchdogWrite(promise, hangMs = WRITE_HANG_MS, { progress = true } = {}) {
+export function watchdogWrite(promise, hangMs = WRITE_HANG_MS, { progress = true, label = null } = {}) {
     let settled = false;
     let hangTimer = null;
     let escalateTimer = null;
@@ -353,6 +514,7 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS, { progress = true
     _inFlight += 1;
     _inFlightStarts.set(token, startedAt);
     if (progress) _inFlightProgress.add(token);
+    if (label) _inFlightLabels.set(token, label);
     _notifyWriteSubs();
 
     // Escalation (2026-08-08, Andrew: "it just keeps spinning. i refresh
@@ -431,6 +593,7 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS, { progress = true
         _inFlight = Math.max(0, _inFlight - 1);
         _inFlightStarts.delete(token);
         _inFlightProgress.delete(token);
+        _inFlightLabels.delete(token);
         if (markedStuck) _stuck = Math.max(0, _stuck - 1);
         _notifyWriteSubs();
     };
@@ -445,8 +608,8 @@ export function watchdogWrite(promise, hangMs = WRITE_HANG_MS, { progress = true
  * but its settle is NOT counted as write-stream progress (transactions
  * commit over unary XHR and can succeed while the write stream is dead).
  */
-export function watchdogTransaction(promise, hangMs = WRITE_HANG_MS) {
-    return watchdogWrite(promise, hangMs, { progress: false });
+export function watchdogTransaction(promise, hangMs = WRITE_HANG_MS, { label = null } = {}) {
+    return watchdogWrite(promise, hangMs, { progress: false, label });
 }
 
 /**
@@ -518,6 +681,37 @@ const PROBE_RELOAD_KEY = 'ddmau:probeReloadAt';
 let _probeStrikes = 0;
 let _probeEscalating = false;
 
+// How long the line takes to answer a cache read, last 5 readings. Rides on the
+// 3-minute probe, with no timer of its own and never more than one out at a time.
+const QUEUE_TIMES_KEPT = 5;
+let _queueTimes = [];
+let _queueTimePending = false;
+function _sampleQueueTime() {
+    if (_queueTimePending) return;
+    _queueTimePending = true;
+    const t0 = Date.now();
+    const done = () => {
+        _queueTimePending = false;
+        _queueTimes = [..._queueTimes, Date.now() - t0].slice(-QUEUE_TIMES_KEPT);
+    };
+    try { getDocFromCache(doc(db, 'config', 'minVersion')).then(done, done); } catch { _queueTimePending = false; }
+}
+
+// Boot timing: how long the very first cache read took. Over BOOT_SLOW_MS logs one
+// row, which shows blocked first access and whether freezes cluster after reloads.
+export const BOOT_SLOW_MS = 3 * 1000;
+let _bootCacheMs = null;
+function _timeFirstCacheRead() {
+    const t0 = Date.now();
+    const done = () => {
+        _bootCacheMs = Date.now() - t0;
+        if (_bootCacheMs > BOOT_SLOW_MS) {
+            try { logError({ error: new Error('boot: first cache read slow'), severity: 'warning', feature: 'firestoreRevive:boot-slow', meta: { bootCacheMs: _bootCacheMs, ...getReportContext() } }); } catch { /* labels only */ }
+        }
+    };
+    try { getDocFromCache(doc(db, 'config', 'minVersion')).then(done, done); } catch { /* labels only */ }
+}
+
 function _resetProbeStrikes() { _probeStrikes = 0; }
 
 async function _maybeProbeReload() {
@@ -533,7 +727,14 @@ async function _maybeProbeReload() {
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
         if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
         try { sessionStorage.setItem(PROBE_RELOAD_KEY, String(Date.now())); } catch { /* still reload */ }
-        escalateReload('probe-stuck');
+        // The stamp counts real reloads only. An attempt that stood down during
+        // its notice mustn't use up the session's one probe reload, or a device
+        // with frozen listeners and no hanging write stays frozen until closed.
+        let reloaded = false;
+        try { reloaded = await escalateReload('probe-stuck'); } catch { /* treated as no reload */ }
+        if (!reloaded) {
+            try { sessionStorage.removeItem(PROBE_RELOAD_KEY); } catch { /* ignore */ }
+        }
     } finally { _probeEscalating = false; }
 }
 
@@ -566,6 +767,7 @@ export async function probeFirestoreLiveness() {
     for (const tok of _inFlightProgress) { const t = _inFlightStarts.get(tok) || 0; if (t > newest) newest = t; }
     if (newest && Date.now() - newest < PROBE_STUCK_MS) return;
     _probeInFlight = true;
+    _sampleQueueTime();
     try {
         // config/minVersion: tiny, always present, already hot in cache
         // server-side. watchdogRead = revive on hang, no reload, no pill.
@@ -656,12 +858,14 @@ export function resilientSnapshot(label, attach) {
 export function installFirestoreRevive() {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
     if (TEST_MODE) return;
+    _timeFirstCacheRead();
     let hiddenAt = null;
 
     const onHide = () => { if (hiddenAt == null) hiddenAt = Date.now(); };
     const onShow = () => {
         const was = hiddenAt;
         hiddenAt = null;
+        if (was != null) noteResume();
         if (was != null && Date.now() - was > RESUME_STALE_MS) {
             reviveFirestore('resume');
             // Post-resume probe (2026-08-29, ST1): don't wait up to

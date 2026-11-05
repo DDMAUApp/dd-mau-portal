@@ -4585,7 +4585,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const batch = writeBatch(db);
                     if (auditRow) batch.set(doc(collection(db, 'inventory_audits_' + loc)), auditRow);
                     batch.update(ref, update);
-                    await watchdogWrite(batch.commit());
+                    await watchdogWrite(batch.commit(), undefined, { label: 'inv-tap' });
                     markSaved();
                     // Low-stock threshold-cross push (negative direction only;
                     // fire-and-forget).
@@ -5012,7 +5012,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
             const mutateInventory = async (transformer) => {
                 try {
-                    const out = await runTransaction(db, async (txn) => {
+                    const out = await watchdogTransaction(_fsRunTransaction(db, async (txn) => {
                         const snap = await txn.get(inventoryDocRef());
                         const data = snap.exists() ? (snap.data() || {}) : {};
                         const live = (snap.exists() && Array.isArray(snap.data()?.customInventory))
@@ -5024,7 +5024,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             date: new Date().toISOString(),
                         }, { merge: true });
                         return { updated, tombstones: data.deletedMasterIds || [] };
-                    });
+                    }), undefined, { label: 'inv-add' });
                     const next = out.updated;
                     mirrorSavedCatalog(next, out.tombstones);
                     return next;

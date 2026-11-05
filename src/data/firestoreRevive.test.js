@@ -25,7 +25,9 @@ vi.mock('./logger', () => ({ logError: (...a) => logError(...a) }));
 // Fresh module per test so the throttle state resets.
 async function loadFresh() {
     vi.resetModules();
-    return await import('./firestoreRevive.js');
+    const mod = await import('./firestoreRevive.js');
+    mod.__setReloadNoticeMsForTests(0); // the notice has its own test below
+    return mod;
 }
 
 beforeEach(() => {
@@ -37,6 +39,7 @@ beforeEach(() => {
     getDocFromCache.mockClear();
     getDocFromCache.mockResolvedValue({ exists: () => true });
     logError.mockClear();
+    try { localStorage.removeItem('ddmau:pendingReloadReports'); } catch { /* jsdom */ }
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -209,7 +212,7 @@ describe('watchdogRead (2026-08-09 audit — reads must not reload or feed the p
         const states = [];
         subscribeInFlightWrites(s => states.push(s));
         watchdogRead(new Promise(() => {}));
-        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false });
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false, reloadNotice: false });
     });
 
     it('returns the original promise semantics untouched', async () => {
@@ -224,7 +227,7 @@ describe('in-flight write tracking (SyncPill feed)', () => {
         const { watchdogWrite, subscribeInFlightWrites } = await loadFresh();
         const states = [];
         subscribeInFlightWrites(s => states.push(s));
-        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false });
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false, reloadNotice: false });
 
         let resolveA, rejectB;
         const a = watchdogWrite(new Promise(res => { resolveA = res; }));
@@ -237,7 +240,7 @@ describe('in-flight write tracking (SyncPill feed)', () => {
 
         rejectB(new Error('denied'));
         await expect(b).rejects.toThrow('denied');
-        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false });
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false, reloadNotice: false });
     });
 
     it('flags stuck once the hang timer fires, clears when the write lands', async () => {
@@ -247,14 +250,14 @@ describe('in-flight write tracking (SyncPill feed)', () => {
 
         let resolveLate;
         const wrapped = watchdogWrite(new Promise(res => { resolveLate = res; }));
-        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 0, hardStuck: false });
+        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 0, hardStuck: false, reloadNotice: false });
 
         await vi.advanceTimersByTimeAsync(WRITE_HANG_MS + 100);
-        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 1, hardStuck: false });
+        expect(states.at(-1)).toEqual({ inFlight: 1, stuck: 1, hardStuck: false, reloadNotice: false });
 
         resolveLate('flushed');
         await wrapped;
-        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false });
+        expect(states.at(-1)).toEqual({ inFlight: 0, stuck: 0, hardStuck: false, reloadNotice: false });
     });
 
     it('unsubscribe stops callbacks; a throwing subscriber cannot break the write', async () => {
@@ -379,6 +382,39 @@ describe('probe-stuck reload escalation (2026-08-29, ST1)', () => {
         mod.probeFirestoreLiveness();
         await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);
         expect(reload).toHaveBeenCalledTimes(1);                       // still one
+    });
+
+    it.each([
+        ['the device goes offline', () => {
+            Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+        }],
+        ['a write lands', (mod) => mod.watchdogWrite(Promise.resolve('ok'))],
+    ])('an attempt that stands down because %s does not use up the session\'s probe reload', async (_name, standDown) => {
+        getDocFromServer.mockReturnValue(hangForever());
+        const { mod, reload } = await setup();
+        mod.__setReloadNoticeMsForTests(3000);
+        let notice = false;
+        mod.subscribeInFlightWrites((s) => { notice = !!s.reloadNotice; });
+        try {
+            mod.probeFirestoreLiveness();
+            await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 100);
+            mod.probeFirestoreLiveness();
+            await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 50);
+            for (let i = 0; i < 700 && !notice; i++) await vi.advanceTimersByTimeAsync(100);
+            expect(notice).toBe(true);
+            await standDown(mod);
+            await vi.advanceTimersByTimeAsync(3100);
+            expect(notice).toBe(false);
+            expect(reload).not.toHaveBeenCalled();
+            expect(sessionStorage.getItem('ddmau:probeReloadAt')).toBeNull();
+        } finally {
+            delete navigator.onLine;
+        }
+        // The line is still stuck, so the next hung probe gets its reload.
+        mod.probeFirestoreLiveness();
+        await vi.advanceTimersByTimeAsync(mod.PROBE_STUCK_MS + 5000);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(sessionStorage.getItem('ddmau:probeReloadAt')).toBeTruthy();
     });
 
     it('a hang detected while the tab is HIDDEN does not count a strike', async () => {
@@ -587,7 +623,7 @@ describe('progress-based watchdog (2026-09-09 — inventory tap bursts)', () => 
         expect(await mod.escalateReload('write-stuck-after-revive', { page: 'inventory' })).toBe(true);
         // pre-probe, then stash → drain → stash → reload
         expect(order).toEqual(['drain', 'stash', 'drain', 'stash', 'reload']);
-        const rep = JSON.parse(sessionStorage.getItem(mod.PENDING_REPORT_KEY));
+        const rep = JSON.parse(localStorage.getItem('ddmau:pendingReloadReports')).at(-1);
         expect(rep.reason).toBe('write-stuck-after-revive');
         expect(rep.drained).toBe(true);
         expect(rep.page).toBe('inventory');
@@ -607,7 +643,7 @@ describe('progress-based watchdog (2026-09-09 — inventory tap bursts)', () => 
         await vi.advanceTimersByTimeAsync(mod.DRAIN_CAP_MS + 100);
         expect(await p).toBe(true);
         expect(reload).toHaveBeenCalledTimes(1);
-        expect(JSON.parse(sessionStorage.getItem(mod.PENDING_REPORT_KEY)).drained).toBe(false);
+        expect(JSON.parse(localStorage.getItem('ddmau:pendingReloadReports')).at(-1).drained).toBe(false);
     });
 
     it('a hung probe is NOT a strike while writes are settling', async () => {
@@ -890,7 +926,7 @@ describe('write-stuck reload only when it can help (2026-09-23 field telemetry)'
         await vi.advanceTimersByTimeAsync(mod.DRAIN_CAP_MS + 50);
         expect(await p).toBe(true);
         expect(reload).toHaveBeenCalledTimes(1);
-        const rep = JSON.parse(sessionStorage.getItem(mod.PENDING_REPORT_KEY));
+        const rep = JSON.parse(localStorage.getItem('ddmau:pendingReloadReports')).at(-1);
         expect(rep.drained).toBe(false);
         expect(rep.preProbe).toBe('timeout');
     });
@@ -900,5 +936,70 @@ describe('write-stuck reload only when it can help (2026-09-23 field telemetry)'
         const reload = vi.fn();
         mod.__setReloadImplForTests(reload);
         expect(await mod.escalateReload('probe-stuck')).toBe(true);
+    });
+});
+
+describe('stuck reports (Release A)', () => {
+    it('classifyStuck names each state', async () => {
+        const { classifyStuck } = await loadFresh();
+        expect(classifyStuck({ assertion: 'b815', queueAnswered: true })).toBe('crash');
+        expect(classifyStuck({ queueAnswered: true, rawFs: 'hang' })).toBe('healthy');
+        expect(classifyStuck({ queueAnswered: false, rawPrivate: 'hang', rawFs: 'ok', commitInFlightMs: 900 })).toBe('storage-hung');
+        expect(classifyStuck({ queueAnswered: false, rawPrivate: 'ok', rawFs: 'error' })).toBe('storage-hung');
+        expect(classifyStuck({ queueAnswered: false, rawPrivate: 'ok', rawFs: 'ok', commitInFlightMs: 40000 })).toBe('held-line');
+        expect(classifyStuck({ queueAnswered: false, rawPrivate: 'ok', rawFs: 'absent', commitInFlightMs: null })).toBe('sdk-stuck');
+    });
+
+    it('a report says what was happening, and two reloads keep two reports', async () => {
+        const mod = await loadFresh();
+        mod.__setReloadImplForTests(vi.fn());
+        sessionStorage.clear();
+        getDocFromCache.mockReturnValue(new Promise(() => {}));
+        const p = mod.escalateReload('probe-stuck');
+        await vi.advanceTimersByTimeAsync(mod.DRAIN_CAP_MS + 100);
+        await p;
+        const first = JSON.parse(localStorage.getItem('ddmau:pendingReloadReports'));
+        expect(first).toHaveLength(1);
+        expect(first[0]).toMatchObject({ reason: 'probe-stuck', detectedBy: 'probe-3min', cls: 'sdk-stuck', drained: false });
+        expect(first[0].reportId).toBeTruthy();
+        expect(first[0].reloadId).toBe(first[0].reportId);
+        expect(first[0].net).toMatchObject({ commitInFlight: 0 });
+        expect(Array.isArray(first[0].tabTrail)).toBe(true);
+        sessionStorage.clear();
+        vi.setSystemTime(Date.now() + mod.RELOAD_GUARD_MS + 1);
+        const p2 = mod.escalateReload('probe-stuck');
+        await vi.advanceTimersByTimeAsync(mod.DRAIN_CAP_MS + 100);
+        await p2;
+        expect(JSON.parse(localStorage.getItem('ddmau:pendingReloadReports'))).toHaveLength(2);
+    });
+
+    it('shows the restart notice for its full time and catches taps made during it', async () => {
+        const mod = await loadFresh();
+        mod.__setReloadNoticeMsForTests(3000);
+        const { registerReloadStash } = await import('./reloadStash.js');
+        const reload = vi.fn();
+        mod.__setReloadImplForTests(reload);
+        sessionStorage.clear();
+        let stashes = 0;
+        registerReloadStash('inventory', () => { stashes += 1; return { n: stashes }; });
+        const seen = [];
+        mod.subscribeInFlightWrites((s) => seen.push(!!s.reloadNotice));
+        const p = mod.escalateReload('probe-stuck');
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(seen.at(-1)).toBe(true);
+        expect(reload).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(600);
+        await p;
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(stashes).toBe(2);
+    });
+
+    it('labels in-flight writes on the report', async () => {
+        const mod = await loadFresh();
+        mod.__setReloadImplForTests(vi.fn());
+        sessionStorage.clear();
+        mod.watchdogWrite(new Promise(() => {}), undefined, { label: 'inv-tap' });
+        await mod.escalateReload('probe-stuck');
+        expect(JSON.parse(localStorage.getItem('ddmau:pendingReloadReports')).at(-1).writeLabels).toEqual(['inv-tap']);
     });
 });

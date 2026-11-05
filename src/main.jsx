@@ -2,6 +2,9 @@
 // anything reads localStorage or opens Firestore.
 import { TEST_MODE, TEST_MODE_IN_OTHER_TAB, exitTestMode, startTestModeHeartbeat, endTestModeElsewhere } from './data/testMode';
 import { prepareTestMode } from './data/testModePrefetch';
+import { installNetWatch } from './data/netWatch';
+import { getBootSeq, parkReport } from './data/pendingReports';
+import { installReliabilityFlags } from './data/reliabilityFlags';
 import { runReloadStashes } from './data/reloadStash';
 import React, { Component } from 'react';
 import ReactDOM from 'react-dom/client';
@@ -10,6 +13,17 @@ import AppToast from './components/AppToast.jsx';
 import './index.css';
 import './firebase.js';
 import { setupPWA } from './pwa.js';
+
+// Boot timing and the request watcher go first, ahead of any Firestore traffic.
+// Both stand down in test mode.
+if (typeof window !== 'undefined') {
+    // Reports carry this as bootMs (reportContext.js).
+    try { window.__ddmauBootMs = Math.round(performance.now()); } catch { /* labels only */ }
+    // Count every boot, not only ones that park a report, so deliveredBoot is right.
+    if (!TEST_MODE) getBootSeq();
+    installNetWatch();
+    installReliabilityFlags();
+}
 
 // ─── Google-Translate DOM guard (2026-07-27) ──────────────────────────
 // NotFoundError "Failed to execute 'removeChild' on 'Node'" crashed the
@@ -72,11 +86,9 @@ function _beforeHealReload(reason, meta) {
     // the inventory rehydrate the mutation queue was just destroyed, so it
     // must not present those taps as still saving.
     try { runReloadStashes(reason); } catch { /* best-effort */ }
-    try {
-        sessionStorage.setItem('ddmau:pendingReloadReport', JSON.stringify({ reason, at: Date.now(), ...meta }));
-    } catch { /* best-effort */ }
+    parkReport({ reason, at: Date.now(), cls: 'crash', detectedBy: 'crash-handler', ...meta });
 }
-async function healFirestoreCrash() {
+async function healFirestoreCrash(assertion) {
     const KEY = 'ddmau:fsHeal';
     let s = {};
     try { s = JSON.parse(sessionStorage.getItem(KEY) || '{}'); } catch { /* noop */ }
@@ -96,10 +108,12 @@ async function healFirestoreCrash() {
         } catch { /* best-effort */ }
     }
     try { hideSplash(); } catch { /* noop */ }
-    try { _beforeHealReload(n >= 2 ? 'fs-heal-wiped' : 'fs-heal-assert', { n, wiped: n >= 2 }); } catch { /* noop */ }
+    try { _beforeHealReload(n >= 2 ? 'fs-heal-wiped' : 'fs-heal-assert', { n, wiped: n >= 2, assertion }); } catch { /* noop */ }
     try { window.location.reload(); } catch { /* noop */ }
 }
 function maybeHealFirestore(msg) {
+    // Test mode never wipes or reloads itself.
+    if (TEST_MODE) return;
     const text = String(msg || '');
     if (_fsHealing || !FS_ASSERT.test(text)) return;
     // ── IndexedDbTransactionError — its OWN gentler path (2026-08-29, ST2).
@@ -121,12 +135,13 @@ function maybeHealFirestore(msg) {
         if (n > 3) return;                   // reloads aren't helping — stop looping
         _fsHealing = true;
         try { hideSplash(); } catch { /* noop */ }
-        try { _beforeHealReload('fs-heal-idbtxn', { n, wiped: false }); } catch { /* noop */ }
+        try { _beforeHealReload('fs-heal-idbtxn', { n, wiped: false, assertion: text.slice(0, 200) }); } catch { /* noop */ }
         try { window.location.reload(); } catch { /* noop */ }
         return;
     }
     _fsHealing = true;
-    healFirestoreCrash();
+    // The first 200 characters tell b815, b7de, ca9 and the others apart.
+    healFirestoreCrash(text.slice(0, 200));
 }
 if (typeof window !== 'undefined') {
     window.addEventListener('error', (e) => maybeHealFirestore(e?.message || e?.error?.message), true);

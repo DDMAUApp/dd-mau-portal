@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { forceRefresh } from './hooks/usePullToRefresh';
+import { deviceShortId } from '../data/deviceId';
 
 // __APP_VERSION__ / __APP_BUILT_AT__ / __APP_OPERATOR__ are injected at
 // build time by Vite (see vite.config.js define block).
@@ -42,7 +43,7 @@ export default function AppVersion({ language, className = '' }) {
                 className={`text-[10px] text-gray-400 hover:text-gray-600 transition px-2 py-1 ${className}`}
                 title={isEs ? 'Información de versión' : 'Version info'}>
                 {OPERATOR && <span>{OPERATOR} · </span>}
-                <span className="font-mono">v{VERSION_MAIN}</span>
+                <span className="font-mono">v{VERSION_MAIN} · {deviceShortId()}</span>
             </button>
             {open && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"

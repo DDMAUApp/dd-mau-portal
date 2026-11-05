@@ -86,6 +86,7 @@ export function shouldAttemptFloorReload(storage) {
 
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
+import { applyReliabilityConfig } from './reliabilityFlags';
 
 export const FLOOR_STUCK_MS = 90 * 1000;
 const OVERLAY_ID = 'ddmau-version-floor-overlay';
@@ -172,6 +173,10 @@ export function installVersionFloor() {
 
     try {
         onSnapshot(doc(db, 'config', 'minVersion'), (snap) => {
+            // Before the early return below: a device at or above the floor
+            // still needs its flags. A cached copy can be older than what the
+            // REST read already stored, so it can't overwrite a fresher "off".
+            if (snap.exists() && !snap.metadata?.fromCache) applyReliabilityConfig(snap.data()?.reliability);
             const min = snap.exists() ? snap.data()?.min : null;
             currentMin = min;
             if (!min || !isBelowMinVersion(localV, min)) {

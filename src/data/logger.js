@@ -42,7 +42,9 @@
 // underlying error/action takes precedence. We swallow + console.warn.
 
 import { db } from '../firebase';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { getOrCreateDeviceId } from './deviceId';
+import { countIdbNoise, pageAgeMs } from './reportContext';
 import { redactObject, redactString, redactStack, redactUrl } from './redact';
 import { setSentryIdentity, captureException as sentryCapture } from './sentryClient';
 
@@ -139,6 +141,8 @@ function buildCommonContext() {
             : 'unknown',
         appVersion: APP_VERSION,
         sessionId: getSessionId(),
+        deviceId: getOrCreateDeviceId(),
+        pageAgeMs: pageAgeMs(),
         userId: ident.userId,
         userName: ident.userName,
         userRole: ident.userRole,
@@ -241,7 +245,15 @@ function floodCheck(errObj) {
     return { drop: false, suppressed };
 }
 
-export async function logError({ error, severity = 'error', feature, meta } = {}) {
+// The IndexedDB server failures stay out of the log, but how many happened is
+// worth knowing, so they add to a counter that goes in the next stuck report.
+const IDB_NOISE = /internal error was encountered in the Indexed Database server|Attempt to iterate a cursor that doesn't exist/i;
+
+// Options for reports that must land (see pendingReports.js):
+//   parked + docId: skip the 60s dedupe, write to a fixed ID, and return the ID
+//     only once the server has it. Rules refuse updates to error_logs, so a
+//     permission-denied on a fixed ID means an earlier send already landed.
+export async function logError({ error, severity = 'error', feature, meta, parked = false, docId = null, onIssued = null } = {}) {
     const errObj = error instanceof Error ? error : new Error(String(error ?? 'unknown error'));
 
     // Defense in depth: filter the same noise we drop at the Sentry
@@ -252,6 +264,7 @@ export async function logError({ error, severity = 'error', feature, meta } = {}
     // through. 2026-05-27 — Kitchen Manager iPad chunk-load error
     // generated a critical-severity row this way.
     if (NOISE_PATTERN_LOG.test(errObj.message || '') || errObj.name === 'ChunkLoadError') {
+        if (IDB_NOISE.test(errObj.message || '')) countIdbNoise();
         if (typeof console !== 'undefined') {
             // eslint-disable-next-line no-console
             console.info('[logger] dropping noise error (cross-origin/stale-cache, not actionable):', errObj.message);
@@ -279,8 +292,15 @@ export async function logError({ error, severity = 'error', feature, meta } = {}
 
     // Flood control AFTER the Sentry capture (Sentry keeps full fidelity;
     // Firestore gets at most 1 row/min per identical error, ≤40/session).
-    const flood = floodCheck(errObj);
-    if (flood.drop) return null;
+    let flood;
+    if (parked) {
+        if (_sessionErrorWrites >= SESSION_MAX) return null;
+        _sessionErrorWrites += 1;
+        flood = { drop: false, suppressed: 0 };
+    } else {
+        flood = floodCheck(errObj);
+        if (flood.drop) return null;
+    }
 
     try {
         const ctx = buildCommonContext();
@@ -300,9 +320,17 @@ export async function logError({ error, severity = 'error', feature, meta } = {}
             recentActions: getBreadcrumbs(),
             resolved: false,
         };
+        if (docId) {
+            // Runs only when the write really goes out, so the caller's send limit
+            // isn't used up by a write that SESSION_MAX or the noise filter stopped.
+            try { onIssued?.(); } catch { /* bookkeeping only */ }
+            await setDoc(doc(db, 'error_logs', docId), row);
+            return docId;
+        }
         const ref = await addDoc(collection(db, 'error_logs'), row);
         return ref.id;
     } catch (e) {
+        if (docId && e?.code === 'permission-denied') return docId;
         // Never recurse — just warn. If logging is broken (rules
         // misconfigured, offline, etc.) the original error is still
         // surfaced to the user via the error boundary AND has already
