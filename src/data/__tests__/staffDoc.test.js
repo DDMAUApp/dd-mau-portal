@@ -4,7 +4,7 @@
 // class: no write can produce duplicate names/ids/PINs, an invalid
 // PIN, an empty name, or an empty list; diffs are exact; no-ops skip.
 import { describe, it, expect } from 'vitest';
-import { applyRosterMutation, nextStaffRev, noteStaffSnapshot, STAFF_DOC } from '../staffDoc';
+import { applyRosterMutation, latestStaffData, nextStaffRev, noteStaffSnapshot, STAFF_DOC } from '../staffDoc';
 
 const person = (id, name, pin, extra = {}) => ({ id, name, pin, ...extra });
 const DATA = {
@@ -110,6 +110,14 @@ describe('rev counter', () => {
         expect(nextStaffRev({})).toBe(1);
         expect(nextStaffRev(null)).toBe(1);
         expect(nextStaffRev({ rev: 'junk' })).toBe(1);
+    });
+
+    it('noteStaffSnapshot keeps the latest raw doc, tokens included', () => {
+        const data = { rev: 3, list: [{ name: 'A', fcmTokens: [{ token: 't' }] }] };
+        noteStaffSnapshot(data);
+        expect(latestStaffData()).toBe(data);
+        noteStaffSnapshot(undefined);
+        expect(latestStaffData()).toBeNull();
     });
 
     it('noteStaffSnapshot tracks the snapshot rev (null when absent)', () => {

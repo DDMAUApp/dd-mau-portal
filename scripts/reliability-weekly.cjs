@@ -112,7 +112,7 @@ async function report(admin) {
     const since = Date.now() - weeks * 7 * 86400000;
     const snap = await db.collection('error_logs').where('occurredAt', '>=', since).get();
     const byWeek = {};
-    const week = (k) => (byWeek[k] ||= { reloads: 0, cls: {}, reason: {}, role: {}, devices: {}, seen: new Set(), skipped: {}, bootSlow: 0, late: 0, oldEpisodes: 0, oldNonCrash: 0, oldKinds: {}, oldExcluded: 0, dropped: new Map(), droppedOverflow: 0 });
+    const week = (k) => (byWeek[k] ||= { reloads: 0, cls: {}, reason: {}, role: {}, devices: {}, seen: new Set(), skipped: {}, bootSlow: 0, late: 0, oldEpisodes: 0, oldNonCrash: 0, oldKinds: {}, oldExcluded: 0, dropped: new Map(), droppedOverflow: 0, pushOutcomes: {} });
     const pilot = Object.keys((await db.doc('config/minVersion').get()).data()?.reliability?.pilot?.devices || {});
     const listedDevices = [...pilot, ...String(process.env.RELIABILITY_EXCLUDE_DEVICES || '').split(',').map((s) => s.trim()).filter(Boolean)];
     const oldRows = [];
@@ -155,6 +155,7 @@ async function report(admin) {
         // Keyed by report ID: a row that hung and landed late can repeat an entry.
         (r.droppedReports || []).forEach((e) => { if (e?.id) w.dropped.set(e.id, e); });
         w.droppedOverflow += Number(r.droppedReportsOverflow) || 0;
+        Object.entries(r.pushOutcomes || {}).forEach(([key, n]) => bump(w.pushOutcomes, key, Number(n) || 0));
     });
     // Given up on means never confirmed, not lost: the row may have landed from the
     // SDK's queue later. Its fixed ID says which, once the row is looked up.
@@ -193,6 +194,7 @@ async function report(admin) {
             lost.forEach((e) => bump(by, `${e.reason || '?'}/${e.cls || '?'}`));
             console.log(`  reports given up on: ${entries.length + w.droppedOverflow} | landed anyway: ${entries.length - lost.length} | never landed: ${lost.length}${w.droppedOverflow ? ` (+${w.droppedOverflow} not itemized)` : ''} (${fmt(by)})`);
         }
+        if (Object.keys(w.pushOutcomes).length) console.log(`  push binding at boot: ${fmt(w.pushOutcomes)}`);
         if (countRows[k]) console.log(`  count rows by weekday: ${fmt(countRows[k])}`);
     }
     console.log('\nNot on this report yet: landing on Home and place restored (Release B), counts and adds lost (Release C), iOS versions (join capgoDeviceId by hand from the Capgo console), assertion IDs on crash reloads, the cache-size split, and failures followed by another within 30 minutes (read those from error_logs by hand for now).');

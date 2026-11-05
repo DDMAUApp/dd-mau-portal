@@ -18,6 +18,7 @@ import { clearDroppedReports, deliveredBootLabel, markReportNotified, noteReport
 import { getOrCreateDeviceId } from './deviceId';
 import { getReliabilityFlag } from './reliabilityFlags';
 import { placeOutcome } from './placeMemory';
+import { clearPushOutcomes, readPushOutcomes } from './noChangeSaves';
 
 // Only a reload that just happened gets a message. A report delivered days
 // later would describe something the person never connects to it.
@@ -151,6 +152,7 @@ export async function logDeviceSeenOncePerDay({ staffName, now = new Date() } = 
         try { screenSize = `${window.screen.width}x${window.screen.height}`; } catch { /* labels only */ }
         const docId = `seen_${String(deviceId).replace(/[^A-Za-z0-9_-]/g, '')}_${day}`;
         const dropped = readDroppedReports();
+        const pushOutcomes = readPushOutcomes();
         await setDoc(doc(db, 'device_seen', docId), {
             day,
             deviceId,
@@ -162,8 +164,10 @@ export async function logDeviceSeenOncePerDay({ staffName, now = new Date() } = 
             ...(dropped.entries.length || dropped.overflow
                 ? { droppedReports: dropped.entries, droppedReportsOverflow: dropped.overflow }
                 : {}),
+            ...(Object.keys(pushOutcomes).length ? { pushOutcomes } : {}),
         });
         clearDroppedReports(dropped);
+        clearPushOutcomes(pushOutcomes);
         // Only now: a failed or hung write gets another try.
         try { localStorage.setItem(KEY, day); } catch { /* the same ID just rewrites */ }
     } catch (e) {

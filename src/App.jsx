@@ -6,6 +6,8 @@ import { t } from './data/translations';
 import { isAdmin, isAdminId, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding, isManagerRoleTitle, canCountMoney, HIDEABLE_PAGES } from './data/staff';
 import { TEST_MODE, isTestModeStaff, enterTestMode, exitTestMode } from './data/testMode';
 import { noteStaffSnapshot, nextStaffRev } from './data/staffDoc';
+import { rosterGateOpen, signInStampedRecently, markSignInStamped, SKIP_NO_CHANGE_FLAG } from './data/noChangeSaves';
+import { getReliabilityFlag } from './data/reliabilityFlags';
 import { toast } from './toast';
 import { enableFcmPush, disableFcmPush, onForegroundMessage, onPushTapNavigate, isSharedDevice, isSharedDeviceModeEnabled } from './messaging';
 import { playKitchenBell } from './data/bell';
@@ -18,7 +20,6 @@ import { installFirestoreRevive, resilientSnapshot, isInputBusy } from './data/f
 import { canSeeFoodSafety } from './data/foodSafetyVisibility';
 import { flushParkedReports, logDeviceSeenOncePerDay } from './data/reportFlush';
 import { noteTab, pageAgeMs, setReportWho } from './data/reportContext';
-import { getReliabilityFlag } from './data/reliabilityFlags';
 import { effectiveStaffRecord, readLastKnownAccess, saveLastKnownAccess } from './data/lastKnownAccess';
 import { readInventoryPlace, readMainTab, saveMainTab } from './data/placeMemory';
 import ConnectingScreen from './components/ConnectingScreen';
@@ -1438,7 +1439,10 @@ export default function App() {
     // (visible in the device console). The ref caps it to one; the foreground
     // listener below is still (re)attached on every run so it stays alive.
     const pushRegisteredForRef = useRef(null);
+    // Flag skipNoChangeTx: boot saves wait for the real roster. Always true with the flag off.
+    const rosterGate = rosterGateOpen(staffListReady);
     useEffect(() => {
+        if (!rosterGate) return;
         if (!staffName || !Array.isArray(staffList) || staffList.length === 0) return;
         let unsubForeground = null;
         let cancelled = false;
@@ -1446,7 +1450,7 @@ export default function App() {
             try {
                 let registered = pushRegisteredForRef.current === staffName;
                 if (!registered) {
-                    const result = await enableFcmPush(staffName, staffList, setStaffList);
+                    const result = await enableFcmPush(staffName, staffList, setStaffList, { bootCheck: true });
                     if (cancelled) return;
                     // 2026-07-09 regression sweep: only latch the once-per-
                     // user guard when the token BINDING actually persisted
@@ -1520,7 +1524,7 @@ export default function App() {
         // failure during a user switch the PREVIOUS user's push binding
         // stayed live all session. Every shape-hash-passing emit now retries;
         // pushRegisteredForRef keeps the happy path to one registration.
-    }, [staffName, staffList]);
+    }, [staffName, staffList, rosterGate]);
     // Load staff list from Firestore.
     //
     // ⚠ DISABLED 2026-05-09: legacy migration block was silently rewriting
@@ -2256,6 +2260,7 @@ export default function App() {
     // Idempotent: writes only on the false→true transition. Subsequent
     // standalone-mode launches are no-ops (no Firestore write).
     useEffect(() => {
+        if (!rosterGate) return;
         if (!staffName || !currentStaffRecord) return;
         if (currentStaffRecord.pwaInstalled === true) return;
         const isStandalone = (
@@ -2299,7 +2304,7 @@ export default function App() {
             }
         })(); }, 5000);
         return () => { cancelled = true; clearTimeout(timer); };
-    }, [staffName, currentStaffRecord?.pwaInstalled]);
+    }, [staffName, currentStaffRecord?.pwaInstalled, rosterGate]);
 
     // ── Last-sign-in stamp (Andrew 2026-05-27) ─────────────────────────
     // The StaffUsageAudit panel was reading fcmTokens[].lastSeen as a
@@ -2319,6 +2324,7 @@ export default function App() {
     // can tell at a glance whether the staffer is opening the PWA or a
     // browser tab.
     useEffect(() => {
+        if (!rosterGate) return;
         if (!staffName || !currentStaffRecord) return;
         let cancelled = false;
         // 2026-07-09 startup audit W4: wait 5s before this stamp. It does
@@ -2335,6 +2341,10 @@ export default function App() {
                     const ms = typeof prev === 'number' ? prev : Date.parse(prev);
                     if (Number.isFinite(ms) && Date.now() - ms < 30 * 60 * 1000) return;
                 }
+                // React's record never holds this stamp, so after a reload the
+                // check above always passes. This device's own record does.
+                const skipNoChange = getReliabilityFlag(SKIP_NO_CHANGE_FLAG);
+                if (skipNoChange && signInStampedRecently(staffName)) return;
                 // TRUE only inside the downloaded native app (Capacitor iOS/
                 // Android wrapper). standalone below stays broader (also true
                 // for a home-screen PWA) for backward compat — the admin usage
@@ -2358,7 +2368,9 @@ export default function App() {
                 // race as the pwaInstalled stamp above (this stamp runs
                 // on EVERY sign-in, so it was the main clobber vector).
                 const { runTransaction } = await import('firebase/firestore');
+                let stampedAt = null;
                 await runTransaction(db, async (tx) => {
+                    stampedAt = null;
                     const ref = doc(db, 'config', 'staff');
                     const snap = await tx.get(ref);
                     if (!snap.exists()) return;
@@ -2374,8 +2386,12 @@ export default function App() {
                     const livePrev = meLive?.lastSignInAt;
                     if (livePrev) {
                         const liveMs = typeof livePrev === 'number' ? livePrev : Date.parse(livePrev);
-                        if (Number.isFinite(liveMs) && Date.now() - liveMs < 30 * 60 * 1000) return;
+                        if (Number.isFinite(liveMs) && Date.now() - liveMs < 30 * 60 * 1000) {
+                            stampedAt = liveMs;
+                            return;
+                        }
                     }
+                    if (meLive) stampedAt = Date.now();
                     const next = list.map(s => s && s.name === staffName
                         ? {
                             ...s,
@@ -2395,12 +2411,13 @@ export default function App() {
                         : s);
                     tx.set(ref, { list: next, rev: nextStaffRev(data) });
                 });
+                if (skipNoChange && stampedAt) markSignInStamped(staffName, stampedAt);
             } catch (e) {
                 console.warn('lastSignInAt write failed (non-fatal):', e);
             }
         })(); }, 5000);
         return () => { cancelled = true; clearTimeout(timer); };
-    }, [staffName, currentStaffRecord?.id]);
+    }, [staffName, currentStaffRecord?.id, rosterGate]);
 
     // ── Stable handler identities (2026-07-27) ──────────────────────────
     // AppShellV2 / MobileHome / HomeV2 / DownloadAppGate are memo-wrapped;
