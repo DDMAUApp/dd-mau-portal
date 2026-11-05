@@ -3,7 +3,7 @@
 // and pickLinkedHire return, and file paths are built only from that record's id.
 import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import {
-    collection, query, where, onSnapshot, doc, updateDoc, addDoc, writeBatch,
+    collection, query, where, onSnapshot, doc, updateDoc as _fsUpdateDoc, addDoc, writeBatch,
     arrayUnion, deleteField, serverTimestamp,
 } from 'firebase/firestore';
 import { ref as sref, listAll } from 'firebase/storage';
@@ -19,6 +19,10 @@ import { isSharedDeviceModeEnabled } from '../messaging';
 import { notifyAdmins } from '../data/notify';
 import { toast } from '../toast';
 import DocumentFileViewer from './DocumentFileViewer';
+import { watchdogWrite, resilientSnapshot } from '../data/firestoreRevive';
+
+// A stuck connection after the app sat in the background recovers instead of hanging.
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 
 const DocCard = lazy(() => import('./OnboardingPortal').then(m => ({ default: m.DocCard })));
 
@@ -275,11 +279,11 @@ function MyDocuments({ staffRecord, isEs }) {
         setUnlockedFor(null);
         if (blocked || staffId === undefined || staffId === null) { setLoaded(true); return undefined; }
         setLoaded(false);
-        return onSnapshot(
+        return resilientSnapshot('documents', (onData, onError) => onSnapshot(
             query(collection(db, 'onboarding_hires'), where('documentsLink.staffId', '==', staffId)),
-            (snap) => { setHires(snap.docs.map(d => ({ ...d.data(), id: d.id }))); setLoaded(true); },
-            (e) => { console.warn('documents listen failed', e?.code); setHires([]); setLoaded(true); },
-        );
+            (snap) => { onData(); setHires(snap.docs.map(d => ({ ...d.data(), id: d.id }))); setLoaded(true); },
+            (e) => { console.warn('documents listen failed', e?.code); setHires([]); setLoaded(true); onError(e); },
+        ));
     }, [blocked, staffId]);
 
     const hire = useMemo(() => pickLinkedHire(hires, staffRecord), [hires, staffRecord]);
@@ -339,7 +343,7 @@ function MatchList({ staffList, confirmedBy, isEs }) {
         batch.update(doc(db, 'onboarding_hires', hire.id), {
             documentsLink: { staffId: person.id, staffName: person.name, confirmedBy, confirmedAt: new Date().toISOString() },
         });
-        await batch.commit();
+        await watchdogWrite(batch.commit());
         audit('documents_link_confirmed', { hireId: hire.id, staffId: person.id, by: confirmedBy });
     });
     const remove = (person, hire) => run(person.id, async () => {

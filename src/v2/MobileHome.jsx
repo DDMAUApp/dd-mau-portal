@@ -70,7 +70,7 @@ import {
     ShieldCheck,
 } from 'lucide-react';
 import { canSeeFoodSafety } from '../data/foodSafetyVisibility';
-import { canSeeDocuments } from '../data/staffDocuments';
+import { canSeeDocuments } from '../data/documentsVisibility';
 // 2026-05-20 — Print Center tile on the home screen. Andrew: "lets
 // make a printer button on the home screen and also has all the
 // same features." Lazy so the chunk only downloads when a staffer

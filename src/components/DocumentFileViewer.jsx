@@ -8,6 +8,8 @@ import { isOwnFilePath, olderVersionLines, olderVersionLabel } from '../data/sta
 
 const MAX_BYTES = 30 * 1024 * 1024;
 const MAX_PAGES = 30;
+const MAX_VIEW_PX = 1600;
+const MAX_PHOTO_PX = 2400;
 
 export function drawOlderWatermark(canvas, lines) {
     const ctx = canvas.getContext('2d');
@@ -28,30 +30,69 @@ export function drawOlderWatermark(canvas, lines) {
     ctx.restore();
 }
 
-async function renderPdf(bytes, host, lines, isLive) {
+// Pages are drawn at screen size, only near where the person is looking, and dropped
+// when far away, so a long PDF can't run a phone out of memory.
+export async function renderPdf(bytes, host, lines, isLive) {
     const pdfjs = await import('pdfjs-dist');
     if (!pdfjs.GlobalWorkerOptions.workerSrc) {
         pdfjs.GlobalWorkerOptions.workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
     }
     const pdf = await pdfjs.getDocument({ data: bytes }).promise;
-    try {
-        for (let n = 1; n <= Math.min(pdf.numPages, MAX_PAGES) && isLive(); n++) {
-            const page = await pdf.getPage(n);
-            const viewport = page.getViewport({ scale: 2 });
-            const canvas = document.createElement('canvas');
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            canvas.className = 'w-full h-auto bg-white rounded shadow mb-3';
-            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-            if (lines) drawOlderWatermark(canvas, lines);
-            if (isLive()) host.appendChild(canvas);
-        }
-    } finally {
-        pdf.destroy();
+    const count = Math.min(pdf.numPages, MAX_PAGES);
+    const drawing = new Map();
+    const draw = async (n) => {
+        const page = await pdf.getPage(n);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: viewScale(base.width, host) });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.className = 'w-full h-auto';
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        if (lines) drawOlderWatermark(canvas, lines);
+        page.cleanup();
+        return canvas;
+    };
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+            const slot = entry.target;
+            const n = Number(slot.dataset.page);
+            if (entry.isIntersecting) {
+                if (drawing.has(n)) return;
+                const job = draw(n).then((canvas) => {
+                    if (isLive() && drawing.get(n) === job) slot.replaceChildren(canvas);
+                }).catch((e) => console.warn('page draw failed', e?.message));
+                drawing.set(n, job);
+            } else if (drawing.has(n)) {
+                drawing.delete(n);
+                const old = slot.querySelector('canvas');
+                if (old) { old.width = 0; old.height = 0; }
+                slot.replaceChildren();
+            }
+        });
+    }, { root: host.parentElement, rootMargin: '100% 0px' });
+    for (let n = 1; n <= count; n++) {
+        const first = await pdf.getPage(n);
+        if (!isLive()) break;
+        const v = first.getViewport({ scale: 1 });
+        const slot = document.createElement('div');
+        slot.dataset.page = String(n);
+        slot.className = 'bg-white rounded shadow mb-3 overflow-hidden';
+        slot.style.aspectRatio = `${v.width} / ${v.height}`;
+        host.appendChild(slot);
+        observer.observe(slot);
     }
+    return () => { observer.disconnect(); pdf.destroy(); };
 }
 
-async function renderImage(bytes, host, lines) {
+// Sharp enough for this screen, and no sharper.
+function viewScale(pageWidth, host) {
+    const cssWidth = Math.max(host.clientWidth || 0, 320);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    return Math.min(MAX_VIEW_PX, cssWidth * dpr) / pageWidth;
+}
+
+export async function renderImage(bytes, host, lines) {
     const url = URL.createObjectURL(new Blob([bytes]));
     try {
         const img = await new Promise((resolve, reject) => {
@@ -60,11 +101,13 @@ async function renderImage(bytes, host, lines) {
             i.onerror = reject;
             i.src = url;
         });
+        // Only this on-screen copy is smaller. The stored photo isn't touched.
+        const shrink = Math.min(1, MAX_PHOTO_PX / Math.max(img.naturalWidth, img.naturalHeight));
         const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
+        canvas.width = Math.round(img.naturalWidth * shrink);
+        canvas.height = Math.round(img.naturalHeight * shrink);
         canvas.className = 'w-full h-auto bg-white rounded shadow';
-        canvas.getContext('2d').drawImage(img, 0, 0);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
         if (lines) drawOlderWatermark(canvas, lines);
         host.appendChild(canvas);
     } finally {
@@ -79,13 +122,17 @@ export default function DocumentFileViewer({ hireId, path, title, older, replace
     useEffect(() => {
         let alive = true;
         const host = hostRef.current;
+        let release = null;
         (async () => {
             if (!isOwnFilePath(path, hireId)) { setState('error'); return; }
             try {
                 const bytes = await getBytes(sref(storage, path), MAX_BYTES);
                 if (!alive) return;
                 const lines = older ? olderVersionLines(replacedAt, isEs) : null;
-                if (/\.pdf$/i.test(path)) await renderPdf(new Uint8Array(bytes), host, lines, () => alive);
+                if (/\.pdf$/i.test(path)) {
+                    release = await renderPdf(new Uint8Array(bytes), host, lines, () => alive);
+                    if (!alive) release?.();
+                }
                 else await renderImage(bytes, host, lines);
                 if (alive) setState('ready');
             } catch (e) {
@@ -93,7 +140,7 @@ export default function DocumentFileViewer({ hireId, path, title, older, replace
                 if (alive) setState('error');
             }
         })();
-        return () => { alive = false; if (host) host.replaceChildren(); };
+        return () => { alive = false; release?.(); if (host) host.replaceChildren(); };
     }, [hireId, path, older, replacedAt, isEs]);
 
     return (

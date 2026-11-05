@@ -6,13 +6,6 @@
 // anything about the link is off, the answer is "no documents", never a best guess.
 import { DOC_STATUS } from './onboarding';
 
-// Owner-only until the owner has confirmed the match list and tried it.
-export const DOCUMENTS_OPEN_TO_ALL = false;
-
-export function canSeeDocuments(isAdminUser) {
-    return DOCUMENTS_OPEN_TO_ALL || isAdminUser === true;
-}
-
 export const normName = (v) => String(v || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase().replace(/\s+/g, ' ').trim();

@@ -35,6 +35,10 @@ vi.mock('../data/testMode', () => ({ get TEST_MODE() { return h.testMode; } }));
 vi.mock('../messaging', () => ({ isSharedDeviceModeEnabled: () => h.shared }));
 vi.mock('../data/notify', () => ({ notifyAdmins: vi.fn(async (n) => { h.notified.push(n); }) }));
 vi.mock('../toast', () => ({ toast: vi.fn() }));
+vi.mock('../data/firestoreRevive', () => ({
+    watchdogWrite: (p) => p,
+    resilientSnapshot: (_label, attach) => attach(() => {}, () => {}),
+}));
 vi.mock('./OnboardingPortal', () => ({
     DocCard: ({ doc, onSetStatus, onSaveForm }) => (
         <div>

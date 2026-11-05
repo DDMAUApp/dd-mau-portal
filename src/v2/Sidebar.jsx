@@ -43,7 +43,7 @@ import {
     ShieldCheck,
 } from 'lucide-react';
 import { FOOD_SAFETY_OPEN_TO_ALL } from '../data/foodSafetyVisibility';
-import { DOCUMENTS_OPEN_TO_ALL } from '../data/staffDocuments';
+import { DOCUMENTS_OPEN_TO_ALL } from '../data/documentsVisibility';
 import { isSharedDeviceModeEnabled } from '../messaging';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';

@@ -18,7 +18,7 @@ import AppVersion from './components/AppVersion';
 import { showLocalNotification } from './data/localNotification';
 import { installFirestoreRevive, resilientSnapshot, isInputBusy } from './data/firestoreRevive';
 import { canSeeFoodSafety } from './data/foodSafetyVisibility';
-import { canSeeDocuments } from './data/staffDocuments';
+import { canSeeDocuments } from './data/documentsVisibility';
 import { flushParkedReports, logDeviceSeenOncePerDay } from './data/reportFlush';
 import { noteTab, pageAgeMs, setReportWho } from './data/reportContext';
 import { effectiveStaffRecord, listWithEffectiveRecord, readLastKnownAccess, saveLastKnownAccess } from './data/lastKnownAccess';

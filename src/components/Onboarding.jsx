@@ -1515,6 +1515,11 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
             // Every version stays. Older ones are marked and open with the watermark.
             const versions = new Map(classifyDocFiles(items.map(it => it.name), { replacedBefore: hire.checklist?.[docDef.id]?.replacedBefore }).map(v => [v.name, v]));
             const enriched = await Promise.all(items.map(async (it) => {
+                const version = versions.get(it.name);
+                // Older versions open through the viewer, which fetches them on the tap.
+                if (version?.older) {
+                    return { name: it.name, fullPath: it.fullPath, url: undefined, older: true, replacedAt: version.replacedAt };
+                }
                 const url = await getDownloadURL(it);
                 let m = null;
                 try { m = await getMetadata(it); } catch {}
@@ -1524,8 +1529,8 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, templa
                     url,
                     size: m?.size,
                     contentType: m?.contentType,
-                    older: !!versions.get(it.name)?.older,
-                    replacedAt: versions.get(it.name)?.replacedAt || 0,
+                    older: false,
+                    replacedAt: 0,
                 };
             }));
             setFiles(enriched.sort((a, b) => Number(a.older) - Number(b.older)));
