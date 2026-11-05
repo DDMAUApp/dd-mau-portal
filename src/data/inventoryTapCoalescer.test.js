@@ -116,3 +116,25 @@ describe('tapDelta — the device\'s own contribution, independent of the on-scr
     });
 });
 
+
+describe('rebase (Release B)', () => {
+    const coalescer = () => {
+        const flushed = [];
+        const c = createTapCoalescer({ flush: (id, w) => flushed.push({ id, ...w }), setTimer: () => 1, clearTimer: () => {} });
+        return { c, flushed };
+    };
+    it('moves an open window onto the real count and keeps its taps', () => {
+        const { c, flushed } = coalescer();
+        c.tap('x', { prevCount: 4, nextCount: 5, kind: 'inc' });
+        c.tap('x', { prevCount: 5, nextCount: 6, kind: 'inc' });
+        expect(c.rebase('x', 2)).toBe(4);
+        c.flushNow('x');
+        expect(flushed[0]).toMatchObject({ prevCount: 2, nextCount: 4, tapDelta: 2, mode: 'inc' });
+    });
+    it('does nothing with no window, or one with a non-increment tap', () => {
+        const { c } = coalescer();
+        expect(c.rebase('x', 2)).toBe(null);
+        c.tap('x', { prevCount: 4, nextCount: 3, kind: 'dec' });
+        expect(c.rebase('x', 2)).toBe(null);
+    });
+});

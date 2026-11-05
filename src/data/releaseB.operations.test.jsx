@@ -194,7 +194,7 @@ describe('loading gate, flag on', () => {
 
     it('a cached copy of the document opens it', async () => {
         await mountOnInventory();
-        await act(async () => { fire(INV, snap(liveDoc(), { fromCache: true })); });
+        await act(async () => { fire(INV, snap(liveDoc({ counts: { [firstItem.id]: 2 } }), { fromCache: true })); });
         expect(screen.queryByTestId('sheet-loading')).toBe(null);
     });
 

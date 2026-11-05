@@ -10,6 +10,14 @@
 
 // True if any counts map passed in has at least one positive quantity.
 // Accepts multiple maps (e.g. master `counts` + `vendorCounts`).
+// JSON with map keys in a fixed order, to tell whether a document's data really changed.
+export function stableJson(value) {
+    return JSON.stringify(value, (_k, v) => {
+        if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
+        return Object.keys(v).sort().reduce((out, k) => { out[k] = v[k]; return out; }, {});
+    }) ?? 'null';
+}
+
 export function hasAnyCount(...maps) {
     for (const m of maps) {
         if (m && typeof m === 'object') {

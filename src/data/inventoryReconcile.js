@@ -73,3 +73,39 @@ export function reconcileCountsDetailed(serverCounts, pending, now) {
     return { counts: reconcileCounts(serverCounts, pending, now), expiredIds, confirmedIds };
 }
 
+/**
+ * Release B: the server has answered with no pending writes, so every + tap whose
+ * window has closed is already in that answer. Pure. Returns the 'inc' holds among
+ * `candidates` to drop, and those still waiting on an open window.
+ */
+export function settleIncHolds(pending, candidates, openWindowIds) {
+    const open = new Set(openWindowIds || []);
+    const dropped = [];
+    const waiting = [];
+    for (const id of candidates || []) {
+        if (pending?.[id]?.mode !== 'inc') continue;
+        (open.has(id) ? waiting : dropped).push(id);
+    }
+    return { dropped, waiting };
+}
+
+/**
+ * Release B: what to do with each hold when a clean server answer opens the sheet. Pure.
+ *   dropped:  + taps made on a saved copy this session. They're in the answer, so they
+ *             go quietly, since their held number came from the old copy.
+ *   waiting:  + taps still in their window. Not sent yet, so not in the answer.
+ *   restored: everything else came through a reload. With nothing pending, one the
+ *             server doesn't show may really be lost, and the person needs to know.
+ */
+export function planHoldsOnOpen(pending, { openWindowIds, tappedOnCopy, restoredIds } = {}) {
+    const open = new Set(openWindowIds || []);
+    const tapped = new Set(tappedOnCopy || []);
+    const fromReload = new Set(restoredIds || []);
+    const plan = { dropped: [], waiting: [], restored: [] };
+    for (const id of Object.keys(pending || {})) {
+        if (pending[id]?.mode === 'inc' && open.has(id)) plan.waiting.push(id);
+        else if (pending[id]?.mode === 'inc' && tapped.has(id) && !fromReload.has(id)) plan.dropped.push(id);
+        else plan.restored.push(id);
+    }
+    return plan;
+}

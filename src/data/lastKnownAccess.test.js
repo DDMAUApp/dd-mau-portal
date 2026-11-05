@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ACCESS_KEYS, LAST_KNOWN_ACCESS_KEY, MAX_SAVED_PEOPLE, effectiveStaffRecord, pickAccessFields, readLastKnownAccess, saveLastKnownAccess } from './lastKnownAccess';
+import { ACCESS_KEYS, LAST_KNOWN_ACCESS_KEY, MAX_SAVED_PEOPLE, effectiveStaffRecord, listWithEffectiveRecord, pickAccessFields, readLastKnownAccess, saveLastKnownAccess } from './lastKnownAccess';
 
 beforeEach(() => localStorage.clear());
 
-const real = {
+const real = { scheduleSide: 'boh', viewLabor: true,
     id: 77, name: 'New Hire', role: 'Prep', location: 'webster', opsAccess: true, recipesAccess: false,
     canCountMoney: true, canViewClockedIn: false, shiftLead: true, hiddenPages: ['menu'], canViewOnboarding: false,
     pin: '1234', fcmTokens: ['tok'], phone: '555', payRate: 20, lastSignInAt: 1,
@@ -13,7 +13,7 @@ describe('saved access', () => {
     it('allows exactly these keys', () => {
         expect([...ACCESS_KEYS]).toEqual([
             'id', 'role', 'location', 'opsAccess', 'recipesAccess', 'canCountMoney',
-            'canViewClockedIn', 'shiftLead', 'hiddenPages', 'canViewOnboarding',
+            'canViewClockedIn', 'shiftLead', 'hiddenPages', 'canViewOnboarding', 'scheduleSide', 'viewLabor',
         ]);
     });
 
@@ -72,5 +72,26 @@ describe('effectiveStaffRecord', () => {
     it('stands alone for someone not on the built-in list', () => {
         expect(effectiveStaffRecord({ staffList: [builtIn], staffName: 'New', staffListReady: false, saved: { id: 99, opsAccess: true } }))
             .toEqual({ name: 'New', id: 99, opsAccess: true });
+    });
+});
+
+describe('listWithEffectiveRecord', () => {
+    const a = { id: 1, name: 'A', role: 'FOH' };
+    const b = { id: 2, name: 'B', role: 'Pho' };
+    it('swaps this person\'s entry and leaves the others alone', () => {
+        const me = { id: 2, name: 'B', role: 'Manager', opsAccess: true };
+        const list = [a, b];
+        expect(listWithEffectiveRecord(list, 'B', me)).toEqual([a, me]);
+        expect(list).toEqual([a, b]);
+    });
+    it('adds someone the built-in list does not have', () => {
+        const me = { name: 'New', opsAccess: true };
+        expect(listWithEffectiveRecord([a], 'New', me)).toEqual([a, me]);
+    });
+    it('returns the same list when there is nothing to swap', () => {
+        const list = [a, b];
+        expect(listWithEffectiveRecord(list, 'A', a)).toBe(list);
+        expect(listWithEffectiveRecord(list, 'A', null)).toBe(list);
+        expect(listWithEffectiveRecord(list, null, a)).toBe(list);
     });
 });

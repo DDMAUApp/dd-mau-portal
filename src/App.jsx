@@ -20,8 +20,8 @@ import { installFirestoreRevive, resilientSnapshot, isInputBusy } from './data/f
 import { canSeeFoodSafety } from './data/foodSafetyVisibility';
 import { flushParkedReports, logDeviceSeenOncePerDay } from './data/reportFlush';
 import { noteTab, pageAgeMs, setReportWho } from './data/reportContext';
-import { effectiveStaffRecord, readLastKnownAccess, saveLastKnownAccess } from './data/lastKnownAccess';
-import { readInventoryPlace, readMainTab, saveMainTab } from './data/placeMemory';
+import { effectiveStaffRecord, listWithEffectiveRecord, readLastKnownAccess, saveLastKnownAccess } from './data/lastKnownAccess';
+import { PLACE_REFRESH_MS, readInventoryPlace, readMainTab, saveMainTab } from './data/placeMemory';
 import ConnectingScreen from './components/ConnectingScreen';
 import SyncPill from './components/SyncPill';
 import { installVersionFloor } from './data/versionFloor';
@@ -925,7 +925,7 @@ export default function App() {
             if (name && getReliabilityFlag('placeRestore')) saveMainTab(name, tab);
         };
         const onVisibility = () => { if (document.visibilityState === 'hidden') touch(); };
-        const id = setInterval(touch, 60 * 1000);
+        const id = setInterval(touch, PLACE_REFRESH_MS);
         window.addEventListener('pagehide', touch);
         document.addEventListener('visibilitychange', onVisibility);
         return () => {
@@ -1649,6 +1649,15 @@ export default function App() {
             saved: placeOn && !staffListReady ? readLastKnownAccess(staffName) : null,
         }),
         [staffList, staffName, staffListReady, placeOn],
+    );
+    // Operations looks the person up in the list it's given, for its access gate,
+    // manager check, checklist side and labor bubble. So until the roster answers it
+    // needs the same record the gates here used. Flag off: the same list as always.
+    const operationsStaffList = useMemo(
+        () => (placeOn && !staffListReady
+            ? listWithEffectiveRecord(staffList, staffName, currentStaffRecord)
+            : staffList),
+        [placeOn, staffListReady, staffList, staffName, currentStaffRecord],
     );
     useEffect(() => {
         if (!placeOn || !staffName || !staffListReady) return;
@@ -2720,7 +2729,7 @@ export default function App() {
             // ship with via a CSS reset class that the tab itself defines.
             if (activeTab === 'chat') return <PageErrorBoundary tabName="Chat" language={language}><ChatCenter language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <PageErrorBoundary tabName="Training" language={language}><TrainingHub staffName={staffName} language={language} staffList={staffList} isManager={isManager} /></PageErrorBoundary>;
-            if (activeTab === 'operations' && hasOpsAccess) return <PageErrorBoundary tabName="Operations" language={language}><Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} onGoHome={() => setActiveTab('home')} /></PageErrorBoundary>;
+            if (activeTab === 'operations' && hasOpsAccess) return <PageErrorBoundary tabName="Operations" language={language}><Operations language={language} staffList={operationsStaffList} staffName={staffName} storeLocation={effectiveLocation} onGoHome={() => setActiveTab('home')} /></PageErrorBoundary>;
             if (activeTab === 'mytasks') return <PageErrorBoundary tabName="My Tasks" language={language}><MyTasksPanel language={language} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} isManager={isManager} /></PageErrorBoundary>;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <PageErrorBoundary tabName="Menu" language={language}><MenuReference language={language} /></PageErrorBoundary>;
             if (activeTab === 'datestickers') return <PageErrorBoundary tabName="Date Stickers" language={language}><DateStickerPrinter language={language} staffName={staffName} storeLocation={effectiveLocation} staffList={staffList} /></PageErrorBoundary>;

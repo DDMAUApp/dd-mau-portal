@@ -16,6 +16,9 @@ export const MAX_SAVED_PEOPLE = 30;
 export const ACCESS_KEYS = Object.freeze([
     'id', 'role', 'location', 'opsAccess', 'recipesAccess', 'canCountMoney',
     'canViewClockedIn', 'shiftLead', 'hiddenPages', 'canViewOnboarding',
+    // Operations reads these two for the checklist side and the labor bubble. Both
+    // are plain settings: 'foh'/'boh'/'both' and a yes/no, with no pay in them.
+    'scheduleSide', 'viewLabor',
 ]);
 
 function _readAll() {
@@ -75,4 +78,20 @@ export function effectiveStaffRecord({ staffList, staffName, staffListReady, sav
     const merged = { ...base };
     for (const k of ACCESS_KEYS) delete merged[k];
     return { ...merged, ...saved };
+}
+
+/**
+ * The list with this person's entry swapped for their effective record, for pages
+ * that look the person up in staffList themselves. Pure. Nothing to swap returns
+ * the same list, so its identity doesn't change.
+ */
+export function listWithEffectiveRecord(staffList, staffName, record) {
+    if (!staffName || !record) return staffList;
+    const list = staffList || [];
+    const at = list.findIndex((s) => s.name === staffName);
+    if (at < 0) return [...list, record];
+    if (list[at] === record) return staffList;
+    const out = [...list];
+    out[at] = record;
+    return out;
 }

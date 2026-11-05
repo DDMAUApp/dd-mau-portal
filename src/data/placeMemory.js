@@ -9,6 +9,9 @@ import { TEST_MODE } from './testMode';
 
 export const PLACE_TTL_MS = 30 * 60 * 1000;
 export const PLACE_SAVE_EVERY_MS = 500;
+// A record's 30 minutes run from when the person was last here, so it's rewritten
+// on this beat while the page is open.
+export const PLACE_REFRESH_MS = 60 * 1000;
 const TAB_PREFIX = 'ddmau:placeTab:';
 const INV_PREFIX = 'ddmau:placeInv:';
 

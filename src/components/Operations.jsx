@@ -58,16 +58,16 @@ import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor, locationLabel, isDuplicateInventoryName, isDuplicateInCategory } from '../data/inventory';
 import { formatCountStampLines, contributionWrites } from '../data/inventoryStamp';
-import { reconcileCountsDetailed, RELEASE_TIMEOUT_MS } from '../data/inventoryReconcile';
-import { createTapCoalescer } from '../data/inventoryTapCoalescer';
+import { planHoldsOnOpen, reconcileCountsDetailed, RELEASE_TIMEOUT_MS, settleIncHolds } from '../data/inventoryReconcile';
+import { createTapCoalescer, DEFAULT_MAX_WAIT_MS } from '../data/inventoryTapCoalescer';
 import { getReliabilityFlag } from '../data/reliabilityFlags';
-import { createPlaceSaver, readInventoryPlace, saveInventoryPlace } from '../data/placeMemory';
-import { sheetText, sheetView, snapshotCountsAsLive } from '../data/sheetGate';
+import { createPlaceSaver, PLACE_REFRESH_MS, readInventoryPlace, saveInventoryPlace } from '../data/placeMemory';
+import { nextSheetState, sheetText, sheetView } from '../data/sheetGate';
 import { ADD_DEADLINE_MS, addFailedText, parkInventoryAddRow } from '../data/inventoryAddReport';
 import SheetLoadingPanel from './SheetLoadingPanel';
 import { registerReloadStash, peekReloadStash, peekReloadStashMeta, clearReloadStash, planStashRehydrate, resolveLostHolds } from '../data/reloadStash';
 import { InventoryLocationJumpBar, InventoryMoreMenu, locationGroupKey, locationTitle, UNASSIGNED_LOCATION, keepLocationFolds } from './InventoryLayoutParts';
-import { hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot, shouldApplyInventorySnapshot, isServerConfirmedSnapshot } from '../data/inventoryStability';
+import { stableJson, hasAnyCount, isRemoteClearAdvanced, shouldIgnoreInventorySnapshot, shouldApplyInventorySnapshot, isServerConfirmedSnapshot } from '../data/inventoryStability';
 // 2026-09-23 inventory bug batch — the catalog load-merge + every catalog
 // edit (edit / move / delete / reorder / new ids) as pure, tested planners.
 import { mergeSavedInventory, isListOverride, findItemById, nextCatalogItemId, planIdRemapWrites, planItemPatch, planItemMove, planItemDelete, planItemSwap } from '../data/inventoryCatalog';
@@ -327,7 +327,7 @@ function vendorColorFor(v) {
 // we no-op so we don't churn the audit log either. The +/- buttons
 // still call updateInventoryCount directly — those are intentional
 // single-tap commits.
-const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit, language, className }) {
+const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit, language, className, disabled = false }) {
     const [local, setLocal] = useState(String(value || 0));
     const [editing, setEditing] = useState(false);
     // `dirty` = the user actually TYPED in this field (vs merely focused/tapped into
@@ -364,8 +364,10 @@ const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit,
         if (f.dirty) f.commit(f.local);
     }, []);
     const numericLocal = parseInt(local || '0', 10) || 0;
+    const inputClass = className || `w-12 h-9 text-center font-bold text-lg rounded-lg border-2 ${numericLocal > 0 ? "text-green-700 border-green-200 bg-white" : "text-gray-300 border-gray-200 bg-white"} focus:border-mint-700 focus:outline-none tabular-nums`;
     return (
         <input
+            disabled={disabled}
             type="text"
             inputMode="numeric"
             pattern="[0-9]*"
@@ -392,7 +394,7 @@ const InventoryCountInput = memo(function InventoryCountInput({ value, onCommit,
                 }
             }}
             aria-label={language === "es" ? "Cantidad" : "Quantity"}
-            className={className || `w-12 h-9 text-center font-bold text-lg rounded-lg border-2 ${numericLocal > 0 ? "text-green-700 border-green-200 bg-white" : "text-gray-300 border-gray-200 bg-white"} focus:border-mint-700 focus:outline-none tabular-nums`}
+            className={disabled ? `${inputClass} opacity-50 cursor-not-allowed` : inputClass}
         />
     );
 });
@@ -543,6 +545,8 @@ const LocationItemRow = memo(function LocationItemRow({
     // it — only the category/vendor views had the dots — so an unconfirmed
     // hold after a forced reload (or a plain failed save) was invisible here.
     syncStatus,
+    // Release B: a saved copy is on screen, so − and typed entry wait for the server.
+    countLocked = false,
 }) {
     return (
         <div className={`ddmau-inv-cv flex items-center justify-between gap-2 px-3 py-2 ${count > 0 ? 'bg-green-50/50' : ''}`}>
@@ -565,8 +569,8 @@ const LocationItemRow = memo(function LocationItemRow({
                 with the + button. */}
             <div className="flex flex-col items-end gap-1 flex-shrink-0">
             <div className="flex items-center gap-2">
-                <button onClick={() => onUpdate(id, Math.max(0, count - 1), -1)}
-                    className={`w-11 h-11 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
+                <button onClick={() => onUpdate(id, Math.max(0, count - 1), -1)} disabled={countLocked}
+                    className={`w-11 h-11 rounded-lg font-bold text-lg flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
                 {/* 2026-06-13 perf — was a raw onChange input that wrote to
                     Firestore on EVERY keystroke (typing "100" = 3 audit docs +
                     3 inventory updates). The location view is the DEFAULT
@@ -578,6 +582,7 @@ const LocationItemRow = memo(function LocationItemRow({
                     value={count}
                     onCommit={(n) => onUpdate(id, n)}
                     language={language}
+                    disabled={countLocked}
                     className="w-14 h-11 text-center text-base font-bold rounded-lg border-2 border-gray-200 bg-white text-gray-800 focus:border-mint-500 focus:outline-none tabular-nums" />
                 <button onClick={() => onUpdate(id, count + 1, 1)}
                     className="w-11 h-11 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
@@ -606,8 +611,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     : null;
             }
             const savedPlace = savedPlaceRef.current;
+            // The search effect's mount run mustn't undo folds just restored, and
+            // neither must its run after a store switch brings another store's in.
+            const keepRestoredFoldsRef = useRef(!!savedPlace);
+            // The store on screen now, for work that finishes after a toggle.
+            const storeNowRef = useRef(storeLocation);
+            storeNowRef.current = storeLocation;
+            // + holds still waiting on an open tap window when the sheet opened.
+            const copyHoldsRef = useRef(new Set());
+            // + taps made on a saved copy this session, and holds a reload brought back.
+            const copyTapIdsRef = useRef(new Set());
+            const restoredHoldIdsRef = useRef(new Set());
             // 'loading' until a snapshot lands, 'stash' after a reload stash paint,
-            // 'live' after a real snapshot. Tracked with the flag off too, so turning
+            // 'cached' after a cached copy with counts, 'live' after a server
+            // snapshot. Tracked with the flag off too, so turning
             // it on mid-session doesn't lock a sheet that's already loaded. Nothing
             // reads it unless the flag is on.
             const [sheetState, setSheetState] = useState('loading');
@@ -623,7 +640,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const v = sheetView(sheetStateRef.current, getReliabilityFlag('placeRestore'));
                 if (v[needs]) return false;
                 const text = sheetText(language);
-                toast(v.showRows ? text.slow : text.loading, { kind: 'info' });
+                toast(v.showRows ? text.cached : text.loading, { kind: 'info' });
                 return true;
             };
 
@@ -1228,16 +1245,50 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     saveInventoryPlace(f.staffName, f.store, { ...f.place, scrollY: placeScrollRef.current });
                 });
             }
+            const placeStoreRef = useRef(storeLocation);
             useEffect(() => {
+                const storeChanged = placeStoreRef.current !== storeLocation;
+                placeStoreRef.current = storeLocation;
                 if (!staffName || !getReliabilityFlag('placeRestore')) return;
-                placeFieldsRef.current = {
-                    staffName,
-                    store: storeLocation,
-                    place: {
-                        subTab: activeTab, invViewMode, invSearch, invShowOnlyCounted, invShowOnlyLow, collapsedCats,
-                        writeInValues, writeInDest, locWriteIn, locWriteInCat, invNewName, invNewNameEs,
-                    },
+                let place = {
+                    subTab: activeTab, invViewMode, invSearch, invShowOnlyCounted, invShowOnlyLow, collapsedCats,
+                    writeInValues, writeInDest, locWriteIn, locWriteInCat, invNewName, invNewNameEs,
                 };
+                if (storeChanged) {
+                    // What's in these fields belongs to the store just left, and is
+                    // already saved under it. Saving it now would put one store's
+                    // typed text and filters in the other's record, so read this
+                    // store's instead. The person stays on the same sub-tab.
+                    const saved = readInventoryPlace(staffName, storeLocation) || {};
+                    place = {
+                        subTab: activeTab,
+                        invViewMode: saved.invViewMode || invViewMode,
+                        invSearch: saved.invSearch ?? "",
+                        invShowOnlyCounted: saved.invShowOnlyCounted ?? false,
+                        invShowOnlyLow: saved.invShowOnlyLow ?? false,
+                        collapsedCats: saved.collapsedCats ?? {},
+                        writeInValues: saved.writeInValues ?? {},
+                        writeInDest: saved.writeInDest ?? {},
+                        locWriteIn: saved.locWriteIn ?? {},
+                        locWriteInCat: saved.locWriteInCat ?? {},
+                        invNewName: saved.invNewName ?? "",
+                        invNewNameEs: saved.invNewNameEs ?? "",
+                    };
+                    if (place.invSearch !== invSearch) keepRestoredFoldsRef.current = true;
+                    setInvViewMode(place.invViewMode);
+                    setInvSearch(place.invSearch);
+                    setInvShowOnlyCounted(place.invShowOnlyCounted);
+                    setInvShowOnlyLow(place.invShowOnlyLow);
+                    setCollapsedCats(place.collapsedCats);
+                    setWriteInValues(place.writeInValues);
+                    setWriteInDest(place.writeInDest);
+                    setLocWriteIn(place.locWriteIn);
+                    setLocWriteInCat(place.locWriteInCat);
+                    setInvNewName(place.invNewName);
+                    setInvNewNameEs(place.invNewNameEs);
+                    placeScrollRef.current = saved.scrollY ?? 0;
+                }
+                placeFieldsRef.current = { staffName, store: storeLocation, place };
                 placeSaverRef.current.schedule();
             }, [staffName, storeLocation, activeTab, invViewMode, invSearch, invShowOnlyCounted, invShowOnlyLow, collapsedCats,
                 writeInValues, writeInDest, locWriteIn, locWriteInCat, invNewName, invNewNameEs]);
@@ -1260,12 +1311,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     timer = setTimeout(note, 200);
                 };
                 const onPageHide = () => { note(); placeSaverRef.current.flush(); };
+                // The 30 minutes run from when the person was last here, so sitting
+                // on a page with nothing changing mustn't age the record out.
+                const refresh = () => placeSaverRef.current.schedule();
+                const onVisibility = () => { note(); refresh(); placeSaverRef.current.flush(); };
+                const refreshId = setInterval(refresh, PLACE_REFRESH_MS);
                 window.addEventListener('scroll', onScroll, { passive: true });
                 window.addEventListener('pagehide', onPageHide);
+                document.addEventListener('visibilitychange', onVisibility);
                 return () => {
                     if (timer) clearTimeout(timer);
+                    clearInterval(refreshId);
                     window.removeEventListener('scroll', onScroll);
                     window.removeEventListener('pagehide', onPageHide);
+                    document.removeEventListener('visibilitychange', onVisibility);
                 };
             }, []);
             useEffect(() => {
@@ -1384,6 +1443,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Split list state: overrides move items between people, writeIns are custom items per person
             const [splitOverrides, setSplitOverrides] = useState({}); // {itemId: personName}
             const [splitWriteIns, setSplitWriteIns] = useState({}); // {personName: [{id, name, count}]}
+            // Release B: has the server answered for this store's split config? Write-in
+            // saves replace a person's whole list, so they wait. Nothing reads it unless
+            // the flag is on.
+            const [splitConfigSeen, setSplitConfigSeen] = useState(false);
+            const splitLocked = getReliabilityFlag('placeRestore') && !splitConfigSeen;
             const [splitWriteInValues, setSplitWriteInValues] = useState({}); // {personName: "text"}
             const [splitMovingItem, setSplitMovingItem] = useState(null); // {itemId, fromPerson}
 
@@ -1505,6 +1569,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return { id: w.id, time: t, displayTime: display, nameEn: `Wave ${i+1} \u{2014} ${display}`, nameEs: `Grupo ${i+1} \u{2014} ${display}` };
             });
             const [skillsMatrix, setSkillsMatrix] = useState({});
+            // Release B: has the matrix really been seen? Nothing reads it unless
+            // the flag is on.
+            const [skillsMatrixSeen, setSkillsMatrixSeen] = useState(false);
             const [showMatrix, setShowMatrix] = useState(false);
 
             // Labor percentage state (admin-only, from Toast scraper).
@@ -1825,9 +1892,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Expand all categories when searching, collapse back when cleared.
             // 2026-09-23: keep the Location view's folded sections (`loc::` keys)
             // — clearing a search used to un-fold every location.
-            const keepRestoredFoldsRef = useRef(!!savedPlace);
             useEffect(() => {
-                // The mount run mustn't undo folds just restored (Release B).
+                // Declared at the top: restored folds stay (Release B).
                 if (keepRestoredFoldsRef.current) { keepRestoredFoldsRef.current = false; return; }
                 if (!invSearch) { setCollapsedCats(keepLocationFolds); }
             }, [invSearch]);
@@ -1887,6 +1953,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (docSnap.exists() && docSnap.data().matrix) {
                         setSkillsMatrix(docSnap.data().matrix);
                     }
+                    // A cache with no copy answers "no document" on a stuck line.
+                    if (docSnap.exists() || !docSnap.metadata?.fromCache) setSkillsMatrixSeen(true);
                 }, (err) => console.warn('skillsMatrix snapshot error:', err));
                 return () => unsubMatrix();
             }, []);
@@ -2327,12 +2395,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 saveStations(fresh);
             };
 
+            // Release B: until the matrix has been seen, the map here is empty, and
+            // today's write replaces the whole document with it.
+            const skillsLocked = getReliabilityFlag('placeRestore') && !skillsMatrixSeen;
             const toggleSkill = async (staffName, skillId) => {
+                if (skillsLocked) return;
                 const key = staffName + "_" + skillId;
                 const newMatrix = { ...skillsMatrix, [key]: !skillsMatrix[key] };
                 setSkillsMatrix(newMatrix);
                 try {
-                    await setDoc(doc(db, "config", "skillsMatrix"), { matrix: newMatrix, updatedAt: new Date().toISOString() });
+                    if (getReliabilityFlag('placeRestore')) {
+                        // Only this one box, so a cached matrix can't undo other
+                        // people's boxes. A map key here is literal, so a dot in a
+                        // name stays part of the name.
+                        await setDoc(doc(db, "config", "skillsMatrix"), { matrix: { [key]: newMatrix[key] }, updatedAt: new Date().toISOString() }, { merge: true });
+                    } else {
+                        await setDoc(doc(db, "config", "skillsMatrix"), { matrix: newMatrix, updatedAt: new Date().toISOString() });
+                    }
                 } catch (err) {
                     console.error("Error saving skills matrix:", err);
                     toast(language === 'es'
@@ -2759,6 +2838,54 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                 // A new store's sheet hasn't been seen yet (Release B).
                 markSheetState('loading');
+                copyHoldsRef.current = new Set();
+                copyTapIdsRef.current = new Set();
+                restoredHoldIdsRef.current = new Set();
+                setSplitConfigSeen(false);
+                // Release B: a clean server answer already has every + tap whose window
+                // has closed, so a tap made on a saved copy goes quietly and the server's
+                // number shows. Its held number came from that copy, and the server may
+                // never reach it. A hold a reload brought back is different: if the server
+                // doesn't show it, the tap may be lost, so its timer runs out now and the
+                // reconcile below shows the server's number and flags the row. A tap still
+                // in its window isn't in the answer yet, so its numbers move onto the
+                // server's. Whatever's left when the sheet opens gets the same timer as a
+                // stash's, since a quiet line may send no further snapshot to release it.
+                const settleSavedCopyHolds = (opening, serverCounts) => {
+                    const pending = pendingCountsRef.current;
+                    const coalescer = tapCoalescerRef.current;
+                    const openIds = coalescer?.pendingIds();
+                    const plan = opening
+                        ? planHoldsOnOpen(pending, { openWindowIds: openIds, tappedOnCopy: copyTapIdsRef.current, restoredIds: restoredHoldIdsRef.current })
+                        : settleIncHolds(pending, [...copyHoldsRef.current], openIds);
+                    const { dropped, waiting, restored = [] } = plan;
+                    copyHoldsRef.current = new Set(waiting);
+                    for (const id of restored) pending[id] = { ...pending[id], ts: 0 };
+                    if (opening) {
+                        for (const id of waiting) {
+                            const next = coalescer?.rebase(id, Number(serverCounts?.[id]) || 0);
+                            if (next == null) continue;
+                            pending[id] = { ...pending[id], expected: next };
+                            inventoryRef.current = { ...inventoryRef.current, [id]: next };
+                        }
+                        copyTapIdsRef.current = new Set();
+                        restoredHoldIdsRef.current = new Set();
+                    }
+                    for (const id of dropped) delete pending[id];
+                    if (dropped.length) {
+                        setInventorySyncStatus(prev => {
+                            let changed = false; const next = { ...prev };
+                            for (const id of dropped) if (next[id] === 'saving') { delete next[id]; changed = true; }
+                            return changed ? next : prev;
+                        });
+                    }
+                    if (opening && Object.keys(pending).length) {
+                        setTimeout(() => {
+                            if (!Object.keys(pendingCountsRef.current).length || !lastServerCountsRef.current) return;
+                            setInventory(reconcileServerCounts(lastServerCountsRef.current));
+                        }, RELEASE_TIMEOUT_MS + DEFAULT_MAX_WAIT_MS + 1000);
+                    }
+                };
                 // Rehydrate from a reload stash (2026-09-09): a forced reload
                 // (revive watchdog, crash heal, deploy broadcast) parked the
                 // sheet — counts, meta, in-flight taps, sub-tab. Paint it back
@@ -2785,6 +2912,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         });
                         if (plan) {
                             markSheetState('stash');
+                            restoredHoldIdsRef.current = new Set(plan.savingIds);
                             // Seed the remote-clear marker FIRST: the doc's stored
                             // clearedAt would otherwise read as "advanced" vs null on
                             // the first snapshot and wipe the holds we just restored.
@@ -2889,26 +3017,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // state — e.g. another device emptied the cart with "−"
                         // taps, which never stamps clearedAt. Empty cache echoes
                         // and the first server snapshot after a load stay guarded.
+                        // Release B: the first server snapshot counts too. A stash or a
+                        // cached copy may be painted by then, and the server's "empty"
+                        // has to replace those numbers.
                         const serverConfirmed = isServerConfirmedSnapshot({
                             fromCache: docSnap.metadata.fromCache,
                             hasPendingWrites: docSnap.metadata.hasPendingWrites,
-                            syncedBefore,
+                            syncedBefore: syncedBefore || getReliabilityFlag('placeRestore'),
                         });
                         if (shouldIgnoreInventorySnapshot({ incomingHasAny, localHasAny, recentlyCleared, remoteClearAdvanced, serverConfirmed })) {
                             console.warn('[inventory] ignored an empty/stale snapshot that would have wiped the active cart — keeping current counts.');
-                            // A server answer is real even when its empty counts are
-                            // ignored. Without this, a stash paint could sit blocked
-                            // with no catalog until some later change (Release B).
-                            if (!docSnap.metadata.fromCache && getReliabilityFlag('placeRestore')) {
-                                if (Array.isArray(data.customInventory)) {
-                                    lastOpsCatalogRef.current = { customInventory: data.customInventory, deletedMasterIds: data.deletedMasterIds || [] };
-                                    if (!isListOverride(activeListRef.current)) applyOpsCatalog(lastOpsCatalogRef.current);
-                                }
-                                markSheetState('live');
-                            }
+                            // The server has answered even though its empty counts were
+                            // ignored. Only reachable with the flag off, where nothing reads
+                            // this, but a flag arriving later mustn't find a + only sheet.
+                            if (!docSnap.metadata.fromCache && !docSnap.metadata.hasPendingWrites) markSheetState('live');
                             return;
                         }
-                        markSheetState('live');
+                        if (getReliabilityFlag('placeRestore') && !docSnap.metadata.fromCache && !docSnap.metadata.hasPendingWrites) {
+                            settleSavedCopyHolds(sheetStateRef.current !== 'live', inCounts);
+                        }
+                        markSheetState(nextSheetState(sheetStateRef.current, {
+                            exists: true, fromCache: docSnap.metadata.fromCache, hasCounts: incomingHasAny,
+                        }));
                         // Remember the clear marker we're about to honor so the
                         // same one never re-triggers.
                         if (incomingClearedAt) lastAppliedClearedAtRef.current = incomingClearedAt;
@@ -2989,9 +3119,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             // catalog bytes haven't changed (count-only snapshot).
                             applyOpsCatalog(lastOpsCatalogRef.current);
                         }
-                    } else if (snapshotCountsAsLive({ exists: false, fromCache: docSnap.metadata.fromCache })) {
-                        // The server says there's no document yet, so the sheet really is empty.
-                        markSheetState('live');
+                    } else {
+                        // The server says there's no document, so the sheet really is
+                        // empty, and any stash or cached numbers on screen go (Release B).
+                        if (getReliabilityFlag('placeRestore') && !docSnap.metadata.fromCache && !docSnap.metadata.hasPendingWrites) {
+                            lastServerCountsRef.current = {};
+                            setInventory(reconcileServerCounts({}));
+                            setInvCountMeta({});
+                            setVendorCounts({});
+                        }
+                        markSheetState(nextSheetState(sheetStateRef.current, {
+                            exists: false, fromCache: docSnap.metadata.fromCache, hasCounts: false,
+                        }));
                     }
                 }, (err) => console.warn('inventory snapshot subscribe failed', err));
 
@@ -3003,15 +3142,33 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }, (err) => console.warn('vendorLog snapshot subscribe failed', err));
 
                 // Load split list config (overrides + write-ins)
-                const unsubSplit = onSnapshot(doc(db, "ops", "splitConfig_" + storeLocation), (docSnap) => {
+                // Metadata changes are on so a server copy matching the cache still says
+                // so (Release B needs that to unlock write-ins). Those events carry no new
+                // data, and applying them could clobber a rapid follow-up tap, so only an
+                // event whose data changed reaches the setters, as it did without the option.
+                let lastSplitData;
+                const unsubSplit = onSnapshot(doc(db, "ops", "splitConfig_" + storeLocation), { includeMetadataChanges: true }, (docSnap) => {
+                    const splitData = stableJson(docSnap.exists() ? docSnap.data() : null);
+                    const metadataOnly = splitData === lastSplitData;
+                    lastSplitData = splitData;
                     // 2026-07-22 (audit B2): skip the local-echo snapshot — the
                     // mutators already updated state optimistically, and the echo
                     // could clobber a rapid follow-up tap with the older map.
                     if (docSnap.metadata.hasPendingWrites && !TEST_MODE) return;
-                    if (docSnap.exists()) {
+                    if (docSnap.exists() && !metadataOnly) {
                         const data = docSnap.data();
                         if (data.overrides) setSplitOverrides(data.overrides);
                         if (data.writeIns) setSplitWriteIns(data.writeIns);
+                    }
+                    if (!docSnap.metadata.fromCache) {
+                        setSplitConfigSeen(true);
+                        // These aren't reset on a store switch, so without this the
+                        // last store's write-ins could be saved into this store's doc.
+                        if (getReliabilityFlag('placeRestore')) {
+                            const data = docSnap.exists() ? docSnap.data() : {};
+                            if (!data.overrides) setSplitOverrides({});
+                            if (!data.writeIns) setSplitWriteIns({});
+                        }
                     }
                 }, (err) => console.warn('splitConfig snapshot subscribe failed', err));
 
@@ -4496,7 +4653,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const updateInventoryCount = async (itemId, newCount, delta = null) => {
-                if (sheetBlocks('canTap')) return;
+                // + is an increment. − and typed entry write absolutes from the number
+                // on screen, which on a saved copy may be old (Release B).
+                if (sheetBlocks(delta === 1 ? 'canPlus' : 'canSetCount')) return;
+                if (delta === 1 && sheetStateRef.current !== 'live' && getReliabilityFlag('placeRestore')) copyTapIdsRef.current.add(itemId);
                 // 2026-07-22 (audit M16): in 'both' admin mode there is no real
                 // inventory doc — writes went to phantom ops/inventory_both that
                 // NEITHER store reads, so the admin's counts silently vanished.
@@ -4870,7 +5030,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Same dotted-path pattern as updateInventoryCount so concurrent edits on
             // other items aren't clobbered.
             const updateVendorCount = async (vendor, vendorId, newCount) => {
-                if (sheetBlocks('canTap')) return;
+                if (sheetBlocks('canSetCount')) return;
                 // 'both' mode writes go to a phantom doc — see updateInventoryCount (M16).
                 if (storeLocation === 'both') {
                     toast(language === 'es'
@@ -5226,6 +5386,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // unless an active inventory list owns the screen (M1).
             const mirrorSavedCatalog = (savedList, tombstones) => {
                 if (isListOverride(activeListRef.current)) return;
+                // `storeLocation` here is the store this save started from, since the
+                // save and this function come from the same render. If the person has
+                // toggled since, this list is the other store's. Painting it would stick,
+                // because the listener skips a catalog it thinks it already applied.
+                if (getReliabilityFlag('placeRestore') && storeNowRef.current !== storeLocation) return;
                 try {
                     setCustomInventory(mergeSavedInventory(INVENTORY_CATEGORIES, savedList, tombstones).merged);
                 } catch (e) {
@@ -5760,6 +5925,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const addSplitWriteIn = async (personName) => {
+                if (splitLocked) return;
                 const input = (splitWriteInValues[personName] || "").trim();
                 if (!input) return;
                 const newId = "sw-" + personName + "-" + Date.now();
@@ -5773,6 +5939,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const removeSplitWriteIn = async (personName, itemId) => {
+                if (splitLocked) return;
                 let nextForPerson;
                 setSplitWriteIns(prev => {
                     nextForPerson = (prev[personName] || []).filter(i => i.id !== itemId);
@@ -5782,6 +5949,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const updateSplitWriteInCount = async (personName, itemId, newCount) => {
+                if (splitLocked) return;
                 let nextForPerson;
                 setSplitWriteIns(prev => {
                     nextForPerson = (prev[personName] || []).map(i => i.id === itemId ? { ...i, count: newCount } : i);
@@ -8742,7 +8910,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                             <div className="flex gap-2">
                                                 <button onClick={handleCreateMasterItem}
                                                     disabled={!newMasterName.trim() || newMasterSaving || !sheet.canBulk}
-                                                    className={`flex-1 py-2 rounded-lg text-xs font-bold text-white transition ${!newMasterName.trim() || newMasterSaving ? "bg-gray-300 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}>
+                                                    className={`flex-1 py-2 rounded-lg text-xs font-bold text-white transition ${!newMasterName.trim() || newMasterSaving || !sheet.canBulk ? "bg-gray-300 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}>
                                                     {newMasterSaving ? "…" : (language === "es" ? "Crear y vincular" : "Create + link")}
                                                 </button>
                                                 <button onClick={() => setAddingToMaster(false)}
@@ -8855,6 +9023,12 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                     )}
                     {deferredActiveTab === "inventory" && sheet.showRows && (
                         <div className="space-y-3">
+                            {sheet.savedCopy && (
+                                <p role="status" data-testid="sheet-saved-copy"
+                                    className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold">
+                                    {sheetText(language).cached}
+                                </p>
+                            )}
                             {/* ── Low-stock summary ──
                                 Surfaces items where count > 0 AND
                                 count <= item.min, ranked by "how
@@ -9086,7 +9260,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                             </button>
                                             <button onClick={clearAllInventoryCounts} disabled={!sheet.canBulk}
                                                 title={language === "es" ? "Limpiar todo el conteo" : "Clear all counts"}
-                                                className="flex-1 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-white text-red-700 border-red-200 hover:bg-red-50 active:scale-95 transition">
+                                                className="flex-1 px-6 py-2.5 rounded-xl text-sm font-bold border-2 bg-white text-red-700 border-red-200 hover:bg-red-50 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">
                                                 🗑 {language === "es" ? "Limpiar" : "Clear"}
                                             </button>
                                         </>
@@ -9435,7 +9609,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                     manual overrides, so the manager's Plan
                                                     never carried into OrderMode. Now uses
                                                     effectiveVendor(r) = override || preferred. */}
-                                                <button onClick={() => {
+                                                <button disabled={!sheet.canBulk} onClick={() => {
+                                                    if (sheetBlocks('canBulk')) return;
                                                     if (rows.length === 0) {
                                                         toast(language === "es" ? "El carrito está vacío." : "Cart is empty.");
                                                         return;
@@ -9452,7 +9627,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         preferredVendor: r.preferredVendor,
                                                     })));
                                                     setShowCart(false);
-                                                }} className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-bold text-sm hover:bg-amber-700 active:scale-95 transition">
+                                                }} className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-bold text-sm hover:bg-amber-700 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">
                                                     📞 {language === "es" ? "Hacer pedido" : "Place order"}
                                                 </button>
                                                 {/* 2026-05-24 — Andrew: "how do you empty it? lets
@@ -9516,7 +9691,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                             toast(language === "es" ? "Error al vaciar" : "Could not empty", { kind: 'error' });
                                                         }
                                                         setShowCart(false);
-                                                    }} className="flex-1 py-3 bg-red-50 border border-red-200 text-red-700 rounded-xl font-bold text-sm hover:bg-red-100 active:scale-95 transition">
+                                                    }} className="flex-1 py-3 bg-red-50 border border-red-200 text-red-700 rounded-xl font-bold text-sm hover:bg-red-100 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">
                                                         🗑 {language === "es" ? "Vaciar" : "Empty"}
                                                     </button>
                                                 )}
@@ -10105,7 +10280,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                     </span>
                                                                                     <button
                                                                                         onClick={() => updateInventoryCount(item.id, suggestedByItem[item.id].avg)}
-                                                                                        className="ml-0.5 px-1.5 py-0 rounded bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-[10px]">
+                                                                                        disabled={!sheet.canSetCount}
+                                                                                        className="ml-0.5 px-1.5 py-0 rounded bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-[10px] disabled:opacity-40 disabled:cursor-not-allowed">
                                                                                         {language === "es" ? "Usar" : "Use"}
                                                                                     </button>
                                                                                 </p>
@@ -10115,8 +10291,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                         </div>
                                                                         <div className="flex items-center gap-1 flex-shrink-0">
                                                                             <>
-                                                                                <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
-                                                                                    className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                                <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)} disabled={!sheet.canSetCount}
+                                                                                    className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
                                                                                 {/* Quantity input — tap-to-type. Andrew 2026-05-17
                                                                                     added inline numeric entry so staff can punch
                                                                                     in "24" instead of tapping + 24 times. Audit
@@ -10130,6 +10306,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                     value={count}
                                                                                     language={language}
                                                                                     onCommit={(n) => updateInventoryCount(item.id, n)}
+                                                                                    disabled={!sheet.canSetCount}
                                                                                 />
                                                                                 <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                     className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
@@ -10301,6 +10478,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                     <InventoryCountInput
                                                                         value={count}
                                                                         onCommit={(n) => updateVendorCount(it.vendor === "Sysco" ? "sysco" : "usfoods", it.vendorId, n)}
+                                                                        disabled={!sheet.canSetCount}
                                                                         language={language}
                                                                         className="w-12 px-2 py-1 border border-orange-300 rounded text-center text-sm font-bold focus:outline-none focus:border-orange-500 tabular-nums" />
                                                                     {currentIsAdmin && (
@@ -10417,6 +10595,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                         onUpdate={stableUpdateInventoryCount}
                                                         stamp={formatCountStampLines(invCountMeta[item.id])}
                                                         syncStatus={inventorySyncStatus[item.id]}
+                                                        countLocked={!sheet.canSetCount}
                                                     />
                                                 ))}
                                             </div>
@@ -10580,8 +10759,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                     {/* Column so the who/when stamp sits under −/count/+ */}
                                                                     <div className="flex flex-col items-end gap-1 flex-shrink-0">
                                                                         <div className="flex items-center gap-1">
-                                                                            <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
-                                                                                className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                            <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)} disabled={!sheet.canSetCount}
+                                                                                className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
                                                                             <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
                                                                             <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                 className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
@@ -10785,8 +10964,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                                 </div>
                                                                                 <div className="flex flex-col items-end gap-1 flex-shrink-0">
                                                                                 <div className="flex items-center gap-1">
-                                                                                    <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
-                                                                                        className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                                    <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)} disabled={!sheet.canSetCount}
+                                                                                        className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
                                                                                     <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
                                                                                     <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                         className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
@@ -10818,13 +10997,13 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                             <p className={`text-sm font-semibold ${wi.count > 0 ? "text-yellow-800" : "text-gray-800"}`}>{wi.name}</p>
                                                                         </div>
                                                                         <div className="flex items-center gap-1 flex-shrink-0">
-                                                                            <button onClick={() => updateSplitWriteInCount(person.name, wi.id, Math.max(0, wi.count - 1))}
-                                                                                className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${wi.count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                            <button onClick={() => updateSplitWriteInCount(person.name, wi.id, Math.max(0, wi.count - 1))} disabled={splitLocked}
+                                                                                className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed ${wi.count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
                                                                             <span className={`w-10 text-center font-bold text-lg ${wi.count > 0 ? "text-yellow-700" : "text-gray-300"}`}>{wi.count}</span>
-                                                                            <button onClick={() => updateSplitWriteInCount(person.name, wi.id, wi.count + 1)}
-                                                                                className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
-                                                                            <button onClick={() => removeSplitWriteIn(person.name, wi.id)}
-                                                                                className="w-7 h-7 rounded-lg bg-red-50 text-red-400 font-bold text-sm flex items-center justify-center hover:bg-red-100 ml-1">{"\u{2715}"}</button>
+                                                                            <button onClick={() => updateSplitWriteInCount(person.name, wi.id, wi.count + 1)} disabled={splitLocked}
+                                                                                className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed">+</button>
+                                                                            <button onClick={() => removeSplitWriteIn(person.name, wi.id)} disabled={splitLocked}
+                                                                                className="w-7 h-7 rounded-lg bg-red-50 text-red-400 font-bold text-sm flex items-center justify-center hover:bg-red-100 ml-1 disabled:opacity-40 disabled:cursor-not-allowed">{"\u{2715}"}</button>
                                                                         </div>
                                                                     </div>
                                                                 </div>
@@ -10835,15 +11014,17 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                 {/* Write-in input */}
                                                 <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
                                                     <div className="flex items-center gap-2">
-                                                        <input type="text"
+                                                        <input type="text" disabled={splitLocked}
                                                             value={splitWriteInValues[person.name] || ""}
                                                             onChange={e => setSplitWriteInValues(prev => ({ ...prev, [person.name]: e.target.value }))}
                                                             onKeyDown={e => { if (e.key === "Enter") addSplitWriteIn(person.name); }}
-                                                            placeholder={language === "es" ? `\u{270D}\u{FE0F} Escribir para ${person.name}...` : `\u{270D}\u{FE0F} Write in for ${person.name}...`}
-                                                            className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-mint-500" />
+                                                            placeholder={splitLocked
+                                                                ? (language === "es" ? "Cargando. Todavía no se puede escribir." : "Loading. Can't write in yet.")
+                                                                : (language === "es" ? `\u{270D}\u{FE0F} Escribir para ${person.name}...` : `\u{270D}\u{FE0F} Write in for ${person.name}...`)}
+                                                            className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-mint-500 disabled:opacity-50 disabled:cursor-not-allowed" />
                                                         {(splitWriteInValues[person.name] || "").trim() && (
-                                                            <button onClick={() => addSplitWriteIn(person.name)}
-                                                                className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition">
+                                                            <button onClick={() => addSplitWriteIn(person.name)} disabled={splitLocked}
+                                                                className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed">
                                                                 {language === "es" ? "Agregar" : "Add"}
                                                             </button>
                                                         )}
@@ -10884,7 +11065,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                             </p>
                                             <div className="flex gap-3">
                                                 <button onClick={saveAndResetInventory} disabled={inventorySaving || !sheet.canBulk}
-                                                    className="flex-1 py-3 rounded-xl font-bold text-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition">
+                                                    className="flex-1 py-3 rounded-xl font-bold text-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">
                                                     {inventorySaving ? (language === "es" ? "Guardando..." : "Saving...") : (language === "es" ? "\u{2705} S\u{00ED}" : "\u{2705} Yes")}
                                                 </button>
                                                 <button onClick={() => setShowSaveConfirm(false)} disabled={inventorySaving}
@@ -10895,7 +11076,7 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                         </div>
                                     ) : (
                                         <button onClick={() => setShowSaveConfirm(true)} disabled={!sheet.canBulk}
-                                            className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition">
+                                            className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">
                                             {language === "es" ? "\u{1F4BE} Guardar y Reiniciar Conteos" : "\u{1F4BE} Save & Reset Counts"}
                                         </button>
                                     )}
@@ -11186,6 +11367,11 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                     <div className="bg-purple-600 text-white px-4 py-2.5">
                                         <h3 className="font-bold text-sm">{language === "es" ? "\u{1F9E0} Matriz de Habilidades" : "\u{1F9E0} Skills Matrix"}</h3>
                                         <p className="text-xs text-purple-200">{language === "es" ? "Marca qué estaciones puede trabajar cada persona" : "Check which stations each person can work"}</p>
+                                        {skillsLocked && (
+                                            <p role="status" data-testid="skills-loading" className="text-xs font-bold text-white mt-1">
+                                                {language === "es" ? "Cargando la matriz. Todavía no se puede cambiar." : "Loading the matrix. It can't be changed yet."}
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-xs">
@@ -11214,7 +11400,8 @@ ${taskHtml || `<p style="text-align:center;color:#9ca3af;padding:40px">${esP ? '
                                                                 <td key={s.id} className="px-1 py-1.5 text-center">
                                                                     <button
                                                                         onClick={() => toggleSkill(staff.name, s.id)}
-                                                                        className={`w-7 h-7 rounded-md text-sm font-bold transition ${
+                                                                        disabled={skillsLocked}
+                                                                        className={`w-7 h-7 rounded-md text-sm font-bold transition disabled:opacity-50 disabled:cursor-not-allowed ${
                                                                             checked
                                                                                 ? "bg-mint-600 text-white"
                                                                                 : "bg-gray-100 text-gray-300 hover:bg-gray-200"

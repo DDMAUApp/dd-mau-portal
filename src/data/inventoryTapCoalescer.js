@@ -91,6 +91,18 @@ export function createTapCoalescer({
             for (const id of [...windows.keys()]) fire(id);
         },
         pendingIds() { return [...windows.keys()]; },
+        /**
+         * Release B: the server has given the real count while this window is open, so
+         * the window's numbers move onto it. Its taps and its increment don't change.
+         * Returns the new latest value, or null if there's nothing to move.
+         */
+        rebase(itemId, base) {
+            const w = windows.get(itemId);
+            if (!w || w.hasNonInc) return null;
+            w.startPrev = base;
+            w.latestNext = base + w.tapDelta;
+            return w.latestNext;
+        },
         /** Drop everything without flushing (unmount / store switch after a flush). */
         clear() {
             for (const w of windows.values()) if (w.timer != null) clearTimer(w.timer);

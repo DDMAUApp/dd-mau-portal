@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldApplyInventorySnapshot, shouldIgnoreInventorySnapshot, hasAnyCount, isServerConfirmedSnapshot } from './inventoryStability';
+import { stableJson, shouldApplyInventorySnapshot, shouldIgnoreInventorySnapshot, hasAnyCount, isServerConfirmedSnapshot } from './inventoryStability';
 
 describe('shouldApplyInventorySnapshot — admission truth table', () => {
     const t = (o) => shouldApplyInventorySnapshot(o);
@@ -54,5 +54,14 @@ describe('M2 — an emptied cart propagates when the server confirms it', () => 
     });
     it('omitting serverConfirmed keeps the old behavior', () => {
         expect(shouldIgnoreInventorySnapshot(base)).toBe(true);
+    });
+});
+
+describe('stableJson (Release B)', () => {
+    it('ignores map key order, keeps array order, and handles nothing', () => {
+        expect(stableJson({ a: 1, b: { c: 2, d: 3 } })).toBe(stableJson({ b: { d: 3, c: 2 }, a: 1 }));
+        expect(stableJson([1, 2])).not.toBe(stableJson([2, 1]));
+        expect(stableJson({ a: 1 })).not.toBe(stableJson({ a: 2 }));
+        expect(stableJson(null)).toBe('null');
     });
 });
