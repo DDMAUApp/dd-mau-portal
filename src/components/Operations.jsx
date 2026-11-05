@@ -1443,6 +1443,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Split list state: overrides move items between people, writeIns are custom items per person
             const [splitOverrides, setSplitOverrides] = useState({}); // {itemId: personName}
             const [splitWriteIns, setSplitWriteIns] = useState({}); // {personName: [{id, name, count}]}
+            // The newest lists, for saves. A setter's updater can run after the handler
+            // has moved on, so it can't be where the handler gets what it saves.
+            const splitWriteInsRef = useRef(splitWriteIns);
+            splitWriteInsRef.current = splitWriteIns;
             // Release B: has the server answered for this store's split config? Write-in
             // saves replace a person's whole list, so they wait. Nothing reads it unless
             // the flag is on.
@@ -3147,6 +3151,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // data, and applying them could clobber a rapid follow-up tap, so only an
                 // event whose data changed reaches the setters, as it did without the option.
                 let lastSplitData;
+                let splitApplied = false;
                 const unsubSplit = onSnapshot(doc(db, "ops", "splitConfig_" + storeLocation), { includeMetadataChanges: true }, (docSnap) => {
                     const splitData = stableJson(docSnap.exists() ? docSnap.data() : null);
                     const metadataOnly = splitData === lastSplitData;
@@ -3155,10 +3160,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // mutators already updated state optimistically, and the echo
                     // could clobber a rapid follow-up tap with the older map.
                     if (docSnap.metadata.hasPendingWrites && !TEST_MODE) return;
-                    if (docSnap.exists() && !metadataOnly) {
+                    // The first event may have been a skipped echo, so the same data
+                    // arriving next is not "already applied". Apply it once regardless.
+                    if (docSnap.exists() && (!metadataOnly || !splitApplied)) {
                         const data = docSnap.data();
                         if (data.overrides) setSplitOverrides(data.overrides);
                         if (data.writeIns) setSplitWriteIns(data.writeIns);
+                        splitApplied = true;
                     }
                     if (!docSnap.metadata.fromCache) {
                         setSplitConfigSeen(true);
@@ -5924,37 +5932,33 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 await saveSplitField('overrides', itemId, toPerson);
             };
 
+            // Works out one person's new list, shows it, and returns it to save.
+            const changeSplitWriteIns = (personName, change) => {
+                const nextForPerson = change(splitWriteInsRef.current[personName] || []);
+                splitWriteInsRef.current = { ...splitWriteInsRef.current, [personName]: nextForPerson };
+                setSplitWriteIns(prev => ({ ...prev, [personName]: nextForPerson }));
+                return nextForPerson;
+            };
+
             const addSplitWriteIn = async (personName) => {
                 if (splitLocked) return;
                 const input = (splitWriteInValues[personName] || "").trim();
                 if (!input) return;
                 const newId = "sw-" + personName + "-" + Date.now();
-                let nextForPerson;
-                setSplitWriteIns(prev => {
-                    nextForPerson = [...(prev[personName] || []), { id: newId, name: input, count: 0 }];
-                    return { ...prev, [personName]: nextForPerson };
-                });
+                const nextForPerson = changeSplitWriteIns(personName, list => [...list, { id: newId, name: input, count: 0 }]);
                 setSplitWriteInValues(prev => ({ ...prev, [personName]: "" }));
                 await saveSplitField('writeIns', personName, nextForPerson);
             };
 
             const removeSplitWriteIn = async (personName, itemId) => {
                 if (splitLocked) return;
-                let nextForPerson;
-                setSplitWriteIns(prev => {
-                    nextForPerson = (prev[personName] || []).filter(i => i.id !== itemId);
-                    return { ...prev, [personName]: nextForPerson };
-                });
+                const nextForPerson = changeSplitWriteIns(personName, list => list.filter(i => i.id !== itemId));
                 await saveSplitField('writeIns', personName, nextForPerson);
             };
 
             const updateSplitWriteInCount = async (personName, itemId, newCount) => {
                 if (splitLocked) return;
-                let nextForPerson;
-                setSplitWriteIns(prev => {
-                    nextForPerson = (prev[personName] || []).map(i => i.id === itemId ? { ...i, count: newCount } : i);
-                    return { ...prev, [personName]: nextForPerson };
-                });
+                const nextForPerson = changeSplitWriteIns(personName, list => list.map(i => i.id === itemId ? { ...i, count: newCount } : i));
                 await saveSplitField('writeIns', personName, nextForPerson);
             };
 

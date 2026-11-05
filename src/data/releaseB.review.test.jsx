@@ -818,6 +818,26 @@ describe('11. split write-ins', () => {
         expect(box().every(i => !i.disabled)).toBe(true);
         expect(screen.queryByText('Saved Write In')).toBe(null);
     });
+    it('every save carries the list, even two taps before the page redraws', async () => {
+        await mountOnInventory();
+        await openSplit();
+        await act(async () => { fire(SPLIT, snap(config())); });
+        const plus = within(wiRow()).getAllByRole('button')[1];
+        await act(async () => { fireEvent.click(plus); fireEvent.click(plus); });
+        expect(splitWrites()).toHaveLength(2);
+        for (const c of splitWrites()) expect(c[2]).toEqual([{ id: 'w1', name: 'Saved Write In', count: 3 }]);
+    });
+    it('a first event that was a skipped echo doesn\'t leave the list blank when the same data follows', async () => {
+        flagOn();
+        await mountOnInventory();
+        await live();
+        await openSplit();
+        await act(async () => { fire(SPLIT, snap(config(), { hasPendingWrites: true })); });
+        expect(screen.queryByText('Saved Write In')).toBe(null);
+        await act(async () => { fire(SPLIT, snap(config())); });
+        expect(screen.getByText('Saved Write In')).toBeTruthy();
+        expect(box().every(i => !i.disabled)).toBe(true);
+    });
     it('flag off: open before any snapshot, and the list follows a store switch, as today', async () => {
         const r = await mountOnInventory();
         await openSplit();
