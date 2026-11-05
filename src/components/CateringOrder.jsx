@@ -1,24 +1,40 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { db } from '../firebase';
 import {
     doc, onSnapshot, collection, query, orderBy, limit,
-    setDoc as _fsSetDoc, addDoc as _fsAddDoc,
+    setDoc as _fsSetDoc, addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc, arrayUnion, deleteField,
 } from 'firebase/firestore';
 // 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
 // see firestoreRevive.js). Same pattern as Schedule/ChatThread.
 import { watchdogWrite } from '../data/firestoreRevive';
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
 const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
+const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
+import { mergeSettings, checkOrder, timeOptions, deliveryFeeFor, blackoutFor } from '../data/cateringRules';
+import { matchOrders, linkChoices, invoiceLocal } from '../data/cateringMatch';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
 import { t } from '../data/translations';
 import { CATERING_MENU, ALL_SAUCES, ALL_SAUCES_ES, ALL_PROTEINS, ALL_PROTEINS_ES, BASE_OPTIONS, BASE_OPTIONS_ES } from '../data/catering';
 import { escapeHtml as esc } from '../data/htmlEscape';
-import { notifyManagement } from '../data/notify';
+import { notifyManagement, notifyStaff } from '../data/notify';
 import ToastInvoices from './ToastInvoices';
 import ToastOrders from './ToastOrders';
 import { toast } from '../toast';
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.
 import { ChefHat, ClipboardList } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
+// "Is it in Toast?" for one order (cateringMatch.js).
+function ToastBadge({ m, isEs }) {
+    if (!m?.invoice) {
+        return <span className="inline-block text-[11px] px-2 py-0.5 rounded-full font-bold bg-gray-100 text-gray-600">{isEs ? "No está en Toast" : "Not in Toast yet"}</span>;
+    }
+    const n = m.diffs.length;
+    return n === 0
+        ? <span className="inline-block text-[11px] px-2 py-0.5 rounded-full font-bold bg-green-100 text-green-800">✓ {isEs ? "En Toast" : "In Toast"} #{m.invoice.invoiceNumber}</span>
+        : <span className="inline-block text-[11px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-800">⚠ {isEs ? "En Toast" : "In Toast"} #{m.invoice.invoiceNumber} · {n} {isEs ? (n === 1 ? "diferencia" : "diferencias") : (n === 1 ? "difference" : "differences")}</span>;
+}
+
 // CateringMenuItem sub-component
 function CateringMenuItem({ item, language, onAdd, editData, onSaveEdit, onCancelEdit }) {
             // editData = { cartItem } when editing an existing cart item
@@ -488,6 +504,54 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
             const [customItemOpen, setCustomItemOpen] = useState(false);
             const [editingCartItem, setEditingCartItem] = useState(null); // cart item being edited
             const [pageTab, setPageTab] = useState("orders");
+            // Owner's rules from Admin → Catering (cateringRules.js).
+            const [settings, setSettings] = useState(() => mergeSettings(null));
+            const [deliveryMiles, setDeliveryMiles] = useState("");
+            const [feeTouched, setFeeTouched] = useState(false);
+            const [pendingIssues, setPendingIssues] = useState(null);
+            const [toastInvoices, setToastInvoices] = useState([]);
+            const [linkPicking, setLinkPicking] = useState(false);
+            useEffect(() => onSnapshot(doc(db, "config", "catering"),
+                snap => setSettings(mergeSettings(snap.exists() ? snap.data() : null)),
+                err => console.warn('catering settings listen failed', err?.code)), []);
+            // Toast invoices, for "is it in Toast yet" on the history and order screens.
+            const needInvoices = pageTab === "catering" && (showHistory || !!viewingOrder);
+            useEffect(() => {
+                if (!needInvoices) return undefined;
+                return onSnapshot(query(collection(db, "toast_invoices"), orderBy("createdDate", "desc"), limit(300)),
+                    snap => setToastInvoices(snap.docs.map(d => d.data())),
+                    err => console.warn('toast invoices listen failed', err?.code));
+            }, [needInvoices]);
+            // Google lookup, once the owner turns it on (functions/cateringDistance.js).
+            const [addressHints, setAddressHints] = useState([]);
+            const [milesBusy, setMilesBusy] = useState(false);
+            const lookup = (data) => httpsCallable(functions, 'cateringDistance', { timeout: 20000 })(data).then(r => r.data);
+            useEffect(() => {
+                if (!settings.distanceLookup || customer.orderType !== "delivery" || (customer.address || "").trim().length < 5) { setAddressHints([]); return undefined; }
+                const t = setTimeout(() => {
+                    lookup({ action: 'suggest', address: customer.address })
+                        .then(d => setAddressHints(Array.isArray(d?.suggestions) ? d.suggestions : []))
+                        .catch(() => setAddressHints([]));
+                }, 500);
+                return () => clearTimeout(t);
+            }, [settings.distanceLookup, customer.orderType, customer.address]);
+            const getMiles = async () => {
+                if (milesBusy || !customer.address || !customer.pickupLocation) return;
+                setMilesBusy(true);
+                try {
+                    const d = await lookup({ action: 'distance', address: customer.address, store: customer.pickupLocation });
+                    if (Number.isFinite(d?.miles)) setDeliveryMiles(String(d.miles));
+                    else toast(language === "es" ? "No se encontró una ruta. Escribe las millas." : "No route found. Type the miles.", { kind: 'error' });
+                } catch {
+                    toast(language === "es" ? "No se pudo calcular. Escribe las millas." : "Couldn't look it up. Type the miles.", { kind: 'error' });
+                } finally { setMilesBusy(false); }
+            };
+            const toastMatches = useMemo(() => matchOrders(orderHistory, toastInvoices), [orderHistory, toastInvoices]);
+            // The rules' fee follows the miles until someone types a fee of their own.
+            useEffect(() => {
+                if (feeTouched || customer.orderType !== "delivery") return;
+                setDeliveryFee(String(deliveryFeeFor(settings, deliveryMiles === "" ? 0 : Number(deliveryMiles))));
+            }, [settings, deliveryMiles, feeTouched, customer.orderType]);
             useEffect(() => {
                 const unsubscribe = onSnapshot(
                     query(collection(db, "cateringOrders"), orderBy("createdAt", "desc"), limit(30)),
@@ -591,8 +655,17 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
             const getTaxableAmount = () => getSubtotal() + getUtensilCost();
             const getTax = () => taxExempt ? 0 : Math.round(getTaxableAmount() * getTaxRate() * 100) / 100;
             const getTotal = () => getSubtotal() + getUtensilCost() + getDelFee() + getTax();
-            const submitOrder = async () => {
+            const currentIssues = () => checkOrder(settings, {
+                date: customer.date, time: customer.time, orderType: customer.orderType,
+                location: customer.pickupLocation, subtotal: getSubtotal(),
+                miles: deliveryMiles === "" ? undefined : Number(deliveryMiles),
+            });
+            const submitOrder = async (confirmedIssues = null) => {
                 if (cart.length === 0) return;
+                // Outside the owner's rules: ask first. Going ahead anyway is saved on the order.
+                const issues = currentIssues();
+                if (issues.length && !confirmedIssues) { setPendingIssues(issues); return; }
+                setPendingIssues(null);
                 // FIX (review 2026-05-20): re-entry guard. The submit button was only
                 // disabled on an empty cart, so a second tap before the addDoc await
                 // resolved called addDoc() twice -> duplicate catering order + a
@@ -617,6 +690,8 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                     tax: getTax(),
                     total: getTotal(),
                     specialNotes,
+                    deliveryMiles: customer.orderType === "delivery" && deliveryMiles !== "" ? Number(deliveryMiles) : null,
+                    overrides: (confirmedIssues || []).map(i => ({ kind: i.kind, message: i.en, by: staffName || '', at: new Date().toISOString() })),
                     takenBy: staffName,
                     createdAt: editingOrderId ? undefined : new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
@@ -654,7 +729,11 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                         const whenLabel = `${customer.date || ''} @ ${customer.time || ''}`.trim();
                         const locLabel = customer.pickupLocation === 'maryland' ? 'Maryland' : 'Webster';
                         const takenBy = staffName || 'staff';
-                        notifyManagement({
+                        const picked = settings.notify.staffNames;
+                        const send = picked.length
+                            ? (n) => Promise.all(picked.map(name => notifyStaff({ ...n, forStaff: name })))
+                            : notifyManagement;
+                        send({
                             type: 'catering_new',
                             title: {
                                 en: `🥡 New catering — ${customer.name || 'order'}`,
@@ -690,10 +769,26 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                     submittingRef.current = false;
                 }
             };
+            // Wrong match: never match this invoice to this order again.
+            const unlinkToast = async (o, guid) => {
+                try {
+                    await updateDoc(doc(db, "cateringOrders", o.id), { toastLink: deleteField(), toastUnlinked: arrayUnion(guid) });
+                    setViewingOrder(v => (v && v.id === o.id ? { ...v, toastLink: null, toastUnlinked: [...(v.toastUnlinked || []), guid] } : v));
+                } catch (e) { console.warn('toast unlink failed', e?.code); toast(language === "es" ? "No se pudo guardar." : "Could not save. Try again.", { kind: 'error' }); }
+            };
+            const linkToast = async (o, guid) => {
+                try {
+                    const link = { invoiceGuid: guid, by: staffName || '', at: new Date().toISOString() };
+                    await updateDoc(doc(db, "cateringOrders", o.id), { toastLink: link });
+                    setViewingOrder(v => (v && v.id === o.id ? { ...v, toastLink: link } : v));
+                    setLinkPicking(false);
+                } catch (e) { console.warn('toast link failed', e?.code); toast(language === "es" ? "No se pudo guardar." : "Could not save. Try again.", { kind: 'error' }); }
+            };
             const resetForm = () => {
                 setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup", pickupLocation: "" });
                 setCart([]); setErrors({}); setSubmitted(false); setSpecialNotes(""); setStep(1);
                 setDeliveryFee("15"); setEditingOrderId(null); setEditingCartItem(null);
+                setDeliveryMiles(""); setFeeTouched(false); setPendingIssues(null);
                 setWantPlates(false); setPlateCount(0); setWantChopsticks(false); setChopstickCount(0);
             };
             const loadOrderForEdit = (o) => {
@@ -705,6 +800,8 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                 setCart((Array.isArray(o.items) ? o.items : []).map((item, i) => ({ ...item, id: Date.now() + i })));
                 setSpecialNotes(o.specialNotes || "");
                 setDeliveryFee(String(o.deliveryFee || 15));
+                setDeliveryMiles(o.deliveryMiles === null || o.deliveryMiles === undefined ? "" : String(o.deliveryMiles));
+                setFeeTouched(true);
                 if (o.utensils?.plates) { setWantPlates(true); setPlateCount(o.utensils.plates); } else { setWantPlates(false); setPlateCount(0); }
                 if (o.utensils?.chopsticks) { setWantChopsticks(true); setChopstickCount(o.utensils.chopsticks); } else { setWantChopsticks(false); setChopstickCount(0); }
                 setEditingOrderId(o.id);
@@ -900,6 +997,44 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                             <button onClick={() => loadOrderForEdit(vo)} className="flex-1 py-3 bg-amber-500 text-white rounded-lg font-bold text-sm">✏️ {language === "es" ? "Editar Pedido" : "Edit Order"}</button>
                             <button onClick={() => printOrder(vo)} className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold text-sm">🖨️ {language === "es" ? "Imprimir" : "Print"}</button>
                         </div>
+                        {(() => {
+                            const isEs = language === "es";
+                            const m = toastMatches.get(vo.id) || matchOrders([vo], toastInvoices).get(vo.id);
+                            const fmtWhen = (inv) => { const l = invoiceLocal(inv); return l ? `${l.date} ${Math.floor(l.minutes / 60) % 12 || 12}:${String(l.minutes % 60).padStart(2, "0")} ${l.minutes >= 720 ? "PM" : "AM"}` : ""; };
+                            return (
+                                <div className={`mb-3 rounded-lg border-2 p-3 ${!m?.invoice ? "border-gray-200 bg-gray-50" : m.diffs.length ? "border-amber-300 bg-amber-50" : "border-green-300 bg-green-50"}`}>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <ToastBadge m={m} isEs={isEs} />
+                                        {m?.invoice && <span className="text-xs text-gray-600">{m.invoice.customerName || m.invoice.companyName} · ${Number(m.invoice.total || 0).toFixed(2)} · {fmtWhen(m.invoice)}{m.manual ? (isEs ? " · enlazado a mano" : " · linked by hand") : ""}</span>}
+                                    </div>
+                                    {m?.diffs?.length > 0 && (
+                                        <ul className="mt-2 space-y-0.5">
+                                            {m.diffs.map(d => <li key={d.kind} className="text-xs font-bold text-amber-900">⚠ {isEs ? d.es : d.en}</li>)}
+                                        </ul>
+                                    )}
+                                    <div className="mt-2 flex gap-2 flex-wrap">
+                                        {m?.invoice
+                                            ? <button onClick={() => unlinkToast(vo, m.invoice.invoiceGuid)} className="px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-xs font-bold">{isEs ? "No es este, desenlazar" : "Not this one, unlink"}</button>
+                                            : <button onClick={() => setLinkPicking(p => !p)} className="px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-xs font-bold">{isEs ? "Enlazar una factura de Toast" : "Link a Toast invoice"}</button>}
+                                    </div>
+                                    {!m?.invoice && linkPicking && (
+                                        <div className="mt-2 space-y-1">
+                                            {linkChoices(vo, toastInvoices).filter(inv => !(vo.toastUnlinked || []).includes(inv.invoiceGuid)).map(inv => (
+                                                <button key={inv.invoiceGuid} onClick={() => linkToast(vo, inv.invoiceGuid)} className="w-full text-left px-2 py-1.5 rounded bg-white border border-gray-200 text-xs">
+                                                    #{inv.invoiceNumber} · {inv.customerName || inv.companyName || "—"} · ${Number(inv.total || 0).toFixed(2)} · {fmtWhen(inv)}
+                                                </button>
+                                            ))}
+                                            {linkChoices(vo, toastInvoices).length === 0 && <p className="text-xs text-gray-500">{isEs ? "No hay facturas de Toast cerca de esa fecha." : "No Toast invoices within a week of that date."}</p>}
+                                        </div>
+                                    )}
+                                    {Array.isArray(vo.overrides) && vo.overrides.length > 0 && (
+                                        <div className="mt-2 pt-2 border-t border-gray-200">
+                                            {vo.overrides.map((o, i) => <p key={i} className="text-xs text-red-800">⛔ {isEs ? "Registrado a pesar de:" : "Put in despite:"} {o.message} ({o.by})</p>)}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })()}
                         <div className="bg-white border-2 border-gray-300 rounded-lg overflow-hidden shadow-xl" style={{minHeight: "80vh"}}>
                             <div style={{background: "#255a37", color: "white", padding: "20px", textAlign: "center"}}>
                                 <h2 className="text-2xl font-bold" style={{margin: 0, letterSpacing: "1px"}}>DD Mau Vietnamese Eatery</h2>
@@ -1032,6 +1167,10 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                                         <span key={i}>{item.qty}x {item.nameEn || item.name} ({item.size}){i < o.items.length - 1 ? ", " : ""}</span>
                                     ))}
                                 </div>
+                                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                    <ToastBadge m={toastMatches.get(o.id)} isEs={language === "es"} />
+                                    {Array.isArray(o.overrides) && o.overrides.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-red-100 text-red-800">⛔ {language === "es" ? "Fuera de las reglas" : "Outside the rules"}</span>}
+                                </div>
                                 <p className="text-xs text-mint-600 font-bold mt-2 text-right">{language === "es" ? "Toca para ver detalles →" : "Tap to view details →"}</p>
                             </div>
                         ))}
@@ -1040,6 +1179,23 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
             }
             return (
                 <div className="p-4 pb-bottom-nav">
+                    {pendingIssues && (
+                        <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="catering-confirm-title">
+                            <div className="bg-white rounded-2xl p-5 max-w-md w-full space-y-3">
+                                <p id="catering-confirm-title" className="text-lg font-black text-red-700">⚠️ {language === "es" ? "¿Seguro?" : "Are you sure?"}</p>
+                                <ul className="space-y-1">
+                                    {pendingIssues.map(i => <li key={i.kind} className="text-sm font-bold text-gray-800">• {language === "es" ? i.es : i.en}</li>)}
+                                </ul>
+                                <p className="text-xs text-gray-600">{language === "es"
+                                    ? "Si lo registras de todos modos, el pedido guarda que lo hiciste."
+                                    : "If you put it in anyway, the order records that you did."}</p>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setPendingIssues(null)} className="flex-1 py-3 rounded-lg bg-gray-200 font-bold">{language === "es" ? "Volver" : "Go back"}</button>
+                                    <button onClick={() => submitOrder(pendingIssues)} className="flex-1 py-3 rounded-lg bg-red-600 text-white font-bold">{language === "es" ? "Sí, registrarlo" : "Yes, put it in"}</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {/* ── Page Tab Bar ── */}
                     {/* FIX (review 2026-05-14): clear `submitted` when leaving the
                         Catering tab so the next return doesn't re-show the stale
@@ -1053,7 +1209,7 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                         </button>
                         <button onClick={() => { setPageTab("invoices"); setSubmitted(false); }}
                             className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "invoices" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
-                            🧾 {language === "es" ? "Facturas" : "Invoices"}
+                            🧾 {language === "es" ? "Facturas de Toast" : "Toast Invoices"}
                         </button>
                         <button onClick={() => setPageTab("catering")}
                             className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "catering" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
@@ -1128,8 +1284,11 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                             </div>
                             {customer.orderType === "delivery" && (
                                 <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                                    <label className="text-xs font-bold text-amber-700">{language === "es" ? "Millas:" : "Miles:"}</label>
+                                    <input value={deliveryMiles} onChange={e => setDeliveryMiles(e.target.value)} aria-label={language === "es" ? "Millas desde la tienda" : "Miles from the store"}
+                                        type="number" min="0" step="0.1" className="w-16 border border-amber-300 rounded px-2 py-1 text-sm font-bold text-center" />
                                     <label className="text-xs font-bold text-amber-700">{language === "es" ? "Tarifa de Entrega: $" : "Delivery Fee: $"}</label>
-                                    <input value={deliveryFee} onChange={e => setDeliveryFee(e.target.value)}
+                                    <input value={deliveryFee} onChange={e => { setDeliveryFee(e.target.value); setFeeTouched(true); }}
                                         type="number" min="0" step="0.01" className="w-20 border border-amber-300 rounded px-2 py-1 text-sm font-bold text-center" />
                                 </div>
                             )}
@@ -1153,13 +1312,28 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                                     <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Fecha del Evento" : "Event Date"} *</label>
                                     <input value={customer.date} onChange={e => { setCustomer(p => ({...p, date: e.target.value})); setErrors(p => ({...p, date: false})); }}
                                         type="date" className={`w-full border-2 ${errors.date ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} />
+                                    {(() => {
+                                        const b = customer.date ? blackoutFor(settings, customer.date, customer.pickupLocation) : null;
+                                        return b ? <p className="mt-1 text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded p-1.5">⛔ {language === "es" ? "Día bloqueado" : "Blacked out"}{b.note ? `: ${b.note}` : ""}</p> : null;
+                                    })()}
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Hora" : "Time"} *</label>
                                     <select value={customer.time} onChange={e => { setCustomer(p => ({...p, time: e.target.value})); setErrors(p => ({...p, time: false})); }}
                                         className={`w-full border-2 ${errors.time ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium bg-white`}>
                                         <option value="">{language === "es" ? "Seleccionar hora" : "Select time"}</option>
-                                        {(() => { const opts = []; for (let h = 8; h <= 21; h++) { for (let m = 0; m < 60; m += 30) { const hour12 = h > 12 ? h - 12 : h === 0 ? 12 : h; const ampm = h >= 12 ? "PM" : "AM"; const label = `${hour12}:${m === 0 ? "00" : m} ${ampm}`; opts.push(<option key={`${h}-${m}`} value={label}>{label}</option>); } } return opts; })()}
+                                        {(() => {
+                                            // Times in the owner's window first; the rest still pick-able, marked ⚠.
+                                            const opts = timeOptions(settings, customer.date, customer.orderType);
+                                            const inside = opts.filter(o => o.inside), outside = opts.filter(o => !o.inside);
+                                            const known = opts.some(o => o.value === customer.time);
+                                            return <>
+                                                {customer.time && !known && <option value={customer.time}>{customer.time}</option>}
+                                                {inside.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                                {outside.length > 0 && <option disabled>──────────</option>}
+                                                {outside.map(o => <option key={o.value} value={o.value}>⚠ {o.label}</option>)}
+                                            </>;
+                                        })()}
                                     </select>
                                 </div>
                             </div>
@@ -1171,8 +1345,16 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                             {customer.orderType === "delivery" && (
                                 <div>
                                     <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Dirección de Entrega" : "Delivery Address"} *</label>
-                                    <input value={customer.address} onChange={e => { setCustomer(p => ({...p, address: e.target.value})); setErrors(p => ({...p, address: false})); }}
+                                    <input value={customer.address} list={settings.distanceLookup ? "catering-address-hints" : undefined} onChange={e => { setCustomer(p => ({...p, address: e.target.value})); setErrors(p => ({...p, address: false})); }}
                                         className={`w-full border-2 ${errors.address ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} placeholder={language === "es" ? "Dirección completa" : "Full address"} />
+                                    {settings.distanceLookup && (
+                                        <>
+                                            <datalist id="catering-address-hints">{addressHints.map(h => <option key={h} value={h} />)}</datalist>
+                                            <button type="button" onClick={getMiles} disabled={milesBusy || !customer.address || !customer.pickupLocation} className="mt-1 px-3 py-1.5 rounded-lg bg-amber-100 text-amber-900 text-xs font-bold disabled:opacity-40">
+                                                📍 {milesBusy ? (language === "es" ? "Calculando…" : "Looking up…") : (language === "es" ? "Calcular millas" : "Get miles")}
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
                             )}
                             {Object.values(errors).some(Boolean) && (
@@ -1395,7 +1577,7 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                                         <span className="text-gray-600">{language === "es" ? "Entrega" : "Delivery Fee"}</span>
                                         <div className="flex items-center gap-1">
                                             <span className="text-gray-400">$</span>
-                                            <input value={deliveryFee} onChange={e => setDeliveryFee(e.target.value)}
+                                            <input value={deliveryFee} onChange={e => { setDeliveryFee(e.target.value); setFeeTouched(true); }}
                                                 type="number" min="0" step="0.01" className="w-16 border border-mint-300 rounded px-1 py-0.5 text-sm font-bold text-right" />
                                         </div>
                                     </div>
@@ -1415,7 +1597,7 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                                     <span className="text-mint-800">${getTotal().toFixed(2)}</span>
                                 </div>
                             </div>
-                            <button onClick={submitOrder} disabled={cart.length === 0}
+                            <button onClick={() => submitOrder()} disabled={cart.length === 0}
                                 className={`w-full py-4 rounded-lg font-bold text-lg ${cart.length > 0 ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-400"}`}>
                                 ✅ {editingOrderId ? (language === "es" ? "Actualizar Pedido" : "Update Order") : t("submitOrder", language)}
                             </button>

@@ -61,6 +61,7 @@ import AdminHub, { AdminToolHeader } from './AdminHub';
 // read-only card; reads staffList in-place, no new Firestore writes.
 import StaffUsageAudit from './StaffUsageAudit';
 import TestActivityLog from './TestActivityLog';
+import CateringSettings from './CateringSettings';
 import TrainingAssignmentsPanel from './TrainingAssignmentsPanel';
 import TimecardDisputesPanel from './TimecardDisputesPanel';
 import HealthBulkEditor from './HealthBulkEditor';
@@ -2519,6 +2520,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 inventoryaudit:   { emoji: '🧮', tint: 'tint-teal',   label: hubTx('Count audit', 'Conteos') },
                 orderlog:         { emoji: '📞', tint: 'tint-sky',    label: hubTx('Order log', 'Pedidos') },
                 recipeaudit:      { emoji: '🔍', tint: 'tint-purple', label: hubTx('Recipe views', 'Recetas') },
+                catering:         { emoji: '🥡', tint: 'tint-orange', label: hubTx('Catering', 'Catering') },
                 testactivity:     { emoji: '🧪', tint: 'tint-purple', label: hubTx('Test login activity', 'Actividad de prueba') },
                 inventorylists:   { emoji: '🗒️', tint: 'tint-orange', label: hubTx('Inv. lists', 'Listas inv.') },
                 danger:           { emoji: '⚠️', tint: 'tint-red',    label: hubTx('Danger zone', 'Zona peligrosa') },
@@ -2536,7 +2538,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 { id: 'g-money',    emoji: '💰', title: hubTx('Money', 'Dinero'),
                     tools: [...(isAdmin(staffName, staffList) ? ['payroll'] : []), 'laborhistory'] },
                 { id: 'g-stickers', emoji: '🏷', title: hubTx('Stickers & Menu', 'Etiquetas y Menú'),
-                    tools: ['labelformat', 'printers', 'menueditor', 'menuscreens'] },
+                    tools: ['labelformat', 'printers', 'menueditor', 'menuscreens', 'catering'] },
                 { id: 'g-comms',    emoji: '📣', title: hubTx('Communication', 'Comunicación'),
                     tools: ['push', 'chathistory'] },
                 { id: 'g-hiring',   emoji: '🧾', title: hubTx('Hiring & Compliance', 'Contratación y Cumplimiento'),
@@ -2662,6 +2664,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         — no new Firestore writes were added to surface
                         this audit. Collapsed by default. */}
                     {show('testactivity') && <TestActivityLog language={language} />}
+                    {show('catering') && <CateringSettings language={language} staffList={staffList} staffName={staffName} />}
                     {show('usage') && <StaffUsageAudit
                         staffList={staffList}
                         language={language}
