@@ -4515,6 +4515,10 @@ exports.aiExtractMenu = onCall(
 // with Claude vision and returns structured dates so the record
 // self-fills. Same SSRF allowlist + rate-limit posture as
 // aiExtractMenu. Cost: ~$0.003 per card — pennies.
+// Catering delivery miles + address suggestions (Google). See cateringDistance.js.
+const { makeCateringDistance } = require("./cateringDistance");
+exports.cateringDistance = makeCateringDistance({ onCall, HttpsError, db });
+
 exports.aiExtractHealthDoc = onCall(
     {
         region: "us-central1",

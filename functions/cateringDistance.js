@@ -1,17 +1,17 @@
 // Catering delivery distance + address suggestions, through Google (Routes API and
-// Places API (New)). NOT wired into index.js yet: it needs the GOOGLE_MAPS_KEY
-// secret, and exporting a function whose secret doesn't exist would fail every
-// functions deploy. To turn it on:
-//   1. firebase functions:secrets:set GOOGLE_MAPS_KEY
-//   2. in index.js:  const { makeCateringDistance } = require("./cateringDistance");
-//                    exports.cateringDistance = makeCateringDistance({ onCall, HttpsError, db });
-//   3. firebase deploy --only functions:cateringDistance
-//   4. set config/catering.distanceLookup = true (Admin → Catering shows it).
+// Places API (New)). Key: the GOOGLE_MAPS_KEY secret (set 2026-11-05, restricted to
+// those two APIs). The order form only calls this when config/catering.distanceLookup
+// is true.
 const { defineSecret } = require("firebase-functions/params");
 
 const GOOGLE_MAPS_KEY = defineSecret("GOOGLE_MAPS_KEY");
 const STL = { latitude: 38.627, longitude: -90.199 };
 const METERS_PER_MILE = 1609.344;
+// Same as DEFAULT_CATERING_SETTINGS.stores until the owner saves Admin → Catering.
+const DEFAULT_STORES = {
+    webster: "8169 Big Bend Blvd, Webster Groves, MO 63119",
+    maryland: "11982 Dorsett Rd, Maryland Heights, MO 63043",
+};
 
 async function driveMiles(key, from, to) {
     const resp = await fetch("https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix", {
@@ -63,7 +63,7 @@ function makeCateringDistance({ onCall, HttpsError, db }) {
             try {
                 if (action === "suggest") return { suggestions: await suggest(key, text) };
                 const settings = (await db.doc("config/catering").get()).data() || {};
-                const from = settings.stores?.[store]?.address;
+                const from = settings.stores?.[store]?.address || DEFAULT_STORES[store];
                 if (!from) throw new HttpsError("failed-precondition", "no store address");
                 return { miles: await driveMiles(key, from, text) };
             } catch (e) {
