@@ -26,8 +26,13 @@ export function tipOf(inv) {
 export function breakdownRows(inv) {
     const b = inv?.breakdown || {};
     const rows = [];
+    // Toast's subtotal (and each item's price) already has discounts taken off, so the
+    // discount is shown against the price before it (checked on live invoices, Nov 5).
+    if (n(b.discounts) && n(b.subtotal) !== null) {
+        rows.push({ key: 'before', en: 'Before discounts', es: 'Antes de descuentos', amount: Math.round((b.subtotal + Math.abs(b.discounts)) * 100) / 100 });
+        rows.push({ key: 'discounts', en: 'Discounts', es: 'Descuentos', amount: -Math.abs(b.discounts) });
+    }
     if (n(b.subtotal) !== null) rows.push({ key: 'subtotal', en: 'Subtotal', es: 'Subtotal', amount: b.subtotal });
-    if (n(b.discounts)) rows.push({ key: 'discounts', en: 'Discounts', es: 'Descuentos', amount: -Math.abs(b.discounts) });
     for (const sc of Array.isArray(b.serviceCharges) ? b.serviceCharges : []) {
         if (n(sc?.amount) === null) continue;
         rows.push({ key: `sc:${sc.name}`, en: sc.gratuity ? `${sc.name} (gratuity)` : sc.name, es: sc.gratuity ? `${sc.name} (propina)` : sc.name, amount: sc.amount });

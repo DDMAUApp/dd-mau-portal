@@ -28,10 +28,15 @@ describe('tips', () => {
 
 describe('breakdown', () => {
     it('receipt order, only what Toast sent', () => {
-        const rows = breakdownRows({ total: 230.5, breakdown: { subtotal: 190, discounts: 5, tax: 19.5, tip: 21, serviceCharges: [{ name: 'Delivery', amount: 15 }] } });
+        const rows = breakdownRows({ total: 225.5, breakdown: { subtotal: 185, discounts: 5, tax: 19.5, tip: 21 } });
         expect(rows.map(r => [r.en, r.amount])).toEqual([
-            ['Subtotal', 190], ['Discounts', -5], ['Delivery', 15], ['Tax', 19.5], ['Tip', 21], ['Total', 230.5],
+            ['Before discounts', 190], ['Discounts', -5], ['Subtotal', 185], ['Tax', 19.5], ['Tip', 21], ['Total', 225.5],
         ]);
+    });
+    it('every row but the before-discount line adds up to the total, as on real invoice #000209', () => {
+        const inv = { total: 404.27, breakdown: { tax: 25.09, subtotal: 304.18, discounts: 53.68, tip: 75 } };
+        const rows = breakdownRows(inv).filter(r => !['before', 'discounts', 'total'].includes(r.key));
+        expect(Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100).toBe(404.27);
     });
     it('older invoices show no breakdown', () => { expect(breakdownRows({ total: 100 })).toEqual([]); });
 });
