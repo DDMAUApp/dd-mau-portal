@@ -36,6 +36,7 @@ function sameCustomer(order, inv) {
 
 const isDelivery = (inv) => (typeof inv.isDelivery === 'boolean' ? inv.isDelivery : !!(inv.deliveryAddress || inv.address));
 const storeOf = (v) => (/mary/i.test(String(v || '')) ? 'maryland' : /webster/i.test(String(v || '')) ? 'webster' : '');
+export const TOTAL_TOLERANCE = 1;
 const money = (n) => `$${(Number(n) || 0).toFixed(2)}`;
 export const NOT_FOOD = /deliver|\bfee\b|utensil|plates?\b|chopstick|napkin|\btip\b|gratuity|service charge/i;
 
@@ -45,7 +46,8 @@ export function compareOrder(order, inv) {
     const c = order?.customer || {};
     const appTotal = Number(order?.total) || 0;
     const toastTotal = Number(inv?.total) || 0;
-    if (Math.abs(appTotal - toastTotal) > 0.5) out.push({ kind: 'total', en: `Total: app ${money(appTotal)}, Toast ${money(toastTotal)}`, es: `Total: app ${money(appTotal)}, Toast ${money(toastTotal)}` });
+    // Within a dollar is fine (owner, 2026-11-05).
+    if (Math.round(Math.abs(appTotal - toastTotal) * 100) > TOTAL_TOLERANCE * 100) out.push({ kind: 'total', en: `Total: app ${money(appTotal)}, Toast ${money(toastTotal)}`, es: `Total: app ${money(appTotal)}, Toast ${money(toastTotal)}` });
     const appQty = (Array.isArray(order?.items) ? order.items : []).reduce((n, i) => n + (Number(i.qty) || 0), 0);
     // Toast lists fees and utensils as items; the app keeps them apart, so only food counts.
     const toastQty = (Array.isArray(inv?.items) ? inv.items : [])

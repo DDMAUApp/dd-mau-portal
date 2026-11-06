@@ -58,8 +58,12 @@ describe('differences', () => {
     it('fees and utensils on the Toast side are not counted as food', () => {
         expect(compareOrder(order(), inv()).find(x => x.kind === 'items')).toBeUndefined();
     });
-    it('cents of rounding are not a difference', () => {
+    it('up to a dollar off is not a difference, more is', () => {
         expect(compareOrder(order({ total: 200.3 }), inv())).toEqual([]);
+        expect(compareOrder(order({ total: 199.01 }), inv())).toEqual([]);
+        expect(compareOrder(order({ total: 201 }), inv())).toEqual([]);
+        expect(compareOrder(order({ total: 201.01 }), inv()).map(x => x.kind)).toEqual(['total']);
+        expect(compareOrder(order({ total: 198.99 }), inv()).map(x => x.kind)).toEqual(['total']);
     });
 });
 
