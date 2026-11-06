@@ -6,6 +6,9 @@ import { escapeHtml as esc } from '../data/htmlEscape';
 import { printViaNative } from '../capacitor-bridge';
 import { reuseSnapshotDocs } from '../data/snapshotReuse';
 import { fmtIso } from '../data/dateFmt';
+import { itemMoney, breakdownRows } from '../data/invoiceMoney';
+
+const fmtMoney = (v) => `${v < 0 ? '−' : ''}$${Math.abs(Number(v) || 0).toFixed(2)}`;
 
 // Delivery detection (Andrew 2026-09-05: Gabriel Vuagniaux's DELIVERY
 // invoice printed as "Pickup Time" with no address). The scraper only
@@ -126,19 +129,42 @@ const InvoiceCard = memo(function InvoiceCard({ inv, expanded, isEn, onToggle, o
                         <div>
                             <p className="text-xs font-bold text-gray-500 mb-1.5">{isEn ? "Items:" : "Artículos:"}</p>
                             <div className="grid grid-cols-1 gap-1">
-                                {inv.items.map((item, ni) => (
+                                {inv.items.map((item, ni) => {
+                                    const m = itemMoney(item);
+                                    return (
                                     <div key={ni} className="text-xs bg-gray-50 rounded px-2 py-1.5">
-                                        <span className="text-gray-700 font-medium">
-                                            {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
-                                        </span>
+                                        <div className="flex justify-between gap-2">
+                                            <span className="text-gray-700 font-medium">
+                                                {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
+                                            </span>
+                                            {m.line !== null && (
+                                                <span className="text-gray-700 font-bold tabular-nums whitespace-nowrap">
+                                                    {m.qty > 1 && m.unit !== null ? <span className="font-normal text-gray-500">{m.qty} × {fmtMoney(m.unit)} = </span> : null}
+                                                    {fmtMoney(m.line)}
+                                                </span>
+                                            )}
+                                        </div>
                                         {item.modifiers && item.modifiers.length > 0 && (
                                             <p className="text-gray-400 text-xs mt-0.5 pl-2">
                                                 ↳ {item.modifiers.join(", ")}
                                             </p>
                                         )}
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
+                        </div>
+                    )}
+
+                    {/* Price breakdown (invoices synced since 2026-11-05) */}
+                    {breakdownRows(inv).length > 0 && (
+                        <div className="mt-2 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
+                            {breakdownRows(inv).map(row => (
+                                <div key={row.key} className={`flex justify-between text-xs py-0.5 ${row.total ? "border-t border-gray-200 mt-1 pt-1 text-sm font-black text-gray-900" : "text-gray-700"}`}>
+                                    <span>{isEn ? row.en : row.es}</span>
+                                    <span className="tabular-nums font-bold">{fmtMoney(row.amount)}</span>
+                                </div>
+                            ))}
                         </div>
                     )}
 

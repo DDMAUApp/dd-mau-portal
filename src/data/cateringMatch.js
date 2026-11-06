@@ -5,6 +5,7 @@
 // can unlink a wrong match (order.toastUnlinked) or link one by hand (order.toastLink),
 // and a hand link always wins.
 import { parseTime } from './cateringRules';
+import { tipOf } from './invoiceMoney';
 
 const TZ = 'America/Chicago';
 const digits = (v) => String(v || '').replace(/\D/g, '').slice(-10);
@@ -45,9 +46,12 @@ export function compareOrder(order, inv) {
     const out = [];
     const c = order?.customer || {};
     const appTotal = Number(order?.total) || 0;
-    const toastTotal = Number(inv?.total) || 0;
+    // Customers sometimes add a tip in Toast; the app order never has one, so it's left out.
+    const tip = tipOf(inv);
+    const toastTotal = (Number(inv?.total) || 0) - tip;
+    const tipNote = tip > 0 ? [` (not counting a ${money(tip)} tip)`, ` (sin contar ${money(tip)} de propina)`] : ['', ''];
     // Within a dollar is fine (owner, 2026-11-05).
-    if (Math.round(Math.abs(appTotal - toastTotal) * 100) > TOTAL_TOLERANCE * 100) out.push({ kind: 'total', en: `Total: app ${money(appTotal)}, Toast ${money(toastTotal)}`, es: `Total: app ${money(appTotal)}, Toast ${money(toastTotal)}` });
+    if (Math.round(Math.abs(appTotal - toastTotal) * 100) > TOTAL_TOLERANCE * 100) out.push({ kind: 'total', en: `Total: app ${money(appTotal)}, Toast ${money(toastTotal)}${tipNote[0]}`, es: `Total: app ${money(appTotal)}, Toast ${money(toastTotal)}${tipNote[1]}` });
     const appQty = (Array.isArray(order?.items) ? order.items : []).reduce((n, i) => n + (Number(i.qty) || 0), 0);
     // Toast lists fees and utensils as items; the app keeps them apart, so only food counts.
     const toastQty = (Array.isArray(inv?.items) ? inv.items : [])
