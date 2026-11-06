@@ -65,7 +65,9 @@ export const RICE_MIN_START_F = 135;    // below this at the start: no sticker
 export const RICE_MAX_70F = 70;
 export const RICE_MAX_41F = 41;
 export const RICE_MAX_COPIES = 4;
-export const RICE_EARLIER_MINUTES = [5, 10]; // For Today only; these flag the row
+// For Today only, and each one flags the row. Owner raised it from 10 minutes to an
+// hour on 2026-11-05: the 135F+ probe still has to pass.
+export const RICE_MAX_LATE_MINUTES = 60;
 export const RICE_OPEN_WINDOW_MIN = 10;      // any staff may edit or delete inside this
 export const RICE_UNDO_MS = 15000;           // All Gone / Tossed hold their write this long
 export const RICE_AFTER_DELETE_FLAG_MIN = 30;

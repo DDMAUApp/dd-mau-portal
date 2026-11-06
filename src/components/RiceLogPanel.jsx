@@ -15,7 +15,7 @@ import { X } from 'lucide-react';
 import ModalPortal from './ModalPortal';
 import { toast } from '../toast';
 import {
-    RICE_EARLIER_MINUTES, RICE_MAX_COPIES, RICE_MIN_START_F, RICE_ROUTE_FRIDGE, RICE_ROUTE_TODAY,
+    RICE_MAX_LATE_MINUTES, RICE_MAX_COPIES, RICE_MIN_START_F, RICE_ROUTE_FRIDGE, RICE_ROUTE_TODAY,
     RICE_WHEEL_MAX_F, RICE_WHEEL_MIN_F, RICE_WHEEL_START_F,
     duplicateBatchNumbers, isRiceOpen, loadRiceAttempts, logRiceLowReading, logRiceTossedAtStart, nextBatchNo, riceDayStr, riceOlderOpen,
     riceScreenDay, riceStoreLabel, saveRiceAttempts, startRiceBatch, subscribeOpenRice, subscribeRiceLog,
@@ -25,10 +25,11 @@ import { isShiftLeadOrAbove } from '../data/staff';
 import RiceBatchRow, { ReprintCount, RiceTossAlerts } from './RiceBatchRow';
 import RiceLogTab from './RiceLogTab';
 import RiceTempWheel from './RiceTempWheel';
+import RiceTimeWheel, { RICE_TOO_LATE } from './RiceTimeWheel';
 import { ricePrintMessage, useRiceBatchActions } from './useRiceBatchActions';
 
 const OLDER_LINE_MAX = 3;
-const TOO_LATE = 'over';    // the time choice for rice unmarked over 10 minutes
+const TOO_LATE = RICE_TOO_LATE;    // the wheel's stop for rice unmarked over an hour
 
 export default function RiceLogPanel({
     location = 'webster', staffName, staffList = [], language = 'en', initialView = 'start', onClose,
@@ -346,13 +347,13 @@ export default function RiceLogPanel({
                                         <>
                                             <div className="rounded-lg bg-red-600 text-white p-3 space-y-2">
                                                 <div className="text-2xl font-black">{tx('Unmarked too long. Toss it.', 'Sin marcar mucho tiempo. Tíralo.')}</div>
-                                                <div className="text-sm font-bold">{tx('More than 10 minutes with no mark gets no sticker.', 'Más de 10 minutos sin marcar no lleva etiqueta.')}</div>
+                                                <div className="text-sm font-bold">{tx('More than an hour with no mark gets no sticker.', 'Más de una hora sin marcar no lleva etiqueta.')}</div>
                                                 <button type="button" onClick={() => handleToss('no_sticker')} disabled={!todayReady}
                                                     className="w-full min-h-[52px] rounded-lg bg-white text-red-700 text-lg font-black active:scale-[0.99] disabled:opacity-40">
                                                     {tx('Toss it', 'Tíralo')}
                                                 </button>
                                             </div>
-                                            <TimeChoice value={timeChoice} onChange={(v) => { setTimeChoice(v); setFridgeMsg(false); }} tx={tx} />
+                                            <RiceTimeWheel value={timeChoice} now={now} maxMinutes={RICE_MAX_LATE_MINUTES} resetKey={wheelKey} onChange={(v) => { setTimeChoice(v); setFridgeMsg(false); }} tx={tx} />
                                         </>
                                     ) : (
                                         <>
@@ -385,7 +386,7 @@ export default function RiceLogPanel({
                                                 )}
                                             </div>
 
-                                            <TimeChoice value={timeChoice} onChange={(v) => { setTimeChoice(v); setFridgeMsg(false); }} tx={tx} />
+                                            <RiceTimeWheel value={timeChoice} now={now} maxMinutes={RICE_MAX_LATE_MINUTES} resetKey={wheelKey} onChange={(v) => { setTimeChoice(v); setFridgeMsg(false); }} tx={tx} />
 
                                             <div className="flex items-center justify-between gap-2">
                                                 <span className="text-sm font-bold text-sky-950">{tx('Pans (one sticker each)', 'Bandejas (una etiqueta cada una)')}</span>
@@ -411,7 +412,7 @@ export default function RiceLogPanel({
                                             )}
                                             {fridgeMsg && (
                                                 <p role="alert" className="rounded-lg bg-amber-100 border border-amber-300 p-2 text-sm font-black text-amber-900">
-                                                    {tx('For the Fridge prints with Now only. Tap Now, or use For Today.', 'Para el refri solo imprime con Ahora. Toca Ahora, o usa Para hoy.')}
+                                                    {tx('For the Fridge prints with Now only. Roll the time back to Now, or use For Today.', 'Para el refri solo imprime con Ahora. Regresa la hora a Ahora, o usa Para hoy.')}
                                                 </p>
                                             )}
 
@@ -445,27 +446,6 @@ export default function RiceLogPanel({
                 </div>
             </div>
         </ModalPortal>
-    );
-}
-
-function TimeChoice({ value, onChange, tx }) {
-    const choices = [
-        [0, tx('Now', 'Ahora')],
-        ...RICE_EARLIER_MINUTES.map((m) => [m, tx(`${m} min ago`, `Hace ${m} min`)]),
-        [TOO_LATE, tx('Over 10 min', 'Más de 10 min')],
-    ];
-    return (
-        <div>
-            <div className="text-[13px] font-bold text-sky-950 mb-1">{tx('When did it come out?', '¿Cuándo salió?')}</div>
-            <div className="grid grid-cols-4 gap-1.5">
-                {choices.map(([v, label]) => (
-                    <button key={v} type="button" onClick={() => onChange(v)} aria-pressed={value === v}
-                        className={`min-h-[44px] px-1 rounded-lg text-xs font-black border ${value === v ? 'bg-sky-700 text-white border-sky-700' : 'bg-white text-sky-950 border-sky-300'}`}>
-                        {label}
-                    </button>
-                ))}
-            </div>
-        </div>
     );
 }
 

@@ -206,6 +206,23 @@ describe('starting a batch', () => {
         expect(setDocMock.mock.calls[0][1]).toMatchObject({ timeSource: 'picked', minutesLate: 10 });
     });
 
+    it('the wheel goes back a full hour, and the log says how late', async () => {
+        await open();
+        fireEvent.click(screen.getByText('60 min ago'));
+        tapCenter();
+        await pressToday();
+        const logged = setDocMock.mock.calls[0][1];
+        expect(logged).toMatchObject({ timeSource: 'picked', minutesLate: 60 });
+        expect(new Date(logged.madeAt).getTime()).toBe(NOW.getTime() - 60 * 60000);
+    });
+
+    it('the wheel opens on the current time', async () => {
+        await open();
+        const wheel = screen.getByRole('slider', { name: 'When the rice came out' });
+        expect(wheel).toHaveAttribute('aria-valuenow', '0');
+        expect(wheel.getAttribute('aria-valuetext')).toMatch(/Now$/);
+    });
+
     it('For the Fridge is now only: picking an earlier time stops it, and says why', async () => {
         await open();
         fireEvent.click(screen.getByText('5 min ago'));
@@ -405,10 +422,10 @@ describe('below 135F', () => {
     });
 });
 
-describe('unmarked more than 10 minutes', () => {
+describe('unmarked more than an hour', () => {
     it('gets a one-tap Toss it that logs no_sticker, not a sticker', async () => {
         await open();
-        fireEvent.click(screen.getByText('Over 10 min'));
+        fireEvent.click(screen.getByText('Over 1 hr'));
         expect(screen.getByText('Unmarked too long. Toss it.')).toBeInTheDocument();
         expect(screen.queryByText('For Today')).toBe(null);
         expect(screen.queryByRole('spinbutton')).toBe(null);
@@ -421,7 +438,7 @@ describe('unmarked more than 10 minutes', () => {
 
     it('a slip of the finger can go back to Now', async () => {
         await open();
-        fireEvent.click(screen.getByText('Over 10 min'));
+        fireEvent.click(screen.getByText('Over 1 hr'));
         fireEvent.click(screen.getByText('Now'));
         expect(screen.getByText('For Today')).toBeInTheDocument();
     });
