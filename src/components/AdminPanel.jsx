@@ -64,6 +64,7 @@ import TestActivityLog from './TestActivityLog';
 import CateringSettings from './CateringSettings';
 import TrainingAssignmentsPanel from './TrainingAssignmentsPanel';
 import TimecardDisputesPanel from './TimecardDisputesPanel';
+import TesterRequestsPanel from './TesterRequestsPanel';
 import HealthBulkEditor from './HealthBulkEditor';
 import ScheduleAuditLog from './ScheduleAuditLog';
 import AttendanceLog from './AttendanceLog';
@@ -1405,6 +1406,22 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 const id = setInterval(fetchCounts, 5 * 60_000);
                 return () => { cancelled = true; clearInterval(id); };
             }, [hasOnboardingAccess]);
+            // Android tester emails badge (2026-11-14) — same aggregate-count
+            // posture as the onboarding badges above: no docs streamed, just
+            // a server count of /tester_requests still 'pending'.
+            const [testerPendingCount, setTesterPendingCount] = useState(0);
+            useEffect(() => {
+                let cancelled = false;
+                const fetchCount = async () => {
+                    try {
+                        const snap = await getCountFromServer(query(collection(db, 'tester_requests'), where('status', '==', 'pending')));
+                        if (!cancelled) setTesterPendingCount(snap.data().count);
+                    } catch (err) { console.warn('tester_requests count load error:', err?.code || err); }
+                };
+                fetchCount();
+                const id = setInterval(fetchCount, 5 * 60_000);
+                return () => { cancelled = true; clearInterval(id); };
+            }, []);
             // Two-step confirmation for the System Refresh broadcast.
             // First tap arms the button; second tap (within 10s) fires it.
             const [confirmingRefresh, setConfirmingRefresh] = useState(false);
@@ -2498,6 +2515,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 usage:            { emoji: '📊', tint: 'tint-teal',   label: hubTx('App usage', 'Uso app') },
                 trainingassign:   { emoji: '🎓', tint: 'tint-green',  label: hubTx('Training', 'Capacitación') },
                 offsite:          { emoji: '🚐', tint: 'tint-purple', label: hubTx('Off-site', 'Fuera') },
+                testers:          { emoji: '🤖', tint: 'tint-green',  label: hubTx('Android testers', 'Probadores Android'), badge: testerPendingCount },
                 deleted:          { emoji: '🗂️', tint: 'tint-slate',  label: hubTx('Deleted', 'Eliminados') },
                 taskplanner:      { emoji: '🗓', tint: 'tint-green',  label: hubTx('Planner', 'Planificador') },
                 todos:            { emoji: '✅', tint: 'tint-amber',  label: hubTx('Staff todos', 'Pendientes') },
@@ -2532,7 +2550,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // keep the exact same gates their sections had.
             const hubGroups = [
                 { id: 'g-staff',    emoji: '👥', title: hubTx('Staff', 'Personal'),
-                    tools: ['staff', 'usage', 'testactivity', 'trainingassign', 'offsite', 'deleted'] },
+                    tools: ['staff', 'usage', 'testers', 'testactivity', 'trainingassign', 'offsite', 'deleted'] },
                 { id: 'g-tasks',    emoji: '📋', title: hubTx('Tasks', 'Tareas'),
                     tools: ['taskplanner', 'todos', 'timecards', 'maintenance'] },
                 { id: 'g-money',    emoji: '💰', title: hubTx('Money', 'Dinero'),
@@ -2664,6 +2682,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         — no new Firestore writes were added to surface
                         this audit. Collapsed by default. */}
                     {show('testactivity') && <TestActivityLog language={language} />}
+                    {/* ── ANDROID TESTER EMAILS (2026-11-14) — emails from the
+                        lock-screen Install app sheet (/tester_requests). */}
+                    {show('testers') && <TesterRequestsPanel language={language} staffName={staffName} />}
                     {show('catering') && <CateringSettings language={language} staffList={staffList} staffName={staffName} />}
                     {show('usage') && <StaffUsageAudit
                         staffList={staffList}
