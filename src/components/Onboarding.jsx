@@ -41,6 +41,7 @@ import { appendStaffRecord } from '../data/staffDoc';
 import { classifyDocFiles, docsWaitingReview, PASSWORD_SETUP_MS, olderVersionLabel } from '../data/staffDocuments';
 import { getPositionTemplate } from '../data/positionTemplates';
 import { normalizeToE164 } from '../data/sms';
+import { buildAppInviteText, appInviteSmsHref } from '../data/appInvite';
 import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata } from 'firebase/storage';
 import { downloadFile, printViaNative, publicAppBase } from '../capacitor-bridge';
 import {
@@ -845,6 +846,23 @@ function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templ
         return !!hireName && list.some((s) => norm(s?.name) === hireName);
     }, [staffList, hire.id, hire.name, hire.personal?.legalName]);
 
+    // ── Text app invite (Andrew 2026-11-14) ───────────────────────────
+    // Sits beside Add to Staff. Opens the admin's Messages app pre-filled
+    // with both store links (+ their PIN once they're on the roster, matched
+    // by onboardingHireId). Same manual sms: pattern as the onboarding
+    // invite — no Twilio. Builder + copy live in data/appInvite.js.
+    const appInviteHref = useMemo(() => {
+        if (!hire.phone) return null;
+        const list = Array.isArray(staffList) ? staffList : [];
+        const rec = list.find((s) => s?.onboardingHireId && s.onboardingHireId === hire.id);
+        const text = buildAppInviteText({
+            name: hire.personal?.legalName || hire.name,
+            pin: rec?.pin ? String(rec.pin) : '',
+            lang: hire.preferredLanguage === 'es' ? 'es' : 'en',
+        });
+        return appInviteSmsHref(hire.phone, text);
+    }, [staffList, hire.id, hire.phone, hire.name, hire.personal?.legalName, hire.preferredLanguage]);
+
     const addToStaff = async () => {
         if (addingStaff) return;
         setAddingStaff(true);
@@ -1099,6 +1117,23 @@ function HireDetail({ hire, isEs, staffName, staffList = [], docOverrides, templ
                                     ? tx('👥 Re-add to Staff', '👥 Volver a agregar')
                                     : tx('👥 Add to Staff', '👥 Agregar a Personal')}
                         </button>
+                    )}
+                    {appInviteHref ? (
+                        <a href={appInviteHref}
+                            onClick={() => onWriteAudit('app_invite_texted', { hireId: hire.id, hireName: hire.name, withPin: onRoster })}
+                            title={onRoster
+                                ? tx('Text them the app download links + their login PIN from your phone',
+                                    'Envíales por SMS los enlaces de la app + su PIN desde tu teléfono')
+                                : tx('Text them the app download links from your phone (tap Add to Staff first to include their PIN)',
+                                    'Envíales por SMS los enlaces de la app (agrega a Personal primero para incluir su PIN)')}
+                            className="text-[11px] px-2.5 py-1.5 rounded-lg bg-cyan-600 text-white font-bold hover:bg-cyan-700">
+                            📲 {tx('Text app invite', 'Enviar app por SMS')}
+                        </a>
+                    ) : (
+                        <span className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-bg text-dd-text-2 font-bold opacity-60"
+                            title={tx('No phone number on file', 'No hay teléfono registrado')}>
+                            📲 {tx('No phone', 'Sin teléfono')}
+                        </span>
                     )}
                     {/* Move to Complete — locks the hire's portal. Only
                         offered when the explicit hire.status isn't already
