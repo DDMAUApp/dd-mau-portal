@@ -49,6 +49,7 @@ describe('pending rescue', () => {
         const ls = fakeLs({
             'ddmau:cateringDraft:eduvijen gomez': JSON.stringify({ customer: { name: 'X' }, savedAt: NOW - 3600000 }),   // abandoned 1 h → sent
             'ddmau:cateringDraft:yulissa hurtado': JSON.stringify({ customer: { name: 'Y' }, savedAt: NOW - 60000 }),    // being typed → skipped
+            'ddmau:moneydraft:webster': JSON.stringify({ at: NOW - 86400000 }),                                         // standing money draft → skipped
         });
         const r1 = await rescuePendingWrites({ staffName: 'Eduvijen Gomez', now: NOW, idb: fakeIdb([cateringBatch]), ls, fetchImpl });
         expect(r1).toMatchObject({ sent: true, stuck: 1, drafts: 1 });

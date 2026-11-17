@@ -84,6 +84,9 @@ export function collectDrafts(ls = typeof localStorage !== 'undefined' ? localSt
         for (let i = 0; i < ls.length; i++) {
             const k = ls.key(i);
             if (!k || !/^ddmau:/.test(k) || !/draft/i.test(k)) continue;
+            // Money Count keeps its count as a standing draft on purpose and
+            // restores it itself — not lost work.
+            if (/^ddmau:moneydraft:/i.test(k)) continue;
             const v = ls.getItem(k);
             if (!v || v.length >= 200000) continue;
             let at = 0;
