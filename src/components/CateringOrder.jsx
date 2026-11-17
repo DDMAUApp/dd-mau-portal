@@ -2,13 +2,12 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { db } from '../firebase';
 import {
     doc, onSnapshot, collection, query, orderBy, limit,
-    setDoc as _fsSetDoc, addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc, arrayUnion, deleteField,
+    setDoc as _fsSetDoc, updateDoc as _fsUpdateDoc, arrayUnion, deleteField,
 } from 'firebase/firestore';
 // 2026-08-11 full-app audit — watchdog shadows (wedged-transport revive;
 // see firestoreRevive.js). Same pattern as Schedule/ChatThread.
 import { watchdogWrite } from '../data/firestoreRevive';
 const setDoc = (...a) => watchdogWrite(_fsSetDoc(...a));
-const addDoc = (...a) => watchdogWrite(_fsAddDoc(...a));
 const updateDoc = (...a) => watchdogWrite(_fsUpdateDoc(...a));
 import { mergeSettings, checkOrder, timeOptions, deliveryFeeFor, blackoutFor } from '../data/cateringRules';
 import { matchOrders, linkChoices, invoiceLocal } from '../data/cateringMatch';
@@ -21,6 +20,7 @@ import { notifyManagement, notifyStaff } from '../data/notify';
 import ToastInvoices from './ToastInvoices';
 import ToastOrders from './ToastOrders';
 import { toast } from '../toast';
+import { loadCateringDraft, saveCateringDraft, clearCateringDraft } from '../data/cateringDraft';
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.
 import { ChefHat, ClipboardList } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
@@ -511,6 +511,48 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
             const [pendingIssues, setPendingIssues] = useState(null);
             const [toastInvoices, setToastInvoices] = useState([]);
             const [linkPicking, setLinkPicking] = useState(false);
+            // ── Crash-safe draft (2026-11-17, see cateringDraft.js) ──────────
+            // The id a NEW order will be saved under, picked once per order so a
+            // retried save rewrites the same doc (no duplicate order / push).
+            const newOrderIdRef = useRef(null);
+            const ensureNewOrderId = () => {
+                if (!newOrderIdRef.current) newOrderIdRef.current = doc(collection(db, "cateringOrders")).id;
+                return newOrderIdRef.current;
+            };
+            const [draftRestoredAt, setDraftRestoredAt] = useState(null);
+            const draftReadyRef = useRef(false);
+            useEffect(() => {
+                const d = loadCateringDraft(staffName);
+                if (d) {
+                    setCustomer(c => ({ ...c, ...(d.customer || {}) }));
+                    setCart(Array.isArray(d.cart) ? d.cart : []);
+                    setSpecialNotes(d.specialNotes || "");
+                    if (d.deliveryFee != null) setDeliveryFee(String(d.deliveryFee));
+                    setFeeTouched(!!d.feeTouched);
+                    setDeliveryMiles(d.deliveryMiles == null ? "" : String(d.deliveryMiles));
+                    setWantPlates(!!d.wantPlates); setPlateCount(Number(d.plateCount) || 0);
+                    setWantChopsticks(!!d.wantChopsticks); setChopstickCount(Number(d.chopstickCount) || 0);
+                    setTaxExempt(!!d.taxExempt);
+                    setEditingOrderId(d.editingOrderId || null);
+                    newOrderIdRef.current = d.newOrderId || null;
+                    setStep(Number(d.step) || 1);
+                    setPageTab("catering");
+                    setDraftRestoredAt(Number(d.savedAt) || Date.now());
+                }
+                draftReadyRef.current = true;
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, [staffName]);
+            useEffect(() => {
+                if (!draftReadyRef.current || submitted) return undefined;
+                const t = setTimeout(() => saveCateringDraft(staffName, {
+                    customer, cart, specialNotes, deliveryFee, feeTouched, deliveryMiles,
+                    wantPlates, plateCount, wantChopsticks, chopstickCount, taxExempt,
+                    editingOrderId, step,
+                    newOrderId: editingOrderId ? null : ensureNewOrderId(),
+                }), 400);
+                return () => clearTimeout(t);
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, [staffName, customer, cart, specialNotes, deliveryFee, feeTouched, deliveryMiles, wantPlates, plateCount, wantChopsticks, chopstickCount, taxExempt, editingOrderId, step, submitted]);
             useEffect(() => onSnapshot(doc(db, "config", "catering"),
                 snap => setSettings(mergeSettings(snap.exists() ? snap.data() : null)),
                 err => console.warn('catering settings listen failed', err?.code)), []);
@@ -711,9 +753,14 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                         delete order.status;   // see comment above — preserve manager-set status on edits
                         await setDoc(doc(db, "cateringOrders", editingOrderId), order, { merge: true });
                     } else {
-                        const ref = await addDoc(collection(db, "cateringOrders"), order);
-                        savedId = ref.id;
+                        // Pre-picked id (see ensureNewOrderId): a retry after a
+                        // stuck save or a reload rewrites the same order.
+                        savedId = ensureNewOrderId();
+                        await setDoc(doc(db, "cateringOrders", savedId), order);
                     }
+                    clearCateringDraft(staffName);
+                    newOrderIdRef.current = null;
+                    setDraftRestoredAt(null);
                     setSubmitted(true);
 
                     // Fan out a notification to managers + owners on a
@@ -785,6 +832,9 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                 } catch (e) { console.warn('toast link failed', e?.code); toast(language === "es" ? "No se pudo guardar." : "Could not save. Try again.", { kind: 'error' }); }
             };
             const resetForm = () => {
+                clearCateringDraft(staffName);
+                newOrderIdRef.current = null;
+                setDraftRestoredAt(null);
                 setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup", pickupLocation: "" });
                 setCart([]); setErrors({}); setSubmitted(false); setSpecialNotes(""); setStep(1);
                 setDeliveryFee("15"); setEditingOrderId(null); setEditingCartItem(null);
@@ -1237,6 +1287,18 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                             </button>
                         }
                     />
+                    {draftRestoredAt && !submitted && (
+                        <div className="bg-sky-50 border border-sky-300 rounded-lg p-2.5 mb-3 text-xs text-sky-900 font-bold flex items-center gap-2 flex-wrap">
+                            <span className="flex-1 min-w-[12rem]">
+                                ↩︎ {language === "es"
+                                    ? `Recuperamos tu pedido sin terminar (guardado ${new Date(draftRestoredAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}). Revísalo y envíalo.`
+                                    : `Your unfinished order was restored (saved ${new Date(draftRestoredAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}). Check it and submit.`}
+                            </span>
+                            <button type="button" onClick={() => setDraftRestoredAt(null)} className="px-2.5 py-1 rounded-full bg-white border border-sky-300 text-sky-800">{language === "es" ? "OK" : "OK"}</button>
+                            <button type="button" onClick={() => { if (confirm(language === "es" ? "¿Borrar este pedido y empezar de nuevo?" : "Erase this order and start over?")) resetForm(); }}
+                                className="px-2.5 py-1 rounded-full bg-white border border-red-200 text-red-700">{language === "es" ? "Empezar de nuevo" : "Start over"}</button>
+                        </div>
+                    )}
                     {editingOrderId && (
                         <div className="bg-amber-50 border border-amber-300 rounded-lg p-2 mb-4 text-xs text-amber-800 font-bold text-center">
                             ✏️ {language === "es" ? "Editando pedido existente" : "Editing existing order"} — #{editingOrderId.slice(-6).toUpperCase()}
