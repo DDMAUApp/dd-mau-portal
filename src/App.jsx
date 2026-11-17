@@ -152,6 +152,8 @@ const InstallSplash = lazy(() => import('./components/InstallSplash'));
 const RequiredTaskFlow = lazy(() => import('./components/RequiredTaskFlow'));
 // 2026-10-17 — "new lesson" pop-up after sign-in for assigned training.
 const TrainingAssignmentPopup = lazy(() => import('./components/TrainingAssignmentPopup'));
+// 2026-11-17 — copies saves stuck on this device to /rescued_writes (pendingRescue.js).
+import { startPendingRescue } from './data/pendingRescue';
 const MenuDisplay = lazy(() => import('./components/MenuDisplay'));
 // Pi-side pairing screen — full-screen 6-digit code entry. Lazy
 // because only a TV that's deliberately hitting /?pair=1 ever needs
@@ -855,6 +857,11 @@ export default function App() {
     // Test mode: the identity comes from the test-mode flag (this tab only),
     // never from the shared ddmau:staffName.
     const [staffName, setStaffName] = useState(() => (TEST_MODE ? TEST_MODE.name : SS.get("staffName")));
+    // Stuck-save rescue (pendingRescue.js): runs on every device, sends a
+    // copy only when something is stuck. Reads the signed-in name via a ref.
+    const rescueNameRef = useRef(staffName);
+    rescueNameRef.current = staffName;
+    useEffect(() => startPendingRescue(() => rescueNameRef.current), []);
     const [staffLocation, setStaffLocation] = useState(() => SS.get("staffLocation", "webster"));
     const [activeLocation, setActiveLocation] = useState(() => SS.get("activeLocation", "webster"));
     const [language, setLanguage] = useState(() => SS.get("language", "en"));
