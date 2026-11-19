@@ -98,3 +98,18 @@ describe('pickSigStampBox', () => {
         expect(pickSigStampBox([hireSigP2, empStamp, hireStamp], hireSigP2)).toBe(hireStamp);
     });
 });
+
+import { skipDocStatusWrite, DOC_STATUS as S } from './onboarding';
+describe('skipDocStatusWrite', () => {
+    it('never lets "started" overwrite a turned-in doc', () => {
+        expect(skipDocStatusWrite(S.SUBMITTED, S.STARTED)).toBe(true);
+        expect(skipDocStatusWrite(S.APPROVED, S.STARTED)).toBe(true);
+        expect(skipDocStatusWrite(S.STARTED, S.STARTED)).toBe(true);
+    });
+    it('still records real progress and re-submits', () => {
+        expect(skipDocStatusWrite(S.NEEDED, S.STARTED)).toBe(false);
+        expect(skipDocStatusWrite(S.REJECTED, S.STARTED)).toBe(false);
+        expect(skipDocStatusWrite(S.SUBMITTED, S.SUBMITTED)).toBe(false);
+        expect(skipDocStatusWrite(S.STARTED, S.SUBMITTED)).toBe(false);
+    });
+});

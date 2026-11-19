@@ -87,6 +87,9 @@ export function collectDrafts(ls = typeof localStorage !== 'undefined' ? localSt
             // Money Count keeps its count as a standing draft on purpose and
             // restores it itself — not lost work.
             if (/^ddmau:moneydraft:/i.test(k)) continue;
+            // Private personal data stays on the device: job applications
+            // (public form: name/phone/address) and health-record uploads.
+            if (/^ddmau:(applyDraft|healthUploadDraft)/i.test(k)) continue;
             const v = ls.getItem(k);
             if (!v || v.length >= 200000) continue;
             let at = 0;

@@ -359,6 +359,19 @@ export const DOC_STATUS = {
 
 // Color/emoji metadata for status pills. Keep these vocabularies in sync
 // with the Tailwind classes available in the project (dd-*, green-*, etc.).
+// "Started" is only a progress hint for the admin. It must never overwrite a
+// doc the hire already turned in (Juan 2026-11-19: re-picking a photo for an
+// already-uploaded voided check flipped it back to "started", so the hire and
+// the admin both saw it as not done), and re-writing "started" on every
+// keystroke is pointless traffic. Returns true when the write should be skipped.
+export function skipDocStatusWrite(prevStatus, next) {
+    return next === DOC_STATUS.STARTED && (
+        prevStatus === DOC_STATUS.STARTED
+        || prevStatus === DOC_STATUS.SUBMITTED
+        || prevStatus === DOC_STATUS.APPROVED
+    );
+}
+
 export const DOC_STATUS_META = {
     needed:    { en: 'Needed',    es: 'Falta',       emoji: '⚪', tone: 'bg-gray-100 text-gray-600 border-gray-200' },
     opened:    { en: 'Opened',    es: 'Abierto',     emoji: '👀', tone: 'bg-blue-50 text-blue-700 border-blue-200' },

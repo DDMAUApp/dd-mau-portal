@@ -44,7 +44,7 @@ import {
     DOC_STATUS, DOC_STATUS_META, ONBOARDING_DOCS,
     docsForHire, isHireMinor, hireProgressCounts,
     ID_DOC_TYPES, docDeadlineState, effectiveDocDescription,
-    effectiveDaysFromHire,
+    effectiveDaysFromHire, skipDocStatusWrite,
 } from '../data/onboarding';
 import { notifyAdmins } from '../data/notify';
 import { hashPortalPassword, verifyPortalPassword, portalUnlockKey } from '../data/onboardingAuth';
@@ -331,6 +331,7 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     const setDocStatus = async (docId, next, extra = {}) => {
         if (!hireId) return;
         const prevStatus = (hire.checklist && hire.checklist[docId] && hire.checklist[docId].status) || DOC_STATUS.NEEDED;
+        if (skipDocStatusWrite(prevStatus, next)) return;
         // A (re-)submission INVALIDATES any admin-side employer completion
         // (I-9 Section 2): the employer-completed PDF was drawn on top of the
         // PREVIOUS filled version (and the submit path already pruned it from
