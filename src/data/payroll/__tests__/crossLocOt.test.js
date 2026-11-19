@@ -345,3 +345,51 @@ describe('CROSS OT through the engine', () => {
         expect(passCheck.level).toBe('pass');                // reconciliation counts CROSS OT hours
     });
 });
+
+// Andrew 2026-11-19: Emerson's OT HRS cell read 0 with 35.18h in CROSS OT —
+// "the accountant can easily miss the extra overtime". The doc must SHOUT.
+import { buildPayrollWorkbook } from '../excelOut';
+describe('CROSS OT is flagged for the accountant', () => {
+    const masterData = {
+        employees: [
+            { key: 'ev', first: 'Emerson', last: 'Velasquez', section: 'BOH', rate: 19, no_tip: false, direct_deposit: true },
+            { key: 'ab', first: 'Ana', last: 'Bee', section: 'BOH', rate: 15, no_tip: false, direct_deposit: true },
+        ],
+        salary: [], errors: [],
+    };
+    masterData.by_key = Object.fromEntries(masterData.employees.map((e) => [e.key, e]));
+    const toastEmps = {
+        ev: { toast_name: 'Velasquez, Emerson', first: 'Emerson', last: 'Velasquez', reg_hours: 77.89, ot_hours: 0, toast_rate: 19, lines: [] },
+        ab: { toast_name: 'Bee, Ana', first: 'Ana', last: 'Bee', reg_hours: 30, ot_hours: 0, toast_rate: 15, lines: [] },
+    };
+    const text = (c) => String(c.value ?? '');
+
+    it('orange row + ACTION NEEDED + OT-cell note + sheet title on PayrollExport; TIP sheet flagged too', async () => {
+        const adjusted = applyCrossOt({ MH: toastEmps }, [{ key: 'ev', location: 'MH', hours: 35.18, total_cents: 100263 }]).MH;
+        const res = runLocation('MH', adjusted, masterData, 0, 0, 50, [], null);
+        const wb = await buildPayrollWorkbook(res);
+        const ws = wb.getWorksheet('PayrollExport');
+        expect(text(ws.getCell('G2'))).toBe('ACTION NEEDED');
+        expect(text(ws.getCell('A1'))).toMatch(/1 PERSON HAS CROSS-STORE OVERTIME/);
+        let ev = null; let ab = null;
+        ws.eachRow((row, n) => { const nm = text(row.getCell(2)); if (nm.startsWith('Velasquez')) ev = n; if (nm.startsWith('Bee')) ab = n; });
+        expect(text(ws.getCell(ev, 5))).toBe('35.18');
+        expect(text(ws.getCell(ev, 7))).toMatch(/OVERTIME: pay the 35\.18h CROSS OT hrs as OVERTIME \(1\.5×\) = \$1,002\.63/);
+        expect(ws.getCell(ev, 4).note).toMatch(/Not the whole overtime/);
+        expect(ws.getCell(ev, 2).fill.fgColor.argb).toBe('FFFFC000');
+        expect(ws.getCell(ab, 2).fill).toBeUndefined();               // normal rows untouched
+        expect(text(ws.getCell(ab, 7))).toBe('');
+        const tip = wb.getWorksheet('MH TIP');
+        let tr = null; tip.eachRow((row, n) => { if (text(row.getCell(2)).toLowerCase() === 'emerson') tr = n; });
+        expect(tip.getCell(tr, 5).note).toMatch(/35\.18h CROSS OT/);
+        expect(tip.getCell(tr, 19).fill.fgColor.argb).toBe('FFFFC000');
+    });
+
+    it('a store with no cross OT keeps the plain title and no flags', async () => {
+        const res = runLocation('WG', toastEmps, masterData, 0, 0, 50, [], null);
+        const ws = (await buildPayrollWorkbook(res)).getWorksheet('PayrollExport');
+        expect(text(ws.getCell('A1'))).not.toMatch(/CROSS-STORE OVERTIME \(orange/);
+        let flagged = 0; ws.eachRow((row, n) => { if (n > 2 && text(row.getCell(7))) flagged++; });
+        expect(flagged).toBe(0);
+    });
+});

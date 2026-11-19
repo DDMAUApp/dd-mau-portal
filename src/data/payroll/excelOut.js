@@ -26,6 +26,11 @@ const FILL_TOT = FILL('FCE4D6');
 const FILL_RED = FILL('FFC7CE');
 const FILL_YEL = FILL('FFF2CC');
 const FILL_GRN = FILL('C6EFCE');
+// Cross-store overtime flag (Andrew 2026-11-19: Emerson's OT HRS showed 0 —
+// "the accountant can easily miss the extra overtime"). Bright orange so it
+// reads as "act on this row", distinct from the red rate-override fill.
+const FILL_XOT = FILL('FFC000');
+const F_XOT = { bold: true, color: { argb: argb('9C0006') } };
 const THIN = { style: 'thin', color: { argb: argb('B0B0B0') } };
 const BORDER = { top: THIN, left: THIN, bottom: THIN, right: THIN };
 const RED_SIDE = { style: 'medium', color: { argb: argb('C00000') } };
@@ -44,6 +49,7 @@ const TIP_HEADERS = ['RATE', 'FIRST', 'LAST', 'REG HRS', 'OT HRS', 'TOTAL HRS', 
     'VAC HRS', 'VAC PAY', 'TOTAL COMP', 'EFF RATE', 'DD',
     'CROSS OT HRS', 'CROSS OT PAY'];
 
+const fmtHrs = (h) => `${fmtG(round2(Number(h) || 0))}h`;
 function cell(ws, r, col) { return ws.getRow(r).getCell(col); }
 function setWidths(ws, widthsByCol) {
     for (const [col, w] of Object.entries(widthsByCol)) ws.getColumn(Number(col)).width = w;
@@ -60,12 +66,13 @@ function writeExportSheet(ws, res) {
     const locName = LOCATION_NAMES[res.location];
     ws.getCell('A1').value = `${locName} – PAYROLL EXPORT (REG/OT as on the Toast export; CROSS OT = combined-store overtime moved out of REGULAR)`;
     ws.getCell('A1').font = F_TITLE;
-    const hdrs = ['LOCATION', 'EMPLOYEE NAME', 'REGULAR HRS', 'OT HRS', 'CROSS OT HRS', 'JOBS (if merged)'];
+    const hdrs = ['LOCATION', 'EMPLOYEE NAME', 'REGULAR HRS', 'OT HRS', 'CROSS OT HRS', 'JOBS (if merged)', 'ACTION NEEDED'];
     hdrs.forEach((h, i) => {
         const c = cell(ws, 2, i + 1);
         c.value = h; c.font = F_HDR; c.fill = FILL_HDR; c.border = BORDER;
     });
     let r = 3;
+    const xotPeople = [];
     let rows = ['FOH', 'BOH'].flatMap((sec) => res.sections[sec].rows).filter((row) => row.toast_name);
     rows = rows.concat(res.review);
     rows.sort((a, b) => {
@@ -80,9 +87,26 @@ function writeExportSheet(ws, res) {
         const oc = cell(ws, r, 4); oc.value = row.ot_hours; oc.numFmt = HOURS;
         if (row.xot_hours) { const xc = cell(ws, r, 5); xc.value = row.xot_hours; xc.numFmt = HOURS; }
         if (row.merge_detail) cell(ws, r, 6).value = row.merge_detail;
+        if (row.xot_hours) {
+            xotPeople.push(row.toast_name);
+            for (let ci = 1; ci <= 7; ci++) cell(ws, r, ci).fill = FILL_XOT;
+            const pay = row.xot_cents ? ` = $${money2(d(row.xot_cents))}` : '';
+            const act = cell(ws, r, 7);
+            act.value = `⚠ OVERTIME: pay the ${fmtHrs(row.xot_hours)} CROSS OT hrs as OVERTIME (1.5×)${pay}. `
+                + `OT HRS shows ${fmtHrs(row.ot_hours || 0)} because each store's Toast only sees its own hours.`;
+            act.font = F_XOT;
+            cell(ws, r, 4).note = `Not the whole overtime! Add the ${fmtHrs(row.xot_hours)} CROSS OT hours (column E) — `
+                + 'overtime from working over 40 hrs/week across BOTH stores.';
+        }
         r += 1;
     }
-    setWidths(ws, { 1: 20, 2: 28, 3: 13, 4: 10, 5: 13, 6: 50 });
+    if (xotPeople.length) {
+        const n = xotPeople.length;
+        ws.getCell('A1').value = `${locName} – PAYROLL EXPORT — ⚠ ${n} ${n === 1 ? 'PERSON HAS' : 'PEOPLE HAVE'} `
+            + 'CROSS-STORE OVERTIME (orange rows): pay CROSS OT HRS as overtime — it is NOT in the OT HRS column';
+        ws.getCell('A1').font = { ...F_TITLE, color: { argb: argb('C00000') } };
+    }
+    setWidths(ws, { 1: 20, 2: 28, 3: 13, 4: 10, 5: 13, 6: 50, 7: xotPeople.length ? 75 : 16 });
     ws.views = [{ state: 'frozen', ySplit: 2 }]; // freeze_panes 'A3'
 }
 
@@ -130,6 +154,11 @@ function tipRow(ws, r, row) {
     if (row.extras && row.extras.length) {
         cell(ws, r, 16).note = row.extras.join('\n');
         if (row.extra_cents < 0) cell(ws, r, 11).font = F_RED;
+    }
+    if (row.xot_hours) {
+        for (const ci of [5, 19, 20]) cell(ws, r, ci).fill = FILL_XOT;
+        cell(ws, r, 5).note = `Not the whole overtime! + ${fmtHrs(row.xot_hours)} CROSS OT hrs (column S) — `
+            + 'over 40 hrs/week across BOTH stores. Pay them as overtime.';
     }
     if (row.xot_cents) {
         cell(ws, r, 20).note = 'Cross-store overtime: hours over 40/week COMBINED across both stores. '
