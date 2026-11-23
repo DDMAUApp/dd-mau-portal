@@ -21,6 +21,7 @@ import ToastInvoices from './ToastInvoices';
 import ToastOrders from './ToastOrders';
 import { toast } from '../toast';
 import { loadCateringDraft, saveCateringDraft, clearCateringDraft } from '../data/cateringDraft';
+import { decodeSampler, itemsForSave } from '../data/cateringSampler';
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.
 import { ChefHat, ClipboardList } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
@@ -722,7 +723,7 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                 utensilInfo.cost = getUtensilCost();
                 const order = {
                     customer,
-                    items: cart.map(({ id, ...rest }) => rest),
+                    items: itemsForSave(cart),   // sampler picks → Firestore-safe (no nested arrays)
                     utensils: utensilInfo,
                     subtotal: getSubtotal(),
                     utensilCost: getUtensilCost(),
@@ -847,7 +848,10 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                 // map, a legacy string) sails past `||` and then throws
                 // "(n||[]).map is not a function" — a real production crash on
                 // opening a saved order for edit (2026-08-01 error_logs).
-                setCart((Array.isArray(o.items) ? o.items : []).map((item, i) => ({ ...item, id: Date.now() + i })));
+                setCart((Array.isArray(o.items) ? o.items : []).map((item, i) => ({
+                    ...item, id: Date.now() + i,
+                    ...(item.samplerProteins ? { samplerProteins: decodeSampler(item.samplerProteins) } : {}),
+                })));
                 setSpecialNotes(o.specialNotes || "");
                 setDeliveryFee(String(o.deliveryFee || 15));
                 setDeliveryMiles(o.deliveryMiles === null || o.deliveryMiles === undefined ? "" : String(o.deliveryMiles));
@@ -878,7 +882,7 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                     if (item.utensils) details += ' | ' + item.utensils;
                     if (item.samplerProteins) {
                         const names = ['Banh Mi', 'Mini Bowls', 'Rice Rolls'];
-                        item.samplerProteins.forEach((sp, si) => { if (sp && sp.length) details += ' | ' + names[si] + ': ' + sp.join(', '); });
+                        (decodeSampler(item.samplerProteins) || []).forEach((sp, si) => { if (sp && sp.length) details += ' | ' + names[si] + ': ' + sp.join(', '); });
                     }
                     if (item.samplerEggRoll) details += ' | Egg Rolls: ' + item.samplerEggRoll;
                     if (item.itemNote) details += ' | Note: ' + item.itemNote;
@@ -1139,7 +1143,7 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                                                         {item.utensils ? ` | ${item.utensils}` : ""}
                                                         {item.samplerEggRoll ? ` | Egg Rolls: ${item.samplerEggRoll}` : ""}
                                                     </span>
-                                                    {item.samplerProteins && item.samplerProteins.map((sp, si) => sp?.length > 0 && (
+                                                    {item.samplerProteins && (decodeSampler(item.samplerProteins) || []).map((sp, si) => sp?.length > 0 && (
                                                         <span key={si} style={{display: "block", color: "#555", fontSize: "12px"}}>• {["Banh Mi", "Mini Bowls", "Rice Rolls"][si]}: {sp.join(", ")}</span>
                                                     ))}
                                                     {item.itemNote && <span style={{display: "block", color: "#d97706", fontSize: "12px", fontStyle: "italic"}}>📝 {item.itemNote}</span>}
@@ -1593,7 +1597,7 @@ export default function CateringOrder({ language, staffName, storeLocation }) {
                                                 {item.singleSauce && <p className="text-xs text-gray-400">{language === "es" ? "Salsa" : "Sauce"}: {item.singleSauce}</p>}
                                                 {item.base && <p className="text-xs text-gray-400">Base: {item.base}</p>}
                                                 {item.utensils && <p className="text-xs text-gray-400">{item.utensils}</p>}
-                                                {item.samplerProteins && item.samplerProteins.map((sp, si) => sp?.length > 0 && (
+                                                {item.samplerProteins && (decodeSampler(item.samplerProteins) || []).map((sp, si) => sp?.length > 0 && (
                                                     <p key={si} className="text-xs text-gray-400">• {["Banh Mi", "Mini Bowls", "Rice Rolls"][si]}: {sp.join(", ")}</p>
                                                 ))}
                                                 {item.samplerEggRoll && <p className="text-xs text-gray-400">{language === "es" ? "Rollos" : "Egg Rolls"}: {item.samplerEggRoll}</p>}
